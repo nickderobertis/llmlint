@@ -24,6 +24,27 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # crates.io publishing self-activates when the CARGO_REGISTRY_TOKEN secret
+  # exists — no extra repo variable to set. `secrets` cannot be read in a job
+  # `if:`, so (mirroring release-plz.yml's guard) this job reads the token into
+  # an env var and exposes whether it is present as an output the publish jobs
+  # gate on. Until the secret is added, publishing stays dormant.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "CARGO_REGISTRY_TOKEN not set; skipping crates.io publish." >&2
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Gate the release on a passing run of the same checks CI enforces, so a tag
   # can never publish an artifact that would not pass the gate.
   test:
@@ -73,17 +94,16 @@ jobs:
           include: README.md,LICENSE,CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # crates.io publishing is opt-in: set the repository variable
-  # PUBLISH_TO_CRATES_IO=true and provide the CARGO_REGISTRY_TOKEN secret. Gated
-  # on the same `test` job as the binary upload (so a crate version never
-  # publishes without a green gate) but it does NOT depend on `upload` — a flaky
-  # per-platform binary upload must not block the immutable crate publish, and a
-  # publish hiccup must not block the binary attachments. Kept out of release-plz
-  # (publish = false there) so versioning/tagging stays decoupled from the
-  # registry push.
+  # crates.io publishing: runs whenever the CARGO_REGISTRY_TOKEN secret is set
+  # (see the `guard` job). Gated on the same `test` job as the binary upload (so
+  # a crate version never publishes without a green gate) but it does NOT depend
+  # on `upload` — a flaky per-platform binary upload must not block the immutable
+  # crate publish, and a publish hiccup must not block the binary attachments.
+  # Kept out of release-plz (publish = false there) so versioning/tagging stays
+  # decoupled from the registry push.
   publish-crate:
-    needs: [test]
-    if: ${{ vars.PUBLISH_TO_CRATES_IO == 'true' }}
+    needs: [guard, test]
+    if: ${{ needs.guard.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -101,8 +121,8 @@ jobs:
   # this fails, the crate is already public (immutable); it surfaces a broken
   # release rather than gating the publish.
   verify-crate:
-    needs: [publish-crate]
-    if: ${{ vars.PUBLISH_TO_CRATES_IO == 'true' }}
+    needs: [guard, publish-crate]
+    if: ${{ needs.guard.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: dtolnay/rust-toolchain@stable
