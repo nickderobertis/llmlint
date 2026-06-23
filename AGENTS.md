@@ -45,9 +45,11 @@ Use the `just` recipes; do not hand-roll equivalents.
   stamped (`.dev/setup.stamp`). On a machine with no `just` yet, run the script
   directly: `./scripts/setup.sh`. The Claude Code **SessionStart hook**
   (`scripts/session-setup.sh`, wired in `.claude/settings.json`) runs the fast
-  `setup-check` and *advises* `just setup` when the environment is not ready — it
-  never blocks the session on a multi-minute install (set `LLMLINT_AUTO_SETUP=1`
-  to provision detached in the background instead).
+  `setup-check` and, when the environment is not ready, launches `just setup`
+  **detached in the background** — it never blocks the session on the
+  multi-minute install; tools appear within a few minutes (verify with
+  `just setup-check`). Set `LLMLINT_NO_AUTO_SETUP=1` to only *advise* instead, or
+  `LLMLINT_SKIP_SETUP=1` to do nothing.
 - `just setup-check` — fast, install-free readiness check (no network); exit 0
   when ready, exit 1 with the reason and the fix. Source of truth for "ready" is
   `scripts/setup-lib.sh` (`REQUIRED_BINS` + a fingerprint of the toolchain/tool
