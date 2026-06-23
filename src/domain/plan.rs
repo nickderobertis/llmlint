@@ -1,0 +1,242 @@
+//! Plan the judge runs: group rules by agent and target files, expand the
+//! multi-judge scheme, and split into batches — each batch is one `oneharness`
+//! invocation.
+//!
+//! Multi-judge majority vote (per the configured scheme): within an
+//! (agent, files) group, `maxJudges = max(rule.judges)`. For judge index
+//! `j ∈ 1..=maxJudges` the judge evaluates `{rules | judges >= j}`, split into
+//! `batch_size` chunks. So a `judges: N` rule appears in judges `1..=N` → N
+//! independent verdicts → majority; a `judges: 1` rule runs exactly once.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use crate::domain::config::Config;
+use crate::domain::template::RuleSpec;
+
+/// A rule with its agent and target files resolved (globbing done by `io`).
+#[derive(Debug, Clone)]
+pub struct ResolvedRule {
+    pub name: String,
+    pub description: String,
+    pub judges: u32,
+    pub agent: String,
+    pub files: Vec<PathBuf>,
+}
+
+/// One judge invocation: a batch of rules to evaluate against a file set.
+#[derive(Debug, Clone)]
+pub struct JudgeRun {
+    pub agent: String,
+    pub harness: String,
+    pub model: Option<String>,
+    pub schema_max_retries: Option<u32>,
+    pub judge_index: u32,
+    /// Master template + this agent's appended prompt text (not yet rendered).
+    pub template: String,
+    pub files: Vec<PathBuf>,
+    pub rules: Vec<RuleSpec>,
+}
+
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub runs: Vec<JudgeRun>,
+    /// Rules with no matching files — nothing to lint, reported as skipped.
+    pub skipped: Vec<String>,
+}
+
+/// Build the plan. Deterministic: groups and runs come out in a stable order.
+pub fn build(
+    config: &Config,
+    master_template: &str,
+    default_batch_size: usize,
+    default_harness: &str,
+    resolved: Vec<ResolvedRule>,
+) -> Plan {
+    let mut plan = Plan::default();
+
+    // Group by agent (stable order via BTreeMap).
+    let mut by_agent: BTreeMap<String, Vec<ResolvedRule>> = BTreeMap::new();
+    for r in resolved {
+        by_agent.entry(r.agent.clone()).or_default().push(r);
+    }
+
+    for (agent_name, rules) in by_agent {
+        let agent = config.agent_or_default(&agent_name);
+        let harness = agent
+            .harness
+            .clone()
+            .unwrap_or_else(|| default_harness.to_string());
+        let batch_size = agent.batch_size.unwrap_or(default_batch_size).max(1);
+        let template = match &agent.prompt_template {
+            Some(extra) => format!("{master_template}\n\n{extra}"),
+            None => master_template.to_string(),
+        };
+
+        // Within an agent, group by the resolved file set so each run carries a
+        // coherent file list.
+        let mut by_files: BTreeMap<Vec<PathBuf>, Vec<ResolvedRule>> = BTreeMap::new();
+        for r in rules {
+            by_files.entry(r.files.clone()).or_default().push(r);
+        }
+
+        for (files, group) in by_files {
+            if files.is_empty() {
+                plan.skipped.extend(group.into_iter().map(|r| r.name));
+                continue;
+            }
+            let max_judges = group.iter().map(|r| r.judges).max().unwrap_or(1);
+            for j in 1..=max_judges {
+                let subset: Vec<&ResolvedRule> = group.iter().filter(|r| r.judges >= j).collect();
+                for chunk in subset.chunks(batch_size) {
+                    plan.runs.push(JudgeRun {
+                        agent: agent_name.clone(),
+                        harness: harness.clone(),
+                        model: agent.model.clone(),
+                        schema_max_retries: config.oneharness.schema_max_retries,
+                        judge_index: j,
+                        template: template.clone(),
+                        files: files.clone(),
+                        rules: chunk
+                            .iter()
+                            .map(|r| RuleSpec {
+                                name: r.name.clone(),
+                                description: r.description.clone(),
+                            })
+                            .collect(),
+                    });
+                }
+            }
+        }
+    }
+
+    plan
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::config::Agent;
+
+    fn rr(name: &str, judges: u32, agent: &str, files: &[&str]) -> ResolvedRule {
+        ResolvedRule {
+            name: name.into(),
+            description: format!("desc {name}"),
+            judges,
+            agent: agent.into(),
+            files: files.iter().map(PathBuf::from).collect(),
+        }
+    }
+
+    #[test]
+    fn single_judge_rules_run_once() {
+        let cfg = Config::default();
+        let plan = build(
+            &cfg,
+            "T",
+            20,
+            "claude-code",
+            vec![
+                rr("a", 1, "default", &["f.rs"]),
+                rr("b", 1, "default", &["f.rs"]),
+            ],
+        );
+        assert_eq!(plan.runs.len(), 1);
+        assert_eq!(plan.runs[0].rules.len(), 2);
+        assert_eq!(plan.runs[0].harness, "claude-code");
+        assert!(plan.skipped.is_empty());
+    }
+
+    #[test]
+    fn multi_judge_expands_into_one_run_per_judge_index() {
+        let cfg = Config::default();
+        // a: 3 judges, b: 1 judge, same files -> judge1{a,b}, judge2{a}, judge3{a}.
+        let plan = build(
+            &cfg,
+            "T",
+            20,
+            "claude-code",
+            vec![
+                rr("a", 3, "default", &["f.rs"]),
+                rr("b", 1, "default", &["f.rs"]),
+            ],
+        );
+        assert_eq!(plan.runs.len(), 3);
+        let j1 = plan.runs.iter().find(|r| r.judge_index == 1).unwrap();
+        assert_eq!(j1.rules.len(), 2);
+        assert_eq!(plan.runs.iter().filter(|r| r.judge_index == 2).count(), 1);
+        assert_eq!(plan.runs.iter().filter(|r| r.judge_index == 3).count(), 1);
+    }
+
+    #[test]
+    fn batches_respect_agent_batch_size() {
+        let mut cfg = Config::default();
+        cfg.agents.insert(
+            "small".into(),
+            Agent {
+                batch_size: Some(2),
+                prompt_template: Some("be terse".into()),
+                ..Default::default()
+            },
+        );
+        let rules = vec![
+            rr("a", 1, "small", &["f.rs"]),
+            rr("b", 1, "small", &["f.rs"]),
+            rr("c", 1, "small", &["f.rs"]),
+        ];
+        let plan = build(&cfg, "MASTER", 20, "claude-code", rules);
+        assert_eq!(plan.runs.len(), 2); // 3 rules / batch 2 -> 2 batches
+        assert!(plan.runs[0].template.contains("MASTER"));
+        assert!(plan.runs[0].template.contains("be terse"));
+    }
+
+    #[test]
+    fn distinct_file_sets_are_separate_runs() {
+        let cfg = Config::default();
+        let plan = build(
+            &cfg,
+            "T",
+            20,
+            "claude-code",
+            vec![
+                rr("a", 1, "default", &["x.rs"]),
+                rr("b", 1, "default", &["y.rs"]),
+            ],
+        );
+        assert_eq!(plan.runs.len(), 2);
+    }
+
+    #[test]
+    fn empty_file_set_is_skipped_not_run() {
+        let cfg = Config::default();
+        let plan = build(
+            &cfg,
+            "T",
+            20,
+            "claude-code",
+            vec![rr("a", 1, "default", &[])],
+        );
+        assert!(plan.runs.is_empty());
+        assert_eq!(plan.skipped, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn agent_harness_override_is_used() {
+        let mut cfg = Config::default();
+        cfg.agents.insert(
+            "arch".into(),
+            Agent {
+                harness: Some("codex".into()),
+                ..Default::default()
+            },
+        );
+        let plan = build(
+            &cfg,
+            "T",
+            20,
+            "claude-code",
+            vec![rr("a", 1, "arch", &["f.rs"])],
+        );
+        assert_eq!(plan.runs[0].harness, "codex");
+    }
+}

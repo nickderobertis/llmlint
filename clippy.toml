@@ -1,0 +1,3 @@
+# Make clippy MSRV-aware so it never suggests APIs newer than the declared
+# minimum supported Rust version (`rust-version` in Cargo.toml).
+msrv = "1.85"

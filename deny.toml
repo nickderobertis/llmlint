@@ -1,0 +1,41 @@
+# cargo-deny policy. Strict by default: advisories, licenses, bans, and sources
+# all fail the check rather than warn. Any exception below is explicit and
+# carries a reason so the policy never silently accumulates debt. Run via
+# `just deps-check` and a dedicated CI job (it needs a network advisory DB), not
+# the core `just check` gate.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive licenses compatible with this MIT-licensed binary. Adding a
+# dependency with a new license fails the check until it is reviewed and added.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+exceptions = []
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

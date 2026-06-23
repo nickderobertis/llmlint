@@ -1,0 +1,36 @@
+# llmlint configuration. Docs: https://github.com/nickderobertis/llmlint
+#
+# llmlint uses an LLM as a judge for checks deterministic linters can't express.
+# Phrase each rule as a positive invariant: holds=true means the code complies;
+# holds=false is a violation. Keep using deterministic linters for everything
+# they can already check.
+version: 1
+
+# Files linted when none are passed explicitly on the CLI.
+files:
+  include:
+    - "src/**"
+  exclude:
+    - "**/target/**"
+
+# Plugins / shared rule sets, merged in by one line each. The bundled
+# config-lint plugin lints this file's own rules for clear names and
+# descriptions — keep it on.
+include:
+  - "llmlint:config-lint"
+
+# Agents group rules and add reviewer context. Rules with no `agent` use the
+# `default` agent. `harness` is any id from `oneharness list` (default
+# claude-code). Use YAML anchors to share prompt text across agents.
+agents:
+  default:
+    harness: claude-code
+
+rules:
+  # Example rule — edit or replace. `judges: 3` would run three independent
+  # judges and take the majority vote for higher-stakes checks.
+  - name: public_items_are_documented
+    description: |
+      TRUE when every public function, struct, enum, and module has a doc
+      comment explaining its purpose. FALSE when any public item is undocumented.
+    judges: 1

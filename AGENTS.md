@@ -1,0 +1,137 @@
+# AGENTS.md
+
+Durable instructions for humans and agents in this repo. Write for a future
+maintainer, not as a session log. Put deterministic steps in scripts; keep this
+file for constraints, tradeoffs, and judgment.
+
+> `CLAUDE.md` is a symlink to this file (`ln -s AGENTS.md CLAUDE.md`). Edit
+> `AGENTS.md` only; the two must never drift.
+
+## What this repo is
+
+`llmlint` is a Rust CLI that uses an **LLM as a judge** to enforce code-quality
+checks deterministic linters can't express — architectural-pattern adherence,
+coding-style intent, org-objective alignment. It is **additive** to deterministic
+linters (use those wherever a check *can* be deterministic), never a replacement.
+A YAML config declares rules, agents, file globs, and a prompt template; llmlint
+drives real coding harnesses **through `oneharness`** and reads its validated
+structured output. Consumers: developers and CI gating a repo's quality.
+
+## Stack and composition
+
+Built with the `create-repo` skill from one **product shape** (CLI), one
+**language** (Rust), and the **CI** + **releasing** cross-cutting references —
+pulling `shapes/cli.md` + `languages/rust.md` + `intersections/rust-cli.md`.
+Deliberately excluded (so it isn't re-litigated):
+
+- **No monorepo** — single binary crate; no Nx/affected wiring.
+- **No `cargo-dist`** — `release.yml`'s native build matrix already ships
+  checksummed cross-platform binaries; release-plz handles versioning.
+- **No crates.io publish** — end-user binary, shipped via GitHub Releases +
+  `install.sh` + `cargo install --git` (`publish = false`).
+- **No heavy pre-commit framework, direnv, or `src`-layout shuffling** — the gate
+  is `just check` + CI on the standard Cargo layout.
+- **Coverage bar: 95% lines** (`cargo llvm-cov --fail-under-lines 95`).
+- **MSRV (`rust-version`) is advisory** — `just msrv` checks it locally; not a CI
+  gate (no strong downstream promise for a binary-only tool yet).
+
+## Command surface
+
+Use the `just` recipes; do not hand-roll equivalents.
+
+- `just bootstrap` — set up from a clean clone (toolchain components + fetch).
+- `just check` — full gate: fmt-check, clippy (`-D warnings`), tests, **e2e**,
+  `cargo doc`. Must pass before any commit or PR.
+- `just test` / `just test-e2e` / `just lint` / `just format` — individual steps.
+- `just upgrade` — update dependencies, then re-run `just check`.
+- `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
+- `just lint-live` — opt-in live run against real oneharness + a real harness;
+  never in the gate or CI.
+
+## How llmlint drives oneharness
+
+llmlint shells out to `oneharness run` once per `(agent, judge, batch)`, passing
+the rendered template via `--system`, a generated JSON Schema via `--schema`
+(oneharness validates it and re-prompts on failure), and reading the per-result
+`structured` value. **oneharness is a runtime prerequisite** — found on PATH,
+overridable via `--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config;
+`llmlint doctor` checks it. The harness reads target files on-demand with its own
+tools (bypass mode is oneharness's default).
+
+- **Verdict polarity (convention):** rules are authored as positive invariants.
+  `holds=true` = property holds (pass); `holds=false` = **violation** (fail).
+  llmlint exits non-zero when any rule's final verdict is `false`.
+- **oneharness `--config` is single-file** today; llmlint forwards the first
+  `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
+  `--config` repeatable, then drop the warning.
+
+## Commits, releases, and merging
+
+- **Squash-merge only, via PR, with auto-merge.** Default branch is protected:
+  merge/rebase commits disabled, so one PR is one squash commit whose subject is
+  the PR title. Queue with `gh pr merge --auto --squash`; merged heads auto-delete.
+  Admins may break-glass.
+- **All gating checks required**: `check` (full e2e gate), `deny`, `install`, and
+  `pr-title`, plus linear history, conversation resolution, no force-push/deletion.
+- **PRs follow `.github/pull_request_template.md`** (What / Why; the squash body).
+- **Releases**: Conventional Commits drive release-plz (pre-1.0: `feat`→minor,
+  `fix`/`perf`→patch, `!`/`BREAKING`→minor; `docs`/`test`/`chore`/`ci`→no release).
+  release-plz opens a release PR, auto-merges it on green, tags `vX.Y.Z`, and cuts
+  the GitHub Release, which fires `release.yml` to build+attach checksummed
+  binaries. Needs the `RELEASE_PLZ_TOKEN` PAT (a `GITHUB_TOKEN` tag won't retrigger
+  `release.yml`); the workflow no-ops until the secret exists. Don't hand-bump the
+  version or `CHANGELOG.md`.
+
+## Invariants (non-negotiable)
+
+- The gate is strict: no warnings-only mode. A diagnostic is an error or is
+  suppressed with a documented, tracked rationale.
+- **Tests are realistic, not mocked, and complete, not minimal** (see below).
+- Validate all external / IO inputs (CLI args, config files, subprocess output)
+  at the boundary; a bad config is a clear exit-2 error, never a silent skip.
+- Keep the artifact portable across Linux, macOS, and Windows.
+- Do not commit secrets, credentials, PII, or customer data.
+
+## Architecture
+
+- **`src/domain/` is pure** — config model + validation, template render, schema
+  generation, judge/batch planning, vote aggregation, violation model, output
+  formatting, exit-code mapping. No process/filesystem/env I/O.
+- **`src/io/`** owns all I/O: config discovery + merge + include resolution, file
+  globbing, the oneharness subprocess client, embedded assets. Never hide I/O in a
+  helper that looks pure.
+- **`src/commands/`** wires domain + io for `lint` (default), `init`, `config`,
+  `doctor`.
+
+## Tests are context engineering
+
+This is an agent-driven repo: the test suite is the *only* QA loop. Realism and
+coverage are a rule, not a preference.
+
+- **The layer under test is llmlint.** The genuinely-external boundary is the
+  `oneharness` subprocess — e2e drives the **real `llmlint` binary** against a
+  **mock-oneharness fixture** (feature `mock-oneharness`, `--oneharness-bin`
+  override), exactly as oneharness mocks the real agent CLIs. Never mock
+  llmlint's own logic (config/render/batch/vote/output).
+- **Done means complete, not minimal:** every user journey, happy path *and*
+  failure/recovery. The e2e journey list lives in `tests/AGENTS.md` and is the
+  source of truth for what's covered; a feature isn't done until its journey lands.
+- A live tier (`just lint-live`) hits real oneharness + a real harness; it is
+  opt-in, env-gated, and never in `just check` or CI.
+
+## Scripts and output are context
+
+- Recipes/scripts are quiet on success — a line or nothing. On failure, preserve
+  the exact error (paths, rule names, exit codes) and suggest the next action.
+
+## Keeping the allowlist current
+
+The agent command allowlist lives in `.claude/settings.json`; the tool enforces
+it. When a new routine command joins the build/test/release workflow, add it
+(kept narrow) instead of re-approving it each session.
+
+## After the main task: refine and hand off
+
+After the requested task, propose only materially-helpful follow-ups (scripts,
+`AGENTS.md` constraints, shared skills, tests/fixtures), each with its likely
+impact. Skip busywork; if nothing helps, say so.

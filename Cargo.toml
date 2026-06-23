@@ -1,0 +1,59 @@
+[package]
+name = "llmlint"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "LLM-as-judge linter: enforce code-quality checks deterministic linters can't express, by driving real coding harnesses through oneharness."
+license = "MIT"
+repository = "https://github.com/nickderobertis/llmlint"
+homepage = "https://github.com/nickderobertis/llmlint"
+readme = "README.md"
+keywords = ["cli", "linter", "llm", "code-review", "oneharness"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "llmlint"
+path = "src/main.rs"
+
+[lib]
+name = "llmlint"
+path = "src/lib.rs"
+
+# Test-only fixture: a fake `oneharness` the e2e tests drive via the
+# `--oneharness-bin` override, so the spawn/parse/vote path is proven
+# hermetically and cross-platform. Gated behind a feature so it never ships in
+# `cargo install`.
+[[bin]]
+name = "llmlint-mock-oneharness"
+path = "tests/support/mock_oneharness.rs"
+required-features = ["mock-oneharness"]
+
+[features]
+# Builds the mock-oneharness fixture. Enabled by `just test`/`just check` and CI.
+mock-oneharness = []
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+minijinja = "2"
+ignore = "0.4"
+globset = "0.4"
+thiserror = "2"
+wait-timeout = "0.2"
+tempfile = "3"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"
+
+# A CLI binary: optimize for a small, fast-starting artifact.
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

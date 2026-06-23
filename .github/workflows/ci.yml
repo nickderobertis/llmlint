@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: most jobs only need to read the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The full gate, including e2e and the coverage threshold. Linux-only because
+  # coverage is measured here (the `#[cfg(unix)]` subprocess tests run on Linux);
+  # macOS/Windows prove the artifact via the `cross` job below.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,nextest,cargo-llvm-cov
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Full gate (fmt, clippy, tests + coverage, docs)
+        run: just check
+
+  # Prove the artifact builds and its tests pass on macOS and Windows (without
+  # the coverage threshold, which is enforced on Linux).
+  cross:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,nextest
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Format + lint
+        run: just fmt-check && just lint
+      - name: Tests (unit + integration + e2e)
+        run: cargo nextest run --features mock-oneharness --locked
+
+  # Advisory + license audit and unused-dependency check (own job: needs a
+  # network advisory DB).
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+      - run: cargo deny check
+      - run: cargo machete
+
+  # Prove the end-user install path on every platform: install the shipped
+  # binary the documented way and smoke-test the real artifact. No oneharness or
+  # network needed for `--version`/`init`/`config`.
+  install:
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install (recommended end-user method)
+        run: cargo install --path . --locked
+      - name: Smoke-test the installed binary
+        run: |
+          llmlint --version
+          llmlint --help >/dev/null
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          llmlint init
+          llmlint config
+
+  # Lint the PR title: under squash-merge it becomes the release-driving commit.
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

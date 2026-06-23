@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(just bootstrap)",
+      "Bash(just check)",
+      "Bash(just test)",
+      "Bash(just test-e2e)",
+      "Bash(just lint)",
+      "Bash(just lint-live)",
+      "Bash(just format)",
+      "Bash(just fmt-check)",
+      "Bash(just upgrade)",
+      "Bash(just deps-check)",
+      "Bash(just doctor)",
+      "Bash(just msrv)",
+      "Bash(just run:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo nextest:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo llvm-cov:*)",
+      "Bash(cargo doc:*)",
+      "Bash(cargo deny:*)",
+      "Bash(cargo machete:*)",
+      "Bash(cargo update:*)",
+      "Bash(oneharness:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git switch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git branch:*)"
+    ],
+    "deny": []
+  }
+}

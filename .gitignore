@@ -1,0 +1,19 @@
+# Build output
+/target
+/dist
+
+# Coverage artifacts
+*.profraw
+*.profdata
+/lcov.info
+/coverage
+
+# Editor/OS noise
+*.rs.bk
+.DS_Store
+
+# Local environment overrides (never commit secrets or machine-specific config)
+.env
+.env.local
+# Personal Claude Code settings (per-machine hooks/permissions; not shared)
+/.claude/settings.local.json

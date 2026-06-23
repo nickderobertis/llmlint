@@ -1,0 +1,44 @@
+# Automated releases from conventional commits, driven by release-plz. Mirrors
+# the proven setup in nickderobertis/oneharness and nickderobertis/allowlister.
+#
+# Flow:
+#   1. Commits land on `main` (feat -> minor, fix/perf -> patch, `!`/BREAKING ->
+#      major; docs/test/chore/ci do not release).
+#   2. The `release-pr` job opens/updates a PR that bumps the version in
+#      Cargo.toml + Cargo.lock and writes the CHANGELOG section.
+#   3. Merging that PR makes the `release` job tag `vX.Y.Z` and cut a GitHub
+#      Release with the changelog notes. That Release (created with a PAT, not
+#      the default GITHUB_TOKEN) triggers `release.yml`, which builds, archives,
+#      checksums, and attaches the cross-platform binaries.
+
+[workspace]
+# An end-user binary distributed via GitHub Releases and `cargo install --git`,
+# never a crates.io dependency: release-plz only versions, changelogs, tags, and
+# cuts the GitHub Release — it never runs `cargo publish`.
+publish = false
+
+# API breaking-change detection (cargo-semver-checks) needs an extra tool and
+# would block releases on any surface change; rely on review and the
+# conventional-commit type instead (a `!` or `BREAKING CHANGE:` still bumps).
+semver_check = false
+
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
+
+# Keep-a-Changelog-style grouping. The version bump is computed from the
+# conventional-commit *type* (pre-1.0 follows Cargo's 0.x rules: feat/fix/perf ->
+# patch, `!`/BREAKING -> minor), independent of these display groups.
+[changelog]
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^build", skip = true },
+  { message = "^style", skip = true },
+  { body = ".*", group = "Other" },
+]

@@ -1,0 +1,14 @@
+# Pinned toolchain for reproducible local and CI builds.
+# The channel is an exact stable release so that `cargo +<channel>` resolves
+# identically everywhere; bump deliberately alongside a `just upgrade`.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy", "llvm-tools"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+profile = "minimal"

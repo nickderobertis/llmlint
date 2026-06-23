@@ -1,0 +1,50 @@
+# llmlint config-lint plugin (bundled, id `llmlint:config-lint`).
+#
+# Lints llmlint configuration files themselves: that rules are well-named and
+# their descriptions yield a clear, mutually-exclusive true/false outcome. These
+# are judgment checks; structural checks (unique names, valid identifiers,
+# resolvable agents) are enforced deterministically by llmlint at load time and
+# are intentionally not duplicated here.
+version: 1
+
+agents:
+  config_lint:
+    # Scope these rules to llmlint config files regardless of the CLI's target
+    # files, so the plugin always lints configuration, not source.
+    files:
+      include:
+        - "**/llmlint.yml"
+        - "**/llmlint.yaml"
+        - "**/.llmlint.yml"
+        - "**/.llmlint.yaml"
+        - "**/*.llmlint.yml"
+        - "**/*.llmlint.yaml"
+    prompt_template: |
+      You are reviewing llmlint configuration files. Each file declares lint
+      `rules`, where every rule has a `name` and a `description`. Evaluate the
+      rules defined in the target config files against the checks below.
+
+rules:
+  - name: description_states_clear_true_and_false
+    agent: config_lint
+    description: |
+      TRUE when every lint rule's `description` unambiguously states the
+      condition under which the verdict is true AND the condition under which it
+      is false, and the two conditions are mutually exclusive. FALSE when any
+      description is ambiguous, omits one side, or its true and false conditions
+      overlap.
+
+  - name: name_is_descriptive_not_placeholder
+    agent: config_lint
+    description: |
+      TRUE when every lint rule `name` is a descriptive, meaningful identifier
+      that conveys what the rule checks. FALSE when any name is a placeholder or
+      nonsense token (for example rule1, foo, bar, baz, test, todo, asdf, temp,
+      thing, xxx) that does not describe what is being checked.
+
+  - name: name_matches_description
+    agent: config_lint
+    description: |
+      TRUE when every lint rule `name` describes the same property that its
+      `description` actually checks. FALSE when any name refers to something
+      different from what its description evaluates.

@@ -1,0 +1,74 @@
+name: Release
+
+# Build, archive, checksum, and attach the cross-platform binaries for a
+# published GitHub Release.
+#
+# The Release itself is created by release-plz (see release-plz.yml) when a
+# version-bump PR merges. Because release-plz uses a PAT, that Release fires the
+# `release: published` event below; this workflow then re-gates on the tests and
+# uploads the archives + checksums. Creating a Release by hand in the GitHub UI
+# is the supported manual fallback — it triggers the same event.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Gate the release on a passing run of the same checks CI enforces, so a tag
+  # can never publish an artifact that would not pass the gate.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,nextest
+      - run: just lint
+      - run: cargo nextest run --features mock-oneharness --locked
+
+  upload:
+    name: upload (${{ matrix.target }})
+    needs: test
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native runners per target so nothing needs cross-compilation.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, archive, checksum, and upload
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: llmlint
+          target: ${{ matrix.target }}
+          archive: $bin-$tag-$target
+          checksum: sha256
+          include: README.md,LICENSE,CHANGELOG.md
+          token: ${{ secrets.GITHUB_TOKEN }}
