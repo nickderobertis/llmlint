@@ -706,6 +706,7 @@ fn init_global_uses_xdg_config_home() {
     assert!(xdg.join("llmlint/llmlint.yml").is_file());
 }
 
+#[cfg(unix)]
 #[test]
 fn init_global_falls_back_to_home_config() {
     let p = Project::new();

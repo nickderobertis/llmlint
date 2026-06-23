@@ -200,6 +200,16 @@ fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Option<PathBuf
     all.into_iter().next()
 }
 
+/// Render a (relative) path with forward slashes, so the prompt the judge sees —
+/// and the violation paths it echoes back — are consistent across platforms
+/// (Windows `PathBuf` would otherwise render `\`).
+fn to_slash(path: &Path) -> String {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn execute(
     client: &oneharness::Client,
     run: &JudgeRun,
@@ -208,7 +218,7 @@ fn execute(
     oh_config: Option<&Path>,
     global_model: Option<&str>,
 ) -> Result<BTreeMap<String, RuleVerdict>> {
-    let files_str: Vec<String> = run.files.iter().map(|p| p.display().to_string()).collect();
+    let files_str: Vec<String> = run.files.iter().map(|p| to_slash(p)).collect();
     let system = template::render(&run.template, &run.rules, &files_str)?;
     let names: Vec<&str> = run.rules.iter().map(|r| r.name.as_str()).collect();
     let schema = schema::build(&names);
