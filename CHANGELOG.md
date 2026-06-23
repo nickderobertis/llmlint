@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/nickderobertis/llmlint/compare/v0.1.4...v0.1.5) - 2026-06-23
+
+### Added
+
+- publish to crates.io on release with post-publish verification ([#14](https://github.com/nickderobertis/llmlint/pull/14))
+
 ## [0.1.3](https://github.com/nickderobertis/llmlint/compare/v0.1.2...v0.1.3) - 2026-06-23
 
 ### Added
