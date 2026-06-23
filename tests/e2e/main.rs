@@ -770,3 +770,262 @@ fn init_global_falls_back_to_home_config() {
         .success();
     assert!(home.join(".config/llmlint/llmlint.yml").is_file());
 }
+
+// ---- explicit --config (replaces discovery; repeatable merge) -------------
+
+#[test]
+fn explicit_config_flag_replaces_discovery_and_merges_multiple() {
+    let p = Project::new();
+    // No config at a default name/location; the configs live elsewhere and are
+    // named so upward discovery would never find them.
+    p.write(
+        "configs/base.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: base_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "configs/extra.yml",
+        &format!("rules:\n  - {{ name: extra_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"base_rule": true, "extra_rule": true}"#);
+
+    // Two `--config` entries: the first supplies top-level scalars, both
+    // contribute rules. Discovery is replaced entirely.
+    let out = p
+        .lint()
+        .arg("--config")
+        .arg("configs/base.yml")
+        .arg("--config")
+        .arg("configs/extra.yml")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"base_rule"), "got: {names:?}");
+    assert!(names.contains(&"extra_rule"), "got: {names:?}");
+}
+
+#[test]
+fn config_command_honors_explicit_config_and_cwd() {
+    let p = Project::new();
+    // Config lives under a non-default name in a subdir; nothing at the root.
+    p.write(
+        "proj/custom.yml",
+        &format!("version: 1\nrules:\n  - {{ name: explicit_rule, description: \"{RULE}\" }}\n"),
+    );
+    let proj = p.path().join("proj");
+    // Process cwd is the project root; `--cwd` is the base both for discovery
+    // *and* for resolving the relative `--config` path. If `--cwd` were ignored,
+    // `custom.yml` would resolve against the root and fail to load.
+    let out = p
+        .bare()
+        .arg("config")
+        .arg("--cwd")
+        .arg(&proj)
+        .arg("--config")
+        .arg("custom.yml")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["config"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"explicit_rule"), "got: {names:?}");
+}
+
+// ---- --cwd (config discovery + the harness working directory) -------------
+
+#[test]
+fn cwd_flag_drives_discovery_and_the_harness_directory() {
+    let p = Project::new();
+    p.write(
+        "proj/llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: cwd_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("proj/src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"cwd_rule": true}"#);
+    let args_dump = p.path().join("args.txt");
+    let proj = p.path().join("proj");
+
+    // The process runs from the project root (no config there); `--cwd ./proj`
+    // is where discovery happens. Success proves discovery used `--cwd`.
+    p.lint()
+        .arg("--cwd")
+        .arg(&proj)
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PASS cwd_rule"));
+
+    // And the same directory is forwarded to oneharness as its `--cwd`.
+    let dumped = fs::read_to_string(&args_dump).unwrap();
+    let cwd_val = dumped
+        .lines()
+        .skip_while(|l| *l != "--cwd")
+        .nth(1)
+        .expect("--cwd flag should be forwarded to oneharness");
+    assert_eq!(Path::new(cwd_val), proj);
+}
+
+// ---- --timeout (forwarded to oneharness) ----------------------------------
+
+#[test]
+fn timeout_flag_is_forwarded_to_oneharness() {
+    let p = lint_project();
+    let args_dump = p.path().join("args.txt");
+    p.lint()
+        .arg("--timeout")
+        .arg("7")
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+    let dumped = fs::read_to_string(&args_dump).unwrap();
+    let timeout_val = dumped
+        .lines()
+        .skip_while(|l| *l != "--timeout")
+        .nth(1)
+        .expect("--timeout flag should be forwarded to oneharness");
+    assert_eq!(timeout_val, "7");
+}
+
+// ---- per-rule / per-agent files precedence over global globs --------------
+
+#[test]
+fn per_rule_files_override_global_globs() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: scoped, description: \"{RULE}\", files: {{ include: [\"only/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/app.rs", "// app\n");
+    p.write("only/special.rs", "// special\n");
+    let verdicts = p.write_verdicts(r#"{"scoped": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("only/special.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("src/app.rs"),
+        "per-rule files should override the global glob:\n{system}"
+    );
+}
+
+#[test]
+fn per_agent_files_override_global_globs() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  docs:\n    \
+             files:\n      include: [\"docs/**\"]\nrules:\n  \
+             - {{ name: doc_rule, description: \"{RULE}\", agent: docs }}\n"
+        ),
+    );
+    p.write("src/app.rs", "// app\n");
+    p.write("docs/guide.md", "# guide\n");
+    let verdicts = p.write_verdicts(r#"{"doc_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("docs/guide.md"), "system:\n{system}");
+    assert!(
+        !system.contains("src/app.rs"),
+        "per-agent files should override the global glob:\n{system}"
+    );
+}
+
+// ---- model passthrough (global default + per-agent override) --------------
+
+#[test]
+fn model_is_forwarded_with_agent_override_taking_precedence() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  model: global-model\n\
+             agents:\n  pinned:\n    model: agent-model\nrules:\n  \
+             - {{ name: global_model_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: pinned_model_rule, description: \"{RULE}\", agent: pinned }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"global_model_rule": true, "pinned_model_rule": true}"#);
+
+    // Default agent inherits the global oneharness model.
+    let global_args = p.path().join("global-args.txt");
+    p.lint()
+        .arg("--rule")
+        .arg("global_model_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &global_args)
+        .assert()
+        .success();
+    let g = fs::read_to_string(&global_args).unwrap();
+    let global_model = g
+        .lines()
+        .skip_while(|l| *l != "--model")
+        .nth(1)
+        .expect("--model should be forwarded for the global default");
+    assert_eq!(global_model, "global-model");
+
+    // A per-agent model overrides the global one.
+    let pinned_args = p.path().join("pinned-args.txt");
+    p.lint()
+        .arg("--rule")
+        .arg("pinned_model_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &pinned_args)
+        .assert()
+        .success();
+    let pinned = fs::read_to_string(&pinned_args).unwrap();
+    let pinned_model = pinned
+        .lines()
+        .skip_while(|l| *l != "--model")
+        .nth(1)
+        .expect("--model should be forwarded for a pinned agent");
+    assert_eq!(pinned_model, "agent-model");
+}
