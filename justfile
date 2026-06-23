@@ -16,6 +16,14 @@ FEATURES := "mock-oneharness"
 nextest-version := "0.9.137"
 llvmcov-version := "0.8.7"
 
+# Tools for the informational performance suite (`bench*`, `profile`). NOT part
+# of the gate or `just setup`: benchmarks measure, they don't block. CI's
+# Performance workflow installs the latest of each via taiki-e/install-action;
+# locally, `just bench-tools` installs these pins on demand.
+hyperfine-version := "1.20.0"
+critcmp-version := "0.1.8"
+samply-version := "0.13.1"
+
 # List available recipes.
 default:
     @just --list
@@ -100,3 +108,49 @@ doctor:
 # Run the CLI through cargo, e.g. `just run -- --help`.
 run *ARGS:
     cargo run --quiet -- {{ARGS}}
+
+# --- Performance suite (informational; never part of `check` or CI's gate) ----
+# Benchmarks are non-deterministic on shared hardware, so they measure rather
+# than gate — like the live `lint-live` check. `just check`/clippy already
+# type-check `benches/`, so the bench can't rot without a phase of its own.
+
+# Install the benchmark + profiling tools (hyperfine, critcmp, samply), pinned.
+# On-demand only: not run by `just setup` (the gate doesn't need these).
+bench-tools:
+    @command -v cargo-binstall >/dev/null || { echo "cargo-binstall not found: see https://github.com/cargo-bins/cargo-binstall, or 'cargo install' each tool" >&2; exit 1; }
+    cargo binstall --no-confirm --disable-telemetry hyperfine@{{hyperfine-version}} critcmp@{{critcmp-version}} samply@{{samply-version}}
+
+# Engine micro-benchmarks (Criterion); saves the `current` baseline for bench-compare.
+bench:
+    cargo bench --locked --bench engine -- --save-baseline current
+
+# Save current engine benchmarks as the `base` baseline (run on the comparison point).
+bench-base:
+    cargo bench --locked --bench engine -- --save-baseline base
+
+# Diff the latest `bench` run against `base` (run `bench-base` first; needs critcmp).
+bench-compare:
+    critcmp base current
+
+# End-to-end CLI latency for every command (hyperfine); writes target/bench/results.*.
+bench-cli:
+    @bash scripts/bench.sh
+
+# Fast smoke check of the CLI benchmark harness (one run, no warmup, no stable numbers).
+bench-cli-smoke:
+    @bash scripts/bench.sh --dry-run
+
+# Deterministic engine allocation counts (counting allocator; exact, comparable across commits).
+bench-allocs:
+    cargo bench --locked --quiet --bench engine_allocs
+
+# Deterministic end-to-end CLI instruction counts (cachegrind; Linux-only, needs valgrind).
+bench-instructions:
+    @bash scripts/bench-instructions.sh
+
+# Run the portable benchmark layers (Criterion + hyperfine + allocation counts).
+bench-all: bench bench-cli bench-allocs
+
+# Record a sampling/callgrind profile to find bottlenecks; see scripts/profile.sh for modes.
+profile *ARGS:
+    @bash scripts/profile.sh {{ARGS}}

@@ -64,6 +64,18 @@ Use the `just` recipes; do not hand-roll equivalents.
 - `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
 - `just lint-live` — opt-in live run against real oneharness + a real harness;
   never in the gate or CI.
+- **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
+  `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
+  gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the
+  pure engine (`benches/`); `scripts/bench.sh` (hyperfine) and
+  `scripts/bench-instructions.sh` (cachegrind) measure the real binary end to end
+  against the **mock-oneharness fixture**, so there's no model/network cost — just
+  llmlint's own work plus one child spawn. The `Performance` workflow
+  (`.github/workflows/bench.yml`) runs all of this on each PR and posts a sticky
+  comment + job summary with a base-vs-PR delta; timings are noisy on shared
+  runners, so it reports rather than blocks. The bench/profile tools (hyperfine,
+  critcmp, samply) are *not* installed by `just setup` — `just bench-tools`
+  installs them on demand; CI installs them via `taiki-e/install-action`.
 
 ## How llmlint drives oneharness
 

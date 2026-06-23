@@ -47,13 +47,46 @@ tempfile = "3"
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+# Statistical micro-benchmarks of the pure engine (see `benches/`). Default
+# features (plotters HTML reports, rayon) are dropped to keep the dependency
+# tree — and the `cargo deny` surface — small; `cargo_bench_support` is the only
+# feature `cargo bench` needs, and it still emits the per-bench `estimates.json`
+# that `critcmp` diffs.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [[test]]
 name = "e2e"
 path = "tests/e2e/main.rs"
+
+# Statistical micro-benchmarks of the pure engine hot paths (config parse, plan,
+# template render, schema, vote, report). `harness = false` hands `main` to
+# Criterion instead of libtest, so `cargo nextest`/coverage never pick it up —
+# it is measured, not gated. `cargo clippy --all-targets` still type-checks it,
+# so it cannot rot.
+[[bench]]
+name = "engine"
+harness = false
+
+# Deterministic allocation tallies for the same hot paths: a plain `main` with a
+# counting global allocator, no Criterion. Exact counts compare across runs and
+# commits without statistics; informational like every bench target.
+[[bench]]
+name = "engine_allocs"
+harness = false
 
 # A CLI binary: optimize for a small, fast-starting artifact.
 [profile.release]
 strip = true
 lto = "thin"
 codegen-units = 1
+
+# Profiling builds: the shipped release artifact exactly, but with symbols kept
+# so `samply` (see `scripts/profile.sh`) can attribute time to functions, and
+# `cachegrind`/`callgrind` (see `scripts/bench-instructions.sh`) can be annotated
+# afterwards. Never affects the published binary — `just profile` builds
+# `--profile profiling` into `target/profiling/` while `[profile.release]` stays
+# stripped.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
