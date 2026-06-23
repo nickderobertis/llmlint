@@ -51,14 +51,17 @@ curl -fsSL https://raw.githubusercontent.com/nickderobertis/oneharness/main/scri
 
 # 2) llmlint
 curl -fsSL https://raw.githubusercontent.com/nickderobertis/llmlint/main/scripts/install.sh | sh
-#    (or: cargo install --git https://github.com/nickderobertis/llmlint --locked)
+#    (or: cargo install llmlint --locked)
+#    (or, without a crates.io release: cargo install --git https://github.com/nickderobertis/llmlint --locked)
 
 llmlint doctor      # confirms oneharness is reachable
 ```
 
-The installer honors `LLMLINT_VERSION` and `LLMLINT_INSTALL_DIR`, and refuses an
-archive whose checksum does not match. Each tagged release also publishes
-prebuilt, checksummed binaries for Linux, macOS, and Windows.
+The installer honors `LLMLINT_VERSION` / `LLMLINT_INSTALL_DIR` (or the `--version`
+/ `--to` flags), works on Linux, macOS, and Windows under a POSIX shell
+(Git Bash / MSYS / WSL), and refuses an archive whose checksum does not match.
+Each tagged release publishes prebuilt, checksummed binaries for those
+platforms; on native Windows PowerShell, use `cargo install llmlint --locked`.
 
 You also need a coding harness installed and authenticated (e.g. Claude Code).
 See `oneharness list` / `oneharness detect --all`.

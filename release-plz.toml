@@ -12,9 +12,11 @@
 #      checksums, and attaches the cross-platform binaries.
 
 [workspace]
-# An end-user binary distributed via GitHub Releases and `cargo install --git`,
-# never a crates.io dependency: release-plz only versions, changelogs, tags, and
-# cuts the GitHub Release — it never runs `cargo publish`.
+# release-plz only versions, changelogs, tags, and cuts the GitHub Release — it
+# never runs `cargo publish`. crates.io publishing is a separate, opt-in step:
+# the `publish-crate` job in release.yml, gated on the PUBLISH_TO_CRATES_IO repo
+# variable + the CARGO_REGISTRY_TOKEN secret. Keeping it out of release-plz
+# decouples versioning/tagging from the registry push.
 publish = false
 
 # API breaking-change detection (cargo-semver-checks) needs an extra tool and
