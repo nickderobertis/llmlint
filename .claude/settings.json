@@ -1,6 +1,26 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/session-setup.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
+      "Bash(just setup)",
+      "Bash(just setup-check)",
+      "Bash(./scripts/setup.sh)",
+      "Bash(bash scripts/setup.sh)",
+      "Bash(bash scripts/setup-check.sh)",
       "Bash(just bootstrap)",
       "Bash(just check)",
       "Bash(just test)",

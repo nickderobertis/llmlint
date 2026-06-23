@@ -39,7 +39,22 @@ Deliberately excluded (so it isn't re-litigated):
 
 Use the `just` recipes; do not hand-roll equivalents.
 
-- `just bootstrap` — set up from a clean clone (toolchain components + fetch).
+- `just setup` — one command to provision a **bare machine** from a fresh clone:
+  rustup + the pinned toolchain, `just` itself, the cargo dev tools
+  (`cargo-nextest`, `cargo-llvm-cov`), then `just bootstrap`. Idempotent and
+  stamped (`.dev/setup.stamp`). On a machine with no `just` yet, run the script
+  directly: `./scripts/setup.sh`. The Claude Code **SessionStart hook**
+  (`scripts/session-setup.sh`, wired in `.claude/settings.json`) runs the fast
+  `setup-check` and *advises* `just setup` when the environment is not ready — it
+  never blocks the session on a multi-minute install (set `LLMLINT_AUTO_SETUP=1`
+  to provision detached in the background instead).
+- `just setup-check` — fast, install-free readiness check (no network); exit 0
+  when ready, exit 1 with the reason and the fix. Source of truth for "ready" is
+  `scripts/setup-lib.sh` (`REQUIRED_BINS` + a fingerprint of the toolchain/tool
+  pins); bump those pins and the stamp invalidates so `setup` re-runs.
+- `just bootstrap` — the cargo-level step `setup` finishes with (toolchain
+  components + `cargo fetch`); CI calls it directly after installing the
+  toolchain + tools its own way. Use `just setup` for a bare machine.
 - `just check` — full gate: fmt-check, clippy (`-D warnings`), tests, **e2e**,
   `cargo doc`. Must pass before any commit or PR.
 - `just test` / `just test-e2e` / `just lint` / `just format` — individual steps.
