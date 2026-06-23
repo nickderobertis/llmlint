@@ -27,13 +27,14 @@ Deliberately excluded (so it isn't re-litigated):
 - **No monorepo** — single binary crate; no Nx/affected wiring.
 - **No `cargo-dist`** — `release.yml`'s native build matrix already ships
   checksummed cross-platform binaries; release-plz handles versioning.
-- **crates.io publish is opt-in** — primary distribution is GitHub Releases +
-  `install.sh` + `cargo install --git`. The `publish-crate` job in `release.yml`
-  *also* runs `cargo publish` when the `PUBLISH_TO_CRATES_IO` repo variable is
-  `true` and the `CARGO_REGISTRY_TOKEN` secret is set; release-plz never
-  publishes (`publish = false` in `release-plz.toml`), so versioning/tagging
-  stays decoupled from the registry push. `Cargo.toml`'s `include` keeps the
-  published crate to sources + manifest + readme/license + `assets/`.
+- **crates.io publish** — alongside GitHub Releases + `install.sh` +
+  `cargo install --git`, the `publish-crate` job in `release.yml` runs
+  `cargo publish` whenever the `CARGO_REGISTRY_TOKEN` secret is set (a `guard`
+  job exposes its presence as an output, since `secrets` can't be read in a job
+  `if:`). release-plz never publishes (`publish = false` in `release-plz.toml`),
+  so versioning/tagging stays decoupled from the registry push. `Cargo.toml`'s
+  `include` keeps the published crate to sources + manifest + readme/license +
+  `assets/`.
 - **No heavy pre-commit framework, direnv, or `src`-layout shuffling** — the gate
   is `just check` + CI on the standard Cargo layout.
 - **Coverage bar: 95% lines** (`cargo llvm-cov --fail-under-lines 95`).
@@ -105,13 +106,13 @@ tools (bypass mode is oneharness's default).
   the workflow no-ops until the secret exists. Don't hand-bump the version or
   `CHANGELOG.md`.
 - **crates.io publish**: `release.yml`'s `publish-crate` job runs
-  `cargo publish --locked` only when the `PUBLISH_TO_CRATES_IO` repo variable is
-  `true` (and `CARGO_REGISTRY_TOKEN` is set). It is gated on the release `test`
-  job but independent of the binary `upload` matrix, so a flaky per-platform
-  upload never blocks the immutable crate publish and vice versa. A `verify-crate`
-  job then polls the crates.io sparse index for the new version and
-  `cargo install`s + smoke-tests it from the registry — a post-publish sanity
-  check (a failure means a broken release, not a blocked publish).
+  `cargo publish --locked` whenever the `CARGO_REGISTRY_TOKEN` secret is set (the
+  `guard` job gates it). It is gated on the release `test` job but independent of
+  the binary `upload` matrix, so a flaky per-platform upload never blocks the
+  immutable crate publish and vice versa. A `verify-crate` job then polls the
+  crates.io sparse index for the new version and `cargo install`s + smoke-tests
+  it from the registry — a post-publish sanity check (a failure means a broken
+  release, not a blocked publish).
 
 ## Invariants (non-negotiable)
 
