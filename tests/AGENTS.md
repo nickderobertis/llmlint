@@ -28,17 +28,27 @@ reporting). Add a journey here when a user-facing behavior lands.
 - `include` merges rules from another file; the bundled `llmlint:config-lint`
   plugin catches a bad rule in a config file.
 - include/exclude globbing selects the right files; explicit CLI files override
-  the config globs.
-- `--rule` filter limits which rules run; rules with no matching files are skipped.
+  the config globs; per-rule and per-agent `files` override the global globs.
+- `--config` replaces upward discovery and is repeatable (first entry supplies
+  the top-level scalars, the rest contribute rules/agents); `config --config`
+  honors a relative path resolved against `--cwd`.
+- `--cwd` drives both config discovery and the directory forwarded to oneharness
+  as its `--cwd`.
+- `--rule` and `--agent` filters limit which rules run; an empty selection exits
+  0; rules with no matching files are skipped.
+- `--timeout` is forwarded to oneharness; the oneharness `model` is forwarded,
+  with a per-agent `model` overriding the global default; multiple oneharness
+  configs warn and use the first; `--oneharness-bin` resolves from the env.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
-- `init` scaffolds a config (and `--with-template`), refuses to clobber without
-  `--force`; `init` then self-lint is clean.
-- `config` prints the merged config + sources; `doctor` reports the oneharness
-  version and fails clearly when it is missing.
+- `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
+  XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
+  self-lint is clean.
+- `config` prints the merged config + sources and rejects an invalid config;
+  `doctor` reports the oneharness version and fails clearly when it is missing.
 - Failure/recovery: missing config, malformed config, duplicate rule names (exit
-  2); schema-invalid, missing-structured, and unparseable oneharness output are
-  surfaced (exit 2).
+  2); schema-invalid, missing-structured, unparseable, empty-results, and
+  bad-verdict-shape oneharness output are surfaced (exit 2).
 
 ## Unit vs e2e
 
