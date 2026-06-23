@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Live e2e: real llmlint -> real oneharness -> real codex harness.
-# Skips (never fails) when the `codex` CLI or its auth is absent.
+# Fails (red build) if the `codex` CLI or its auth is absent — this tier expects
+# the harness configured (CI), so a missing prerequisite is a broken setup.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/live-lib.sh

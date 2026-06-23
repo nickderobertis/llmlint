@@ -1,0 +1,50 @@
+name: Live e2e (claude-code)
+
+# The live tier: real llmlint -> real oneharness -> the real claude-code harness,
+# making real (paid) model calls. Kept out of the PR gate (`ci.yml`) — it runs on
+# a schedule and on demand. Mirrors oneharness's own per-harness e2e workflow.
+#
+# Unlike the hermetic suite, a missing CLI/auth/oneharness here is a HARD FAILURE
+# (the script does not skip), so a broken live setup turns this workflow red.
+# Configure the `CLAUDE_CODE_OAUTH_TOKEN` secret (or `ANTHROPIC_API_KEY`) and,
+# optionally, the `CLAUDE_E2E_MODEL` variable.
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 07:00 UTC. Adjust as the cost/coverage tradeoff warrants.
+    - cron: "0 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-claude-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-claude:
+    # Never on forks: forks can't read the secret, and the run would (correctly)
+    # fail. Gate to the canonical repo so the red build means a real setup issue.
+    if: github.repository == 'nickderobertis/llmlint'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Install oneharness (runtime prerequisite, on PATH)
+        run: |
+          cargo install --git https://github.com/nickderobertis/oneharness --locked
+          oneharness --version
+      - name: Install the claude-code CLI
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+      - name: Live e2e against the real claude-code harness
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_E2E_MODEL: ${{ vars.CLAUDE_E2E_MODEL }}
+        run: just live-claude

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Run every per-harness live e2e script in turn. Each one SKIPs (exit 0) when its
-# CLI/auth is absent and FAILs (exit non-zero) only on a real regression, so this
-# aggregator surfaces just the genuine failures. Mirrors oneharness's `live-all`.
+# Run every per-harness live e2e script in turn and aggregate the failures.
+# Each script FAILs (exit non-zero) on a regression OR on a missing CLI/auth — the
+# live tier expects every harness configured (CI), so `live-all` requires them all.
+# To exercise only the harnesses you have set up, run the individual `live-<harness>`
+# recipes instead. Mirrors oneharness's `live-all`.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

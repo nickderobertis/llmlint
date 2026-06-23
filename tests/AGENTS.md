@@ -56,17 +56,20 @@ The hermetic e2e suite above proves llmlint's logic against a mock oneharness. T
 **live tier** proves the *real* stack — real `llmlint` → real `oneharness` → a
 real, authenticated harness — and is the llmlint analogue of oneharness's own
 `scripts/e2e-*.sh`. It is opt-in (`just live-<harness>` / `just live-all`), makes
-real (paid) model calls, and is never in `just check` or CI.
+real (paid) model calls, and is out of the `just check` gate — it runs in its own
+secret-gated CI job, not on every PR.
 
-- **Skip, never fail:** a missing harness CLI or missing auth is a `SKIP` (exit 0).
-  A clean run is *required* once the prerequisites are present — that is the point.
+- **Fail, never skip:** because this tier runs where the harness is configured, a
+  missing harness CLI, missing auth, or missing oneharness is a **hard failure**
+  (red build), not a skip — a silent skip would let a broken live setup pass
+  unnoticed. Run only the `live-<harness>` recipes for the harnesses you have set
+  up; `live-all` requires them all.
 - **Journeys per harness** (`live_run_journeys` in `scripts/live-lib.sh`): scaffold
   a throwaway project with one crisp invariant (`no_todo_comments`) pinned to that
   harness, then (1) a clean `src/lib.rs` must pass → exit 0, rule `pass`; (2) a
   file with a planted `TODO` must be flagged → exit 1, rule `fail`. Exit 2 (the
-  live stack could not complete) is a failure, not a skip, since CLI + auth were
-  confirmed first.
-- **Harness CLI + auth** (skip unless present), matching oneharness:
+  live stack could not complete) is also a failure.
+- **Harness CLI + auth** (required; absent → fail), matching oneharness:
   `claude-code`→`claude` + `CLAUDE_CODE_OAUTH_TOKEN`|`ANTHROPIC_API_KEY`;
   `codex`→`codex` + `OPENAI_API_KEY`;
   `opencode`→`opencode` + `ANTHROPIC_API_KEY`|`OPENAI_API_KEY`;

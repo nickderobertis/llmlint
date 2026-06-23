@@ -163,9 +163,9 @@ just live-all    # opt-in: live e2e — real llmlint → real oneharness → eac
 Tests drive the real `llmlint` binary against a hermetic mock-oneharness fixture.
 The live tier (`just live-<harness>` / `just live-all`, and the ad-hoc
 `just lint-live`) drives the whole stack end to end against a real, authenticated
-harness — the only thing that makes real model calls, never part of the gate or
-CI. A missing CLI or auth is a skip, never a failure. See `AGENTS.md` and
-`tests/AGENTS.md`.
+harness — the only thing that makes real model calls, and out of the `check` gate.
+It runs where the harness is configured (its own CI job), so a missing CLI, auth,
+or oneharness is a hard failure, not a skip. See `AGENTS.md` and `tests/AGENTS.md`.
 
 ## License
 

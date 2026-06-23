@@ -5,9 +5,11 @@
 # analogue of the hermetic e2e suite (`tests/e2e/`, which drives a mock
 # oneharness), and mirror oneharness's own `scripts/e2e-*.sh` tier.
 #
-# Contract (same spirit as oneharness): a missing CLI or missing auth is a
-# **skip**, never a failure, so the suite is safe to run anywhere. A clean run is
-# *required* once the prerequisites are present — that is the whole point.
+# Contract: this tier normally runs in CI, where every harness CLI and its auth
+# are expected to be configured. So a missing CLI, missing auth, or missing
+# oneharness is a **hard failure** (red build), never a silent skip — a skip would
+# let a broken live setup pass unnoticed. Set up the harness or don't run its
+# recipe.
 #
 # Sourced by the per-harness scripts (`scripts/live-<harness>.sh`); not run on its
 # own. Each per-harness script declares its harness id, the CLI it needs, the auth
@@ -20,15 +22,18 @@ LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --- logging -----------------------------------------------------------------
 
 note() { printf '%s\n' "$*" >&2; }
+
+# A missing prerequisite is a HARD FAILURE, not a skip: the live tier is meant to
+# run in CI with the harness CLI + auth configured, so an absent prerequisite is a
+# broken setup that should turn the build red — same exit path as a regression.
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
-# A missing prerequisite exits cleanly (status 0): an environment without the
-# harness installed/authed has nothing to verify, it is not a regression.
-skip() { printf 'SKIP: %s\n' "$*" >&2; exit 0; }
+need() {
+    command -v "$1" >/dev/null 2>&1 ||
+        fail "required tool not found on PATH: $1 (the live tier needs the real harness CLI installed)"
+}
 
-need() { command -v "$1" >/dev/null 2>&1 || skip "required tool not found: $1"; }
-
-# Skip unless at least one of the named env vars is non-empty.
+# Fail unless at least one of the named auth env vars is non-empty.
 need_env() {
     local label="$1"
     shift
@@ -36,7 +41,7 @@ need_env() {
     for v in "$@"; do
         [ -n "${!v:-}" ] && return 0
     done
-    skip "no $label configured (set one of: $*)"
+    fail "no $label configured (set one of: $*)"
 }
 
 # --- binary resolution -------------------------------------------------------
@@ -61,7 +66,7 @@ ll_bin() {
 }
 
 # llmlint needs oneharness on PATH (or via LLMLINT_ONEHARNESS_BIN); without it the
-# whole stack can't run, so skip rather than fail.
+# whole stack can't run — a broken setup, so fail.
 require_oneharness() {
     if [ -n "${LLMLINT_ONEHARNESS_BIN:-}" ]; then
         local b
@@ -70,7 +75,7 @@ require_oneharness() {
         done
     fi
     command -v oneharness >/dev/null 2>&1 && return 0
-    skip "oneharness not found (install it, or set LLMLINT_ONEHARNESS_BIN)"
+    fail "oneharness not found (install it, or set LLMLINT_ONEHARNESS_BIN)"
 }
 
 # --- throwaway project scaffolding ------------------------------------------
@@ -125,7 +130,7 @@ ll_run() {
     shift
     local bin
     bin="$(ll_bin)"
-    [ -n "$bin" ] || skip "llmlint binary not found (build it: \`just _live-build\`, or set LLMLINT_BIN)"
+    [ -n "$bin" ] || fail "llmlint binary not found (build it: \`just _live-build\`, or set LLMLINT_BIN)"
     local errf
     errf="$(mktemp)"
     note "  driving: llmlint --cwd <proj> --format json $* (timeout ${LL_TIMEOUT:-120}s${LL_MODEL:+, model $LL_MODEL})"
