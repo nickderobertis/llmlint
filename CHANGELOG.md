@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/nickderobertis/llmlint/compare/v0.1.2...v0.1.3) - 2026-06-23
+
+### Added
+
+- fall back to oneharness default harness when agent leaves it unset ([#9](https://github.com/nickderobertis/llmlint/pull/9))
+
 ## [0.1.2](https://github.com/nickderobertis/llmlint/compare/v0.1.1...v0.1.2) - 2026-06-23
 
 ### Added
