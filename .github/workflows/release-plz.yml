@@ -77,7 +77,17 @@ jobs:
             | tar -xz -C /usr/local/bin release-plz
           release-plz --version
 
-      - name: Use the last release tag as the version baseline
+      - name: Tag and publish a merged version bump
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: release-plz release --git-token "$GITHUB_TOKEN"
+
+      # Compute the baseline AFTER `release` so it reflects the tag that step
+      # just created. Computing it earlier made `release-pr` compare against the
+      # *previous* tag, so the just-merged release commit always looked like new
+      # work and `release-pr` opened yet another release PR — which, with the
+      # auto-merge below, became a self-sustaining release loop.
+      - name: Use the latest release tag as the version baseline
         id: baseline
         run: |
           tag="$(git tag --list 'v*' --sort=-version:refname | head -n1)"
@@ -90,17 +100,18 @@ jobs:
             echo "No release tag yet; the first release uses the current version."
           fi
 
-      - name: Tag and publish a merged version bump
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-        run: release-plz release --git-token "$GITHUB_TOKEN"
-
+      # Belt to the baseline fix: never open/merge a release PR on a push that is
+      # itself a merged release commit. The `release` step above already tagged
+      # and cut the release for it; the next release PR opens on the next real
+      # change. Without this guard a single stale comparison can run away.
       - name: Open or update the release PR
+        if: "${{ !startsWith(github.event.head_commit.message, 'chore: release') }}"
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: release-plz release-pr ${{ steps.baseline.outputs.arg }} --git-token "$GITHUB_TOKEN"
 
       - name: Auto-merge the release PR when the gate is green
+        if: "${{ !startsWith(github.event.head_commit.message, 'chore: release') }}"
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
