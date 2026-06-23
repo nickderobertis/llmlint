@@ -603,6 +603,55 @@ fn oneharness_passthrough_args_are_accepted() {
 }
 
 #[test]
+fn harness_is_omitted_when_unset_and_forwarded_when_set() {
+    let p = Project::new();
+    // Two agents: one leaves harness unset, one pins it.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  pinned:\n    \
+             harness: codex\nrules:\n  \
+             - {{ name: default_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: pinned_rule, description: \"{RULE}\", agent: pinned }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"default_rule": true, "pinned_rule": true}"#);
+
+    // Unset agent: --rule limits the run to one judge so the dump is unambiguous.
+    let unset_args = p.path().join("unset-args.txt");
+    p.lint()
+        .arg("--rule")
+        .arg("default_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &unset_args)
+        .assert()
+        .success();
+    let unset = fs::read_to_string(&unset_args).unwrap();
+    assert!(
+        !unset.lines().any(|l| l == "--harness"),
+        "expected no --harness flag when the agent leaves it unset, got:\n{unset}"
+    );
+
+    // Pinned agent: the configured harness id is forwarded verbatim.
+    let pinned_args = p.path().join("pinned-args.txt");
+    p.lint()
+        .arg("--rule")
+        .arg("pinned_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &pinned_args)
+        .assert()
+        .success();
+    let pinned = fs::read_to_string(&pinned_args).unwrap();
+    let harness_val = pinned
+        .lines()
+        .skip_while(|l| *l != "--harness")
+        .nth(1)
+        .expect("--harness flag should be present for a pinned agent");
+    assert_eq!(harness_val, "codex");
+}
+
+#[test]
 fn multiple_oneharness_configs_warns() {
     let p = Project::new();
     p.write(

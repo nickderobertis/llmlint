@@ -15,6 +15,8 @@
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
+//! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
+//!   per line) so a test can assert which flags llmlint did/did not pass.
 
 use std::env;
 use std::fs;
@@ -87,6 +89,12 @@ fn main() {
     }
 
     let harness = arg_value(&args, "--harness").unwrap_or_else(|| "claude-code".into());
+
+    // Optionally record the raw arg vector so a test can assert which flags
+    // llmlint passed (e.g. that `--harness` is omitted when not configured).
+    if let Some(dump) = env::var_os("LLMLINT_MOCK_DUMP_ARGS") {
+        let _ = fs::write(PathBuf::from(dump), args[1..].join("\n"));
+    }
 
     // Optionally record the rendered system prompt so the e2e suite can assert
     // on which files/rules reached the judge (file globbing + template render).

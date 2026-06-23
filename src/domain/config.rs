@@ -53,7 +53,8 @@ pub struct OneharnessCfg {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {
-    /// Harness id from `oneharness list` (default `claude-code`).
+    /// Harness id from `oneharness list`. When unset, llmlint omits `--harness`
+    /// and oneharness selects its own configured default harness.
     #[serde(default)]
     pub harness: Option<String>,
     #[serde(default)]

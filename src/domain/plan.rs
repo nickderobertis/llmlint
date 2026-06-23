@@ -28,7 +28,9 @@ pub struct ResolvedRule {
 #[derive(Debug, Clone)]
 pub struct JudgeRun {
     pub agent: String,
-    pub harness: String,
+    /// Harness id to pass to oneharness, or `None` to let oneharness pick its
+    /// own configured default (no `--harness` flag is sent).
+    pub harness: Option<String>,
     pub model: Option<String>,
     pub schema_max_retries: Option<u32>,
     pub judge_index: u32,
@@ -50,7 +52,6 @@ pub fn build(
     config: &Config,
     master_template: &str,
     default_batch_size: usize,
-    default_harness: &str,
     resolved: Vec<ResolvedRule>,
 ) -> Plan {
     let mut plan = Plan::default();
@@ -63,10 +64,8 @@ pub fn build(
 
     for (agent_name, rules) in by_agent {
         let agent = config.agent_or_default(&agent_name);
-        let harness = agent
-            .harness
-            .clone()
-            .unwrap_or_else(|| default_harness.to_string());
+        // No agent harness => leave it unset so oneharness uses its own default.
+        let harness = agent.harness.clone();
         let batch_size = agent.batch_size.unwrap_or(default_batch_size).max(1);
         let template = match &agent.prompt_template {
             Some(extra) => format!("{master_template}\n\n{extra}"),
@@ -135,7 +134,6 @@ mod tests {
             &cfg,
             "T",
             20,
-            "claude-code",
             vec![
                 rr("a", 1, "default", &["f.rs"]),
                 rr("b", 1, "default", &["f.rs"]),
@@ -143,7 +141,8 @@ mod tests {
         );
         assert_eq!(plan.runs.len(), 1);
         assert_eq!(plan.runs[0].rules.len(), 2);
-        assert_eq!(plan.runs[0].harness, "claude-code");
+        // No agent harness configured -> left unset for oneharness to default.
+        assert_eq!(plan.runs[0].harness, None);
         assert!(plan.skipped.is_empty());
     }
 
@@ -155,7 +154,6 @@ mod tests {
             &cfg,
             "T",
             20,
-            "claude-code",
             vec![
                 rr("a", 3, "default", &["f.rs"]),
                 rr("b", 1, "default", &["f.rs"]),
@@ -184,7 +182,7 @@ mod tests {
             rr("b", 1, "small", &["f.rs"]),
             rr("c", 1, "small", &["f.rs"]),
         ];
-        let plan = build(&cfg, "MASTER", 20, "claude-code", rules);
+        let plan = build(&cfg, "MASTER", 20, rules);
         assert_eq!(plan.runs.len(), 2); // 3 rules / batch 2 -> 2 batches
         assert!(plan.runs[0].template.contains("MASTER"));
         assert!(plan.runs[0].template.contains("be terse"));
@@ -197,7 +195,6 @@ mod tests {
             &cfg,
             "T",
             20,
-            "claude-code",
             vec![
                 rr("a", 1, "default", &["x.rs"]),
                 rr("b", 1, "default", &["y.rs"]),
@@ -209,13 +206,7 @@ mod tests {
     #[test]
     fn empty_file_set_is_skipped_not_run() {
         let cfg = Config::default();
-        let plan = build(
-            &cfg,
-            "T",
-            20,
-            "claude-code",
-            vec![rr("a", 1, "default", &[])],
-        );
+        let plan = build(&cfg, "T", 20, vec![rr("a", 1, "default", &[])]);
         assert!(plan.runs.is_empty());
         assert_eq!(plan.skipped, vec!["a".to_string()]);
     }
@@ -230,13 +221,23 @@ mod tests {
                 ..Default::default()
             },
         );
-        let plan = build(
-            &cfg,
-            "T",
-            20,
-            "claude-code",
-            vec![rr("a", 1, "arch", &["f.rs"])],
+        let plan = build(&cfg, "T", 20, vec![rr("a", 1, "arch", &["f.rs"])]);
+        assert_eq!(plan.runs[0].harness.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn no_agent_harness_leaves_it_unset() {
+        let mut cfg = Config::default();
+        // An agent that sets some fields but deliberately not `harness`.
+        cfg.agents.insert(
+            "arch".into(),
+            Agent {
+                model: Some("gpt-5".into()),
+                ..Default::default()
+            },
         );
-        assert_eq!(plan.runs[0].harness, "codex");
+        let plan = build(&cfg, "T", 20, vec![rr("a", 1, "arch", &["f.rs"])]);
+        assert_eq!(plan.runs[0].harness, None);
+        assert_eq!(plan.runs[0].model.as_deref(), Some("gpt-5"));
     }
 }

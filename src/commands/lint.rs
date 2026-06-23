@@ -16,7 +16,6 @@ use crate::errors::{Error, Result};
 use crate::io::{assets, configfs, files, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
-const DEFAULT_HARNESS: &str = "claude-code";
 const DEFAULT_TIMEOUT: u64 = 120;
 const DEFAULT_MAX_PARALLEL: usize = 8;
 const PROMPT_TRIGGER: &str =
@@ -59,13 +58,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
         });
     }
 
-    let the_plan = plan::build(
-        &config,
-        &master_template,
-        DEFAULT_BATCH_SIZE,
-        DEFAULT_HARNESS,
-        resolved,
-    );
+    let the_plan = plan::build(&config, &master_template, DEFAULT_BATCH_SIZE, resolved);
 
     let bin = args
         .oneharness_bin
@@ -223,7 +216,7 @@ fn execute(
     let names: Vec<&str> = run.rules.iter().map(|r| r.name.as_str()).collect();
     let schema = schema::build(&names);
     let req = oneharness::RunRequest {
-        harness: &run.harness,
+        harness: run.harness.as_deref(),
         model: run.model.as_deref().or(global_model),
         system: &system,
         prompt: PROMPT_TRIGGER,
