@@ -62,8 +62,15 @@ Use the `just` recipes; do not hand-roll equivalents.
 - `just test` / `just test-e2e` / `just lint` / `just format` — individual steps.
 - `just upgrade` — update dependencies, then re-run `just check`.
 - `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
-- `just lint-live` — opt-in live run against real oneharness + a real harness;
-  never in the gate or CI.
+- `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
+  harness (`cargo run -- …`); never in the gate or CI.
+- `just live-<harness>` / `just live-all` — the **live e2e tier**: builds a
+  release binary, then drives the real `llmlint` → real `oneharness` → that real,
+  authenticated harness through `scripts/live-*.sh`, asserting a clean file passes
+  (exit 0) and a planted `TODO` is flagged (exit 1). Mirrors oneharness's own
+  `live-*` scripts: a missing CLI or auth is a **skip**, never a failure; auth per
+  harness and the `<HARNESS>_E2E_MODEL` override are documented in `tests/AGENTS.md`.
+  Makes real (paid) model calls — deliberately out of `check`/CI.
 
 ## How llmlint drives oneharness
 
@@ -133,8 +140,10 @@ coverage are a rule, not a preference.
 - **Done means complete, not minimal:** every user journey, happy path *and*
   failure/recovery. The e2e journey list lives in `tests/AGENTS.md` and is the
   source of truth for what's covered; a feature isn't done until its journey lands.
-- A live tier (`just lint-live`) hits real oneharness + a real harness; it is
-  opt-in, env-gated, and never in `just check` or CI.
+- A live tier (`just live-<harness>` / `just live-all`, plus the ad-hoc
+  `just lint-live`) hits real oneharness + a real harness; it is opt-in,
+  CLI/auth-gated (missing → skip), and never in `just check` or CI. The
+  scripted journeys live in `scripts/live-*.sh` and are listed in `tests/AGENTS.md`.
 
 ## Scripts and output are context
 

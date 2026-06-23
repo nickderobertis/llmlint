@@ -91,6 +91,39 @@ msrv:
 lint-live *ARGS:
     cargo run -- {{ARGS}}
 
+# --- LIVE e2e: real llmlint -> real oneharness -> a real harness --------------
+# The live analogue of the hermetic e2e suite: `just check` drives a mock
+# oneharness, these drive the whole stack end to end (`scripts/live-*.sh`),
+# mirroring oneharness's own `live-*` tier. A missing CLI or auth is a SKIP, never
+# a failure. They make real (paid) model calls, so they are never in `check`/CI.
+# Auth per harness (see `tests/AGENTS.md`); model via `<HARNESS>_E2E_MODEL`.
+
+# Build the optimized binary the live scripts drive (release, like a real user).
+_live-build:
+    cargo build --release --locked --bin llmlint
+
+# Each harness end to end. Skips cleanly without that harness's CLI + auth.
+live-claude: _live-build
+    bash scripts/live-claude.sh
+live-codex: _live-build
+    bash scripts/live-codex.sh
+live-opencode: _live-build
+    bash scripts/live-opencode.sh
+live-goose: _live-build
+    bash scripts/live-goose.sh
+live-qwen: _live-build
+    bash scripts/live-qwen.sh
+live-crush: _live-build
+    bash scripts/live-crush.sh
+live-copilot: _live-build
+    bash scripts/live-copilot.sh
+live-cursor: _live-build
+    bash scripts/live-cursor.sh
+
+# Every harness in turn, skipping the ones whose CLI/auth is absent.
+live-all: _live-build
+    bash scripts/live-all.sh
+
 # Verbose, install-free diagnostics (kept out of the gate).
 doctor:
     rustc --version
