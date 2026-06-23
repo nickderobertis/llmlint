@@ -20,8 +20,9 @@ include:
   - "llmlint:config-lint"
 
 # Agents group rules and add reviewer context. Rules with no `agent` use the
-# `default` agent. `harness` is any id from `oneharness list` (default
-# claude-code). Use YAML anchors to share prompt text across agents.
+# `default` agent. `harness` is any id from `oneharness list`; omit it to let
+# oneharness pick its own configured default. Use YAML anchors to share prompt
+# text across agents.
 agents:
   default:
     harness: claude-code

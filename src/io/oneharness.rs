@@ -29,7 +29,9 @@ pub struct Client {
 
 /// One judge invocation request.
 pub struct RunRequest<'a> {
-    pub harness: &'a str,
+    /// Harness id to select, or `None` to omit `--harness` and let oneharness
+    /// use its own configured default harness.
+    pub harness: Option<&'a str>,
     pub model: Option<&'a str>,
     pub system: &'a str,
     pub prompt: &'a str,
@@ -92,6 +94,9 @@ impl Client {
 
     /// Run one judge and return its per-rule verdicts.
     pub fn run(&self, req: &RunRequest) -> Result<BTreeMap<String, RuleVerdict>> {
+        // A human-readable harness label for error messages; when unset, the
+        // harness is whichever default oneharness resolves from its own config.
+        let harness = req.harness.unwrap_or("oneharness default");
         let mut schema_file = tempfile::Builder::new()
             .prefix("llmlint-schema-")
             .suffix(".json")
@@ -107,8 +112,6 @@ impl Client {
 
         let mut cmd = Command::new(&self.bin);
         cmd.arg("run")
-            .arg("--harness")
-            .arg(req.harness)
             .arg("--system")
             .arg(req.system)
             .arg("--prompt")
@@ -121,6 +124,9 @@ impl Client {
             .arg(req.timeout_secs.to_string())
             .arg("--require-available")
             .arg("--compact");
+        if let Some(h) = req.harness {
+            cmd.arg("--harness").arg(h);
+        }
         if let Some(m) = req.model {
             cmd.arg("--model").arg(m);
         }
@@ -153,7 +159,7 @@ impl Client {
                 return Err(Error::Oneharness(format!(
                     "oneharness did not exit within {}s (harness {})",
                     wall.as_secs(),
-                    req.harness
+                    harness
                 )))
             }
         };
@@ -168,15 +174,14 @@ impl Client {
 
         let result = report.results.into_iter().next().ok_or_else(|| {
             Error::Oneharness(format!(
-                "oneharness returned no results for harness {}",
-                req.harness
+                "oneharness returned no results for harness {harness}"
             ))
         })?;
 
         if result.schema_valid == Some(false) {
             return Err(Error::Oneharness(format!(
                 "harness {} produced output that failed schema validation: {}",
-                req.harness,
+                harness,
                 result
                     .schema_error
                     .unwrap_or_else(|| "unknown error".into())
@@ -188,7 +193,7 @@ impl Client {
             _ => {
                 return Err(Error::Oneharness(format!(
                     "harness {} returned no structured output (status {:?}): {}",
-                    req.harness,
+                    harness,
                     result.status.as_deref().unwrap_or("?"),
                     result.error.unwrap_or_else(|| "no error reported".into())
                 )))
@@ -196,10 +201,7 @@ impl Client {
         };
 
         serde_json::from_value(structured).map_err(|e| {
-            Error::Oneharness(format!(
-                "invalid verdict shape from harness {}: {e}",
-                req.harness
-            ))
+            Error::Oneharness(format!("invalid verdict shape from harness {harness}: {e}"))
         })
     }
 }
@@ -253,7 +255,7 @@ mod tests {
 
     fn req<'a>(schema: &'a Value, cwd: &'a Path) -> RunRequest<'a> {
         RunRequest {
-            harness: "claude-code",
+            harness: Some("claude-code"),
             model: None,
             system: "sys",
             prompt: "go",

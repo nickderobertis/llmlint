@@ -18,6 +18,8 @@ reporting). Add a journey here when a user-facing behavior lands.
   which files/rules reached the judge (globbing + template render).
 - `LLMLINT_MOCK_FAIL_SCHEMA` / `LLMLINT_MOCK_NO_STRUCTURED` / `LLMLINT_MOCK_GARBAGE`
   — force oneharness failure shapes.
+- `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
+  which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
 
 ## Journeys covered
 
@@ -28,6 +30,8 @@ reporting). Add a journey here when a user-facing behavior lands.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs.
 - `--rule` filter limits which rules run; rules with no matching files are skipped.
+- An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
+  flag so oneharness falls back to its own configured default harness.
 - `init` scaffolds a config (and `--with-template`), refuses to clobber without
   `--force`; `init` then self-lint is clean.
 - `config` prints the merged config + sources; `doctor` reports the oneharness

@@ -96,7 +96,7 @@ include:
 # YAML anchors let you share prompt text with zero framework support.
 agents:
   architecture:
-    harness: claude-code       # any id from `oneharness list` (default claude-code)
+    harness: claude-code       # any id from `oneharness list`; omit to use oneharness's own default
     model: opus
     batch_size: 15             # rules per judge run (default 20)
     prompt_template: |         # appended to the master template before render
