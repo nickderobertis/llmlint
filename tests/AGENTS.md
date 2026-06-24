@@ -21,12 +21,20 @@ reporting). Add a journey here when a user-facing behavior lands.
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
 
+Plugin-fetch journeys also set `LLMLINT_CACHE_DIR=<dir>` (an isolated cache),
+and the one `http://` journey drives a real `curl` against a localhost
+`HttpServer` (with the proxy env cleared); it loudly skips if `curl` is absent.
+The version/cache logic itself is covered hermetically via `file://` plugins.
+
 ## Journeys covered
 
 - All rules hold -> exit 0; a violation -> exit 1 with `file:line: message`.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
-- `include` merges rules from another file; the bundled `llmlint:config-lint`
-  plugin catches a bad rule in a config file.
+- `plugins` merges rules from another file and from a `file://` URL; a pinned
+  `http://` URL is fetched once via `curl` and reused from cache (not refetched);
+  a version mismatch, the removed `llmlint:` scheme, and the renamed top-level
+  `include` key are each clear exit-2 errors; the bundled config-lint plugin (a
+  URL resolved offline from the embedded copy) catches a bad rule in a config.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule and per-agent `files` override the global globs.
 - `--config` replaces upward discovery and is repeatable (first entry supplies

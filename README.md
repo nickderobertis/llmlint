@@ -83,16 +83,18 @@ llmlint --format json        # machine-readable output
 `-c/--config`, repeatable):
 
 ```yaml
-version: 1
+version: 1                     # this config's published version (used when it is consumed as a plugin)
 
 # Files linted when none are passed on the CLI.
 files:
   include: ["src/**/*.rs"]
   exclude: ["**/generated/**"]
 
-# Pull in shared rule sets / plugins with one line each (paths or `llmlint:` ids).
-include:
-  - "llmlint:config-lint"      # bundled: lints this config's own rules
+# Pull in shared rule sets / plugins with one line each. An entry is a local
+# path or a URL (`http(s)://`, `file://`); pin a URL to a version with `@`.
+plugins:
+  - "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1"  # bundled: lints this config's own rules
+  - "https://example.com/org-rules.yml@1.2.3"   # pinned; fetched + cached once
   - "./team-rules.yml"
 
 # Agents group rules and add reviewer context + harness/model/batch config.
@@ -122,9 +124,9 @@ rules:
 - **Phrase each rule as a positive invariant.** `holds = true` means the code
   complies; `holds = false` is a violation that llmlint reports and fails on.
 - **Make the true/false outcome unambiguous and mutually exclusive** — state when
-  it is true *and* when it is false. The bundled `llmlint:config-lint` plugin
-  lints your config for exactly this, plus descriptive (non-placeholder) names
-  that match what each rule checks.
+  it is true *and* when it is false. The bundled config-lint plugin (the
+  `config_lint.yml` URL above) lints your config for exactly this, plus
+  descriptive (non-placeholder) names that match what each rule checks.
 - **Names** are unique, terse, and descriptive (`^[A-Za-z][A-Za-z0-9_]*$`); they
   become the JSON keys of the structured output.
 
@@ -140,6 +142,27 @@ llmlint lets oneharness discover its own `oneharness.toml` by default. To force 
 specific oneharness config, use `--oneharness-config <path>` (or `oneharness.config`
 in the llmlint config); it is forwarded via oneharness's `--config`. Override the
 binary with `--oneharness-bin` or `$LLMLINT_ONEHARNESS_BIN`.
+
+### Plugins (shared rule sets)
+
+`plugins` pulls other llmlint configs into this one — their rules and agents are
+merged in; the root config keeps the top-level settings (template, files,
+oneharness). Each entry is a config file:
+
+- a **local path** (`./team-rules.yml`), resolved relative to the including file;
+- a **URL** — `http(s)://` (fetched with `curl`) or `file://` (read directly).
+
+A URL may be **pinned to a version** with an `@` suffix matching the plugin
+config's own top-level `version`: `@1` accepts any `1.x`, `@1.2` any `1.2.x`,
+`@1.2.3` exactly that. The pin is both an assertion (a mismatch is a hard error)
+and the **cache key**: a pinned URL is fetched once into the cache and reused on
+later runs without refetching — bump the pin to pull a new version. An *unpinned*
+URL is fetched every run. Fetching needs `curl` on `PATH`; the bundled
+config-lint plugin ships inside the binary and resolves **offline**.
+
+The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
+`LLMLINT_CACHE_DIR`). Set `LLMLINT_PLUGIN_REFRESH=1` to force a refetch, or
+`LLMLINT_CURL_BIN` to point at a specific `curl`.
 
 ## Commands & exit codes
 

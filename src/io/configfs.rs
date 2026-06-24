@@ -1,12 +1,14 @@
 //! Config discovery, parsing (anchors + `<<` merge keys), and recursive
-//! `include` resolution — which doubles as the plugin system.
+//! `plugins:` resolution — local files and remote/versioned URLs (see
+//! [`crate::io::plugins`]).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::domain::config::Config;
+use crate::domain::version::VersionReq;
 use crate::errors::{io_err, Error, Result};
-use crate::io::assets;
+use crate::io::plugins::{self, ResolveOpts};
 
 /// Config file names searched for, in priority order, when walking up the tree.
 pub const CONFIG_NAMES: &[&str] = &[
@@ -17,7 +19,7 @@ pub const CONFIG_NAMES: &[&str] = &[
 ];
 
 /// The merged config plus the ordered list of sources that contributed to it
-/// (file paths and bundled plugin ids), for provenance.
+/// (file paths and plugin URLs), for provenance.
 #[derive(Debug)]
 pub struct Loaded {
     pub config: Config,
@@ -48,14 +50,28 @@ pub fn parse(text: &str, origin: &str) -> Result<Config> {
     };
     let mut value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text).map_err(err)?;
     value.apply_merge().map_err(err)?;
+    // The top-level config-include key was renamed `include` -> `plugins` (to
+    // avoid confusion with `files.include`). Unknown top-level keys are allowed
+    // (anchors live in throwaway keys), so a stale `include:` would silently do
+    // nothing; catch it with a clear migration error instead.
+    if let serde_yaml_ng::Value::Mapping(m) = &value {
+        if m.contains_key(serde_yaml_ng::Value::from("include")) {
+            return Err(Error::ConfigParse {
+                path: origin.to_string(),
+                message: "top-level `include` was renamed to `plugins` (it pulls in other \
+                          configs; `files.include` is the file glob). Rename the key to `plugins`."
+                    .to_string(),
+            });
+        }
+    }
     serde_yaml_ng::from_value(value).map_err(err)
 }
 
 /// Load and merge config from explicit entry files (from `--config`), or, when
-/// `entries` is empty, the nearest discovered config above `cwd`. `include`d
-/// configs (file paths or bundled `llmlint:` ids) are merged recursively; the
-/// first entry provides the top-level scalars, the rest contribute rules and
-/// agents. Diamonds and cycles are de-duplicated by absolute path / id.
+/// `entries` is empty, the nearest discovered config above `cwd`. `plugins`
+/// (local files or remote/versioned URLs) are merged recursively; the first
+/// entry provides the top-level scalars, the rest contribute rules and agents.
+/// Diamonds and cycles are de-duplicated by absolute path / plugin key.
 pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     let entry_paths: Vec<PathBuf> = if entries.is_empty() {
         match discover(cwd) {
@@ -71,6 +87,7 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
         entries.iter().map(|p| absolutize(p, cwd)).collect()
     };
 
+    let opts = ResolveOpts::from_env();
     let mut visited: BTreeSet<String> = BTreeSet::new();
     let mut sources: Vec<String> = Vec::new();
     let mut acc: Option<Config> = None;
@@ -78,6 +95,7 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     for path in &entry_paths {
         load_node(
             Node::File(path.clone()),
+            &opts,
             &mut visited,
             &mut sources,
             &mut acc,
@@ -92,35 +110,50 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
 
 enum Node {
     File(PathBuf),
-    Bundled(String, &'static str),
+    /// A URL plugin: the bare URL, an optional version pin, and a stable dedup
+    /// key (`url` or `url@pin`). The text is fetched in [`Node::read`] — after
+    /// the visited check — so a diamond never refetches.
+    Remote {
+        url: String,
+        req: Option<VersionReq>,
+        key: String,
+    },
 }
 
 impl Node {
+    /// Parse a `plugins:` spec into a node. Pure: no I/O happens here (so a
+    /// duplicate is skipped before any fetch).
     fn resolve(spec: &str, base_dir: Option<&Path>) -> Result<Node> {
-        if spec.starts_with("llmlint:") {
-            let content = assets::bundled(spec).ok_or_else(|| Error::UnknownPlugin(spec.into()))?;
-            return Ok(Node::Bundled(spec.to_string(), content));
-        }
-        let p = PathBuf::from(spec);
-        let abs = if p.is_absolute() {
-            p
-        } else {
-            match base_dir {
-                Some(d) => d.join(p),
-                None => {
-                    return Err(Error::InvalidConfig(format!(
-                        "cannot resolve relative include {spec:?} from a bundled plugin"
-                    )))
-                }
+        match plugins::parse_spec(spec)? {
+            plugins::PluginRef::Local(p) => {
+                let abs = if p.is_absolute() {
+                    p
+                } else {
+                    match base_dir {
+                        Some(d) => d.join(p),
+                        None => {
+                            return Err(Error::InvalidConfig(format!(
+                                "cannot resolve relative plugin {spec:?} from a remote plugin"
+                            )))
+                        }
+                    }
+                };
+                Ok(Node::File(abs))
             }
-        };
-        Ok(Node::File(abs))
+            plugins::PluginRef::Remote { url, req } => {
+                let key = match &req {
+                    Some(r) => format!("{url}@{r}"),
+                    None => url.clone(),
+                };
+                Ok(Node::Remote { url, req, key })
+            }
+        }
     }
 
     fn key(&self) -> String {
         match self {
             Node::File(p) => normalize(p).display().to_string(),
-            Node::Bundled(id, _) => id.clone(),
+            Node::Remote { key, .. } => key.clone(),
         }
     }
 
@@ -128,21 +161,24 @@ impl Node {
         self.key()
     }
 
-    /// Returns `(text, base_dir_for_relative_includes)`.
-    fn read(&self) -> Result<(String, Option<PathBuf>)> {
+    /// Returns `(text, base_dir_for_relative_plugins)`.
+    fn read(&self, opts: &ResolveOpts) -> Result<(String, Option<PathBuf>)> {
         match self {
             Node::File(p) => {
                 let text = std::fs::read_to_string(p)
                     .map_err(|e| io_err(format!("reading config {}", p.display()), e))?;
                 Ok((text, p.parent().map(Path::to_path_buf)))
             }
-            Node::Bundled(_, content) => Ok((content.to_string(), None)),
+            // Remote plugins can pull in further URL plugins, but not relative
+            // file paths (there is no local base directory).
+            Node::Remote { url, req, .. } => Ok((plugins::load_remote(url, req, opts)?, None)),
         }
     }
 }
 
 fn load_node(
     node: Node,
+    opts: &ResolveOpts,
     visited: &mut BTreeSet<String>,
     sources: &mut Vec<String>,
     acc: &mut Option<Config>,
@@ -153,18 +189,18 @@ fn load_node(
     }
     sources.push(key);
 
-    let (text, base_dir) = node.read()?;
+    let (text, base_dir) = node.read(opts)?;
     let cfg = parse(&text, &node.origin())?;
-    let includes = cfg.include.clone();
+    let child_specs = cfg.plugins.clone();
 
     match acc {
         None => *acc = Some(cfg),
         Some(a) => a.merge_rules_and_agents(cfg),
     }
 
-    for inc in includes {
-        let child = Node::resolve(&inc, base_dir.as_deref())?;
-        load_node(child, visited, sources, acc)?;
+    for spec in child_specs {
+        let child = Node::resolve(&spec, base_dir.as_deref())?;
+        load_node(child, opts, visited, sources, acc)?;
     }
     Ok(())
 }
@@ -245,18 +281,21 @@ rules:
     }
 
     #[test]
-    fn load_merges_includes_and_bundled_plugin() {
+    fn load_merges_file_and_bundled_plugins() {
         let dir = tempdir().unwrap();
         fs::write(
             dir.path().join("team.yml"),
             "rules:\n  - name: team_rule\n    description: \"TRUE when ok; FALSE otherwise.\"\n",
         )
         .unwrap();
+        let plugin = format!("{}@1", crate::io::assets::CONFIG_LINT_URL);
         let root = dir.path().join("llmlint.yml");
         fs::write(
             &root,
-            "version: 1\ninclude:\n  - ./team.yml\n  - llmlint:config-lint\nrules:\n  \
-             - name: root_rule\n    description: \"TRUE when ok; FALSE otherwise.\"\n",
+            format!(
+                "version: 1\nplugins:\n  - ./team.yml\n  - {plugin}\nrules:\n  \
+                 - name: root_rule\n    description: \"TRUE when ok; FALSE otherwise.\"\n"
+            ),
         )
         .unwrap();
         let loaded = load(&[root], dir.path()).unwrap();
@@ -268,28 +307,37 @@ rules:
             .collect();
         assert!(names.contains(&"root_rule"));
         assert!(names.contains(&"team_rule"));
-        assert!(names.contains(&"name_matches_description")); // from the plugin
-        assert!(loaded.sources.iter().any(|s| s == "llmlint:config-lint"));
+        assert!(names.contains(&"name_matches_description")); // from the bundled plugin
+        assert!(loaded.sources.iter().any(|s| s == &plugin));
     }
 
     #[test]
-    fn unknown_plugin_errors() {
+    fn removed_llmlint_scheme_errors() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("llmlint.yml");
-        fs::write(&root, "include:\n  - llmlint:does-not-exist\n").unwrap();
+        fs::write(&root, "plugins:\n  - llmlint:config-lint\n").unwrap();
         assert!(matches!(
             load(&[root], dir.path()),
-            Err(Error::UnknownPlugin(_))
+            Err(Error::PluginSpec(_))
         ));
     }
 
     #[test]
-    fn include_cycle_is_safe() {
+    fn renamed_include_key_is_a_clear_error() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("llmlint.yml");
+        fs::write(&root, "include:\n  - ./team.yml\n").unwrap();
+        let err = load(&[root], dir.path()).unwrap_err();
+        assert!(err.to_string().contains("renamed to `plugins`"));
+    }
+
+    #[test]
+    fn plugin_cycle_is_safe() {
         let dir = tempdir().unwrap();
         let a = dir.path().join("a.yml");
         let b = dir.path().join("b.yml");
-        fs::write(&a, "include:\n  - ./b.yml\nrules: []\n").unwrap();
-        fs::write(&b, "include:\n  - ./a.yml\nrules: []\n").unwrap();
+        fs::write(&a, "plugins:\n  - ./b.yml\nrules: []\n").unwrap();
+        fs::write(&b, "plugins:\n  - ./a.yml\nrules: []\n").unwrap();
         // Must terminate rather than recurse forever.
         let loaded = load(&[a], dir.path()).unwrap();
         assert_eq!(loaded.sources.len(), 2);

@@ -83,7 +83,8 @@ mod tests {
     #[test]
     fn plain_init_is_the_starter_config() {
         let out = render(false);
-        assert!(out.contains("llmlint:config-lint"));
+        assert!(out.contains("plugins:"));
+        assert!(out.contains("config_lint.yml@1"));
         assert!(!out.contains("prompt_template: |"));
     }
 
