@@ -9,12 +9,12 @@
 //! - a **URL** (`https://…`, `http://…`, `file://…`), optionally pinned with a
 //!   trailing `@version` (`…/rules.yml@1.2.3`).
 //!
-//! `http(s)` URLs are fetched by shelling out to `curl` (llmlint's networking
-//! prerequisite, like `oneharness` is its runtime prerequisite — and the same
-//! pattern keeps the binary portable and the dependency/license surface small).
-//! `file://` URLs are read directly. Bundled plugins (see
-//! [`crate::io::assets::bundled_url`]) short-circuit to their embedded copy and
-//! never touch the network or cache.
+//! `http(s)` URLs are fetched over HTTPS with a pure-Rust client (`ureq` on
+//! rustls with bundled Mozilla roots) — no external tools and no system TLS, so
+//! the binary stays self-contained and cross-platform. Standard `HTTP(S)_PROXY`
+//! / `NO_PROXY` env vars are honored. `file://` URLs are read directly. Bundled
+//! plugins (see [`crate::io::assets::bundled_url`]) short-circuit to their
+//! embedded copy and never touch the network or cache.
 //!
 //! **Caching:** a *pinned* fetch (`url@version`) is written under the cache dir
 //! keyed by the URL and the pin, and reused on later runs without refetching —
@@ -24,7 +24,6 @@
 
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::Deserialize;
 
@@ -49,32 +48,22 @@ pub enum PluginRef {
 pub struct ResolveOpts {
     /// Where pinned fetches are cached. `None` disables caching entirely.
     pub cache_dir: Option<PathBuf>,
-    /// The `curl` binary used for `http(s)` fetches.
-    pub curl_bin: String,
     /// Force a refetch even when a cached copy exists.
     pub refresh: bool,
 }
 
 impl ResolveOpts {
     /// Build from the environment: `LLMLINT_CACHE_DIR` (else the platform cache
-    /// dir), `LLMLINT_CURL_BIN` (else `curl`), and `LLMLINT_PLUGIN_REFRESH`.
+    /// dir) and `LLMLINT_PLUGIN_REFRESH`.
     pub fn from_env() -> Self {
         let cache_dir = std::env::var_os("LLMLINT_CACHE_DIR")
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .or_else(default_cache_dir);
-        let curl_bin = std::env::var("LLMLINT_CURL_BIN")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "curl".to_string());
         let refresh = std::env::var_os("LLMLINT_PLUGIN_REFRESH")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false);
-        ResolveOpts {
-            cache_dir,
-            curl_bin,
-            refresh,
-        }
+        ResolveOpts { cache_dir, refresh }
     }
 }
 
@@ -171,7 +160,7 @@ pub fn load_remote(url: &str, req: &Option<VersionReq>, opts: &ResolveOpts) -> R
         }
     }
 
-    let text = raw_fetch(url, opts)?;
+    let text = raw_fetch(url)?;
     validate_version(url, req, &text)?;
 
     if let Some(p) = &cache_path {
@@ -211,32 +200,35 @@ fn validate_version(url: &str, req: &Option<VersionReq>, text: &str) -> Result<(
     }
 }
 
-/// Fetch a URL's raw bytes: a direct read for `file://`, otherwise `curl`.
-fn raw_fetch(url: &str, opts: &ResolveOpts) -> Result<String> {
+/// Fetch a URL's text: a direct read for `file://`, otherwise an HTTPS GET.
+fn raw_fetch(url: &str) -> Result<String> {
     if let Some(path) = file_url_path(url) {
         return std::fs::read_to_string(&path).map_err(|e| Error::PluginFetch {
             url: url.to_string(),
             message: format!("reading {}: {e}", path.display()),
         });
     }
-    let out = Command::new(&opts.curl_bin)
-        .args(["--fail", "--silent", "--show-error", "--location", url])
-        .output()
-        .map_err(|e| Error::PluginFetch {
-            url: url.to_string(),
-            message: format!("running {}: {e} (is curl installed?)", opts.curl_bin),
-        })?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(Error::PluginFetch {
-            url: url.to_string(),
-            message: format!("curl failed ({}): {}", out.status, stderr.trim()),
-        });
-    }
-    String::from_utf8(out.stdout).map_err(|e| Error::PluginFetch {
+    http_get(url)
+}
+
+/// HTTPS GET via `ureq` (rustls, bundled roots). Honors `HTTP(S)_PROXY` /
+/// `NO_PROXY`; a non-2xx status or transport error becomes a [`Error::PluginFetch`].
+fn http_get(url: &str) -> Result<String> {
+    let fetch_err = |message: String| Error::PluginFetch {
         url: url.to_string(),
-        message: format!("response was not UTF-8: {e}"),
-    })
+        message,
+    };
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(ureq::Proxy::try_from_env())
+        .build()
+        .into();
+    let mut resp = agent
+        .get(url)
+        .call()
+        .map_err(|e| fetch_err(e.to_string()))?;
+    resp.body_mut()
+        .read_to_string()
+        .map_err(|e| fetch_err(format!("reading response body: {e}")))
 }
 
 /// Map a `file://` URL to a filesystem path (`None` for other schemes).
@@ -273,7 +265,6 @@ mod tests {
     fn opts_with_cache(dir: &Path) -> ResolveOpts {
         ResolveOpts {
             cache_dir: Some(dir.to_path_buf()),
-            curl_bin: "curl".to_string(),
             refresh: false,
         }
     }
@@ -438,7 +429,6 @@ mod tests {
     fn missing_file_url_is_a_fetch_error() {
         let opts = ResolveOpts {
             cache_dir: None,
-            curl_bin: "curl".into(),
             refresh: false,
         };
         let err = load_remote("file:///no/such/plugin.yml", &None, &opts).unwrap_err();
@@ -449,10 +439,9 @@ mod tests {
     fn bundled_url_resolves_offline_and_validates_pin() {
         let opts = ResolveOpts {
             cache_dir: None,
-            curl_bin: "definitely-not-a-real-binary".into(),
             refresh: false,
         };
-        // Resolves from the embedded copy — no curl, no cache.
+        // Resolves from the embedded copy — no network, no cache.
         let text = load_remote(
             assets::CONFIG_LINT_URL,
             &Some(VersionReq::parse("1").unwrap()),
@@ -471,37 +460,11 @@ mod tests {
     }
 
     #[test]
-    fn missing_curl_binary_is_a_fetch_error() {
-        // An http(s) URL with no usable curl surfaces a clear fetch error
-        // (the spawn fails) — no network needed.
+    fn http_connection_failure_is_a_fetch_error() {
+        // Port 1 refuses immediately, exercising the transport-error branch of
+        // the HTTPS client without any external network.
         let opts = ResolveOpts {
             cache_dir: None,
-            curl_bin: "llmlint-definitely-no-such-binary".into(),
-            refresh: false,
-        };
-        let err = load_remote("https://example.invalid/p.yml", &None, &opts).unwrap_err();
-        match err {
-            Error::PluginFetch { message, .. } => assert!(message.contains("is curl installed?")),
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn curl_failure_is_a_fetch_error() {
-        // Only meaningful when curl is present; a connection-refused port makes
-        // curl exit non-zero, exercising the failure branch without a network.
-        let curl_ok = Command::new("curl")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !curl_ok {
-            eprintln!("SKIP curl_failure_is_a_fetch_error: curl not on PATH");
-            return;
-        }
-        let opts = ResolveOpts {
-            cache_dir: None,
-            curl_bin: "curl".into(),
             refresh: false,
         };
         let err = load_remote("http://127.0.0.1:1/nope.yml", &None, &opts).unwrap_err();
@@ -516,7 +479,6 @@ mod tests {
         std::fs::write(&plugin, "version: : :\n  - oops\n").unwrap();
         let opts = ResolveOpts {
             cache_dir: None,
-            curl_bin: "curl".into(),
             refresh: false,
         };
         let err = load_remote(
@@ -529,16 +491,20 @@ mod tests {
     }
 
     #[test]
-    fn from_env_reads_overrides() {
+    fn from_env_reads_cache_dir_override() {
         // Exercise the env-driven constructor without disturbing global state
         // beyond this test's scope.
-        let prev = std::env::var_os("LLMLINT_CURL_BIN");
-        std::env::set_var("LLMLINT_CURL_BIN", "my-curl");
+        let prev = std::env::var_os("LLMLINT_CACHE_DIR");
+        std::env::set_var("LLMLINT_CACHE_DIR", "/tmp/llmlint-cache-test");
         let opts = ResolveOpts::from_env();
-        assert_eq!(opts.curl_bin, "my-curl");
+        assert_eq!(
+            opts.cache_dir,
+            Some(PathBuf::from("/tmp/llmlint-cache-test"))
+        );
+        assert!(!opts.refresh);
         match prev {
-            Some(v) => std::env::set_var("LLMLINT_CURL_BIN", v),
-            None => std::env::remove_var("LLMLINT_CURL_BIN"),
+            Some(v) => std::env::set_var("LLMLINT_CACHE_DIR", v),
+            None => std::env::remove_var("LLMLINT_CACHE_DIR"),
         }
     }
 }

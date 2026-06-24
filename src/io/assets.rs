@@ -21,7 +21,7 @@ pub const INIT_CONFIG: &str = include_str!("../../assets/init.llmlint.yml");
 
 /// If `url` (without any `@version` suffix) names a plugin bundled into the
 /// binary, return its embedded YAML. Bundled plugins resolve offline — no
-/// network, no `curl`, no cache — so the shipped default config always works.
+/// network, no cache — so the shipped default config always works.
 /// The version pin, if any, is still validated by the caller against the
 /// embedded config's declared `version`.
 pub fn bundled_url(url: &str) -> Option<&'static str> {

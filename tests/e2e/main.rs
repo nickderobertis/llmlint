@@ -72,7 +72,7 @@ const CONFIG_LINT: &str =
 
 /// A throwaway localhost HTTP server for the plugin-fetch journey: serves one
 /// fixed body to every GET and counts requests, so a test can assert that a
-/// cached pin is not refetched. This exercises the real `curl` fetch path
+/// cached pin is not refetched. This exercises the real HTTPS-client fetch path
 /// (localhost only — no external network).
 struct HttpServer {
     base_url: String,
@@ -110,16 +110,6 @@ impl HttpServer {
     fn hits(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
     }
-}
-
-/// Whether `curl` is on PATH; the single HTTP-fetch journey needs it (the
-/// version/cache logic itself is covered hermetically via `file://`).
-fn curl_available() -> bool {
-    std::process::Command::new("curl")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 // ---- happy path ----------------------------------------------------------
@@ -378,11 +368,7 @@ fn renamed_top_level_include_key_is_rejected() {
 }
 
 #[test]
-fn pinned_url_plugin_is_fetched_via_curl_and_cached() {
-    if !curl_available() {
-        eprintln!("SKIP pinned_url_plugin_is_fetched_via_curl_and_cached: curl not on PATH");
-        return;
-    }
+fn pinned_url_plugin_is_fetched_over_http_and_cached() {
     let p = Project::new();
     let server = HttpServer::serve(&format!(
         "version: 1\nrules:\n  - {{ name: remote_rule, description: \"{RULE}\" }}\n"

@@ -22,16 +22,16 @@ reporting). Add a journey here when a user-facing behavior lands.
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
 
 Plugin-fetch journeys also set `LLMLINT_CACHE_DIR=<dir>` (an isolated cache),
-and the one `http://` journey drives a real `curl` against a localhost
-`HttpServer` (with the proxy env cleared); it loudly skips if `curl` is absent.
-The version/cache logic itself is covered hermetically via `file://` plugins.
+and the one `http://` journey drives the real built-in HTTPS client (`ureq`)
+against a localhost `HttpServer` (with the proxy env cleared). The version/cache
+logic is also covered hermetically via `file://` plugins.
 
 ## Journeys covered
 
 - All rules hold -> exit 0; a violation -> exit 1 with `file:line: message`.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
-  `http://` URL is fetched once via `curl` and reused from cache (not refetched);
+  `http://` URL is fetched once over HTTPS and reused from cache (not refetched);
   a version mismatch, the removed `llmlint:` scheme, and the renamed top-level
   `include` key are each clear exit-2 errors; the bundled config-lint plugin (a
   URL resolved offline from the embedded copy) catches a bad rule in a config.

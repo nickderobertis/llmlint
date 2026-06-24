@@ -114,7 +114,7 @@ mod tests {
             .contains("invalid plugin spec"));
         assert!(Error::PluginFetch {
             url: "https://x/p.yml".into(),
-            message: "curl exited 22".into()
+            message: "connection refused".into()
         }
         .to_string()
         .contains("https://x/p.yml"));

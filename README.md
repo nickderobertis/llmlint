@@ -150,19 +150,22 @@ merged in; the root config keeps the top-level settings (template, files,
 oneharness). Each entry is a config file:
 
 - a **local path** (`./team-rules.yml`), resolved relative to the including file;
-- a **URL** — `http(s)://` (fetched with `curl`) or `file://` (read directly).
+- a **URL** — `http(s)://` (fetched over HTTPS) or `file://` (read directly).
+
+URL fetching is built in (a pure-Rust HTTPS client — no `curl` or other external
+tools, no system OpenSSL) and honors the standard `HTTP(S)_PROXY` / `NO_PROXY`
+env vars. The bundled config-lint plugin ships inside the binary and resolves
+**offline**.
 
 A URL may be **pinned to a version** with an `@` suffix matching the plugin
 config's own top-level `version`: `@1` accepts any `1.x`, `@1.2` any `1.2.x`,
 `@1.2.3` exactly that. The pin is both an assertion (a mismatch is a hard error)
 and the **cache key**: a pinned URL is fetched once into the cache and reused on
 later runs without refetching — bump the pin to pull a new version. An *unpinned*
-URL is fetched every run. Fetching needs `curl` on `PATH`; the bundled
-config-lint plugin ships inside the binary and resolves **offline**.
+URL is fetched every run.
 
 The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
-`LLMLINT_CACHE_DIR`). Set `LLMLINT_PLUGIN_REFRESH=1` to force a refetch, or
-`LLMLINT_CURL_BIN` to point at a specific `curl`.
+`LLMLINT_CACHE_DIR`). Set `LLMLINT_PLUGIN_REFRESH=1` to force a refetch.
 
 ## Commands & exit codes
 
