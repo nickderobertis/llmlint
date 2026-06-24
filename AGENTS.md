@@ -79,9 +79,11 @@ Use the `just` recipes; do not hand-roll equivalents.
   Harness *breadth* is oneharness's test surface (every harness is the same
   `--harness <id>` to llmlint), so one canonical harness is enough. The harness
   CLI + auth are configured in CI, so a missing CLI, auth, or oneharness is a
-  **hard failure** (red build), not a skip — a broken live setup must be visible.
-  Auth + the `CLAUDE_E2E_MODEL` override are documented in `tests/AGENTS.md`. Makes
-  real (paid) model calls — out of the `check` gate.
+  **hard failure** (red build); the one skip — matching oneharness — is when
+  oneharness can't *launch* the harness on a platform (on Windows it can't spawn
+  the npm `claude.cmd` shim, so the model round-trip is skipped there while the
+  built binary + oneharness still run). Auth + the `CLAUDE_E2E_MODEL` override are
+  documented in `tests/AGENTS.md`. Makes real (paid) model calls — out of `check`.
 - **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
   `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
   gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the
