@@ -28,14 +28,8 @@ note() { printf '%s\n' "$*" >&2; }
 # A missing prerequisite is a HARD FAILURE, not a skip: the live tier is meant to
 # run in CI with the harness CLI + auth configured, so an absent prerequisite is a
 # broken setup that should turn the build red — same exit path as a regression.
+# Nothing in this tier ever skips: if the stack can't complete, that's a failure.
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-
-# A clean exit for the one case that is NOT a setup mistake: oneharness reports it
-# cannot *launch* the harness on this platform. That is the same thing oneharness
-# itself treats as a skip ("nothing to verify") — e.g. on Windows it cannot spawn
-# the npm `claude.cmd` shim (Rust's batch-spawn guard). Setup problems (missing
-# CLI/auth/oneharness) still hard-fail above; only an unlaunchable harness skips.
-skip() { printf 'SKIP: %s\n' "$*" >&2; exit 0; }
 
 need() {
     command -v "$1" >/dev/null 2>&1 ||
@@ -161,26 +155,11 @@ _ll_dump() {
     fi
 }
 
-# True when llmlint's exit-2 was because oneharness could not *launch* the harness
-# (e.g. Windows can't spawn the npm `claude.cmd` shim) — as opposed to a real
-# error from a harness that did run (schema-invalid, unparseable, etc.). oneharness
-# surfaces this as a "spawn-error"/"skipped" status; it is the same condition
-# oneharness itself skips, so we skip too rather than fail a platform gap.
-_ll_harness_unlaunchable() {
-    printf '%s' "$LL_REPORT" |
-        jq -e '(.errors // []) | join(" ") | test("spawn-error|status \"skipped\"|not available|unavailable")' \
-        >/dev/null 2>&1
-}
-
-# Exit 2 means llmlint could not complete the run. We only get here after
-# `need`/`need_env` confirmed the CLI + auth, so a genuine live-stack error is a
-# hard failure — EXCEPT when oneharness simply couldn't launch the harness on this
-# platform, which (like oneharness's own e2e) is a skip, not a regression.
+# Exit 2 means llmlint could not complete the run (a oneharness/harness/schema
+# error). We only get here after `need`/`need_env` confirmed the CLI + auth, so
+# this is a genuine live-stack failure worth surfacing — never a skip.
 _ll_guard_completed() {
     if [ "$LL_EXIT" = 2 ]; then
-        if _ll_harness_unlaunchable; then
-            skip "oneharness cannot launch the '${LL_HARNESS:-harness}' harness on this platform ($(uname -s)) — the built llmlint + oneharness ran, but there is no model round-trip to verify here (this is what oneharness itself does when a harness can't run)"
-        fi
         _ll_dump
         fail "llmlint could not complete the run (exit 2) — the live stack errored despite CLI + auth being present"
     fi
@@ -243,7 +222,6 @@ ll_live_fail() {
 # The full live run for one harness: a pass journey and a violation journey.
 live_run_journeys() {
     local harness="$1"
-    LL_HARNESS="$harness"
     need jq
     require_oneharness
     note "== llmlint live e2e: $harness =="
