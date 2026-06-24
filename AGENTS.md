@@ -70,15 +70,18 @@ Use the `just` recipes; do not hand-roll equivalents.
 - `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
-- `just live-<harness>` / `just live-all` — the **live e2e tier**: builds a
-  release binary, then drives the real `llmlint` → real `oneharness` → that real,
-  authenticated harness through `scripts/live-*.sh`, asserting a clean file passes
-  (exit 0) and a planted `TODO` is flagged (exit 1). It runs on PRs in its own
-  workflow (`.github/workflows/live-claude.yml`) where the harness CLI + auth are
-  configured, so a missing CLI, auth, or oneharness is a **hard failure** (red
-  build), not a skip — that's the point: a broken live setup must be visible. Auth
-  per harness and the `<HARNESS>_E2E_MODEL` override are documented in
-  `tests/AGENTS.md`. Makes real (paid) model calls — out of the `check` gate.
+- `just live-claude` — the **live e2e tier**: builds a release binary, then drives
+  the real `llmlint` → real `oneharness` → the real claude-code harness through
+  `scripts/live-claude.sh`, asserting a clean file passes (exit 0) and a planted
+  `TODO` is flagged (exit 1). It runs on PRs in its own workflow
+  (`.github/workflows/live.yml`) across **Linux, macOS, and Windows** — the point
+  is to prove the built binary + oneharness + a real harness work on each OS.
+  Harness *breadth* is oneharness's test surface (every harness is the same
+  `--harness <id>` to llmlint), so one canonical harness is enough. The harness
+  CLI + auth are configured in CI, so a missing CLI, auth, or oneharness — or any
+  failure to complete the run — is a **hard failure** (red build); the tier never
+  skips. Auth + the `CLAUDE_E2E_MODEL` override are documented in `tests/AGENTS.md`.
+  Makes real (paid) model calls — out of `check`.
 - **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
   `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
   gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the
@@ -170,13 +173,14 @@ coverage are a rule, not a preference.
 - **Done means complete, not minimal:** every user journey, happy path *and*
   failure/recovery. The e2e journey list lives in `tests/AGENTS.md` and is the
   source of truth for what's covered; a feature isn't done until its journey lands.
-- A live tier (`just live-<harness>` / `just live-all`, plus the ad-hoc
-  `just lint-live`) hits real oneharness + a real harness; it is opt-in and out of
-  the `just check` gate; it runs on PRs in its own workflow
-  (`.github/workflows/live-claude.yml`). It expects the harness CLI + auth
-  configured, so a missing CLI/auth/oneharness is a **hard failure**, not a skip.
-  The scripted
-  journeys live in `scripts/live-*.sh` and are listed in `tests/AGENTS.md`.
+- A live tier (`just live-claude`, plus the ad-hoc `just lint-live`) hits real
+  oneharness + a real harness; it is opt-in and out of the `just check` gate. It
+  runs on PRs in its own workflow (`.github/workflows/live.yml`) across Linux,
+  macOS, and Windows to prove the built binary + oneharness + a real harness work
+  on each OS. It expects the harness CLI + auth configured, so a missing
+  CLI/auth/oneharness is a **hard failure**, not a skip. The scripted journeys
+  live in `scripts/live-claude.sh` + `scripts/live-lib.sh` and are described in
+  `tests/AGENTS.md`.
 
 ## Scripts and output are context
 
