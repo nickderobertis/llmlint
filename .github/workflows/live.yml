@@ -49,6 +49,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
       - name: Install oneharness (runtime prerequisite, on PATH)
         run: |
           cargo install --git https://github.com/nickderobertis/oneharness --locked
