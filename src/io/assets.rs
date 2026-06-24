@@ -5,19 +5,30 @@
 /// `prompt_template`.
 pub const DEFAULT_TEMPLATE: &str = include_str!("../../assets/default_template.md");
 
-/// The bundled `llmlint:config-lint` plugin: rules that lint llmlint config
-/// files themselves.
+/// The bundled config-lint plugin: rules that lint llmlint config files
+/// themselves. Referenced from configs by [`CONFIG_LINT_URL`].
 pub const CONFIG_LINT_PLUGIN: &str = include_str!("../../assets/config_lint.yml");
+
+/// Canonical URL of the bundled config-lint plugin. It is a normal plugin URL
+/// (no special scheme), but resolves offline from the embedded copy above, so
+/// the default config works with no network and `llmlint init` stays usable
+/// disconnected. Pin a version with `@` like any other plugin (`…@1`).
+pub const CONFIG_LINT_URL: &str =
+    "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml";
 
 /// Starter config body written by `llmlint init`.
 pub const INIT_CONFIG: &str = include_str!("../../assets/init.llmlint.yml");
 
-/// Resolve a bundled plugin id (e.g. `llmlint:config-lint`) to its embedded
-/// YAML, or `None` if unknown.
-pub fn bundled(id: &str) -> Option<&'static str> {
-    match id {
-        "llmlint:config-lint" => Some(CONFIG_LINT_PLUGIN),
-        _ => None,
+/// If `url` (without any `@version` suffix) names a plugin bundled into the
+/// binary, return its embedded YAML. Bundled plugins resolve offline — no
+/// network, no cache — so the shipped default config always works.
+/// The version pin, if any, is still validated by the caller against the
+/// embedded config's declared `version`.
+pub fn bundled_url(url: &str) -> Option<&'static str> {
+    if url == CONFIG_LINT_URL {
+        Some(CONFIG_LINT_PLUGIN)
+    } else {
+        None
     }
 }
 
@@ -26,15 +37,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_plugin_resolves() {
-        assert!(bundled("llmlint:config-lint").is_some());
-        assert!(bundled("llmlint:nope").is_none());
+    fn bundled_url_resolves_config_lint() {
+        assert_eq!(bundled_url(CONFIG_LINT_URL), Some(CONFIG_LINT_PLUGIN));
+        assert!(bundled_url("https://example.com/other.yml").is_none());
     }
 
     #[test]
     fn embedded_assets_are_non_empty() {
         assert!(DEFAULT_TEMPLATE.contains("{% for r in rules %}"));
         assert!(CONFIG_LINT_PLUGIN.contains("name_matches_description"));
-        assert!(INIT_CONFIG.contains("llmlint:config-lint"));
+        // The starter config references the bundled plugin by URL.
+        assert!(INIT_CONFIG.contains("config_lint.yml"));
+        assert!(INIT_CONFIG.contains("plugins:"));
     }
 }

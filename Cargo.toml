@@ -56,6 +56,11 @@ globset = "0.4"
 thiserror = "2"
 wait-timeout = "0.2"
 tempfile = "3"
+# HTTPS client for fetching remote `plugins` URLs. Pure Rust (rustls) so the
+# binary stays self-contained and cross-platform with no external tools (no
+# `curl`) and no system TLS/OpenSSL link. Minimal features: the rustls backend
+# with bundled Mozilla roots — no gzip/json/cookies/charset.
+ureq = { version = "3", default-features = false, features = ["rustls", "rustls-webpki-roots"] }
 
 [dev-dependencies]
 assert_cmd = "2"

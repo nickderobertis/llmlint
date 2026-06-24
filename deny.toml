@@ -23,6 +23,10 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
+    # Bundled Mozilla CA root store (`webpki-roots`, pulled in by `ureq` for
+    # HTTPS plugin fetches). CDLA-Permissive-2.0 is a permissive, non-copyleft
+    # data license with no redistribution restrictions on this MIT binary.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 exceptions = []

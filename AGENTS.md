@@ -153,9 +153,10 @@ tools (bypass mode is oneharness's default).
 - **`src/domain/` is pure** — config model + validation, template render, schema
   generation, judge/batch planning, vote aggregation, violation model, output
   formatting, exit-code mapping. No process/filesystem/env I/O.
-- **`src/io/`** owns all I/O: config discovery + merge + include resolution, file
-  globbing, the oneharness subprocess client, embedded assets. Never hide I/O in a
-  helper that looks pure.
+- **`src/io/`** owns all I/O: config discovery + merge + `plugins` resolution
+  (local files and remote/versioned URLs, fetched over HTTPS with `ureq`/rustls
+  and cached on disk — see `src/io/plugins.rs`), file globbing, the oneharness
+  subprocess client, embedded assets. Never hide I/O in a helper that looks pure.
 - **`src/commands/`** wires domain + io for `lint` (default), `init`, `config`,
   `doctor`.
 

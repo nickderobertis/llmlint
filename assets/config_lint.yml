@@ -1,10 +1,13 @@
-# llmlint config-lint plugin (bundled, id `llmlint:config-lint`).
+# llmlint config-lint plugin (bundled; referenced by URL,
+# .../assets/config_lint.yml, and resolved offline from the embedded copy).
 #
 # Lints llmlint configuration files themselves: that rules are well-named and
 # their descriptions yield a clear, mutually-exclusive true/false outcome. These
 # are judgment checks; structural checks (unique names, valid identifiers,
 # resolvable agents) are enforced deterministically by llmlint at load time and
 # are intentionally not duplicated here.
+#
+# `version` is the published plugin version consumers pin with `@` (e.g. `@1`).
 version: 1
 
 agents:

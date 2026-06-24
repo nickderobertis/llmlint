@@ -20,7 +20,7 @@ pub fn example_template() -> &'static str {
 }
 
 /// The two bundled config documents (`llmlint init`'s starter config and the
-/// `llmlint:config-lint` plugin), labelled. The realistic floor for the
+/// bundled config-lint plugin), labelled. The realistic floor for the
 /// `config_parse` group: the exact YAML the binary parses on a default run.
 pub fn example_configs() -> Vec<(&'static str, &'static str)> {
     vec![

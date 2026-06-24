@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::version::Version;
 use crate::errors::{Error, Result};
 
 /// Include/exclude glob set used to select target files.
@@ -97,16 +98,23 @@ impl Rule {
 /// throwaway key (e.g. `x-prompts:`); nested structs reject unknown fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
+    /// The config's published version (`1`, `1.1`, or `1.1.1`). Set this when
+    /// the config is consumed as a plugin: a consumer pins a desired version
+    /// with an `@` suffix on the plugin URL, validated against this value.
     #[serde(default)]
-    pub version: Option<u32>,
+    pub version: Option<Version>,
     #[serde(default)]
     pub prompt_template: Option<String>,
     #[serde(default)]
     pub files: FileFilter,
     #[serde(default)]
     pub oneharness: OneharnessCfg,
+    /// Plugins (shared rule sets) merged in, one entry each: a local file path
+    /// or a URL (`http(s)://`, `file://`), the URL optionally pinned with an
+    /// `@version` suffix. Named `plugins` (not `include`) to avoid confusion
+    /// with `files.include`. Resolution lives in [`crate::io::plugins`].
     #[serde(default)]
-    pub include: Vec<String>,
+    pub plugins: Vec<String>,
     #[serde(default)]
     pub agents: BTreeMap<String, Agent>,
     #[serde(default)]
@@ -115,7 +123,7 @@ pub struct Config {
 
 impl Config {
     /// Merge another config's rules and agents into this one (used to fold in
-    /// `include`d configs). Top-level scalars (template, files, oneharness) are
+    /// `plugins`). Top-level scalars (template, files, oneharness) are
     /// the entry config's and are left untouched; on an agent-name clash the
     /// existing (earlier/root) definition wins.
     pub fn merge_rules_and_agents(&mut self, other: Config) {

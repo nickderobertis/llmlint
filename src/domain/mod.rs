@@ -11,4 +11,5 @@ pub mod report;
 pub mod schema;
 pub mod template;
 pub mod verdict;
+pub mod version;
 pub mod vote;

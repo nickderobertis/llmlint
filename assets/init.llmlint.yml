@@ -4,6 +4,10 @@
 # Phrase each rule as a positive invariant: holds=true means the code complies;
 # holds=false is a violation. Keep using deterministic linters for everything
 # they can already check.
+#
+# `version` is this config's published version. It matters when the config is
+# consumed elsewhere as a plugin: that consumer pins a desired version with an
+# `@` suffix on the URL (see `plugins` below).
 version: 1
 
 # Files linted when none are passed explicitly on the CLI.
@@ -13,11 +17,14 @@ files:
   exclude:
     - "**/target/**"
 
-# Plugins / shared rule sets, merged in by one line each. The bundled
-# config-lint plugin lints this file's own rules for clear names and
-# descriptions — keep it on.
-include:
-  - "llmlint:config-lint"
+# Plugins / shared rule sets, merged in one line each. An entry is a config
+# file: a local path or a URL (`http(s)://`, `file://`). Pin a URL to a version
+# with `@` (e.g. `…/rules.yml@1.2.3`); a pinned URL is fetched and cached once
+# and only refetched when you change the pin. The bundled config-lint plugin
+# below lints this file's own rules for clear names and descriptions — it ships
+# inside llmlint and resolves offline, so keep it on.
+plugins:
+  - "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1"
 
 # Agents group rules and add reviewer context. Rules with no `agent` use the
 # `default` agent. `harness` is any id from `oneharness list`; omit it to let

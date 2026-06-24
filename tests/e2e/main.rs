@@ -5,7 +5,12 @@
 //! source of truth for what's covered (see `tests/AGENTS.md`).
 
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
 
 use assert_cmd::cargo::cargo_bin;
 use assert_cmd::Command;
@@ -59,6 +64,66 @@ impl Project {
 }
 
 const RULE: &str = "TRUE when ok; FALSE otherwise.";
+
+/// The bundled config-lint plugin, referenced by URL + version pin (resolved
+/// offline from the binary's embedded copy).
+const CONFIG_LINT: &str =
+    "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1";
+
+/// A throwaway localhost HTTP server for the plugin-fetch journey: serves one
+/// fixed body to every GET and counts requests, so a test can assert that a
+/// cached pin is not refetched. This exercises the real HTTPS-client fetch path
+/// (localhost only — no external network).
+struct HttpServer {
+    base_url: String,
+    hits: Arc<AtomicUsize>,
+}
+
+impl HttpServer {
+    fn serve(body: &str) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_thread = Arc::clone(&hits);
+        let body = body.to_string();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 1024]; // read + discard the request head
+                let _ = stream.read(&mut buf);
+                hits_thread.fetch_add(1, Ordering::SeqCst);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len(),
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        HttpServer {
+            base_url: format!("http://127.0.0.1:{port}"),
+            hits,
+        }
+    }
+    fn url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
+    }
+    fn hits(&self) -> usize {
+        self.hits.load(Ordering::SeqCst)
+    }
+}
+
+/// Build a valid `file://` URL from a path on any platform: forward slashes,
+/// with a leading slash before a Windows drive letter. Embedding the raw
+/// `Path::display()` (with `\` on Windows) in a double-quoted YAML scalar would
+/// be misread as an escape, so always normalize here.
+fn file_url(path: &Path) -> String {
+    let s = path.display().to_string().replace('\\', "/");
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
+    }
+}
 
 // ---- happy path ----------------------------------------------------------
 
@@ -176,7 +241,7 @@ fn includes_merge_rules_from_another_file() {
     p.write(
         "llmlint.yml",
         &format!(
-            "version: 1\nfiles:\n  include: [\"src/**\"]\ninclude:\n  - ./team.yml\nrules:\n  \
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - ./team.yml\nrules:\n  \
              - {{ name: root_rule, description: \"{RULE}\" }}\n"
         ),
     );
@@ -208,7 +273,7 @@ fn config_lint_plugin_catches_a_bad_rule() {
     // The bundled plugin lints config files; it always runs against llmlint.yml.
     p.write(
         "llmlint.yml",
-        "version: 1\ninclude:\n  - llmlint:config-lint\n",
+        &format!("version: 1\nplugins:\n  - {CONFIG_LINT}\n"),
     );
     let verdicts = p.write_verdicts(
         r#"{"name_is_descriptive_not_placeholder":
@@ -225,6 +290,146 @@ fn config_lint_plugin_catches_a_bad_rule() {
             "FAIL name_is_descriptive_not_placeholder",
         ))
         .stdout(predicate::str::contains("rule named 'foo'"));
+}
+
+#[test]
+fn plugin_from_a_file_url_merges_its_rules() {
+    let p = Project::new();
+    let plugin = p.path().join("shared.yml");
+    fs::write(
+        &plugin,
+        format!("version: 1\nrules:\n  - {{ name: shared_rule, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{}@1\"\nrules:\n  \
+             - {{ name: local_rule, description: \"{RULE}\" }}\n",
+            file_url(&plugin)
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"local_rule": true, "shared_rule": true}"#);
+
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_CACHE_DIR", p.path().join("cache"))
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"local_rule"));
+    assert!(names.contains(&"shared_rule"));
+}
+
+#[test]
+fn plugin_version_mismatch_is_an_error() {
+    let p = Project::new();
+    let plugin = p.path().join("shared.yml");
+    // Declares version 2, but the config pins @1 -> hard error.
+    fs::write(
+        &plugin,
+        format!("version: 2\nrules:\n  - {{ name: shared_rule, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nplugins:\n  - \"{}@1\"\n", file_url(&plugin)),
+    );
+    p.lint()
+        .env("LLMLINT_CACHE_DIR", p.path().join("cache"))
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "requested version 1 but the config declares version 2",
+        ));
+}
+
+#[test]
+fn removed_llmlint_scheme_is_a_clear_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nplugins:\n  - llmlint:config-lint\n",
+    );
+    p.lint().assert().code(2).stderr(predicate::str::contains(
+        "the `llmlint:` plugin scheme was removed",
+    ));
+}
+
+#[test]
+fn renamed_top_level_include_key_is_rejected() {
+    let p = Project::new();
+    p.write("llmlint.yml", "version: 1\ninclude:\n  - ./team.yml\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("renamed to `plugins`"));
+}
+
+#[test]
+fn pinned_url_plugin_is_fetched_over_http_and_cached() {
+    let p = Project::new();
+    let server = HttpServer::serve(&format!(
+        "version: 1\nrules:\n  - {{ name: remote_rule, description: \"{RULE}\" }}\n"
+    ));
+    let url = server.url("/rules.yml");
+    let cache = p.path().join("cache");
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{url}@1\"\nrules:\n  \
+             - {{ name: local_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"local_rule": true, "remote_rule": true}"#);
+
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("NO_PROXY", "*")
+            .env("no_proxy", "*")
+            .env("HTTP_PROXY", "")
+            .env("http_proxy", "")
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .output()
+            .unwrap()
+    };
+
+    let out = run();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"remote_rule"));
+    assert_eq!(server.hits(), 1, "first run should fetch exactly once");
+
+    // Second run reuses the cached pin: the server sees no further requests.
+    let out = run();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(server.hits(), 1, "an unchanged pin must not refetch");
 }
 
 // ---- file selection -------------------------------------------------------
@@ -353,7 +558,8 @@ fn init_scaffolds_a_config_then_refuses_to_clobber() {
     let p = Project::new();
     p.bare().arg("init").assert().success();
     let cfg = fs::read_to_string(p.path().join("llmlint.yml")).unwrap();
-    assert!(cfg.contains("llmlint:config-lint"));
+    assert!(cfg.contains("plugins:"));
+    assert!(cfg.contains("config_lint.yml@1"));
 
     // Second init without --force fails (exit 2).
     p.bare().arg("init").assert().code(2);
@@ -400,7 +606,7 @@ fn config_command_prints_merged_config_and_sources() {
     p.write(
         "llmlint.yml",
         &format!(
-            "version: 1\ninclude:\n  - llmlint:config-lint\nrules:\n  \
+            "version: 1\nplugins:\n  - {CONFIG_LINT}\nrules:\n  \
              - {{ name: my_rule, description: \"{RULE}\" }}\n"
         ),
     );
@@ -411,7 +617,7 @@ fn config_command_prints_merged_config_and_sources() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|s| s == "llmlint:config-lint"));
+        .any(|s| s == CONFIG_LINT));
     let names: Vec<&str> = v["config"]["rules"]
         .as_array()
         .unwrap()
