@@ -1,13 +1,18 @@
-name: Live e2e (claude-code)
+name: Live e2e
 
-# The live tier: real llmlint -> real oneharness -> the real claude-code harness,
-# making real (paid) model calls. Runs on PRs and pushes to main, plus on demand.
-# Kept out of the `check` gate (`ci.yml`) — it's its own workflow.
+# The live tier: the built llmlint binary -> real oneharness -> a real harness
+# (claude-code), end to end, making real (paid) model calls. Runs on PRs and
+# pushes to main, plus on demand. Out of the `check` gate (`ci.yml`).
 #
-# Unlike the hermetic suite, a missing CLI/auth/oneharness here is a HARD FAILURE
-# (the script does not skip), so a broken live setup turns this workflow red.
-# Configure the `CLAUDE_CODE_OAUTH_TOKEN` secret (or `ANTHROPIC_API_KEY`) and,
-# optionally, the `CLAUDE_E2E_MODEL` repo variable.
+# What this proves that the hermetic suite can't: the whole stack works on each
+# OS — the real binary, the oneharness subprocess, and a real harness round-trip
+# on Linux, macOS, and Windows. Harness *breadth* (codex, cursor, …) is
+# oneharness's own test surface; from llmlint's side every harness is the same
+# `--harness <id>` handed to oneharness, so one canonical harness is enough here.
+#
+# A missing CLI/auth/oneharness is a HARD FAILURE (the script does not skip), so a
+# broken live setup turns this workflow red. Configure `CLAUDE_CODE_OAUTH_TOKEN`
+# (or `ANTHROPIC_API_KEY`) and, optionally, the `CLAUDE_E2E_MODEL` repo variable.
 on:
   push:
     branches: [main]
@@ -18,19 +23,25 @@ permissions:
   contents: read
 
 concurrency:
-  group: live-claude-${{ github.ref }}
+  group: live-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  live-claude:
+  live:
     # Only where the auth secret is available: the canonical repo, and never a
     # fork PR (forks can't read secrets, and the run would correctly hard-fail).
-    # On the canonical repo a red build then means a genuine setup/regression.
     if: >-
       github.repository == 'nickderobertis/llmlint' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

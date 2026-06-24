@@ -1,20 +1,22 @@
 # Shared helpers for the llmlint LIVE end-to-end tier.
 #
-# These drive the REAL `llmlint` binary against the REAL `oneharness` and a REAL,
-# authenticated coding harness — the whole stack, no mocks. They are the live
+# These drive the REAL built `llmlint` binary against the REAL `oneharness` and a
+# REAL, authenticated coding harness — the whole stack, no mocks. It is the live
 # analogue of the hermetic e2e suite (`tests/e2e/`, which drives a mock
-# oneharness), and mirror oneharness's own `scripts/e2e-*.sh` tier.
+# oneharness). The CI workflow (`.github/workflows/live.yml`) runs it on Linux,
+# macOS, and Windows: the cross-OS proof is the point. Harness *breadth* is
+# oneharness's test surface, so the live tier drives one canonical harness.
 #
-# Contract: this tier normally runs in CI, where every harness CLI and its auth
-# are expected to be configured. So a missing CLI, missing auth, or missing
-# oneharness is a **hard failure** (red build), never a silent skip — a skip would
-# let a broken live setup pass unnoticed. Set up the harness or don't run its
-# recipe.
+# Contract: this tier runs in CI, where the harness CLI and its auth are expected
+# to be configured. So a missing CLI, missing auth, or missing oneharness is a
+# **hard failure** (red build), never a silent skip — a skip would let a broken
+# live setup pass unnoticed. Set up the harness or don't run the recipe.
 #
-# Sourced by the per-harness scripts (`scripts/live-<harness>.sh`); not run on its
-# own. Each per-harness script declares its harness id, the CLI it needs, the auth
-# env vars it accepts, and an optional `<HARNESS>_E2E_MODEL` override, then calls
-# `live_run_journeys <harness-id>`.
+# Sourced by the harness entrypoint (`scripts/live-claude.sh`); not run on its
+# own. The entrypoint declares its harness id, the CLI it needs, the auth env vars
+# it accepts, and an optional model override, then calls `live_run_journeys <id>`.
+# `live_run_journeys` is harness-agnostic, so an ad-hoc script for another harness
+# is a few lines (see `tests/AGENTS.md`).
 
 # Repo root = the parent of this script's directory.
 LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -160,16 +160,15 @@ just check       # full gate: fmt, clippy -D warnings, tests + 95% coverage, doc
 just test-e2e    # the e2e binary journeys in isolation
 just deps-check  # cargo deny + cargo machete
 just lint-live   # opt-in: ad-hoc lint against the REAL oneharness + a real harness
-just live-all    # opt-in: live e2e — real llmlint → real oneharness → each real harness
+just live-claude # opt-in: live e2e — built llmlint → real oneharness → real harness
 ```
 
 Tests drive the real `llmlint` binary against a hermetic mock-oneharness fixture.
-The live tier (`just live-<harness>` / `just live-all`, and the ad-hoc
-`just lint-live`) drives the whole stack end to end against a real, authenticated
-harness — the only thing that makes real model calls, and out of the `check` gate.
-It runs on PRs in its own workflow where the harness is configured, so a missing
-CLI, auth, or oneharness is a hard failure, not a skip. See `AGENTS.md` and
-`tests/AGENTS.md`.
+The live tier (`just live-claude`, and the ad-hoc `just lint-live`) drives the
+whole stack end to end against a real, authenticated harness — the only thing that
+makes real model calls, and out of the `check` gate. It runs on PRs in its own
+workflow across Linux/macOS/Windows, so a missing CLI, auth, or oneharness is a
+hard failure, not a skip. See `AGENTS.md` and `tests/AGENTS.md`.
 
 ## License
 
