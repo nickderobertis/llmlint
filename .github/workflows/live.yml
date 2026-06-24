@@ -60,6 +60,10 @@ jobs:
         run: |
           npm install -g @anthropic-ai/claude-code
           claude --version
+      - name: Detect harnesses (teach oneharness how to launch claude on this OS)
+        run: |
+          oneharness detect --all || echo "detect --all exited $?"
+          oneharness list || echo "list exited $?"
       - name: Live e2e against the real claude-code harness
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
