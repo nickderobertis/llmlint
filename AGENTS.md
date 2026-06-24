@@ -27,8 +27,14 @@ Deliberately excluded (so it isn't re-litigated):
 - **No monorepo** — single binary crate; no Nx/affected wiring.
 - **No `cargo-dist`** — `release.yml`'s native build matrix already ships
   checksummed cross-platform binaries; release-plz handles versioning.
-- **No crates.io publish** — end-user binary, shipped via GitHub Releases +
-  `install.sh` + `cargo install --git` (`publish = false`).
+- **crates.io publish** — alongside GitHub Releases + `install.sh` +
+  `cargo install --git`, the `publish-crate` job in `release.yml` runs
+  `cargo publish` whenever the `CARGO_REGISTRY_TOKEN` secret is set (a `guard`
+  job exposes its presence as an output, since `secrets` can't be read in a job
+  `if:`). release-plz never publishes (`publish = false` in `release-plz.toml`),
+  so versioning/tagging stays decoupled from the registry push. `Cargo.toml`'s
+  `include` keeps the published crate to sources + manifest + readme/license +
+  `assets/`.
 - **No heavy pre-commit framework, direnv, or `src`-layout shuffling** — the gate
   is `just check` + CI on the standard Cargo layout.
 - **Coverage bar: 95% lines** (`cargo llvm-cov --fail-under-lines 95`).
@@ -67,12 +73,24 @@ Use the `just` recipes; do not hand-roll equivalents.
 - `just live-<harness>` / `just live-all` — the **live e2e tier**: builds a
   release binary, then drives the real `llmlint` → real `oneharness` → that real,
   authenticated harness through `scripts/live-*.sh`, asserting a clean file passes
-  (exit 0) and a planted `TODO` is flagged (exit 1). This tier runs in its own
-  (manually/secret-gated) CI job where the harness is configured, so a missing
-  CLI, auth, or oneharness is a **hard failure** (red build), not a skip — that's
-  the point: a broken live setup must be visible. Auth per harness and the
-  `<HARNESS>_E2E_MODEL` override are documented in `tests/AGENTS.md`. Makes real
-  (paid) model calls — out of the `check` gate.
+  (exit 0) and a planted `TODO` is flagged (exit 1). It runs on PRs in its own
+  workflow (`.github/workflows/live-claude.yml`) where the harness CLI + auth are
+  configured, so a missing CLI, auth, or oneharness is a **hard failure** (red
+  build), not a skip — that's the point: a broken live setup must be visible. Auth
+  per harness and the `<HARNESS>_E2E_MODEL` override are documented in
+  `tests/AGENTS.md`. Makes real (paid) model calls — out of the `check` gate.
+- **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
+  `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
+  gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the
+  pure engine (`benches/`); `scripts/bench.sh` (hyperfine) and
+  `scripts/bench-instructions.sh` (cachegrind) measure the real binary end to end
+  against the **mock-oneharness fixture**, so there's no model/network cost — just
+  llmlint's own work plus one child spawn. The `Performance` workflow
+  (`.github/workflows/bench.yml`) runs all of this on each PR and posts a sticky
+  comment + job summary with a base-vs-PR delta; timings are noisy on shared
+  runners, so it reports rather than blocks. The bench/profile tools (hyperfine,
+  critcmp, samply) are *not* installed by `just setup` — `just bench-tools`
+  installs them on demand; CI installs them via `taiki-e/install-action`.
 
 ## How llmlint drives oneharness
 
@@ -104,9 +122,18 @@ tools (bypass mode is oneharness's default).
   `fix`/`perf`→patch, `!`/`BREAKING`→minor; `docs`/`test`/`chore`/`ci`→no release).
   release-plz opens a release PR, auto-merges it on green, tags `vX.Y.Z`, and cuts
   the GitHub Release, which fires `release.yml` to build+attach checksummed
-  binaries. Needs the `RELEASE_PLZ_TOKEN` PAT (a `GITHUB_TOKEN` tag won't retrigger
-  `release.yml`); the workflow no-ops until the secret exists. Don't hand-bump the
-  version or `CHANGELOG.md`.
+  binaries and, when opted in, `cargo publish` the crate. Needs the
+  `RELEASE_PLZ_TOKEN` PAT (a `GITHUB_TOKEN` tag won't retrigger `release.yml`);
+  the workflow no-ops until the secret exists. Don't hand-bump the version or
+  `CHANGELOG.md`.
+- **crates.io publish**: `release.yml`'s `publish-crate` job runs
+  `cargo publish --locked` whenever the `CARGO_REGISTRY_TOKEN` secret is set (the
+  `guard` job gates it). It is gated on the release `test` job but independent of
+  the binary `upload` matrix, so a flaky per-platform upload never blocks the
+  immutable crate publish and vice versa. A `verify-crate` job then polls the
+  crates.io sparse index for the new version and `cargo install`s + smoke-tests
+  it from the registry — a post-publish sanity check (a failure means a broken
+  release, not a blocked publish).
 
 ## Invariants (non-negotiable)
 
@@ -144,8 +171,10 @@ coverage are a rule, not a preference.
   source of truth for what's covered; a feature isn't done until its journey lands.
 - A live tier (`just live-<harness>` / `just live-all`, plus the ad-hoc
   `just lint-live`) hits real oneharness + a real harness; it is opt-in and out of
-  the `just check` gate. It expects the harness configured (its own CI job), so a
-  missing CLI/auth/oneharness is a **hard failure**, not a skip. The scripted
+  the `just check` gate; it runs on PRs in its own workflow
+  (`.github/workflows/live-claude.yml`). It expects the harness CLI + auth
+  configured, so a missing CLI/auth/oneharness is a **hard failure**, not a skip.
+  The scripted
   journeys live in `scripts/live-*.sh` and are listed in `tests/AGENTS.md`.
 
 ## Scripts and output are context

@@ -56,8 +56,8 @@ The hermetic e2e suite above proves llmlint's logic against a mock oneharness. T
 **live tier** proves the *real* stack — real `llmlint` → real `oneharness` → a
 real, authenticated harness — and is the llmlint analogue of oneharness's own
 `scripts/e2e-*.sh`. It is opt-in (`just live-<harness>` / `just live-all`), makes
-real (paid) model calls, and is out of the `just check` gate — it runs in its own
-secret-gated CI job, not on every PR.
+real (paid) model calls, and is out of the `just check` gate — it runs on PRs in
+its own workflow (`.github/workflows/live-claude.yml`), not as part of `check`.
 
 - **Fail, never skip:** because this tier runs where the harness is configured, a
   missing harness CLI, missing auth, or missing oneharness is a **hard failure**

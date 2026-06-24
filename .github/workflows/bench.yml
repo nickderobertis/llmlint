@@ -1,0 +1,181 @@
+name: Performance
+
+# Informational performance suite. On every PR it runs the Criterion engine
+# benchmarks and the hyperfine end-to-end CLI timings (against the
+# mock-oneharness fixture, so no model/network is involved), then posts the
+# numbers as a sticky PR comment and a job summary. It is deliberately NOT a
+# quality gate: benchmark timings are noisy on shared CI runners, so this job
+# reports rather than blocks — keep it out of branch-protection's required
+# checks. (The hard, deterministic gate is ci.yml / `just check`.)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read the code; write PR comments. The comment step is additionally guarded to
+# same-repo PRs below, since fork PRs only ever get a read-only token.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: benchmarks
+    # A single, consistent runner: timings are only comparable on the same
+    # hardware, so this never matrixes across OSes the way ci.yml does.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the PR base commit is available for the comparison.
+          fetch-depth: 0
+
+      # rust-toolchain.toml is the source of truth; `rustup show` realises it.
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,hyperfine,critcmp
+
+      # cachegrind backs the deterministic instruction counts; a system package,
+      # not a cargo tool.
+      - name: Install valgrind
+        run: sudo apt-get update -q && sudo apt-get install -y -q valgrind
+
+      # Fresh baselines every run: rust-cache may carry a stale target/criterion
+      # across runs, which would silently corrupt the base-vs-PR comparison.
+      - name: Clear stale Criterion baselines
+        run: rm -rf target/criterion
+
+      - name: Benchmark this revision (Criterion)
+        run: cargo bench --locked --bench engine -- --measurement-time 3 --save-baseline pr
+
+      - name: Benchmark this revision (hyperfine CLI)
+        run: just bench-cli
+
+      # Exact counts, no statistics: these two are the only layers where a small
+      # delta is meaningful on a shared runner.
+      - name: Allocation counts (deterministic)
+        run: |
+          mkdir -p target/bench
+          just bench-allocs | tee target/bench/allocs.md
+
+      - name: Instruction counts (cachegrind)
+        run: just bench-instructions
+
+      # Best effort: the PR base may predate a bench (e.g. the PR that introduces
+      # it, where the engine bench / profiling profile do not yet exist), so a
+      # failure here is expected and non-fatal — the job still reports absolute
+      # numbers, just without a regression delta.
+      - name: Compare against PR base (Criterion + cachegrind)
+        id: basecmp
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          # The instructions harness must be the PR's copy even while the
+          # worktree sits at base (where it may not exist yet); parked one level
+          # under the repo root so its own root resolution still finds this repo.
+          cp scripts/bench-instructions.sh target/bench-instructions-pr.sh
+          git checkout -q "$base"
+          cargo bench --locked --bench engine -- --measurement-time 3 --save-baseline base
+          BENCH_OUT="$PWD/target/bench-base" bash target/bench-instructions-pr.sh || true
+          git checkout -q -
+          critcmp base pr | tee target/bench/critcmp.txt
+          if [ -s target/bench-base/instructions.tsv ]; then
+            bash scripts/bench-instructions.sh report \
+              target/bench-base/instructions.tsv target/bench/instructions.tsv \
+              | tee target/bench/instructions-delta.md
+          fi
+
+      - name: Assemble report
+        run: |
+          set -euo pipefail
+          report=target/bench/report.md
+          {
+            echo "## ⏱️ Performance report"
+            echo
+            echo "Commit \`${GITHUB_SHA::8}\` on \`ubuntu-latest\`. Timings are"
+            echo "informational — shared-runner noise means treat small deltas with caution."
+            echo
+            echo "### End-to-end CLI latency (hyperfine)"
+            echo
+            echo "_The real \`llmlint\` binary against the deterministic mock-oneharness"
+            echo "fixture: llmlint's own work plus one child spawn, not model latency._"
+            echo
+            cat target/bench/results.md
+            echo
+            echo "### Engine micro-benchmarks vs base (Criterion + critcmp)"
+            echo
+            if [ -s target/bench/critcmp.txt ]; then
+              echo '```'
+              cat target/bench/critcmp.txt
+              echo '```'
+            else
+              echo "_No base comparison: the engine bench is not present on the base"
+              echo "ref yet (expected on the PR that introduces it). Future PRs will"
+              echo "show the regression delta here._"
+            fi
+            echo
+            echo "### CLI instruction counts (cachegrind; deterministic)"
+            echo
+            if [ -s target/bench/instructions-delta.md ]; then
+              cat target/bench/instructions-delta.md
+            else
+              cat target/bench/instructions.md
+            fi
+            echo
+            echo "### Engine allocation counts (deterministic)"
+            echo
+            cat target/bench/allocs.md
+          } > "$report"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: |
+            target/bench/results.json
+            target/bench/results.md
+            target/bench/critcmp.txt
+            target/bench/instructions.tsv
+            target/bench/instructions.md
+            target/bench/instructions-delta.md
+            target/bench/allocs.md
+          if-no-files-found: warn
+
+      # Same-repo PRs only: fork PRs carry a read-only token and cannot comment,
+      # so they fall back to the job summary + artifact above.
+      - name: Post sticky PR comment
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- llmlint-perf -->';
+            const body = `${marker}\n${fs.readFileSync('target/bench/report.md', 'utf8')}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

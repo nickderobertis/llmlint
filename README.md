@@ -51,14 +51,17 @@ curl -fsSL https://raw.githubusercontent.com/nickderobertis/oneharness/main/scri
 
 # 2) llmlint
 curl -fsSL https://raw.githubusercontent.com/nickderobertis/llmlint/main/scripts/install.sh | sh
-#    (or: cargo install --git https://github.com/nickderobertis/llmlint --locked)
+#    (or: cargo install llmlint --locked)
+#    (or, without a crates.io release: cargo install --git https://github.com/nickderobertis/llmlint --locked)
 
 llmlint doctor      # confirms oneharness is reachable
 ```
 
-The installer honors `LLMLINT_VERSION` and `LLMLINT_INSTALL_DIR`, and refuses an
-archive whose checksum does not match. Each tagged release also publishes
-prebuilt, checksummed binaries for Linux, macOS, and Windows.
+The installer honors `LLMLINT_VERSION` / `LLMLINT_INSTALL_DIR` (or the `--version`
+/ `--to` flags), works on Linux, macOS, and Windows under a POSIX shell
+(Git Bash / MSYS / WSL), and refuses an archive whose checksum does not match.
+Each tagged release publishes prebuilt, checksummed binaries for those
+platforms; on native Windows PowerShell, use `cargo install llmlint --locked`.
 
 You also need a coding harness installed and authenticated (e.g. Claude Code).
 See `oneharness list` / `oneharness detect --all`.
@@ -164,8 +167,9 @@ Tests drive the real `llmlint` binary against a hermetic mock-oneharness fixture
 The live tier (`just live-<harness>` / `just live-all`, and the ad-hoc
 `just lint-live`) drives the whole stack end to end against a real, authenticated
 harness — the only thing that makes real model calls, and out of the `check` gate.
-It runs where the harness is configured (its own CI job), so a missing CLI, auth,
-or oneharness is a hard failure, not a skip. See `AGENTS.md` and `tests/AGENTS.md`.
+It runs on PRs in its own workflow where the harness is configured, so a missing
+CLI, auth, or oneharness is a hard failure, not a skip. See `AGENTS.md` and
+`tests/AGENTS.md`.
 
 ## License
 
