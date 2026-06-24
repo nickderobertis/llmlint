@@ -1,0 +1,54 @@
+name: Live e2e (claude-code)
+
+# The live tier: real llmlint -> real oneharness -> the real claude-code harness,
+# making real (paid) model calls. Runs on PRs and pushes to main, plus on demand.
+# Kept out of the `check` gate (`ci.yml`) — it's its own workflow.
+#
+# Unlike the hermetic suite, a missing CLI/auth/oneharness here is a HARD FAILURE
+# (the script does not skip), so a broken live setup turns this workflow red.
+# Configure the `CLAUDE_CODE_OAUTH_TOKEN` secret (or `ANTHROPIC_API_KEY`) and,
+# optionally, the `CLAUDE_E2E_MODEL` repo variable.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-claude-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-claude:
+    # Only where the auth secret is available: the canonical repo, and never a
+    # fork PR (forks can't read secrets, and the run would correctly hard-fail).
+    # On the canonical repo a red build then means a genuine setup/regression.
+    if: >-
+      github.repository == 'nickderobertis/llmlint' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Install oneharness (runtime prerequisite, on PATH)
+        run: |
+          cargo install --git https://github.com/nickderobertis/oneharness --locked
+          oneharness --version
+      - name: Install the claude-code CLI
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+      - name: Live e2e against the real claude-code harness
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_E2E_MODEL: ${{ vars.CLAUDE_E2E_MODEL }}
+        run: just live-claude

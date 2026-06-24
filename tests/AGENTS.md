@@ -50,6 +50,38 @@ reporting). Add a journey here when a user-facing behavior lands.
   2); schema-invalid, missing-structured, unparseable, empty-results, and
   bad-verdict-shape oneharness output are surfaced (exit 2).
 
+## Live tier (`scripts/live-*.sh`)
+
+The hermetic e2e suite above proves llmlint's logic against a mock oneharness. The
+**live tier** proves the *real* stack — real `llmlint` → real `oneharness` → a
+real, authenticated harness — and is the llmlint analogue of oneharness's own
+`scripts/e2e-*.sh`. It is opt-in (`just live-<harness>` / `just live-all`), makes
+real (paid) model calls, and is out of the `just check` gate — it runs on PRs in
+its own workflow (`.github/workflows/live-claude.yml`), not as part of `check`.
+
+- **Fail, never skip:** because this tier runs where the harness is configured, a
+  missing harness CLI, missing auth, or missing oneharness is a **hard failure**
+  (red build), not a skip — a silent skip would let a broken live setup pass
+  unnoticed. Run only the `live-<harness>` recipes for the harnesses you have set
+  up; `live-all` requires them all.
+- **Journeys per harness** (`live_run_journeys` in `scripts/live-lib.sh`): scaffold
+  a throwaway project with one crisp invariant (`no_todo_comments`) pinned to that
+  harness, then (1) a clean `src/lib.rs` must pass → exit 0, rule `pass`; (2) a
+  file with a planted `TODO` must be flagged → exit 1, rule `fail`. Exit 2 (the
+  live stack could not complete) is also a failure.
+- **Harness CLI + auth** (required; absent → fail), matching oneharness:
+  `claude-code`→`claude` + `CLAUDE_CODE_OAUTH_TOKEN`|`ANTHROPIC_API_KEY`;
+  `codex`→`codex` + `OPENAI_API_KEY`;
+  `opencode`→`opencode` + `ANTHROPIC_API_KEY`|`OPENAI_API_KEY`;
+  `goose`→`goose` + `OPENAI_API_KEY`; `qwen`→`qwen` + `OPENAI_API_KEY`;
+  `crush`→`crush` + `ANTHROPIC_API_KEY`|`OPENAI_API_KEY`;
+  `copilot`→`copilot` + `COPILOT_GITHUB_TOKEN`;
+  `cursor`→`cursor-agent` + `CURSOR_API_KEY`.
+- **Overrides:** `<HARNESS>_E2E_MODEL` picks the judge model (claude defaults to
+  `haiku`; others use the harness default unless set); `LL_TIMEOUT` (default 120s)
+  becomes the config's `oneharness.timeout`; `LLMLINT_BIN` /
+  `LLMLINT_ONEHARNESS_BIN` override binary resolution.
+
 ## Unit vs e2e
 
 Pure domain logic (validation, planning, voting, schema, rendering, reporting)

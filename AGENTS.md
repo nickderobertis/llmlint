@@ -68,8 +68,17 @@ Use the `just` recipes; do not hand-roll equivalents.
 - `just test` / `just test-e2e` / `just lint` / `just format` — individual steps.
 - `just upgrade` — update dependencies, then re-run `just check`.
 - `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
-- `just lint-live` — opt-in live run against real oneharness + a real harness;
-  never in the gate or CI.
+- `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
+  harness (`cargo run -- …`); never in the gate or CI.
+- `just live-<harness>` / `just live-all` — the **live e2e tier**: builds a
+  release binary, then drives the real `llmlint` → real `oneharness` → that real,
+  authenticated harness through `scripts/live-*.sh`, asserting a clean file passes
+  (exit 0) and a planted `TODO` is flagged (exit 1). It runs on PRs in its own
+  workflow (`.github/workflows/live-claude.yml`) where the harness CLI + auth are
+  configured, so a missing CLI, auth, or oneharness is a **hard failure** (red
+  build), not a skip — that's the point: a broken live setup must be visible. Auth
+  per harness and the `<HARNESS>_E2E_MODEL` override are documented in
+  `tests/AGENTS.md`. Makes real (paid) model calls — out of the `check` gate.
 - **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
   `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
   gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the
@@ -160,8 +169,13 @@ coverage are a rule, not a preference.
 - **Done means complete, not minimal:** every user journey, happy path *and*
   failure/recovery. The e2e journey list lives in `tests/AGENTS.md` and is the
   source of truth for what's covered; a feature isn't done until its journey lands.
-- A live tier (`just lint-live`) hits real oneharness + a real harness; it is
-  opt-in, env-gated, and never in `just check` or CI.
+- A live tier (`just live-<harness>` / `just live-all`, plus the ad-hoc
+  `just lint-live`) hits real oneharness + a real harness; it is opt-in and out of
+  the `just check` gate; it runs on PRs in its own workflow
+  (`.github/workflows/live-claude.yml`). It expects the harness CLI + auth
+  configured, so a missing CLI/auth/oneharness is a **hard failure**, not a skip.
+  The scripted
+  journeys live in `scripts/live-*.sh` and are listed in `tests/AGENTS.md`.
 
 ## Scripts and output are context
 
