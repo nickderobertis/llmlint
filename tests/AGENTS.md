@@ -64,15 +64,11 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
   *breadth* (codex, cursor, …) is **oneharness's** test surface, not llmlint's —
   from llmlint's side every harness is the same `--harness <id>` forwarded to
   oneharness, so one canonical harness (claude-code) is enough here.
-- **Fail on broken setup; skip only an unlaunchable harness.** A missing harness
-  CLI, missing auth, or missing oneharness is a **hard failure** (red build) — a
-  silent skip would let a broken setup pass unnoticed. The one exception, matching
-  oneharness's own e2e: when oneharness reports it cannot *launch* the harness on
-  this platform (a `spawn-error`/`skipped` status — e.g. on **Windows** it can't
-  spawn the npm `claude.cmd` shim, Rust's batch-spawn guard), the run **skips**,
-  because the built llmlint + oneharness still ran and there's simply no model
-  round-trip to verify there. A harness that *did* run but returned bad output
-  (schema-invalid, unparseable) is still a hard failure, not a skip.
+- **Never skips.** A missing harness CLI, missing auth, or missing oneharness — or
+  any exit 2 (the stack couldn't complete) — is a **hard failure** (red build). A
+  silent skip would let a broken live setup pass unnoticed, so the live tier has no
+  skip path at all (matching oneharness's own e2e, which fails rather than skips).
+  This runs the full round-trip on Linux, macOS, **and Windows**.
 - **Journeys** (`live_run_journeys` in `scripts/live-lib.sh`): scaffold a throwaway
   project with one crisp invariant (`no_todo_comments`) pinned to the harness, then
   (1) a clean `src/lib.rs` must pass → exit 0, rule `pass`; (2) a file with a
