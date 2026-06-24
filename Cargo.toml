@@ -1,6 +1,6 @@
 [package]
 name = "llmlint"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 description = "LLM-as-judge linter: enforce code-quality checks deterministic linters can't express, by driving real coding harnesses through oneharness."

@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nickderobertis/llmlint/compare/v0.1.8...v0.2.0) - 2026-06-24
+
+### Added
+
+- [**breaking**] plugins config key with versioned, cached URL fetching ([#24](https://github.com/nickderobertis/llmlint/pull/24))
+
 ## [0.1.5](https://github.com/nickderobertis/llmlint/compare/v0.1.4...v0.1.5) - 2026-06-23
 
 ### Added
