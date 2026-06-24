@@ -112,6 +112,19 @@ impl HttpServer {
     }
 }
 
+/// Build a valid `file://` URL from a path on any platform: forward slashes,
+/// with a leading slash before a Windows drive letter. Embedding the raw
+/// `Path::display()` (with `\` on Windows) in a double-quoted YAML scalar would
+/// be misread as an escape, so always normalize here.
+fn file_url(path: &Path) -> String {
+    let s = path.display().to_string().replace('\\', "/");
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
+    }
+}
+
 // ---- happy path ----------------------------------------------------------
 
 #[test]
@@ -291,9 +304,9 @@ fn plugin_from_a_file_url_merges_its_rules() {
     p.write(
         "llmlint.yml",
         &format!(
-            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"file://{}@1\"\nrules:\n  \
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{}@1\"\nrules:\n  \
              - {{ name: local_rule, description: \"{RULE}\" }}\n",
-            plugin.display()
+            file_url(&plugin)
         ),
     );
     p.write("src/lib.rs", "// code\n");
@@ -331,10 +344,7 @@ fn plugin_version_mismatch_is_an_error() {
     .unwrap();
     p.write(
         "llmlint.yml",
-        &format!(
-            "version: 1\nplugins:\n  - \"file://{}@1\"\n",
-            plugin.display()
-        ),
+        &format!("version: 1\nplugins:\n  - \"{}@1\"\n", file_url(&plugin)),
     );
     p.lint()
         .env("LLMLINT_CACHE_DIR", p.path().join("cache"))

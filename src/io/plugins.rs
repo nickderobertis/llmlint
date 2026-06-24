@@ -236,7 +236,26 @@ fn file_url_path(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("file://")?;
     // `file://localhost/path` and `file:///path` both mean `/path`.
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    Some(PathBuf::from(rest))
+    Some(PathBuf::from(drive_letter_path(rest)))
+}
+
+/// On Windows a `file://` URL for an absolute path is `file:///C:/dir/x` — after
+/// stripping the scheme the remainder is `/C:/dir/x`, so drop the leading slash
+/// that precedes the drive letter. A no-op elsewhere (and for already-drive-less
+/// paths).
+#[cfg(windows)]
+fn drive_letter_path(s: &str) -> &str {
+    let b = s.as_bytes();
+    if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' {
+        &s[1..]
+    } else {
+        s
+    }
+}
+
+#[cfg(not(windows))]
+fn drive_letter_path(s: &str) -> &str {
+    s
 }
 
 /// On-disk cache location for a pinned fetch: a per-URL subdir (named by a hash
@@ -269,8 +288,15 @@ mod tests {
         }
     }
 
+    /// Build a valid `file://` URL from a path on any platform: forward slashes,
+    /// with a leading slash before a Windows drive letter (`C:/x` -> `///C:/x`).
     fn file_url(path: &Path) -> String {
-        format!("file://{}", path.display())
+        let s = path.display().to_string().replace('\\', "/");
+        if s.starts_with('/') {
+            format!("file://{s}")
+        } else {
+            format!("file:///{s}")
+        }
     }
 
     #[test]
@@ -322,6 +348,11 @@ mod tests {
             Some(PathBuf::from("/a/b.yml"))
         );
         assert!(file_url_path("https://x/p.yml").is_none());
+        #[cfg(windows)]
+        assert_eq!(
+            file_url_path("file:///C:/a/b.yml"),
+            Some(PathBuf::from("C:/a/b.yml"))
+        );
     }
 
     #[test]
