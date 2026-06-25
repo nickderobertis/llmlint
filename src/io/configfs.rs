@@ -80,7 +80,7 @@ pub fn parse(text: &str, origin: &str) -> Result<Config> {
 /// entry provides the top-level scalars, the rest contribute rules and agents.
 /// Each pulled-in config's own `plugins` are resolved transitively. Diamonds and
 /// cycles are de-duplicated by absolute path / plugin key, and the transitive
-/// depth is bounded by [`MAX_PLUGIN_DEPTH`].
+/// depth is bounded by `MAX_PLUGIN_DEPTH`.
 pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     let entry_paths: Vec<PathBuf> = if entries.is_empty() {
         match discover(cwd) {
