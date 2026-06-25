@@ -937,6 +937,20 @@ fn config_command_rejects_invalid_config() {
 }
 
 #[test]
+fn config_command_rejects_even_judges() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: tied, description: \"{RULE}\", judges: 2 }}\n"),
+    );
+    p.bare()
+        .arg("config")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("must be odd"));
+}
+
+#[test]
 fn init_writes_to_a_custom_output_path() {
     let p = Project::new();
     p.bare()

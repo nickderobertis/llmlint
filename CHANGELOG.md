@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/nickderobertis/llmlint/compare/v0.2.0...v0.2.1) - 2026-06-25
+
+### Added
+
+- reject an even number of judges in config validation ([#26](https://github.com/nickderobertis/llmlint/pull/26))
+
 ## [0.2.0](https://github.com/nickderobertis/llmlint/compare/v0.1.8...v0.2.0) - 2026-06-24
 
 ### Added
