@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.9](https://github.com/nickderobertis/llmlint/compare/v0.2.8...v0.2.9) - 2026-06-25
+
+### Documentation
+
+- let screenshots carry the report output in the README ([#45](https://github.com/nickderobertis/llmlint/pull/45))
+
 ## [0.2.8](https://github.com/nickderobertis/llmlint/compare/v0.2.7...v0.2.8) - 2026-06-25
 
 ### Added
