@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/nickderobertis/llmlint/compare/v0.2.3...v0.2.4) - 2026-06-25
+
+### Added
+
+- concise lint output by default, with -v for full detail and oneharness debug ([#34](https://github.com/nickderobertis/llmlint/pull/34))
+
 ## [0.2.3](https://github.com/nickderobertis/llmlint/compare/v0.2.2...v0.2.3) - 2026-06-25
 
 ### Fixed
