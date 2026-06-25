@@ -17,6 +17,8 @@
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
+//! - `LLMLINT_MOCK_DUMP_SCHEMA=<path>` — copy the generated `--schema` JSON so a
+//!   test can assert its shape (per-rule `name`/`rationale`/`holds` ordering).
 //! - `LLMLINT_MOCK_RUNLOG=<dir>` — record one file per invocation listing the
 //!   rule names it judged (comma-joined), so a test can count invocations and
 //!   assert how rules were batched into oneharness calls.
@@ -188,6 +190,15 @@ fn main() {
 
     let schema_path = arg_value(&args, "--schema").unwrap_or_default();
     let names = rule_names(&schema_path);
+
+    // Optionally copy the generated `--schema` JSON so a test can assert its
+    // shape (e.g. that each rule requires/orders `name`, `rationale`, `holds`).
+    // The real schema file is a tempfile llmlint deletes after the run.
+    if let Some(dump) = env::var_os("LLMLINT_MOCK_DUMP_SCHEMA") {
+        if let Ok(text) = fs::read_to_string(&schema_path) {
+            let _ = fs::write(PathBuf::from(dump), text);
+        }
+    }
 
     // Optionally record one file per invocation listing the rules it judged, so
     // a test can count oneharness calls and assert how rules were batched.

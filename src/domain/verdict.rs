@@ -32,12 +32,16 @@ impl Violation {
 }
 
 /// One judge's decision for one rule, as parsed from oneharness's validated
-/// `structured` output. Lenient on extra fields the model may add.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// `structured` output. Lenient on extra fields the model may add (e.g. the
+/// echoed `name`, which we already know from the map key).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleVerdict {
     pub holds: bool,
     #[serde(default)]
     pub violations: Vec<Violation>,
+    /// The judge's terse justification, when rationales are enabled for the rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
 }
 
 /// Final state of a rule after aggregating all of its judges' verdicts.
@@ -49,13 +53,35 @@ pub enum Outcome {
     Skipped,
 }
 
-/// The aggregated result for a single rule, ready for reporting.
+/// One judge's opinion, kept per rule so a multi-judge breakdown can show how the
+/// individual judges voted and why. Populated only when a rule runs more than one
+/// judge (a single judge is fully described by the rule's own `rationale`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct JudgeOpinion {
+    pub holds: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+}
+
+/// The aggregated result for a single rule, ready for reporting. Fields serialize
+/// in the same logical order the judge produced them: `name`, then the
+/// `rationale`, then the verdict (`outcome` + votes + per-judge breakdown +
+/// `violations`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuleOutcome {
     pub name: String,
+    /// A representative rationale for the winning verdict, when the rule had
+    /// rationales enabled. Carried in machine output for auditability and shown
+    /// in the human report (always for failures, and for every rule at `-v`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
     pub outcome: Outcome,
     pub votes_total: u32,
     pub votes_hold: u32,
+    /// Per-judge opinions, populated only for multi-judge rules so the report and
+    /// machine output can show each judge's result (and rationale).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub judges: Vec<JudgeOpinion>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub violations: Vec<Violation>,
 }
@@ -64,9 +90,11 @@ impl RuleOutcome {
     pub fn skipped(name: impl Into<String>) -> Self {
         RuleOutcome {
             name: name.into(),
+            rationale: None,
             outcome: Outcome::Skipped,
             votes_total: 0,
             votes_hold: 0,
+            judges: Vec::new(),
             violations: Vec::new(),
         }
     }

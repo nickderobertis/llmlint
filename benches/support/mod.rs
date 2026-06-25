@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use llmlint::domain::plan::ResolvedRule;
 use llmlint::domain::template::RuleSpec;
-use llmlint::domain::verdict::{Outcome, RuleOutcome, RuleVerdict, Violation};
+use llmlint::domain::verdict::{JudgeOpinion, Outcome, RuleOutcome, RuleVerdict, Violation};
 use llmlint::io::{assets, configfs};
 
 /// The built-in master prompt template — the same one a default `llmlint` run
@@ -40,6 +40,7 @@ pub fn example_rule_specs() -> Vec<RuleSpec> {
         .map(|r| RuleSpec {
             name: r.name,
             description: r.description,
+            rationale: true,
         })
         .collect()
 }
@@ -66,6 +67,7 @@ pub fn example_resolved() -> Vec<ResolvedRule> {
             judges: 1,
             agent: "default".into(),
             files: vec![PathBuf::from("src/lib.rs")],
+            rationale: true,
         })
         .collect()
 }
@@ -82,6 +84,7 @@ pub fn synthetic_resolved(n: usize, judges: u32) -> Vec<ResolvedRule> {
             judges,
             agent: "default".into(),
             files: vec![PathBuf::from("src/lib.rs")],
+            rationale: true,
         })
         .collect()
 }
@@ -104,6 +107,7 @@ pub fn synthetic_rule_specs(n: usize) -> Vec<RuleSpec> {
         .map(|i| RuleSpec {
             name: format!("rule_{i}"),
             description: format!("TRUE when rule {i} holds; FALSE otherwise."),
+            rationale: true,
         })
         .collect()
 }
@@ -111,6 +115,17 @@ pub fn synthetic_rule_specs(n: usize) -> Vec<RuleSpec> {
 /// `n` synthetic rule names for the schema-build scaling group.
 pub fn synthetic_rule_names(n: usize) -> Vec<String> {
     (0..n).map(|i| format!("rule_{i}")).collect()
+}
+
+/// `n` synthetic schema rules (rationale on) for the schema-build scaling group.
+pub fn synthetic_schema_rules(names: &[String]) -> Vec<llmlint::domain::schema::SchemaRule<'_>> {
+    names
+        .iter()
+        .map(|n| llmlint::domain::schema::SchemaRule {
+            name: n.as_str(),
+            rationale: true,
+        })
+        .collect()
 }
 
 /// `n` judge verdicts for one rule. When `dissent`, the verdicts split so the
@@ -132,6 +147,11 @@ pub fn judge_verdicts(n: usize, dissent: bool) -> Vec<RuleVerdict> {
                         message: Some(format!("violation {i}")),
                     }]
                 },
+                rationale: if holds {
+                    None
+                } else {
+                    Some(format!("rule {i} violated"))
+                },
             }
         })
         .collect()
@@ -144,16 +164,33 @@ pub fn outcomes(n: usize) -> Vec<RuleOutcome> {
         .map(|i| match i % 3 {
             0 => RuleOutcome {
                 name: format!("rule_{i}"),
+                rationale: Some(format!("rule {i} complies")),
                 outcome: Outcome::Pass,
                 votes_total: 1,
                 votes_hold: 1,
+                judges: vec![],
                 violations: vec![],
             },
             1 => RuleOutcome {
                 name: format!("rule_{i}"),
+                rationale: Some(format!("rule {i} violated at file_{i}.rs")),
                 outcome: Outcome::Fail,
                 votes_total: 3,
                 votes_hold: 1,
+                judges: vec![
+                    JudgeOpinion {
+                        holds: false,
+                        rationale: Some(format!("judge a: rule {i} violated")),
+                    },
+                    JudgeOpinion {
+                        holds: true,
+                        rationale: Some(format!("judge b: rule {i} held")),
+                    },
+                    JudgeOpinion {
+                        holds: false,
+                        rationale: Some(format!("judge c: rule {i} violated")),
+                    },
+                ],
                 violations: vec![Violation {
                     file: Some(format!("src/file_{i}.rs")),
                     line: Some(i as u64 + 1),

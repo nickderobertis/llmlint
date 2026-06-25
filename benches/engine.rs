@@ -96,7 +96,14 @@ fn bench_template_render(c: &mut Criterion) {
     let rules = support::example_rule_specs();
     let files = support::example_files();
     c.bench_function("template_render/examples", |b| {
-        b.iter(|| template::render(black_box(tmpl), black_box(&rules), black_box(&files)));
+        b.iter(|| {
+            template::render(
+                black_box(tmpl),
+                black_box(&rules),
+                black_box(&files),
+                black_box(true),
+            )
+        });
     });
 }
 
@@ -108,7 +115,7 @@ fn bench_template_render_scaling(c: &mut Criterion) {
     for n in [10usize, 100, 1000] {
         let rules = support::synthetic_rule_specs(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &rules, |b, rules| {
-            b.iter(|| template::render(tmpl, rules, &files));
+            b.iter(|| template::render(tmpl, rules, &files, true));
         });
     }
     group.finish();
@@ -119,9 +126,9 @@ fn bench_schema_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("schema_build");
     for n in [10usize, 100, 1000] {
         let names = support::synthetic_rule_names(n);
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        group.bench_with_input(BenchmarkId::from_parameter(n), &refs, |b, refs| {
-            b.iter(|| schema::build(black_box(refs)));
+        let rules = support::synthetic_schema_rules(&names);
+        group.bench_with_input(BenchmarkId::from_parameter(n), &rules, |b, rules| {
+            b.iter(|| schema::build(black_box(rules)));
         });
     }
     group.finish();

@@ -290,6 +290,73 @@ fn majority_vote_fails_when_most_judges_dissent() {
         ));
 }
 
+#[test]
+fn multi_judge_failure_shows_each_judges_result_and_rationale() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: voted_rule, description: \"{RULE}\", judges: 3 }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Three sequential judges with distinct rationales: violate, hold, violate
+    // -> majority fail. Each judge's result + rationale must be itemized.
+    let verdicts = p.write_verdicts(
+        r#"{"voted_rule": [
+            {"holds": false, "rationale": "raw SQL at lib.rs:1",
+                "violations": [{"file": "src/lib.rs", "line": 1, "message": "inline SQL"}]},
+            {"holds": true, "rationale": "uses the query layer"},
+            {"holds": false, "rationale": "string-built query"}
+        ]}"#,
+    );
+    let state = p.path().join("state");
+
+    let out = p
+        .lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // The machine contract carries every judge's holds + rationale, in order.
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let judges = v["rules"][0]["judges"].as_array().unwrap();
+    assert_eq!(judges.len(), 3);
+    assert_eq!(judges[0]["holds"], false);
+    assert_eq!(judges[0]["rationale"], "raw SQL at lib.rs:1");
+    assert_eq!(judges[1]["holds"], true);
+    assert_eq!(judges[1]["rationale"], "uses the query layer");
+
+    // The default human report itemizes each judge at the failure (no `-v`).
+    let state2 = p.path().join("state2");
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state2)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL voted_rule (1/3 judges held)",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 1 violated: raw SQL at lib.rs:1",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 2 held: uses the query layer",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 3 violated: string-built query",
+        ))
+        .stdout(predicate::str::contains("src/lib.rs:1: inline SQL"));
+}
+
 // ---- includes / plugin system --------------------------------------------
 
 #[test]
@@ -2040,4 +2107,492 @@ fn serial_wave_does_not_satisfy_the_concurrency_barrier() {
         .assert()
         .code(2)
         .stdout(predicate::str::contains("no structured output"));
+}
+
+// ---- rationales -----------------------------------------------------------
+
+/// The ordered key list of a JSON object (relies on `serde_json`'s
+/// `preserve_order`, which is unified on for this whole package).
+fn key_order(obj: &Value) -> Vec<String> {
+    obj.as_object().unwrap().keys().cloned().collect()
+}
+
+#[test]
+fn rationale_is_required_and_ordered_in_the_schema_by_default() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r_one, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r_one": true}"#);
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .success();
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    let rule = &schema["properties"]["r_one"];
+    // Strict field order: name -> rationale -> result, in both the property map
+    // and the `required` list, so next-token prediction anchors each verdict.
+    assert_eq!(
+        key_order(&rule["properties"]),
+        ["name", "rationale", "holds", "violations"]
+    );
+    assert_eq!(
+        rule["required"],
+        serde_json::json!(["name", "rationale", "holds"])
+    );
+    // The name is pinned to the exact rule so the judge can't mislabel it.
+    assert_eq!(rule["properties"]["name"]["const"], "r_one");
+}
+
+#[test]
+fn rationale_shows_for_failure_by_default_and_for_passes_at_verbose() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: passing_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: failing_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"passing_rule": {"holds": true, "rationale": "every import flows downward"},
+            "failing_rule": {"holds": false, "rationale": "raw SQL built in lib.rs:1",
+                "violations": [{"file": "src/lib.rs", "line": 1, "message": "inline SQL"}]}}"#,
+    );
+
+    // Default: the failure's rationale is shown; the passing rule (and its
+    // rationale) is not itemized.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL failing_rule"))
+        .stdout(predicate::str::contains(
+            "rationale: raw SQL built in lib.rs:1",
+        ))
+        .stdout(predicate::str::contains("every import flows downward").not());
+
+    // `-v`: every evaluated rule shows its rationale, passing ones included.
+    p.lint_v()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("PASS passing_rule"))
+        .stdout(predicate::str::contains(
+            "rationale: every import flows downward",
+        ))
+        .stdout(predicate::str::contains(
+            "rationale: raw SQL built in lib.rs:1",
+        ));
+}
+
+#[test]
+fn no_rationales_flag_drops_rationale_from_schema_and_report() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: bare_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Even if the harness returns a rationale anyway, `--no-rationales` must
+    // suppress it: llmlint is authoritative about whether one is shown.
+    let verdicts = p.write_verdicts(
+        r#"{"bare_rule": {"holds": false, "rationale": "leaked rationale",
+            "violations": [{"file": "src/lib.rs", "line": 1, "message": "nope"}]}}"#,
+    );
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .arg("--no-rationales")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL bare_rule"))
+        .stdout(predicate::str::contains("rationale:").not())
+        .stdout(predicate::str::contains("leaked rationale").not());
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    let rule = &schema["properties"]["bare_rule"];
+    assert_eq!(
+        key_order(&rule["properties"]),
+        ["name", "holds", "violations"]
+    );
+    assert_eq!(rule["required"], serde_json::json!(["name", "holds"]));
+}
+
+#[test]
+fn cli_rationales_flag_overrides_config_false() {
+    let p = Project::new();
+    // Config disables rationales; the CLI flag turns them back on (CLI wins).
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: false\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r_one, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r_one": true}"#);
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .arg("--rationales")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .success();
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["r_one"]["required"],
+        serde_json::json!(["name", "rationale", "holds"])
+    );
+}
+
+#[test]
+fn per_rule_rationale_overrides_the_session_default() {
+    let p = Project::new();
+    // Session default off, but one rule opts back in. Both share a file set, so
+    // they land in one judge call (one schema) where they must differ per rule.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: false\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: wants_one, description: \"{RULE}\", rationale: true }}\n  \
+             - {{ name: wants_none, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"wants_one": true, "wants_none": true}"#);
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .success();
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["wants_one"]["required"],
+        serde_json::json!(["name", "rationale", "holds"])
+    );
+    assert_eq!(
+        schema["properties"]["wants_none"]["required"],
+        serde_json::json!(["name", "holds"])
+    );
+}
+
+// ---- CLI overrides of top-level settings ---------------------------------
+
+#[test]
+fn cli_model_overrides_config_model() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  model: config-model\n\
+             rules:\n  - {{ name: m_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"m_rule": true}"#);
+    let args_dump = p.path().join("args.txt");
+
+    p.lint()
+        .arg("--model")
+        .arg("cli-model")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+
+    let args = fs::read_to_string(&args_dump).unwrap();
+    let model = args
+        .lines()
+        .skip_while(|l| *l != "--model")
+        .nth(1)
+        .expect("--model should be forwarded");
+    assert_eq!(model, "cli-model");
+}
+
+#[test]
+fn cli_schema_max_retries_overrides_config() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  schema_max_retries: 2\n\
+             rules:\n  - {{ name: retry_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"retry_rule": true}"#);
+    let args_dump = p.path().join("args.txt");
+
+    p.lint()
+        .arg("--schema-max-retries")
+        .arg("9")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+
+    let args = fs::read_to_string(&args_dump).unwrap();
+    let retries = args
+        .lines()
+        .skip_while(|l| *l != "--schema-max-retries")
+        .nth(1)
+        .expect("--schema-max-retries should be forwarded");
+    assert_eq!(retries, "9");
+}
+
+#[test]
+fn cli_prompt_template_file_overrides_config_template() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\n\
+         prompt_template: |\n  \
+           CONFIG_TEMPLATE_MARKER\n  \
+           {% for r in rules %}rule={{ r.name }}\n  \
+           {% endfor %}\n\
+         files:\n  include: [\"src/**\"]\n\
+         rules:\n  \
+           - name: templated_rule\n    \
+             description: \"TRUE when ok; FALSE otherwise.\"\n",
+    );
+    p.write(
+        "cli-template.md",
+        "CLI_TEMPLATE_MARKER\n{% for r in rules %}rule={{ r.name }}\n{% endfor %}",
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"templated_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--prompt-template")
+        .arg(p.path().join("cli-template.md"))
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("CLI_TEMPLATE_MARKER"), "system:\n{system}");
+    assert!(
+        !system.contains("CONFIG_TEMPLATE_MARKER"),
+        "system:\n{system}"
+    );
+    assert!(system.contains("rule=templated_rule"), "system:\n{system}");
+}
+
+#[test]
+fn plugin_top_level_scalars_resolve_nearest_root_wins() {
+    let p = Project::new();
+    // root -> mid -> leaf. The nearest config to set a scalar wins; a deeper
+    // plugin only fills what shallower configs left unset.
+    p.write(
+        "leaf.yml",
+        "rationales: true\noneharness:\n  model: leaf-model\n  timeout: 7\n\
+         prompt_template: leaf-tmpl\nrules: []\n",
+    );
+    p.write(
+        "mid.yml",
+        "plugins:\n  - ./leaf.yml\noneharness:\n  model: mid-model\nrules: []\n",
+    );
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nplugins:\n  - ./mid.yml\nrationales: false\n\
+             files:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: root_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+
+    let out = p.bare().arg("config").output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let cfg = &v["config"];
+    // root set rationales -> root wins over both plugins.
+    assert_eq!(cfg["rationales"], false);
+    // root left model unset; mid is nearer than leaf -> mid wins.
+    assert_eq!(cfg["oneharness"]["model"], "mid-model");
+    // only leaf set these -> they fill through.
+    assert_eq!(cfg["oneharness"]["timeout"], 7);
+    assert_eq!(cfg["prompt_template"], "leaf-tmpl");
+}
+
+#[test]
+fn config_rationales_false_drops_rationale_without_a_cli_flag() {
+    let p = Project::new();
+    // Rationales disabled in the config, no CLI flag at all.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: false\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: bare_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // The mock leaks a rationale; llmlint must still drop it.
+    let verdicts = p.write_verdicts(
+        r#"{"bare_rule": {"holds": false, "rationale": "leaked rationale",
+            "violations": [{"file": "src/lib.rs", "line": 1, "message": "nope"}]}}"#,
+    );
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL bare_rule"))
+        .stdout(predicate::str::contains("rationale:").not())
+        .stdout(predicate::str::contains("leaked rationale").not());
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["bare_rule"]["required"],
+        serde_json::json!(["name", "holds"])
+    );
+}
+
+#[test]
+fn per_rule_rationale_false_suppresses_only_that_rule_when_session_is_on() {
+    let p = Project::new();
+    // Session default is on (unset); one rule opts out. Both fail, so both are
+    // shown at the default level — the opted-out rule must omit its rationale.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: kept_in, description: \"{RULE}\" }}\n  \
+             - {{ name: opted_out, description: \"{RULE}\", rationale: false }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"kept_in": {"holds": false, "rationale": "kept reason",
+                "violations": [{"file": "src/lib.rs", "line": 1, "message": "k"}]},
+            "opted_out": {"holds": false, "rationale": "dropped reason",
+                "violations": [{"file": "src/lib.rs", "line": 2, "message": "o"}]}}"#,
+    );
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("rationale: kept reason"))
+        .stdout(predicate::str::contains("dropped reason").not());
+
+    // The schema agrees per rule: kept_in carries `rationale`, opted_out doesn't.
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["kept_in"]["required"],
+        serde_json::json!(["name", "rationale", "holds"])
+    );
+    assert_eq!(
+        schema["properties"]["opted_out"]["required"],
+        serde_json::json!(["name", "holds"])
+    );
+}
+
+#[test]
+fn json_output_carries_rationale_for_every_rule() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: pass_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: fail_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"pass_rule": {"holds": true, "rationale": "all good"},
+            "fail_rule": {"holds": false, "rationale": "broke at lib.rs:1",
+                "violations": [{"file": "src/lib.rs", "line": 1, "message": "x"}]}}"#,
+    );
+
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let by_name = |name: &str| {
+        v["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    // Both the pass and the fail carry their rationale in the machine contract.
+    assert_eq!(by_name("pass_rule")["rationale"], "all good");
+    assert_eq!(by_name("fail_rule")["rationale"], "broke at lib.rs:1");
+    // And `name` leads each rule object, mirroring the schema's field order.
+    assert_eq!(
+        key_order(&by_name("pass_rule"))[0..2],
+        ["name", "rationale"]
+    );
+}
+
+#[test]
+fn rationale_guidance_reaches_the_prompt_only_when_enabled() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r_one, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r_one": true}"#);
+    let dump = p.path().join("system.txt");
+
+    // Default (rationales on): the terse-rationale guidance is rendered in.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let on = fs::read_to_string(&dump).unwrap();
+    assert!(on.contains("## Rationale"), "system:\n{on}");
+    // The terseness guidance is present (the wrapped text is "terse and\npithy").
+    assert!(on.contains("terse"), "system:\n{on}");
+
+    // `--no-rationales`: the guidance block is gone.
+    p.lint()
+        .arg("--no-rationales")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let off = fs::read_to_string(&dump).unwrap();
+    assert!(!off.contains("## Rationale"), "system:\n{off}");
 }

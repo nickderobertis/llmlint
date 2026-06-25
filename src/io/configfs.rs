@@ -76,9 +76,13 @@ pub fn parse(text: &str, origin: &str) -> Result<Config> {
 
 /// Load and merge config from explicit entry files (from `--config`), or, when
 /// `entries` is empty, the nearest discovered config above `cwd`. `plugins`
-/// (local files or remote/versioned URLs) are merged recursively; the first
-/// entry provides the top-level scalars, the rest contribute rules and agents.
-/// Each pulled-in config's own `plugins` are resolved transitively. Diamonds and
+/// (local files or remote/versioned URLs) are merged recursively and **nearer
+/// the root wins**: a config's own top-level settings take precedence over its
+/// plugins', a plugin's over its own plugins', and an earlier-listed plugin over
+/// a later sibling; a plugin only fills settings the including config left unset
+/// (see [`Config::merge_plugin`]). Rules and agents from every config are
+/// contributed. Each pulled-in config's own `plugins` are resolved transitively.
+/// Diamonds and
 /// cycles are de-duplicated by absolute path / plugin key, and the transitive
 /// depth is bounded by `MAX_PLUGIN_DEPTH`.
 pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
@@ -214,7 +218,7 @@ fn load_node(
 
     match acc {
         None => *acc = Some(cfg),
-        Some(a) => a.merge_rules_and_agents(cfg),
+        Some(a) => a.merge_plugin(cfg),
     }
 
     for spec in child_specs {
@@ -382,6 +386,40 @@ rules:
             .map(|r| r.name.as_str())
             .collect();
         assert_eq!(names, ["root_rule", "mid_rule", "leaf_rule"]);
+    }
+
+    #[test]
+    fn top_level_scalars_resolve_nearest_root_wins() {
+        // root -> mid -> leaf. Each sets a different scalar; the nearest config to
+        // set one wins, and a deeper plugin only fills what shallower ones left
+        // unset.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("leaf.yml"),
+            "rationales: true\noneharness:\n  model: leaf-model\n  timeout: 7\n\
+             prompt_template: leaf-tmpl\nrules: []\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("mid.yml"),
+            "plugins:\n  - ./leaf.yml\noneharness:\n  model: mid-model\nrules: []\n",
+        )
+        .unwrap();
+        let root = dir.path().join("llmlint.yml");
+        fs::write(
+            &root,
+            "version: 1\nplugins:\n  - ./mid.yml\nrationales: false\nrules: []\n",
+        )
+        .unwrap();
+
+        let cfg = load(&[root], dir.path()).unwrap().config;
+        // root set rationales -> root wins over both plugins.
+        assert_eq!(cfg.rationales, Some(false));
+        // root left model unset; mid is nearer than leaf -> mid wins.
+        assert_eq!(cfg.oneharness.model.as_deref(), Some("mid-model"));
+        // only leaf set these -> they fill through.
+        assert_eq!(cfg.oneharness.timeout, Some(7));
+        assert_eq!(cfg.prompt_template.as_deref(), Some("leaf-tmpl"));
     }
 
     #[test]

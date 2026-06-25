@@ -22,6 +22,12 @@ pub struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+// `LintArgs` is the largest variant by design (it carries every lint flag) and
+// `Cli` flattens the same struct for the default path, so boxing it here would
+// just add indirection to a value parsed once at startup — and clap's derive
+// doesn't flatten through a `Box`. The size gap is harmless for a short-lived
+// CLI enum.
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Run the LLM-as-judge lint (this is the default).
     Lint(LintArgs),
@@ -50,6 +56,32 @@ pub struct LintArgs {
     /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN` or PATH).
     #[arg(long = "oneharness-bin", value_name = "PATH")]
     pub oneharness_bin: Option<String>,
+
+    /// Override the master prompt template with this file's contents (wins over
+    /// the config's `prompt_template`).
+    #[arg(long = "prompt-template", value_name = "PATH")]
+    pub prompt_template: Option<PathBuf>,
+
+    /// Default judge model, forwarded to oneharness (overrides config
+    /// `oneharness.model`; a per-agent `model` still wins for that agent).
+    #[arg(long = "model", value_name = "NAME")]
+    pub model: Option<String>,
+
+    /// Schema-validation re-prompt budget (oneharness `--schema-max-retries`;
+    /// overrides config `oneharness.schema_max_retries`).
+    #[arg(long = "schema-max-retries", value_name = "N")]
+    pub schema_max_retries: Option<u32>,
+
+    /// Require a `rationale` for every rule's verdict (the default). Overrides
+    /// the config's `rationales`; a per-rule `rationale` still wins. Use
+    /// `--no-rationales` to turn rationales off.
+    #[arg(long = "rationales", overrides_with = "no_rationales", action = clap::ArgAction::SetTrue)]
+    pub rationales: bool,
+
+    /// Disable rationales for this run (overrides config; a per-rule `rationale`
+    /// still wins). The inverse of `--rationales`.
+    #[arg(long = "no-rationales", overrides_with = "rationales", action = clap::ArgAction::SetTrue)]
+    pub no_rationales: bool,
 
     /// Only run rules assigned to this agent (`default` for unassigned rules).
     #[arg(long = "agent", value_name = "NAME")]
@@ -81,6 +113,22 @@ pub struct LintArgs {
     /// Directory to lint from (config discovery + the harness cwd). Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+}
+
+impl LintArgs {
+    /// The rationale choice from the CLI, or `None` when neither
+    /// `--rationales`/`--no-rationales` was given (so the config decides). The
+    /// two flags `overrides_with` each other, so the last one on the command
+    /// line wins and at most one bool is set.
+    pub fn rationales(&self) -> Option<bool> {
+        if self.no_rationales {
+            Some(false)
+        } else if self.rationales {
+            Some(true)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]

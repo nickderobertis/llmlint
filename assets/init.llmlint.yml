@@ -17,6 +17,14 @@ files:
   exclude:
     - "**/target/**"
 
+# Whether judges must justify each verdict with a short `rationale` (default
+# true). Rationales improve auditability (a record of *why* each verdict landed),
+# debugging (you see the judge's reasoning, not just pass/fail), and reliability
+# (the judge reasons before concluding) — but they cost extra output tokens on
+# every request. Turn off to save tokens (`rationales: false`, or
+# `--no-rationales`); override per rule with a rule-level `rationale:`.
+rationales: true
+
 # Plugins / shared rule sets, merged in one line each. An entry is a config
 # file: a local path or a URL (`http(s)://`, `file://`). Pin a URL to a version
 # with `@` (e.g. `…/rules.yml@1.2.3`); a pinned URL is fetched and cached once

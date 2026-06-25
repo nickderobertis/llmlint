@@ -20,6 +20,8 @@ reporting). Add a journey here when a user-facing behavior lands.
   — force oneharness failure shapes.
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
+- `LLMLINT_MOCK_DUMP_SCHEMA=<file>` — copy the generated `--schema` JSON, to
+  assert its shape (e.g. each rule's `name`/`rationale`/`holds` ordering).
 - `LLMLINT_MOCK_RUNLOG=<dir>` — one file per invocation listing the rules it
   judged, to count oneharness calls and assert how rules were batched.
 - `LLMLINT_MOCK_BARRIER=<dir>` (+ `_N`, `_MS`) — a rendezvous that releases only
@@ -77,6 +79,28 @@ logic is also covered hermetically via `file://` plugins.
   `model` overriding the global default; multiple oneharness configs warn and use
   the first; `--oneharness-bin` resolves from the env, and a config
   `oneharness.bin` resolves the binary with no flag or env at all.
+- Rationales (on by default): the generated schema requires each rule to emit
+  `name` -> `rationale` -> `holds` -> `violations` in that order, with `name`
+  pinned to the rule, and the default template renders the terse-rationale
+  guidance into the prompt (absent under `--no-rationales`); the human report
+  shows a rule's rationale for every failure by default and for every evaluated
+  rule at `-v`, and `--format json` carries it (name-first) for every rule.
+  `--no-rationales` and config `rationales: false` (with no flag) both drop
+  `rationale` from the schema and the report — and llmlint suppresses a rationale
+  even when the harness leaks one; a CLI `--rationales` overrides config
+  `rationales: false`; a per-rule `rationale` overrides the session default in
+  both directions within one batch (opt-in under a disabled session, opt-out
+  under an enabled one). For a multi-judge rule, the report and `--format json`
+  itemize *each* judge's result (`held`/`violated`) and rationale — at every
+  failure and for every evaluated rule at `-v` — so judge disagreement is
+  visible, not collapsed to one representative.
+- Every top-level setting also has a CLI override that wins over the config:
+  `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
+  contents replace the config's template) are each asserted to override their
+  config counterparts. Across plugins, the nearest config to the root wins for
+  top-level scalars (template, files, oneharness, rationales) and a deeper plugin
+  only fills what shallower configs left unset — asserted end to end via
+  `llmlint config` on a root -> mid -> leaf chain.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via

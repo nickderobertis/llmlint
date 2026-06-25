@@ -114,6 +114,9 @@ files:
   include: ["src/**/*.rs"]
   exclude: ["**/generated/**"]
 
+# Require a short `rationale` for every verdict (default true). See Rationales below.
+rationales: true
+
 # Pull in shared rule sets / plugins with one line each. An entry is a local
 # path or a URL (`http(s)://`, `file://`); pin a URL to a version with `@`.
 plugins:
@@ -139,6 +142,7 @@ rules:
       inline.
     agent: architecture        # optional; omit to use the default agent
     judges: 3                  # optional; independent judges, majority wins (default 1)
+    rationale: true            # optional; override the session-wide `rationales` for this rule
     files:                     # optional; override the target files for this rule
       include: ["src/api/**"]
 ```
@@ -164,12 +168,13 @@ yourself. The top-level `prompt_template` *replaces* the master template; an
 agent's `prompt_template` is **appended** to it before rendering, so reviewer
 context you add per-agent sees the same variables.
 
-Exactly two variables are in scope when a template renders:
+Three variables are in scope when a template renders:
 
 | Variable | Type | Description |
 | --- | --- | --- |
 | `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
-| `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output) and `.description` (the invariant to judge). |
+| `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), and `.rationale` (whether this rule wants a justification). |
+| `rationales` | bool | True when any rule in this batch wants a rationale — gate the rationale guidance on it. |
 
 ```jinja
 ## Target files
@@ -184,6 +189,68 @@ Exactly two variables are in scope when a template renders:
 
 A run is one `(agent, file set, judge)` batch, so `rules` is that batch's slice
 (see `batch_size`), not necessarily every rule in the config.
+
+### Rationales
+
+By default each judge must justify every verdict with a short **rationale**. The
+structured output for each rule is ordered deliberately — the judge echoes the
+rule **name**, writes the **rationale**, then commits to the **result**
+(`holds` + any `violations`):
+
+```jsonc
+{
+  "no_inline_sql": {
+    "name": "no_inline_sql",                       // 1. anchor on the rule
+    "rationale": "raw SQL built inline in db.rs:42, not via the query layer",  // 2. reason
+    "holds": false,                                // 3. conclude
+    "violations": [{ "file": "src/db.rs", "line": 42, "message": "inline SQL" }]
+  }
+}
+```
+
+Reasoning *before* concluding (and naming the rule first) keeps each verdict
+consistent and targeted — it leans on the model's next-token prediction so the
+`holds` follows from the evidence just written, not the other way round. Beyond
+that, rationales buy you:
+
+- **Auditability** — a durable record of *why* each verdict landed, carried in
+  `--format json` for every rule (pass or fail).
+- **Debugging** — when a verdict looks wrong, you see the judge's reasoning, not
+  just a bare pass/fail.
+- **Reliability** — verdicts are measurably steadier when the judge must commit
+  to evidence first.
+
+The cost is **extra output tokens on every request**. Turn rationales off to
+save tokens:
+
+```yaml
+rationales: false            # session-wide default (CLI --no-rationales overrides it)
+
+rules:
+  - name: handlers_delegate_to_services
+    description: ...
+    rationale: true           # …but keep them for this high-stakes rule
+```
+
+Precedence, lowest to highest: the session default `rationales` (default `true`)
+→ a per-rule `rationale` → the `--rationales` / `--no-rationales` CLI flags
+(which set the session default for the run; a per-rule `rationale` still wins).
+In the human report, a rule's rationale is shown for every **failure** by
+default, and for **every evaluated rule** at `-v`. The default prompt template
+asks for rationales that are terse and pithy — the fewest tokens that still cite
+the evidence — so the token cost stays small.
+
+For a **multi-judge** rule (`judges: N`), the report and `--format json` show
+**each judge's** result and rationale, not just one representative — so you can
+see exactly where the judges agreed or split:
+
+```text
+FAIL no_inline_sql (1/3 judges held)
+     judge 1 violated: raw SQL concatenated at db.rs:3
+     judge 2 held: all access goes through the query builder
+     judge 3 violated: f-string SQL in the helper
+     src/db.rs:3: inline SQL
+```
 
 ### Judges and voting
 
@@ -202,8 +269,13 @@ binary with `--oneharness-bin` or `$LLMLINT_ONEHARNESS_BIN`.
 ### Plugins (shared rule sets)
 
 `plugins` pulls other llmlint configs into this one — their rules and agents are
-merged in; the root config keeps the top-level settings (template, files,
-oneharness). Each entry is a config file:
+merged in. For the **top-level settings** (template, files, oneharness,
+rationales), **the nearer config to the root wins**: your config's settings take
+precedence over a plugin's, a plugin's over its own plugins', and an
+earlier-listed plugin over a later sibling. A plugin only *fills in* a setting
+the including config left unset, so a shared plugin can ship sensible defaults
+without overriding what you set locally. The CLI overrides all of them (see
+Commands). Each entry is a config file:
 
 - a **local path** (`./team-rules.yml`), resolved relative to the including file;
 - a **URL** — `http(s)://` (fetched over HTTPS) or `file://` (read directly).
@@ -232,7 +304,10 @@ The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 - `llmlint [FILES...]` — lint (the default). `--format human|json`, `--agent`,
   `--rule`, `--max-parallel`, `--timeout`, `--cwd`. Target individual rules with
   `--rule NAME` (repeatable) or a whole group with `--agent NAME`; an unknown
-  rule/agent name is an exit-2 error that lists the available names.
+  rule/agent name is an exit-2 error that lists the available names. Every
+  top-level setting also has a flag that wins over the config:
+  `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
+  `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`.
 - `llmlint init` — write a starter config (`--with-template`, `--global`, `--force`).
 - `llmlint config` — print the merged config and its sources as JSON.
 - `llmlint doctor` — check that oneharness is installed and reachable.
