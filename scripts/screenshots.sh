@@ -125,7 +125,11 @@ for view in "${views[@]}"; do
   fi
 
   image="$shot_name-$view.svg"
-  freeze "$ansi" "${freeze_flags[@]}" -o "$SHOTS_OUT/$image" >&2
+  # `< /dev/null`: freeze reads stdin whenever it is not a character device
+  # (its IsPipe check), so under CI's piped stdin it would ignore the file
+  # argument and render empty input ("No input"). Pointing stdin at /dev/null
+  # (a char device) forces it down the read-the-file path on every runner.
+  freeze "$ansi" "${freeze_flags[@]}" -o "$SHOTS_OUT/$image" </dev/null >&2
   hash="$(sha256 "$SHOTS_OUT/$image")"
   # captures.json identity is `name + JSON.stringify(toggles)`; emit toggles with
   # the same compact, key-sorted shape screencomp expects.
