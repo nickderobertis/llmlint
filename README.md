@@ -130,6 +130,37 @@ rules:
 - **Names** are unique, terse, and descriptive (`^[A-Za-z][A-Za-z0-9_]*$`); they
   become the JSON keys of the structured output.
 
+### The prompt template
+
+llmlint renders the judge's system prompt from a
+[minijinja](https://docs.rs/minijinja) (Jinja2-style) template. The bundled
+default lives in [`assets/default_template.md`](assets/default_template.md); embed
+a copy to customize with `llmlint init --with-template`, or set `prompt_template`
+yourself. The top-level `prompt_template` *replaces* the master template; an
+agent's `prompt_template` is **appended** to it before rendering, so reviewer
+context you add per-agent sees the same variables.
+
+Exactly two variables are in scope when a template renders:
+
+| Variable | Type | Description |
+| --- | --- | --- |
+| `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
+| `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output) and `.description` (the invariant to judge). |
+
+```jinja
+## Target files
+{% for f in files %}- {{ f }}
+{% endfor %}
+## Rules to evaluate
+{% for r in rules %}### {{ r.name }}
+
+{{ r.description }}
+{% endfor %}
+```
+
+A run is one `(agent, file set, judge)` batch, so `rules` is that batch's slice
+(see `batch_size`), not necessarily every rule in the config.
+
 ### Judges and voting
 
 `judges: N` runs a rule through `N` independent judges and takes the **majority**
