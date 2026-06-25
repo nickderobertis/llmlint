@@ -63,6 +63,13 @@ pub struct LintArgs {
     #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
     pub format: OutputFormat,
 
+    /// Increase output detail. By default, failing rules (with their locations)
+    /// and the summary line are shown. `-v` additionally itemizes every passed
+    /// and skipped rule, and prints the oneharness debug view (exact command +
+    /// result) to stderr. Ignored for `--format json`.
+    #[arg(long = "verbose", short = 'v', action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
     /// Maximum judges to run in parallel.
     #[arg(long = "max-parallel", value_name = "N")]
     pub max_parallel: Option<usize>,

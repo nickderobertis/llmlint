@@ -34,7 +34,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
         let report = Report::new(Vec::new(), Vec::new());
-        emit(&report, args.format);
+        emit(&report, args.format, args.verbose);
         return Ok(report.exit_code());
     }
 
@@ -81,6 +81,11 @@ pub fn run(args: LintArgs) -> Result<i32> {
 
     let mut verdicts: BTreeMap<String, Vec<RuleVerdict>> = BTreeMap::new();
     let mut run_errors: Vec<String> = Vec::new();
+    // At `-v` we collect each oneharness invocation's exact command + raw result
+    // and print them to stderr (the debug view); off by default to avoid the
+    // cost of formatting the full command line on every judge.
+    let want_trace = args.verbose >= 1;
+    let mut traces: Vec<(String, oneharness::RunTrace)> = Vec::new();
 
     // Bind Copy references so the per-judge `move` closures capture borrows
     // (which outlive the scope) rather than moving the owned `client`/`cwd`.
@@ -99,31 +104,30 @@ pub fn run(args: LintArgs) -> Result<i32> {
                             timeout,
                             oh_config_ref,
                             global_model,
+                            want_trace,
                         )
                     })
                 })
                 .collect();
             for (run, handle) in wave.iter().zip(handles) {
-                match handle.join().expect("judge thread panicked") {
+                let (trace, result) = handle.join().expect("judge thread panicked");
+                if let Some(trace) = trace {
+                    traces.push((judge_label(run), trace));
+                }
+                match result {
                     Ok(map) => {
                         for (name, verdict) in map {
                             verdicts.entry(name).or_default().push(verdict);
                         }
                     }
-                    Err(e) => run_errors.push(format!(
-                        "agent {} judge {} [{}]: {}",
-                        run.agent,
-                        run.judge_index,
-                        run.rules
-                            .iter()
-                            .map(|r| r.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        e
-                    )),
+                    Err(e) => run_errors.push(format!("{}: {}", judge_label(run), e)),
                 }
             }
         });
+    }
+
+    if want_trace {
+        print_traces(&traces);
     }
 
     let mut outcomes: Vec<RuleOutcome> = verdicts
@@ -135,7 +139,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     }
 
     let report = Report::new(outcomes, run_errors);
-    emit(&report, args.format);
+    emit(&report, args.format, args.verbose);
     Ok(report.exit_code())
 }
 
@@ -203,6 +207,42 @@ fn to_slash(path: &Path) -> String {
         .join("/")
 }
 
+/// A stable per-judge label used for both error messages and the `-v` debug
+/// trace headers: `agent <name> judge <i> [<rule>, ...]`.
+fn judge_label(run: &JudgeRun) -> String {
+    format!(
+        "agent {} judge {} [{}]",
+        run.agent,
+        run.judge_index,
+        run.rules
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Print the oneharness debug view (exact command + raw result per judge) to
+/// stderr, keeping the parseable report on stdout. Shown at `-v`.
+fn print_traces(traces: &[(String, oneharness::RunTrace)]) {
+    for (label, trace) in traces {
+        eprintln!("\n# oneharness: {label}");
+        eprintln!("$ {}", trace.command);
+        if let Some(code) = trace.exit_code {
+            eprintln!("exit: {code}");
+        }
+        let stdout = trace.stdout.trim();
+        if !stdout.is_empty() {
+            eprintln!("result:\n{stdout}");
+        }
+        let stderr = trace.stderr.trim();
+        if !stderr.is_empty() {
+            eprintln!("stderr:\n{stderr}");
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn execute(
     client: &oneharness::Client,
     run: &JudgeRun,
@@ -210,9 +250,18 @@ fn execute(
     timeout: u64,
     oh_config: Option<&Path>,
     global_model: Option<&str>,
-) -> Result<BTreeMap<String, RuleVerdict>> {
+    want_trace: bool,
+) -> (
+    Option<oneharness::RunTrace>,
+    Result<BTreeMap<String, RuleVerdict>>,
+) {
     let files_str: Vec<String> = run.files.iter().map(|p| to_slash(p)).collect();
-    let system = template::render(&run.template, &run.rules, &files_str)?;
+    let system = match template::render(&run.template, &run.rules, &files_str) {
+        Ok(s) => s,
+        // A render failure happens before any oneharness call, so there is no
+        // command to trace.
+        Err(e) => return (None, Err(e)),
+    };
     let names: Vec<&str> = run.rules.iter().map(|r| r.name.as_str()).collect();
     let schema = schema::build(&names);
     let req = oneharness::RunRequest {
@@ -227,12 +276,17 @@ fn execute(
         oneharness_config: oh_config,
         no_config: false,
     };
-    client.run(&req)
+    if want_trace {
+        let (trace, result) = client.run_with_trace(&req);
+        (Some(trace), result)
+    } else {
+        (None, client.run(&req))
+    }
 }
 
-fn emit(report: &Report, format: OutputFormat) {
+fn emit(report: &Report, format: OutputFormat, verbosity: u8) {
     match format {
-        OutputFormat::Human => print!("{}", report.to_human()),
+        OutputFormat::Human => print!("{}", report.to_human(verbosity)),
         OutputFormat::Json => {
             println!(
                 "{}",

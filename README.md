@@ -15,15 +15,34 @@ files and decide, and reports the violations — with file and line numbers wher
 they can be pinned down. Because the gate is "just a config file," llmlint drops
 into CI next to your other linters.
 
+By default llmlint reports the failing rules (with the locations it could pin
+down) and a one-line summary — passing and skipped rules are just counted:
+
 ```console
 $ llmlint
 FAIL handlers_delegate_to_services (2/3 judges held)
      src/api/users.rs:48: user creation logic lives in the handler, not a service
+
+3 rules: 1 passed, 1 failed, 1 skipped
+```
+
+Add `-v` to itemize *every* rule (passed and skipped too) and to print the
+oneharness debug view — the exact `oneharness run …` command and the raw result
+for each judge — to **stderr**, so the report on stdout stays clean:
+
+```console
+$ llmlint -v
 PASS modules_have_doc_comments
+FAIL handlers_delegate_to_services (2/3 judges held)
+     src/api/users.rs:48: user creation logic lives in the handler, not a service
 SKIP no_todo_without_ticket (no files matched)
 
 3 rules: 1 passed, 1 failed, 1 skipped
 ```
+
+The exit code is unaffected by verbosity (`0` all-pass, `1` a violation, `2`
+the run couldn't complete); operational errors are always shown. Use
+`--format json` for the full machine-readable report.
 
 ## How it works
 
