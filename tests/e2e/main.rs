@@ -63,7 +63,7 @@ impl Project {
     }
 }
 
-const RULE: &str = "TRUE when ok; FALSE otherwise.";
+const RULE: &str = "true when ok; false otherwise.";
 
 /// The bundled config-lint plugin, referenced by URL + version pin (resolved
 /// offline from the binary's embedded copy).

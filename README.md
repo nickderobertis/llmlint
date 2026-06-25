@@ -110,8 +110,8 @@ agents:
 rules:
   - name: handlers_delegate_to_services   # unique, terse, descriptive
     description: |
-      TRUE when every HTTP handler delegates business logic to a service layer.
-      FALSE when a handler performs business logic (DB queries, domain rules)
+      true when every HTTP handler delegates business logic to a service layer.
+      false when a handler performs business logic (DB queries, domain rules)
       inline.
     agent: architecture        # optional; omit to use the default agent
     judges: 3                  # optional; independent judges, majority wins (default 1)

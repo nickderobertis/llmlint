@@ -249,7 +249,7 @@ agents:
     model: opus
 rules:
   - name: only_rule
-    description: "TRUE when ok; FALSE otherwise."
+    description: "true when ok; false otherwise."
 "#;
         let cfg = parse(yaml, "test").unwrap();
         assert_eq!(cfg.agents["a"].prompt_template.as_deref(), Some("be terse"));
@@ -285,7 +285,7 @@ rules:
         let dir = tempdir().unwrap();
         fs::write(
             dir.path().join("team.yml"),
-            "rules:\n  - name: team_rule\n    description: \"TRUE when ok; FALSE otherwise.\"\n",
+            "rules:\n  - name: team_rule\n    description: \"true when ok; false otherwise.\"\n",
         )
         .unwrap();
         let plugin = format!("{}@1", crate::io::assets::CONFIG_LINT_URL);
@@ -294,7 +294,7 @@ rules:
             &root,
             format!(
                 "version: 1\nplugins:\n  - ./team.yml\n  - {plugin}\nrules:\n  \
-                 - name: root_rule\n    description: \"TRUE when ok; FALSE otherwise.\"\n"
+                 - name: root_rule\n    description: \"true when ok; false otherwise.\"\n"
             ),
         )
         .unwrap();

@@ -212,7 +212,7 @@ mod tests {
     fn rule(name: &str) -> Rule {
         Rule {
             name: name.into(),
-            description: "TRUE when ok; FALSE otherwise.".into(),
+            description: "true when ok; false otherwise.".into(),
             agent: None,
             judges: None,
             files: None,
