@@ -8,7 +8,7 @@
         {
           "file": "src/api/users.rs",
           "line": 48,
-          "message": "user creation logic lives in the handler, not a service"
+          "message": "DEMO: user creation logic lives in the handler, not a service"
         }
       ]
     },
@@ -19,7 +19,7 @@
         {
           "file": "src/api/users.rs",
           "line": 48,
-          "message": "user creation logic lives in the handler, not a service"
+          "message": "DEMO: user creation logic lives in the handler, not a service"
         }
       ]
     },
