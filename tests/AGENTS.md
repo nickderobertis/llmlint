@@ -76,7 +76,9 @@ logic is also covered hermetically via `file://` plugins.
   flag so oneharness falls back to its own configured default harness.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
-  self-lint is clean.
+  self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`
+  modeline pointing at the published config schema (`assets/llmlint.schema.json`,
+  pinned to `domain::config_schema::build()` so it can't drift from the model).
 - `config` prints the merged config + sources and rejects an invalid config;
   `doctor` reports the oneharness version and fails clearly when it is missing.
 - `--format json` is a stable machine contract: a passing run lists rule names; a

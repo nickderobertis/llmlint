@@ -19,6 +19,13 @@ pub const CONFIG_LINT_URL: &str =
 /// Starter config body written by `llmlint init`.
 pub const INIT_CONFIG: &str = include_str!("../../assets/init.llmlint.yml");
 
+/// The public JSON Schema for an llmlint config file. Bundled here so it ships
+/// in the crate and is pinned by a test to the generator in
+/// [`crate::domain::config_schema`]; published at
+/// [`crate::domain::config_schema::SCHEMA_URL`] for the `$schema` modeline that
+/// `llmlint init` writes.
+pub const CONFIG_SCHEMA: &str = include_str!("../../assets/llmlint.schema.json");
+
 /// If `url` (without any `@version` suffix) names a plugin bundled into the
 /// binary, return its embedded YAML. Bundled plugins resolve offline — no
 /// network, no cache — so the shipped default config always works.
@@ -49,5 +56,8 @@ mod tests {
         // The starter config references the bundled plugin by URL.
         assert!(INIT_CONFIG.contains("config_lint.yml"));
         assert!(INIT_CONFIG.contains("plugins:"));
+        // The bundled config schema is valid JSON with the published `$id`.
+        let schema: serde_json::Value = serde_json::from_str(CONFIG_SCHEMA).unwrap();
+        assert_eq!(schema["$id"], crate::domain::config_schema::SCHEMA_URL);
     }
 }
