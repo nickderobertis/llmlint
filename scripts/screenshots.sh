@@ -89,13 +89,34 @@ for view in "${views[@]}"; do
   verbosity=()
   [ "$view" = "verbose" ] && verbosity=(-v)
   ansi="$tmp_state/$view.ansi"
+  err="$tmp_state/$view.err"
   # `--color always` forces ANSI through the pipe; `--max-parallel 1` keeps the
   # multi-judge order stable so the per-judge lines render identically every run.
+  # `-c` pins the fixture config so upward config discovery never picks up a
+  # parent llmlint.yml from wherever the repo happens to be checked out (CI).
+  set +e
   ( cd "$fixture" \
       && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
          LLMLINT_MOCK_STATE="$tmp_state/state-$view" \
-         "$llmlint_bin" --oneharness-bin "$mock_bin" --color always \
-         --max-parallel 1 "${verbosity[@]}" ) >"$ansi" 2>/dev/null || true
+         "$llmlint_bin" -c "$fixture/llmlint.yml" --oneharness-bin "$mock_bin" \
+         --color always --max-parallel 1 "${verbosity[@]}" ) >"$ansi" 2>"$err"
+  rc=$?
+  set -e
+
+  # A failing lint exits 1 by design (the fixture has a failing rule), so the
+  # exit code is not the signal — the presence of ANSI is. freeze needs the
+  # escape codes to render terminal mode; without them it dies with an opaque
+  # "Language Unknown", so guard it here and surface what llmlint actually did.
+  if ! grep -q $'\033' "$ansi"; then
+    {
+      echo "screenshots: scene '$view' produced no ANSI (llmlint exit $rc) — cannot render."
+      echo "---- llmlint stdout ($(wc -c <"$ansi") bytes) ----"
+      cat -v "$ansi"
+      echo "---- llmlint stderr ----"
+      cat "$err"
+    } >&2
+    exit 1
+  fi
 
   image="$shot_name-$view.svg"
   freeze "$ansi" "${freeze_flags[@]}" -o "$SHOTS_OUT/$image" >&2
