@@ -18,29 +18,11 @@ into CI next to your other linters.
 By default llmlint reports the failing rules (with the locations it could pin
 down) and a one-line summary — passing and skipped rules are just counted:
 
-```console
-$ llmlint
-FAIL handlers_delegate_to_services (2/3 judges held)
-     src/api/users.rs:48: user creation logic lives in the handler, not a service
-
-3 rules: 1 passed, 1 failed, 1 skipped
-```
-
 ![llmlint's default report: a red FAIL with its pinned violation and a colorized summary line](docs/screenshots/lint-report-default.svg)
 
 Add `-v` to itemize *every* rule (passed and skipped too) and to print the
 oneharness debug view — the exact `oneharness run …` command and the raw result
 for each judge — to **stderr**, so the report on stdout stays clean:
-
-```console
-$ llmlint -v
-PASS modules_have_doc_comments
-FAIL handlers_delegate_to_services (2/3 judges held)
-     src/api/users.rs:48: user creation logic lives in the handler, not a service
-SKIP no_todo_without_ticket (no files matched)
-
-3 rules: 1 passed, 1 failed, 1 skipped
-```
 
 ![llmlint's verbose report: green PASS, red FAIL, and yellow SKIP lines above the summary](docs/screenshots/lint-report-verbose.svg)
 
