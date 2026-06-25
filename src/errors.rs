@@ -23,6 +23,9 @@ pub enum Error {
     #[error("invalid config: {0}")]
     InvalidConfig(String),
 
+    #[error("{0}")]
+    UnknownFilter(String),
+
     #[error("invalid plugin spec: {0}")]
     PluginSpec(String),
 
@@ -147,6 +150,9 @@ mod tests {
         assert!(Error::Template("bad".into())
             .to_string()
             .contains("template error"));
+        assert!(Error::UnknownFilter("no rule named \"x\"".into())
+            .to_string()
+            .contains("no rule named"));
         assert!(Error::ConfigParse {
             path: "f".into(),
             message: "m".into()

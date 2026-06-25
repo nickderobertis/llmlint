@@ -859,6 +859,32 @@ fn lint_project() -> Project {
 
 #[test]
 fn empty_rule_selection_exits_zero() {
+    // A *valid* but empty selection: `default_rule` exists and agent `special`
+    // exists, but the rule isn't assigned to that agent, so they don't
+    // intersect. That is a legitimate "nothing to run" -> exit 0, distinct from
+    // a typo'd name (which is an error; see below).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  special:\n    \
+             harness: claude-code\nrules:\n  \
+             - {{ name: default_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.lint()
+        .arg("--rule")
+        .arg("default_rule")
+        .arg("--agent")
+        .arg("special")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 rules"));
+}
+
+#[test]
+fn unknown_rule_name_is_an_error() {
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -872,8 +898,32 @@ fn empty_rule_selection_exits_zero() {
         .arg("--rule")
         .arg("nonexistent")
         .assert()
-        .success()
-        .stdout(predicate::str::contains("0 rules"));
+        .code(2)
+        .stderr(predicate::str::contains("no rule named nonexistent"))
+        .stderr(predicate::str::contains("available rules: only_rule"));
+}
+
+#[test]
+fn unknown_agent_name_is_an_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  special:\n    \
+             harness: claude-code\nrules:\n  \
+             - {{ name: only_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.lint()
+        .arg("--agent")
+        .arg("typo")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no agent named typo"))
+        .stderr(predicate::str::contains(
+            "available agents: default, special",
+        ));
 }
 
 #[test]
