@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/nickderobertis/llmlint/compare/v0.2.2...v0.2.3) - 2026-06-25
+
+### Fixed
+
+- *(plugins)* bound transitive plugin resolution at depth 100 ([#31](https://github.com/nickderobertis/llmlint/pull/31))
+
 ## [0.2.2](https://github.com/nickderobertis/llmlint/compare/v0.2.1...v0.2.2) - 2026-06-25
 
 ### Documentation

@@ -184,6 +184,10 @@ oneharness). Each entry is a config file:
 - a **local path** (`./team-rules.yml`), resolved relative to the including file;
 - a **URL** — `http(s)://` (fetched over HTTPS) or `file://` (read directly).
 
+Resolution is **transitive**: a pulled-in config's own `plugins` are pulled in
+turn, and so on. Diamonds and cycles are de-duplicated (each config loads once),
+and the chain is bounded at a depth of 100 to fail fast on a pathological graph.
+
 URL fetching is built in (a pure-Rust HTTPS client — no `curl` or other external
 tools, no system OpenSSL) and honors the standard `HTTP(S)_PROXY` / `NO_PROXY`
 env vars. The bundled config-lint plugin ships inside the binary and resolves

@@ -45,6 +45,13 @@ pub enum Error {
     )]
     PluginMissingVersion { url: String, requested: String },
 
+    #[error(
+        "plugins nested too deep (exceeded the max depth of {max}); a config's \
+         `plugins` pull in further configs transitively — check for an \
+         unintended cycle or flatten the include graph"
+    )]
+    PluginDepthExceeded { max: usize },
+
     #[error("config already exists at {0}; pass --force to overwrite")]
     ConfigExists(PathBuf),
 
@@ -131,6 +138,9 @@ mod tests {
         }
         .to_string()
         .contains("declares no version"));
+        assert!(Error::PluginDepthExceeded { max: 100 }
+            .to_string()
+            .contains("max depth of 100"));
         assert!(Error::ConfigExists("/tmp/llmlint.yml".into())
             .to_string()
             .contains("already exists"));
