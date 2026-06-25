@@ -81,11 +81,16 @@ logic is also covered hermetically via `file://` plugins.
   `oneharness.bin` resolves the binary with no flag or env at all.
 - Rationales (on by default): the generated schema requires each rule to emit
   `name` -> `rationale` -> `holds` -> `violations` in that order, with `name`
-  pinned to the rule; the human report shows a rule's rationale for every failure
-  by default and for every evaluated rule at `-v`. `--no-rationales` (and config
-  `rationales: false`) drop `rationale` from the schema and the report; a CLI
-  `--rationales` overrides config `rationales: false`; a per-rule `rationale`
-  overrides the session default within one batch.
+  pinned to the rule, and the default template renders the terse-rationale
+  guidance into the prompt (absent under `--no-rationales`); the human report
+  shows a rule's rationale for every failure by default and for every evaluated
+  rule at `-v`, and `--format json` carries it (name-first) for every rule.
+  `--no-rationales` and config `rationales: false` (with no flag) both drop
+  `rationale` from the schema and the report — and llmlint suppresses a rationale
+  even when the harness leaks one; a CLI `--rationales` overrides config
+  `rationales: false`; a per-rule `rationale` overrides the session default in
+  both directions within one batch (opt-in under a disabled session, opt-out
+  under an enabled one).
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their

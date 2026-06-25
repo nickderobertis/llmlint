@@ -2370,3 +2370,162 @@ fn plugin_top_level_scalars_resolve_nearest_root_wins() {
     assert_eq!(cfg["oneharness"]["timeout"], 7);
     assert_eq!(cfg["prompt_template"], "leaf-tmpl");
 }
+
+#[test]
+fn config_rationales_false_drops_rationale_without_a_cli_flag() {
+    let p = Project::new();
+    // Rationales disabled in the config, no CLI flag at all.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: false\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: bare_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // The mock leaks a rationale; llmlint must still drop it.
+    let verdicts = p.write_verdicts(
+        r#"{"bare_rule": {"holds": false, "rationale": "leaked rationale",
+            "violations": [{"file": "src/lib.rs", "line": 1, "message": "nope"}]}}"#,
+    );
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL bare_rule"))
+        .stdout(predicate::str::contains("rationale:").not())
+        .stdout(predicate::str::contains("leaked rationale").not());
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["bare_rule"]["required"],
+        serde_json::json!(["name", "holds"])
+    );
+}
+
+#[test]
+fn per_rule_rationale_false_suppresses_only_that_rule_when_session_is_on() {
+    let p = Project::new();
+    // Session default is on (unset); one rule opts out. Both fail, so both are
+    // shown at the default level — the opted-out rule must omit its rationale.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: kept_in, description: \"{RULE}\" }}\n  \
+             - {{ name: opted_out, description: \"{RULE}\", rationale: false }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"kept_in": {"holds": false, "rationale": "kept reason",
+                "violations": [{"file": "src/lib.rs", "line": 1, "message": "k"}]},
+            "opted_out": {"holds": false, "rationale": "dropped reason",
+                "violations": [{"file": "src/lib.rs", "line": 2, "message": "o"}]}}"#,
+    );
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("rationale: kept reason"))
+        .stdout(predicate::str::contains("dropped reason").not());
+
+    // The schema agrees per rule: kept_in carries `rationale`, opted_out doesn't.
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["kept_in"]["required"],
+        serde_json::json!(["name", "rationale", "holds"])
+    );
+    assert_eq!(
+        schema["properties"]["opted_out"]["required"],
+        serde_json::json!(["name", "holds"])
+    );
+}
+
+#[test]
+fn json_output_carries_rationale_for_every_rule() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: pass_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: fail_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"pass_rule": {"holds": true, "rationale": "all good"},
+            "fail_rule": {"holds": false, "rationale": "broke at lib.rs:1",
+                "violations": [{"file": "src/lib.rs", "line": 1, "message": "x"}]}}"#,
+    );
+
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let by_name = |name: &str| {
+        v["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    // Both the pass and the fail carry their rationale in the machine contract.
+    assert_eq!(by_name("pass_rule")["rationale"], "all good");
+    assert_eq!(by_name("fail_rule")["rationale"], "broke at lib.rs:1");
+    // And `name` leads each rule object, mirroring the schema's field order.
+    assert_eq!(
+        key_order(&by_name("pass_rule"))[0..2],
+        ["name", "rationale"]
+    );
+}
+
+#[test]
+fn rationale_guidance_reaches_the_prompt_only_when_enabled() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r_one, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r_one": true}"#);
+    let dump = p.path().join("system.txt");
+
+    // Default (rationales on): the terse-rationale guidance is rendered in.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let on = fs::read_to_string(&dump).unwrap();
+    assert!(on.contains("## Rationale"), "system:\n{on}");
+    // The terseness guidance is present (the wrapped text is "terse and\npithy").
+    assert!(on.contains("terse"), "system:\n{on}");
+
+    // `--no-rationales`: the guidance block is gone.
+    p.lint()
+        .arg("--no-rationales")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let off = fs::read_to_string(&dump).unwrap();
+    assert!(!off.contains("## Rationale"), "system:\n{off}");
+}
