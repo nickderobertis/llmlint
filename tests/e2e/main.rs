@@ -1777,6 +1777,7 @@ fn config_level_oneharness_bin_is_used() {
     let verdicts = p.write_verdicts(r#"{"bin_rule": true}"#);
 
     p.bare()
+        .arg("-v") // `-v` itemizes the passing rule so we can assert on it
         .env_remove("LLMLINT_ONEHARNESS_BIN")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
@@ -1854,7 +1855,7 @@ fn max_parallel_runs_judges_concurrently() {
     // `--max-parallel 2` both runs share a wave, so they rendezvous and pass.
     // (A generous timeout tolerates slow process spawns; the success path
     // returns the instant both arrive, so the test stays fast.)
-    p.lint()
+    p.lint_v() // `-v` itemizes the passing rules so we can assert on them
         .arg("--max-parallel")
         .arg("2")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
