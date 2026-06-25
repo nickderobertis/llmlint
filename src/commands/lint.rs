@@ -154,6 +154,9 @@ pub fn run(args: LintArgs) -> Result<i32> {
     for o in &mut outcomes {
         if rationale_off.contains(&o.name) {
             o.rationale = None;
+            for j in &mut o.judges {
+                j.rationale = None;
+            }
         }
     }
     for name in &the_plan.skipped {

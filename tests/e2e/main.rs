@@ -290,6 +290,73 @@ fn majority_vote_fails_when_most_judges_dissent() {
         ));
 }
 
+#[test]
+fn multi_judge_failure_shows_each_judges_result_and_rationale() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: voted_rule, description: \"{RULE}\", judges: 3 }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Three sequential judges with distinct rationales: violate, hold, violate
+    // -> majority fail. Each judge's result + rationale must be itemized.
+    let verdicts = p.write_verdicts(
+        r#"{"voted_rule": [
+            {"holds": false, "rationale": "raw SQL at lib.rs:1",
+                "violations": [{"file": "src/lib.rs", "line": 1, "message": "inline SQL"}]},
+            {"holds": true, "rationale": "uses the query layer"},
+            {"holds": false, "rationale": "string-built query"}
+        ]}"#,
+    );
+    let state = p.path().join("state");
+
+    let out = p
+        .lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // The machine contract carries every judge's holds + rationale, in order.
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let judges = v["rules"][0]["judges"].as_array().unwrap();
+    assert_eq!(judges.len(), 3);
+    assert_eq!(judges[0]["holds"], false);
+    assert_eq!(judges[0]["rationale"], "raw SQL at lib.rs:1");
+    assert_eq!(judges[1]["holds"], true);
+    assert_eq!(judges[1]["rationale"], "uses the query layer");
+
+    // The default human report itemizes each judge at the failure (no `-v`).
+    let state2 = p.path().join("state2");
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state2)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL voted_rule (1/3 judges held)",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 1 violated: raw SQL at lib.rs:1",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 2 held: uses the query layer",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 3 violated: string-built query",
+        ))
+        .stdout(predicate::str::contains("src/lib.rs:1: inline SQL"));
+}
+
 // ---- includes / plugin system --------------------------------------------
 
 #[test]

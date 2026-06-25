@@ -90,7 +90,10 @@ logic is also covered hermetically via `file://` plugins.
   even when the harness leaks one; a CLI `--rationales` overrides config
   `rationales: false`; a per-rule `rationale` overrides the session default in
   both directions within one batch (opt-in under a disabled session, opt-out
-  under an enabled one).
+  under an enabled one). For a multi-judge rule, the report and `--format json`
+  itemize *each* judge's result (`held`/`violated`) and rationale — at every
+  failure and for every evaluated rule at `-v` — so judge disagreement is
+  visible, not collapsed to one representative.
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their

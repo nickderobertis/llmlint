@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use llmlint::domain::plan::ResolvedRule;
 use llmlint::domain::template::RuleSpec;
-use llmlint::domain::verdict::{Outcome, RuleOutcome, RuleVerdict, Violation};
+use llmlint::domain::verdict::{JudgeOpinion, Outcome, RuleOutcome, RuleVerdict, Violation};
 use llmlint::io::{assets, configfs};
 
 /// The built-in master prompt template — the same one a default `llmlint` run
@@ -168,6 +168,7 @@ pub fn outcomes(n: usize) -> Vec<RuleOutcome> {
                 outcome: Outcome::Pass,
                 votes_total: 1,
                 votes_hold: 1,
+                judges: vec![],
                 violations: vec![],
             },
             1 => RuleOutcome {
@@ -176,6 +177,20 @@ pub fn outcomes(n: usize) -> Vec<RuleOutcome> {
                 outcome: Outcome::Fail,
                 votes_total: 3,
                 votes_hold: 1,
+                judges: vec![
+                    JudgeOpinion {
+                        holds: false,
+                        rationale: Some(format!("judge a: rule {i} violated")),
+                    },
+                    JudgeOpinion {
+                        holds: true,
+                        rationale: Some(format!("judge b: rule {i} held")),
+                    },
+                    JudgeOpinion {
+                        holds: false,
+                        rationale: Some(format!("judge c: rule {i} violated")),
+                    },
+                ],
                 violations: vec![Violation {
                     file: Some(format!("src/file_{i}.rs")),
                     line: Some(i as u64 + 1),

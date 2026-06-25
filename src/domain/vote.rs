@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict, Violation};
+use crate::domain::verdict::{JudgeOpinion, Outcome, RuleOutcome, RuleVerdict, Violation};
 
 /// Tally the verdicts for a single rule. A rule **passes** only with a strict
 /// majority of `holds = true` (a tie fails — conservative for a linter). On a
@@ -23,32 +23,49 @@ pub fn tally(name: &str, verdicts: &[RuleVerdict]) -> RuleOutcome {
         )
     };
 
+    // Keep the per-judge breakdown only when more than one judge ran: a single
+    // judge is already fully described by the rule's own `rationale`.
+    let judges = if total > 1 {
+        verdicts
+            .iter()
+            .map(|v| JudgeOpinion {
+                holds: v.holds,
+                rationale: clean_rationale(v),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     RuleOutcome {
         name: name.to_string(),
         rationale: pick_rationale(verdicts, passes),
         outcome: if passes { Outcome::Pass } else { Outcome::Fail },
         votes_total: total,
         votes_hold,
+        judges,
         violations,
     }
+}
+
+/// A judge's rationale, trimmed, or `None` when it is missing or blank.
+fn clean_rationale(v: &RuleVerdict) -> Option<String> {
+    v.rationale
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Choose one rationale to represent the winning verdict: prefer a judge that
 /// agreed with the outcome (so a pass shows why it held and a fail why it
 /// failed), falling back to any non-empty rationale if the majority gave none.
 fn pick_rationale(verdicts: &[RuleVerdict], passes: bool) -> Option<String> {
-    let non_empty = |v: &RuleVerdict| {
-        v.rationale
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-    };
     verdicts
         .iter()
         .filter(|v| v.holds == passes)
-        .find_map(non_empty)
-        .or_else(|| verdicts.iter().find_map(non_empty))
+        .find_map(clean_rationale)
+        .or_else(|| verdicts.iter().find_map(clean_rationale))
 }
 
 fn dedup(items: impl Iterator<Item = Violation>) -> Vec<Violation> {
@@ -155,6 +172,28 @@ mod tests {
         );
         assert_eq!(o.outcome, Outcome::Fail);
         assert_eq!(o.rationale.as_deref(), Some("inline sql at db.rs:42"));
+    }
+
+    #[test]
+    fn multi_judge_keeps_each_judges_opinion_single_judge_does_not() {
+        // Three judges -> a per-judge breakdown in verdict order, each carrying
+        // its own holds + rationale.
+        let o = tally(
+            "r",
+            &[v_why(false, "j1"), v_why(true, "j2"), v_why(false, "j3")],
+        );
+        assert_eq!(o.outcome, Outcome::Fail);
+        assert_eq!(o.judges.len(), 3);
+        assert_eq!(
+            o.judges.iter().map(|j| j.holds).collect::<Vec<_>>(),
+            [false, true, false]
+        );
+        assert_eq!(o.judges[1].rationale.as_deref(), Some("j2"));
+
+        // A single judge needs no breakdown — its rationale is the rule's.
+        let o = tally("r", &[v_why(false, "solo")]);
+        assert!(o.judges.is_empty());
+        assert_eq!(o.rationale.as_deref(), Some("solo"));
     }
 
     #[test]

@@ -63,15 +63,10 @@ impl Report {
                 // Failures are shown even at the default level — they are the
                 // actionable result of a lint run.
                 Outcome::Fail => {
-                    let votes = if o.votes_total > 1 {
-                        format!(" ({}/{} judges held)", o.votes_hold, o.votes_total)
-                    } else {
-                        String::new()
-                    };
-                    out.push_str(&format!("FAIL {}{}\n", o.name, votes));
-                    // A failure is the actionable result, so its rationale shows
+                    out.push_str(&format!("FAIL {}{}\n", o.name, votes_suffix(o)));
+                    // A failure is the actionable result, so its reasoning shows
                     // at every level (right after the header, before locations).
-                    push_rationale(&mut out, o);
+                    push_reasoning(&mut out, o);
                     for v in &o.violations {
                         out.push_str(&format!("     {}\n", format_violation(v)));
                     }
@@ -79,8 +74,8 @@ impl Report {
                 // Passing and skipped rules are only itemized at `-v`; at the
                 // default level the summary alone accounts for them.
                 Outcome::Pass if verbosity >= 1 => {
-                    out.push_str(&format!("PASS {}\n", o.name));
-                    push_rationale(&mut out, o);
+                    out.push_str(&format!("PASS {}{}\n", o.name, votes_suffix(o)));
+                    push_reasoning(&mut out, o);
                 }
                 Outcome::Skipped if verbosity >= 1 => {
                     out.push_str(&format!("SKIP {} (no files matched)\n", o.name))
@@ -125,9 +120,33 @@ impl Report {
     }
 }
 
-/// Append the rule's rationale line, if it has one, indented under its header.
-fn push_rationale(out: &mut String, o: &RuleOutcome) {
-    if let Some(r) = &o.rationale {
+/// The `(X/Y judges held)` suffix for a multi-judge rule, else empty.
+fn votes_suffix(o: &RuleOutcome) -> String {
+    if o.votes_total > 1 {
+        format!(" ({}/{} judges held)", o.votes_hold, o.votes_total)
+    } else {
+        String::new()
+    }
+}
+
+/// Append a rule's reasoning under its header. For a multi-judge rule this is a
+/// per-judge breakdown — each judge's result (`held`/`violated`) and rationale,
+/// so disagreement is visible; for a single judge it is the one rationale line.
+fn push_reasoning(out: &mut String, o: &RuleOutcome) {
+    if !o.judges.is_empty() {
+        for (i, j) in o.judges.iter().enumerate() {
+            let verdict = if j.holds { "held" } else { "violated" };
+            match j
+                .rationale
+                .as_deref()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+            {
+                Some(r) => out.push_str(&format!("     judge {} {verdict}: {r}\n", i + 1)),
+                None => out.push_str(&format!("     judge {} {verdict}\n", i + 1)),
+            }
+        }
+    } else if let Some(r) = &o.rationale {
         let r = r.trim();
         if !r.is_empty() {
             out.push_str(&format!("     rationale: {r}\n"));
@@ -158,6 +177,8 @@ fn format_violation(v: &Violation) -> String {
 mod tests {
     use super::*;
 
+    use crate::domain::verdict::JudgeOpinion;
+
     fn fail(name: &str, v: Vec<Violation>) -> RuleOutcome {
         RuleOutcome {
             name: name.into(),
@@ -165,6 +186,7 @@ mod tests {
             outcome: Outcome::Fail,
             votes_total: 1,
             votes_hold: 0,
+            judges: vec![],
             violations: v,
         }
     }
@@ -175,12 +197,19 @@ mod tests {
             outcome: Outcome::Pass,
             votes_total: 1,
             votes_hold: 1,
+            judges: vec![],
             violations: vec![],
         }
     }
     fn with_rationale(mut o: RuleOutcome, why: &str) -> RuleOutcome {
         o.rationale = Some(why.into());
         o
+    }
+    fn opinion(holds: bool, why: Option<&str>) -> JudgeOpinion {
+        JudgeOpinion {
+            holds,
+            rationale: why.map(Into::into),
+        }
     }
 
     #[test]
@@ -271,6 +300,7 @@ mod tests {
                     outcome: Outcome::Fail,
                     votes_total: 3,
                     votes_hold: 1,
+                    judges: vec![],
                     violations: vec![],
                 },
                 RuleOutcome::skipped("nofiles"),
@@ -323,6 +353,50 @@ mod tests {
         let loud = r.to_human(1);
         assert!(loud.contains("PASS layered"));
         assert!(loud.contains("     rationale: imports only flow downward"));
+    }
+
+    #[test]
+    fn multi_judge_shows_each_judges_result_and_rationale() {
+        let mut failing = fail(
+            "voted_rule",
+            vec![Violation {
+                message: Some("inline SQL".into()),
+                ..Default::default()
+            }],
+        );
+        failing.votes_total = 3;
+        failing.votes_hold = 1;
+        failing.judges = vec![
+            opinion(false, Some("raw SQL at db.rs:42")),
+            opinion(true, Some("uses the query layer")),
+            opinion(false, None), // a judge that gave no rationale
+        ];
+        let mut passing = pass("agreed");
+        passing.votes_total = 3;
+        passing.votes_hold = 2;
+        passing.judges = vec![
+            opinion(true, Some("clean")),
+            opinion(false, Some("looked off")),
+            opinion(true, Some("fine")),
+        ];
+        let r = Report::new(vec![failing, passing], vec![]);
+
+        // Default: the failure shows every judge's result + rationale (a missing
+        // rationale still shows the bare result), plus the aggregated violation.
+        let quiet = r.to_human(0);
+        assert!(quiet.contains("FAIL voted_rule (1/3 judges held)"));
+        assert!(quiet.contains("judge 1 violated: raw SQL at db.rs:42"));
+        assert!(quiet.contains("judge 2 held: uses the query layer"));
+        assert!(quiet.contains("judge 3 violated\n"));
+        assert!(quiet.contains("inline SQL"));
+        // The passing rule isn't itemized at the default level.
+        assert!(!quiet.contains("agreed"));
+
+        // Verbose: the passing multi-judge rule shows its breakdown too, with the
+        // dissent visible.
+        let loud = r.to_human(1);
+        assert!(loud.contains("PASS agreed (2/3 judges held)"));
+        assert!(loud.contains("judge 2 violated: looked off"));
     }
 
     #[test]

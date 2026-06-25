@@ -240,6 +240,18 @@ default, and for **every evaluated rule** at `-v`. The default prompt template
 asks for rationales that are terse and pithy — the fewest tokens that still cite
 the evidence — so the token cost stays small.
 
+For a **multi-judge** rule (`judges: N`), the report and `--format json` show
+**each judge's** result and rationale, not just one representative — so you can
+see exactly where the judges agreed or split:
+
+```text
+FAIL no_inline_sql (1/3 judges held)
+     judge 1 violated: raw SQL concatenated at db.rs:3
+     judge 2 held: all access goes through the query builder
+     judge 3 violated: f-string SQL in the helper
+     src/db.rs:3: inline SQL
+```
+
 ### Judges and voting
 
 `judges: N` runs a rule through `N` independent judges and takes the **majority**
