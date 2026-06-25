@@ -220,7 +220,7 @@
           "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
         },
         "description": {
-          "description": "The invariant the judge evaluates. State clearly what is TRUE (passes)\nand what is FALSE (a violation).",
+          "description": "The invariant the judge evaluates. State clearly what is true (passes)\nand what is false (a violation).",
           "type": "string",
           "minLength": 1
         },

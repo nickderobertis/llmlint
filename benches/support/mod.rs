@@ -80,7 +80,7 @@ pub fn synthetic_resolved(n: usize, judges: u32) -> Vec<ResolvedRule> {
     (0..n)
         .map(|i| ResolvedRule {
             name: format!("rule_{i}"),
-            description: format!("TRUE when rule {i} holds; FALSE otherwise."),
+            description: format!("true when rule {i} holds; false otherwise."),
             judges,
             agent: "default".into(),
             files: vec![PathBuf::from("src/lib.rs")],
@@ -95,7 +95,7 @@ pub fn synthetic_config_text(n: usize) -> String {
     let mut s = String::from("version: 1\nrules:\n");
     for i in 0..n {
         s.push_str(&format!(
-            "  - name: rule_{i}\n    description: \"TRUE when rule {i} holds; FALSE otherwise.\"\n"
+            "  - name: rule_{i}\n    description: \"true when rule {i} holds; false otherwise.\"\n"
         ));
     }
     s
@@ -106,7 +106,7 @@ pub fn synthetic_rule_specs(n: usize) -> Vec<RuleSpec> {
     (0..n)
         .map(|i| RuleSpec {
             name: format!("rule_{i}"),
-            description: format!("TRUE when rule {i} holds; FALSE otherwise."),
+            description: format!("true when rule {i} holds; false otherwise."),
             rationale: true,
         })
         .collect()

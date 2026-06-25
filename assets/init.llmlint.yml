@@ -47,6 +47,6 @@ rules:
   # judges and take the majority vote for higher-stakes checks.
   - name: public_items_are_documented
     description: |
-      TRUE when every public function, struct, enum, and module has a doc
-      comment explaining its purpose. FALSE when any public item is undocumented.
+      true when every public function, struct, enum, and module has a doc
+      comment explaining its purpose. false when any public item is undocumented.
     judges: 1
