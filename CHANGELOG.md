@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.10](https://github.com/nickderobertis/llmlint/compare/v0.2.9...v0.2.10) - 2026-06-25
+
+### Documentation
+
+- use lowercase json true/false in rule examples ([#47](https://github.com/nickderobertis/llmlint/pull/47))
+
 ## [0.2.9](https://github.com/nickderobertis/llmlint/compare/v0.2.8...v0.2.9) - 2026-06-25
 
 ### Documentation
