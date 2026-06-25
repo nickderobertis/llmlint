@@ -36,13 +36,20 @@ jobs:
       # prune history on the monthly schedule above.
       gh-pages-maintenance: true
       gh-pages-history-versions: 20
-      # Our capture: install the pinned `freeze` (the renderer), then run the
-      # script. The reusable workflow exports $SHOTS_OUT as shots/current/<arch>
-      # per lane; the script builds the release binaries (Rust is preinstalled on
-      # the runner) and writes $SHOTS_OUT/captures.json + the SVGs it references.
-      # The SVG bytes depend only on the report text + freeze + the vendored font,
-      # not on the compiler, so the runner's stock toolchain is fine.
+      # The capture-command runs INSIDE this container (the reusable workflow's
+      # default is a Playwright image for web apps). Ours needs Rust to build the
+      # binaries, so pin the matching Rust image (it carries curl/git/tar via
+      # buildpack-deps). The shots are deterministic SVGs (vendored font), so the
+      # image only has to build + render — no Playwright, no pinned-CPU concerns.
+      container: rust:1.96.0-bookworm
+      # Install the pinned `freeze` from its prebuilt release (no Go needed), then
+      # capture. RUSTUP_TOOLCHAIN bypasses rust-toolchain.toml so we build with the
+      # image's toolchain instead of syncing its extra components/targets (the SVG
+      # bytes don't depend on the compiler anyway). The reusable workflow exports
+      # $SHOTS_OUT as shots/current/<arch>; the script writes captures.json + SVGs.
       capture-command: |
-        go install github.com/charmbracelet/freeze@v0.2.2
-        export PATH="$(go env GOPATH)/bin:$PATH"
+        export RUSTUP_TOOLCHAIN=1.96.0
+        curl -fsSL -o /tmp/freeze.tgz https://github.com/charmbracelet/freeze/releases/download/v0.2.2/freeze_0.2.2_Linux_x86_64.tar.gz
+        tar -xzf /tmp/freeze.tgz -C /tmp
+        install /tmp/freeze_0.2.2_Linux_x86_64/freeze /usr/local/bin/freeze
         bash scripts/screenshots.sh
