@@ -55,6 +55,21 @@ pub struct OneharnessCfg {
     pub schema_max_retries: Option<u32>,
 }
 
+impl OneharnessCfg {
+    /// Fill any unset field from `other` (a plugin's `oneharness` block), keeping
+    /// this (nearer-root) config's own values. Lets a plugin supply defaults the
+    /// including config didn't set, while the including config always wins.
+    pub fn merge_under(&mut self, other: OneharnessCfg) {
+        if self.config.is_empty() {
+            self.config = other.config;
+        }
+        self.bin = self.bin.take().or(other.bin);
+        self.model = self.model.take().or(other.model);
+        self.timeout = self.timeout.or(other.timeout);
+        self.schema_max_retries = self.schema_max_retries.or(other.schema_max_retries);
+    }
+}
+
 /// A group of rules sharing reviewer context and harness/model/batch config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -102,11 +117,22 @@ pub struct Rule {
     /// Override the target files for this rule.
     #[serde(default)]
     pub files: Option<FileFilter>,
+    /// Whether the judge must justify this rule's verdict with a `rationale`.
+    /// Overrides the session-wide `rationales` default for this one rule; unset
+    /// inherits it.
+    #[serde(default)]
+    pub rationale: Option<bool>,
 }
 
 impl Rule {
     pub fn judges(&self) -> u32 {
         self.judges.unwrap_or(1)
+    }
+
+    /// Whether this rule requires a rationale, given the session-wide default
+    /// (from config `rationales` or the `--rationales`/`--no-rationales` flag).
+    pub fn wants_rationale(&self, session_default: bool) -> bool {
+        self.rationale.unwrap_or(session_default)
     }
 }
 
@@ -141,6 +167,13 @@ pub struct Config {
     /// Defaults for how llmlint invokes the oneharness subprocess.
     #[serde(default)]
     pub oneharness: OneharnessCfg,
+    /// Whether judges must justify each verdict with a short `rationale`
+    /// (default `true`). Rationales aid auditability, debugging, and reliability
+    /// (the judge reasons before concluding) but cost extra output tokens on
+    /// every request. A per-rule `rationale` overrides this default. The
+    /// `--rationales`/`--no-rationales` CLI flags override the config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationales: Option<bool>,
     /// Plugins (shared rule sets) merged in, one entry each: a local file path
     /// or a URL (`http(s)://`, `file://`), the URL optionally pinned with an
     /// `@version` suffix. Named `plugins` (not `include`) to avoid confusion
@@ -158,11 +191,23 @@ pub struct Config {
 }
 
 impl Config {
-    /// Merge another config's rules and agents into this one (used to fold in
-    /// `plugins`). Top-level scalars (template, files, oneharness) are
-    /// the entry config's and are left untouched; on an agent-name clash the
-    /// existing (earlier/root) definition wins.
-    pub fn merge_rules_and_agents(&mut self, other: Config) {
+    /// Fold a plugin (an included config) into this one. `self` is nearer the
+    /// root of the include graph, so **`self` always wins**: every top-level
+    /// setting it already specifies is kept, and the plugin only fills in the
+    /// gaps. Resolution is a pre-order walk (root, then its plugins, then their
+    /// plugins), so this first-writer-wins rule gives the documented precedence —
+    /// the current config over its plugins, a plugin over its own plugins, and an
+    /// earlier-listed plugin over a later sibling. Rules are appended in include
+    /// order; on an agent-name clash the existing (nearer-root) agent is kept.
+    pub fn merge_plugin(&mut self, other: Config) {
+        // Top-level scalars: keep ours when set, otherwise adopt the plugin's.
+        self.version = self.version.take().or(other.version);
+        self.prompt_template = self.prompt_template.take().or(other.prompt_template);
+        if self.files.is_empty() {
+            self.files = other.files;
+        }
+        self.oneharness.merge_under(other.oneharness);
+        self.rationales = self.rationales.or(other.rationales);
         for (name, agent) in other.agents {
             self.agents.entry(name).or_insert(agent);
         }
@@ -172,6 +217,12 @@ impl Config {
     /// The agent named `name`, or a default agent when it is not declared.
     pub fn agent_or_default(&self, name: &str) -> Agent {
         self.agents.get(name).cloned().unwrap_or_default()
+    }
+
+    /// The session-wide rationale default after merging: the config's
+    /// `rationales` value, or `true` when unset.
+    pub fn rationales_default(&self) -> bool {
+        self.rationales.unwrap_or(true)
     }
 }
 
@@ -252,6 +303,7 @@ mod tests {
             agent: None,
             judges: None,
             files: None,
+            rationale: None,
         }
     }
 
@@ -333,13 +385,75 @@ mod tests {
                 ..Default::default()
             },
         );
-        root.merge_rules_and_agents(other);
+        root.merge_plugin(other);
         assert_eq!(root.rules.len(), 2);
         // Root's agent definition wins on clash.
         assert_eq!(
             root.agents["shared"].harness.as_deref(),
             Some("claude-code")
         );
+    }
+
+    #[test]
+    fn merge_top_level_scalars_keep_root_then_fall_back_to_plugin() {
+        // Root sets some scalars; the plugin sets others (and clashes on one).
+        let mut root = Config {
+            prompt_template: Some("root template".into()),
+            rationales: Some(false),
+            ..Default::default()
+        };
+        root.oneharness.model = Some("opus".into());
+        let plugin = Config {
+            // Clashes: root must win.
+            prompt_template: Some("plugin template".into()),
+            rationales: Some(true),
+            // Gaps the root left open: the plugin fills them.
+            files: FileFilter {
+                include: vec!["src/**".into()],
+                exclude: vec![],
+            },
+            oneharness: OneharnessCfg {
+                model: Some("haiku".into()),
+                timeout: Some(99),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        root.merge_plugin(plugin);
+        // Root wins every clash...
+        assert_eq!(root.prompt_template.as_deref(), Some("root template"));
+        assert_eq!(root.rationales, Some(false));
+        assert_eq!(root.oneharness.model.as_deref(), Some("opus"));
+        // ...and the plugin fills only what the root left unset.
+        assert_eq!(root.files.include, vec!["src/**".to_string()]);
+        assert_eq!(root.oneharness.timeout, Some(99));
+    }
+
+    #[test]
+    fn rationales_default_is_true_when_unset() {
+        assert!(Config::default().rationales_default());
+        let off = Config {
+            rationales: Some(false),
+            ..Default::default()
+        };
+        assert!(!off.rationales_default());
+    }
+
+    #[test]
+    fn per_rule_rationale_overrides_session_default() {
+        let r = rule("r");
+        assert!(r.wants_rationale(true));
+        assert!(!r.wants_rationale(false));
+        let forced_on = Rule {
+            rationale: Some(true),
+            ..rule("on")
+        };
+        let forced_off = Rule {
+            rationale: Some(false),
+            ..rule("off")
+        };
+        assert!(forced_on.wants_rationale(false));
+        assert!(!forced_off.wants_rationale(true));
     }
 
     #[test]

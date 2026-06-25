@@ -20,6 +20,8 @@ reporting). Add a journey here when a user-facing behavior lands.
   — force oneharness failure shapes.
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
+- `LLMLINT_MOCK_DUMP_SCHEMA=<file>` — copy the generated `--schema` JSON, to
+  assert its shape (e.g. each rule's `name`/`rationale`/`holds` ordering).
 - `LLMLINT_MOCK_RUNLOG=<dir>` — one file per invocation listing the rules it
   judged, to count oneharness calls and assert how rules were batched.
 - `LLMLINT_MOCK_BARRIER=<dir>` (+ `_N`, `_MS`) — a rendezvous that releases only
@@ -77,6 +79,20 @@ logic is also covered hermetically via `file://` plugins.
   `model` overriding the global default; multiple oneharness configs warn and use
   the first; `--oneharness-bin` resolves from the env, and a config
   `oneharness.bin` resolves the binary with no flag or env at all.
+- Rationales (on by default): the generated schema requires each rule to emit
+  `name` -> `rationale` -> `holds` -> `violations` in that order, with `name`
+  pinned to the rule; the human report shows a rule's rationale for every failure
+  by default and for every evaluated rule at `-v`. `--no-rationales` (and config
+  `rationales: false`) drop `rationale` from the schema and the report; a CLI
+  `--rationales` overrides config `rationales: false`; a per-rule `rationale`
+  overrides the session default within one batch.
+- Every top-level setting also has a CLI override that wins over the config:
+  `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
+  contents replace the config's template) are each asserted to override their
+  config counterparts. Across plugins, the nearest config to the root wins for
+  top-level scalars (template, files, oneharness, rationales) and a deeper plugin
+  only fills what shallower configs left unset — asserted end to end via
+  `llmlint config` on a root -> mid -> leaf chain.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via

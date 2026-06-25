@@ -48,7 +48,11 @@ mock-oneharness = []
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `preserve_order` keeps JSON object keys in insertion order, so the structured-
+# output schema can present each rule's fields in the exact order the judge
+# should emit them (name -> rationale -> result). Used everywhere we hand-build
+# JSON (schema, report) and round-trip configs.
+serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"
 minijinja = "2"
 ignore = "0.4"

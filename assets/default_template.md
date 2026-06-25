@@ -19,7 +19,15 @@ organization objectives — that deterministic linters cannot express.
   file and across files. If a violation genuinely cannot be tied to an exact
   source location, omit `file`/`line` and just give a `message`.
 - When `holds = true`, return an empty `violations` list.
+{% if rationales %}
+## Rationale
 
+Some rules require a `rationale`: one short justification for the verdict, given
+*before* `holds` so the conclusion follows from the evidence. Keep it terse and
+pithy — the fewest tokens that still cite the specific evidence (the file,
+symbol, or pattern) a reviewer needs to confirm the verdict at a glance. No
+restating the rule, no hedging, no preamble. One sentence is plenty.
+{% endif %}
 ## Target files
 
 {% for f in files %}- {{ f }}
@@ -31,6 +39,9 @@ organization objectives — that deterministic linters cannot express.
 {{ r.description }}
 
 {% endfor %}
+## Response
+
 Respond with **only** the JSON object required by the response schema: one key
-per rule name above, each mapping to an object with a boolean `holds` and an
-optional `violations` array. Do not include any prose outside the JSON.
+per rule name above. Fill each rule's object in the exact field order the schema
+lists — first echo the rule's `name`,{% if rationales %} then its `rationale`,{% endif %} then the verdict `holds` and any `violations`. Do not include any prose
+outside the JSON.

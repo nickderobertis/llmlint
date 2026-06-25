@@ -22,6 +22,8 @@ pub struct ResolvedRule {
     pub judges: u32,
     pub agent: String,
     pub files: Vec<PathBuf>,
+    /// Whether the judge must justify this rule's verdict with a `rationale`.
+    pub rationale: bool,
 }
 
 /// One judge invocation: a batch of rules to evaluate against a file set.
@@ -101,6 +103,7 @@ pub fn build(
                             .map(|r| RuleSpec {
                                 name: r.name.clone(),
                                 description: r.description.clone(),
+                                rationale: r.rationale,
                             })
                             .collect(),
                     });
@@ -124,6 +127,7 @@ mod tests {
             judges,
             agent: agent.into(),
             files: files.iter().map(PathBuf::from).collect(),
+            rationale: true,
         }
     }
 
@@ -186,6 +190,20 @@ mod tests {
         assert_eq!(plan.runs.len(), 2); // 3 rules / batch 2 -> 2 batches
         assert!(plan.runs[0].template.contains("MASTER"));
         assert!(plan.runs[0].template.contains("be terse"));
+    }
+
+    #[test]
+    fn per_rule_rationale_flows_into_the_rule_spec() {
+        let cfg = Config::default();
+        let mut on = rr("on", 1, "default", &["f.rs"]);
+        let mut off = rr("off", 1, "default", &["f.rs"]);
+        on.rationale = true;
+        off.rationale = false;
+        let plan = build(&cfg, "T", 20, vec![on, off]);
+        let specs = &plan.runs[0].rules;
+        let find = |n: &str| specs.iter().find(|r| r.name == n).unwrap().rationale;
+        assert!(find("on"));
+        assert!(!find("off"));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{RuleOutcome, RuleVerdict};
 use crate::domain::{schema, vote};
-use crate::errors::{Error, Result};
+use crate::errors::{io_err, Error, Result};
 use crate::io::{assets, configfs, files, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
@@ -28,9 +28,15 @@ pub fn run(args: LintArgs) -> Result<i32> {
     };
 
     let loaded = configfs::load(&args.config, &cwd)?;
-    let config = loaded.config;
+    let mut config = loaded.config;
     validate(&config)?;
     validate_filters(&config, &args)?;
+    // Overlay CLI overrides onto the merged config so every top-level arg can be
+    // set on the command line, with the CLI winning over the config (which in
+    // turn won over its plugins). After this, downstream (planning, schema,
+    // template) reads the single effective config.
+    apply_cli_overrides(&mut config, &args)?;
+    let session_rationales = config.rationales_default();
 
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
@@ -56,8 +62,18 @@ pub fn run(args: LintArgs) -> Result<i32> {
             judges: rule.judges(),
             agent: agent_name,
             files: target,
+            rationale: rule.wants_rationale(session_rationales),
         });
     }
+
+    // Rules whose rationale is disabled: llmlint is authoritative, so we drop any
+    // rationale a harness returns anyway, keeping `--no-rationales` deterministic
+    // regardless of harness behavior.
+    let rationale_off: HashSet<String> = resolved
+        .iter()
+        .filter(|r| !r.rationale)
+        .map(|r| r.name.clone())
+        .collect();
 
     let the_plan = plan::build(&config, &master_template, DEFAULT_BATCH_SIZE, resolved);
 
@@ -135,6 +151,11 @@ pub fn run(args: LintArgs) -> Result<i32> {
         .iter()
         .map(|(name, vs)| vote::tally(name, vs))
         .collect();
+    for o in &mut outcomes {
+        if rationale_off.contains(&o.name) {
+            o.rationale = None;
+        }
+    }
     for name in &the_plan.skipped {
         outcomes.push(RuleOutcome::skipped(name));
     }
@@ -243,6 +264,30 @@ fn resolve_files(
     files::resolve(cwd, global)
 }
 
+/// Overlay the lint CLI's top-level overrides onto the merged config so the CLI
+/// wins over the config. Each knob also has a config field and (transitively) a
+/// plugin precedence; this is the final, highest-priority layer. `--oneharness-bin`,
+/// `--timeout`, `--oneharness-config`, and the file/agent/rule selectors are
+/// resolved at their use sites (they fold in env/discovery too) and are not
+/// overlaid here.
+fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
+    if let Some(path) = &args.prompt_template {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| io_err(format!("reading prompt template {}", path.display()), e))?;
+        config.prompt_template = Some(text);
+    }
+    if let Some(model) = &args.model {
+        config.oneharness.model = Some(model.clone());
+    }
+    if let Some(n) = args.schema_max_retries {
+        config.oneharness.schema_max_retries = Some(n);
+    }
+    if let Some(b) = args.rationales() {
+        config.rationales = Some(b);
+    }
+    Ok(())
+}
+
 fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Option<PathBuf> {
     let mut all: Vec<PathBuf> = args.oneharness_config.clone();
     all.extend(config.oneharness.config.iter().map(PathBuf::from));
@@ -316,14 +361,23 @@ fn execute(
     Result<BTreeMap<String, RuleVerdict>>,
 ) {
     let files_str: Vec<String> = run.files.iter().map(|p| to_slash(p)).collect();
-    let system = match template::render(&run.template, &run.rules, &files_str) {
+    // Show the rationale guidance when any rule in this batch wants a rationale.
+    let want_rationale = run.rules.iter().any(|r| r.rationale);
+    let system = match template::render(&run.template, &run.rules, &files_str, want_rationale) {
         Ok(s) => s,
         // A render failure happens before any oneharness call, so there is no
         // command to trace.
         Err(e) => return (None, Err(e)),
     };
-    let names: Vec<&str> = run.rules.iter().map(|r| r.name.as_str()).collect();
-    let schema = schema::build(&names);
+    let specs: Vec<schema::SchemaRule> = run
+        .rules
+        .iter()
+        .map(|r| schema::SchemaRule {
+            name: r.name.as_str(),
+            rationale: r.rationale,
+        })
+        .collect();
+    let schema = schema::build(&specs);
     let req = oneharness::RunRequest {
         harness: run.harness.as_deref(),
         model: run.model.as_deref().or(global_model),
@@ -367,6 +421,7 @@ mod tests {
             agent: agent.map(Into::into),
             judges: None,
             files: None,
+            rationale: None,
         }
     }
 
@@ -433,6 +488,37 @@ mod tests {
         let cfg = config_with(vec![], &[]);
         let err = validate_filters(&cfg, &args(&["x"], None)).unwrap_err();
         assert!(err.to_string().contains("available rules: (none)"));
+    }
+
+    #[test]
+    fn cli_overrides_win_over_config() {
+        let mut cfg = Config {
+            rationales: Some(true),
+            ..Default::default()
+        };
+        cfg.oneharness.model = Some("config-model".into());
+        let args = LintArgs {
+            model: Some("cli-model".into()),
+            schema_max_retries: Some(5),
+            no_rationales: true,
+            ..Default::default()
+        };
+        apply_cli_overrides(&mut cfg, &args).unwrap();
+        assert_eq!(cfg.oneharness.model.as_deref(), Some("cli-model"));
+        assert_eq!(cfg.oneharness.schema_max_retries, Some(5));
+        assert_eq!(cfg.rationales, Some(false));
+        assert!(!cfg.rationales_default());
+    }
+
+    #[test]
+    fn no_rationale_flags_leaves_config_untouched() {
+        let mut cfg = Config {
+            rationales: Some(false),
+            ..Default::default()
+        };
+        apply_cli_overrides(&mut cfg, &LintArgs::default()).unwrap();
+        // No --model/--schema-max-retries/--rationales: config value survives.
+        assert_eq!(cfg.rationales, Some(false));
     }
 
     #[test]

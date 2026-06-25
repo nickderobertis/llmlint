@@ -32,12 +32,16 @@ impl Violation {
 }
 
 /// One judge's decision for one rule, as parsed from oneharness's validated
-/// `structured` output. Lenient on extra fields the model may add.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// `structured` output. Lenient on extra fields the model may add (e.g. the
+/// echoed `name`, which we already know from the map key).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleVerdict {
     pub holds: bool,
     #[serde(default)]
     pub violations: Vec<Violation>,
+    /// The judge's terse justification, when rationales are enabled for the rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
 }
 
 /// Final state of a rule after aggregating all of its judges' verdicts.
@@ -49,10 +53,17 @@ pub enum Outcome {
     Skipped,
 }
 
-/// The aggregated result for a single rule, ready for reporting.
+/// The aggregated result for a single rule, ready for reporting. Fields serialize
+/// in the same logical order the judge produced them: `name`, then the
+/// `rationale`, then the verdict (`outcome` + votes + `violations`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuleOutcome {
     pub name: String,
+    /// A representative rationale for the winning verdict, when the rule had
+    /// rationales enabled. Carried in machine output for auditability and shown
+    /// in the human report (always for failures, and for every rule at `-v`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
     pub outcome: Outcome,
     pub votes_total: u32,
     pub votes_hold: u32,
@@ -64,6 +75,7 @@ impl RuleOutcome {
     pub fn skipped(name: impl Into<String>) -> Self {
         RuleOutcome {
             name: name.into(),
+            rationale: None,
             outcome: Outcome::Skipped,
             votes_total: 0,
             votes_hold: 0,

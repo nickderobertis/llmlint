@@ -25,11 +25,30 @@ pub fn tally(name: &str, verdicts: &[RuleVerdict]) -> RuleOutcome {
 
     RuleOutcome {
         name: name.to_string(),
+        rationale: pick_rationale(verdicts, passes),
         outcome: if passes { Outcome::Pass } else { Outcome::Fail },
         votes_total: total,
         votes_hold,
         violations,
     }
+}
+
+/// Choose one rationale to represent the winning verdict: prefer a judge that
+/// agreed with the outcome (so a pass shows why it held and a fail why it
+/// failed), falling back to any non-empty rationale if the majority gave none.
+fn pick_rationale(verdicts: &[RuleVerdict], passes: bool) -> Option<String> {
+    let non_empty = |v: &RuleVerdict| {
+        v.rationale
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    verdicts
+        .iter()
+        .filter(|v| v.holds == passes)
+        .find_map(non_empty)
+        .or_else(|| verdicts.iter().find_map(non_empty))
 }
 
 fn dedup(items: impl Iterator<Item = Violation>) -> Vec<Violation> {
@@ -58,6 +77,14 @@ mod tests {
                     ..Default::default()
                 }]
             },
+            rationale: None,
+        }
+    }
+
+    fn v_why(holds: bool, why: &str) -> RuleVerdict {
+        RuleVerdict {
+            rationale: Some(why.into()),
+            ..v(holds, "bad")
         }
     }
 
@@ -105,5 +132,39 @@ mod tests {
     fn duplicate_violations_are_deduped() {
         let o = tally("r", &[v(false, "same"), v(false, "same")]);
         assert_eq!(o.violations.len(), 1);
+    }
+
+    #[test]
+    fn rationale_comes_from_a_judge_that_agreed_with_the_outcome() {
+        // Pass: take a holding judge's rationale, not the lone dissenter's.
+        let o = tally(
+            "r",
+            &[
+                v_why(true, "complies"),
+                v_why(false, "looks off"),
+                v_why(true, "ok"),
+            ],
+        );
+        assert_eq!(o.outcome, Outcome::Pass);
+        assert_eq!(o.rationale.as_deref(), Some("complies"));
+
+        // Fail: take a dissenting judge's rationale.
+        let o = tally(
+            "r",
+            &[v_why(false, "inline sql at db.rs:42"), v_why(true, "fine")],
+        );
+        assert_eq!(o.outcome, Outcome::Fail);
+        assert_eq!(o.rationale.as_deref(), Some("inline sql at db.rs:42"));
+    }
+
+    #[test]
+    fn rationale_falls_back_when_the_majority_gave_none_and_is_absent_when_disabled() {
+        // Majority passed but only the dissenter explained itself: fall back.
+        let o = tally("r", &[v(true, ""), v(true, ""), v_why(false, "stray")]);
+        assert_eq!(o.outcome, Outcome::Pass);
+        assert_eq!(o.rationale.as_deref(), Some("stray"));
+        // No rationales at all (disabled) -> none on the outcome.
+        let o = tally("r", &[v(true, ""), v(true, "")]);
+        assert_eq!(o.rationale, None);
     }
 }
