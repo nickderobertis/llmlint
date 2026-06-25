@@ -1249,3 +1249,526 @@ fn model_is_forwarded_with_agent_override_taking_precedence() {
         .expect("--model should be forwarded for a pinned agent");
     assert_eq!(pinned_model, "agent-model");
 }
+
+// ---- JSON output contract (failure + run-error shapes) --------------------
+
+#[test]
+fn json_output_reports_violations_and_summary_on_failure() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n  \
+             - {{ name: documented, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"no_todo": {"holds": false, "violations": [
+                {"file": "src/lib.rs", "line": 3, "message": "stray TODO"}]},
+            "documented": true}"#,
+    );
+
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    // Summary counts are part of the machine-readable contract.
+    assert_eq!(v["summary"]["total"], 2);
+    assert_eq!(v["summary"]["passed"], 1);
+    assert_eq!(v["summary"]["failed"], 1);
+    assert_eq!(v["summary"]["errored"], 0);
+    assert!(v["errors"].as_array().unwrap().is_empty());
+    // The failing rule carries its outcome and located violation.
+    let failing = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "no_todo")
+        .expect("failing rule present");
+    assert_eq!(failing["outcome"], "fail");
+    let viol = &failing["violations"][0];
+    assert_eq!(viol["file"], "src/lib.rs");
+    assert_eq!(viol["line"], 3);
+    assert_eq!(viol["message"], "stray TODO");
+}
+
+#[test]
+fn json_output_reports_run_errors_and_exits_two() {
+    let p = lint_project();
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_NO_STRUCTURED", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["summary"]["errored"], 1);
+    let errors = v["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1, "one judge run errored: {errors:?}");
+    assert!(
+        errors[0].as_str().unwrap().contains("no structured output"),
+        "errors: {errors:?}"
+    );
+}
+
+// ---- custom prompt templates reach the judge ------------------------------
+
+#[test]
+fn global_prompt_template_override_reaches_the_judge() {
+    let p = Project::new();
+    // A custom top-level template entirely replaces the bundled one.
+    p.write(
+        "llmlint.yml",
+        "version: 1\n\
+         prompt_template: |\n  \
+           GLOBAL_TEMPLATE_MARKER\n  \
+           {% for r in rules %}rule={{ r.name }}\n  \
+           {% endfor %}\n\
+         files:\n  include: [\"src/**\"]\n\
+         rules:\n  \
+           - name: templated_rule\n    \
+             description: \"TRUE when ok; FALSE otherwise.\"\n",
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"templated_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("GLOBAL_TEMPLATE_MARKER"),
+        "custom template should drive the prompt:\n{system}"
+    );
+    assert!(system.contains("rule=templated_rule"), "system:\n{system}");
+}
+
+#[test]
+fn agent_prompt_template_is_appended_for_its_rules() {
+    let p = Project::new();
+    // The agent's `prompt_template` is extra text appended to the master template.
+    p.write(
+        "llmlint.yml",
+        "version: 1\n\
+         files:\n  include: [\"src/**\"]\n\
+         agents:\n  reviewer:\n    prompt_template: \"AGENT_APPENDED_MARKER\"\n\
+         rules:\n  \
+           - name: reviewed_rule\n    \
+             description: \"TRUE when ok; FALSE otherwise.\"\n    \
+             agent: reviewer\n",
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"reviewed_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("AGENT_APPENDED_MARKER"),
+        "agent prompt_template should be appended to the prompt:\n{system}"
+    );
+}
+
+#[test]
+fn yaml_anchors_merge_keys_and_stash_keys_resolve() {
+    let p = Project::new();
+    // An `x-` stash key holds anchors; one is aliased into an agent's appended
+    // template, and a `<<` merge key folds shared agent fields in. All three are
+    // resolved by the YAML layer before the config is parsed.
+    p.write(
+        "llmlint.yml",
+        "version: 1\n\
+         x-snippets:\n  guidance: &guidance \"ANCHORED_GUIDANCE_MARKER\"\n\
+         x-defaults: &agent_defaults\n  harness: codex\n\
+         files:\n  include: [\"src/**\"]\n\
+         agents:\n  reviewer:\n    <<: *agent_defaults\n    prompt_template: *guidance\n\
+         rules:\n  \
+           - name: anchored_rule\n    \
+             description: \"TRUE when ok; FALSE otherwise.\"\n    \
+             agent: reviewer\n",
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"anchored_rule": true}"#);
+    let dump = p.path().join("system.txt");
+    let args_dump = p.path().join("args.txt");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+
+    // The aliased anchor reached the rendered prompt...
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("ANCHORED_GUIDANCE_MARKER"),
+        "aliased anchor should reach the prompt:\n{system}"
+    );
+    // ...and the `<<`-merged harness field took effect.
+    let args = fs::read_to_string(&args_dump).unwrap();
+    let harness = args
+        .lines()
+        .skip_while(|l| *l != "--harness")
+        .nth(1)
+        .expect("the merged harness should be forwarded");
+    assert_eq!(harness, "codex");
+}
+
+// ---- batching (one oneharness call per batch) -----------------------------
+
+#[test]
+fn rules_for_one_agent_share_a_single_oneharness_call_by_default() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: rule_a, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_b, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_c, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"rule_a": true, "rule_b": true, "rule_c": true}"#);
+    let runlog = p.path().join("runlog");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success();
+
+    let calls = runlog_calls(&runlog);
+    assert_eq!(
+        calls.len(),
+        1,
+        "the default batch groups all three rules into one call: {calls:?}"
+    );
+    for name in ["rule_a", "rule_b", "rule_c"] {
+        assert!(calls[0].contains(name), "call: {:?}", calls[0]);
+    }
+}
+
+#[test]
+fn batch_size_splits_rules_into_separate_oneharness_calls() {
+    let p = Project::new();
+    // batch_size 1 on the default agent forces one oneharness call per rule.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  default:\n    batch_size: 1\n\
+             rules:\n  \
+             - {{ name: rule_a, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_b, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_c, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"rule_a": true, "rule_b": true, "rule_c": true}"#);
+    let runlog = p.path().join("runlog");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success();
+
+    let calls = runlog_calls(&runlog);
+    assert_eq!(calls.len(), 3, "one call per rule: {calls:?}");
+    assert!(
+        calls.iter().all(|c| !c.contains(',')),
+        "each call should carry exactly one rule: {calls:?}"
+    );
+}
+
+/// Read the per-invocation run-log files the mock wrote, one entry per
+/// oneharness call (its comma-joined rule names).
+fn runlog_calls(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|e| fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect()
+}
+
+// ---- validation exit-2 journeys -------------------------------------------
+
+#[test]
+fn invalid_rule_name_is_rejected() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: \"bad-name\", description: \"{RULE}\" }}\n"),
+    );
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("not a valid identifier"));
+}
+
+#[test]
+fn empty_rule_description_is_rejected() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nrules:\n  - { name: blank_rule, description: \"   \" }\n",
+    );
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("empty description"));
+}
+
+#[test]
+fn zero_judges_is_rejected() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: no_judge, description: \"{RULE}\", judges: 0 }}\n"
+        ),
+    );
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("must be >= 1"));
+}
+
+#[test]
+fn zero_batch_size_is_rejected() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nagents:\n  a:\n    batch_size: 0\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\", agent: a }}\n"
+        ),
+    );
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("batch_size: 0"));
+}
+
+#[test]
+fn rule_referencing_unknown_agent_is_rejected() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: orphan, description: \"{RULE}\", agent: ghost }}\n"
+        ),
+    );
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown agent"));
+}
+
+// ---- oneharness passthrough actually forwarded ----------------------------
+
+#[test]
+fn schema_max_retries_is_forwarded_to_oneharness() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  schema_max_retries: 4\n\
+             rules:\n  - {{ name: retry_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"retry_rule": true}"#);
+    let args_dump = p.path().join("args.txt");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+
+    let args = fs::read_to_string(&args_dump).unwrap();
+    let retries = args
+        .lines()
+        .skip_while(|l| *l != "--schema-max-retries")
+        .nth(1)
+        .expect("--schema-max-retries should be forwarded");
+    assert_eq!(retries, "4");
+}
+
+#[test]
+fn config_timeout_is_forwarded_when_no_cli_flag() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  timeout: 33\n\
+             rules:\n  - {{ name: timed_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"timed_rule": true}"#);
+    let args_dump = p.path().join("args.txt");
+
+    // No `--timeout` on the CLI: the config value must be used.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+
+    let args = fs::read_to_string(&args_dump).unwrap();
+    let timeout = args
+        .lines()
+        .skip_while(|l| *l != "--timeout")
+        .nth(1)
+        .expect("--timeout should be forwarded from config");
+    assert_eq!(timeout, "33");
+}
+
+#[test]
+fn config_level_oneharness_bin_is_used() {
+    let p = Project::new();
+    // The binary is resolved from `oneharness.bin` in the config alone — no
+    // `--oneharness-bin` flag and no `LLMLINT_ONEHARNESS_BIN` env.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  bin: '{}'\n\
+             rules:\n  - {{ name: bin_rule, description: \"{RULE}\" }}\n",
+            mock_path().display()
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"bin_rule": true}"#);
+
+    p.bare()
+        .env_remove("LLMLINT_ONEHARNESS_BIN")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PASS bin_rule"));
+}
+
+// ---- plugin cache refresh -------------------------------------------------
+
+#[test]
+fn plugin_refresh_forces_a_refetch() {
+    let p = Project::new();
+    let server = HttpServer::serve(&format!(
+        "version: 1\nrules:\n  - {{ name: remote_rule, description: \"{RULE}\" }}\n"
+    ));
+    let url = server.url("/rules.yml");
+    let cache = p.path().join("cache");
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{url}@1\"\nrules:\n  \
+             - {{ name: local_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"local_rule": true, "remote_rule": true}"#);
+
+    let run = |refresh: bool| {
+        let mut c = p.lint();
+        c.env("LLMLINT_CACHE_DIR", &cache)
+            .env("NO_PROXY", "*")
+            .env("no_proxy", "*")
+            .env("HTTP_PROXY", "")
+            .env("http_proxy", "")
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts);
+        if refresh {
+            c.env("LLMLINT_PLUGIN_REFRESH", "1");
+        }
+        c.assert().success();
+    };
+
+    run(false);
+    assert_eq!(server.hits(), 1, "first run fetches once");
+    // Refresh overrides the cache and refetches even though the pin is unchanged.
+    run(true);
+    assert_eq!(server.hits(), 2, "refresh must refetch the cached pin");
+}
+
+// ---- --max-parallel concurrency (rendezvous barrier) ----------------------
+
+/// A two-agent project: each rule is its own oneharness run, so `--max-parallel`
+/// controls whether the two runs overlap.
+fn two_run_project() -> Project {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\n\
+         files:\n  include: [\"src/**\"]\n\
+         agents:\n  a: {}\n  b: {}\n\
+         rules:\n  \
+           - name: rule_a\n    description: \"TRUE when ok; FALSE otherwise.\"\n    agent: a\n  \
+           - name: rule_b\n    description: \"TRUE when ok; FALSE otherwise.\"\n    agent: b\n",
+    );
+    p.write("src/lib.rs", "// code\n");
+    p
+}
+
+#[test]
+fn max_parallel_runs_judges_concurrently() {
+    let p = two_run_project();
+    let verdicts = p.write_verdicts(r#"{"rule_a": true, "rule_b": true}"#);
+    let barrier = p.path().join("barrier");
+
+    // The barrier releases only when both judges are present at once. With
+    // `--max-parallel 2` both runs share a wave, so they rendezvous and pass.
+    // (A generous timeout tolerates slow process spawns; the success path
+    // returns the instant both arrive, so the test stays fast.)
+    p.lint()
+        .arg("--max-parallel")
+        .arg("2")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_BARRIER", &barrier)
+        .env("LLMLINT_MOCK_BARRIER_N", "2")
+        .env("LLMLINT_MOCK_BARRIER_MS", "30000")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PASS rule_a"))
+        .stdout(predicate::str::contains("PASS rule_b"));
+}
+
+#[test]
+fn serial_wave_does_not_satisfy_the_concurrency_barrier() {
+    let p = two_run_project();
+    let verdicts = p.write_verdicts(r#"{"rule_a": true, "rule_b": true}"#);
+    let barrier = p.path().join("barrier");
+
+    // With `--max-parallel 1` the first run is alone in its wave; it never sees a
+    // second peer, times out at the barrier, and is reported as a run error
+    // (exit 2). This is the negative control proving the barrier really gates on
+    // concurrency rather than passing trivially.
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_BARRIER", &barrier)
+        .env("LLMLINT_MOCK_BARRIER_N", "2")
+        .env("LLMLINT_MOCK_BARRIER_MS", "1500")
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("no structured output"));
+}

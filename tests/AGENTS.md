@@ -20,6 +20,11 @@ reporting). Add a journey here when a user-facing behavior lands.
   — force oneharness failure shapes.
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
+- `LLMLINT_MOCK_RUNLOG=<dir>` — one file per invocation listing the rules it
+  judged, to count oneharness calls and assert how rules were batched.
+- `LLMLINT_MOCK_BARRIER=<dir>` (+ `_N`, `_MS`) — a rendezvous that releases only
+  when `N` invocations are present at once, to prove `--max-parallel` overlapped
+  them (a serial wave times out instead).
 
 Plugin-fetch journeys also set `LLMLINT_CACHE_DIR=<dir>` (an isolated cache),
 and the one `http://` journey drives the real built-in HTTPS client (`ureq`)
@@ -31,10 +36,19 @@ logic is also covered hermetically via `file://` plugins.
 - All rules hold -> exit 0; a violation -> exit 1 with `file:line: message`.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
-  `http://` URL is fetched once over HTTPS and reused from cache (not refetched);
+  `http://` URL is fetched once over HTTPS and reused from cache (not refetched),
+  while `LLMLINT_PLUGIN_REFRESH` forces a refetch of the same pin;
   a version mismatch, the removed `llmlint:` scheme, and the renamed top-level
   `include` key are each clear exit-2 errors; the bundled config-lint plugin (a
   URL resolved offline from the embedded copy) catches a bad rule in a config.
+- YAML anchors, `<<` merge keys, and `x-` stash keys resolve end to end: an
+  aliased anchor reaches the rendered prompt and a merged field reaches oneharness.
+- A custom top-level `prompt_template` drives the prompt, and an agent's
+  `prompt_template` is appended for its rules (both asserted via the dumped prompt).
+- Rules for one agent share a single oneharness call by default; a per-agent
+  `batch_size` splits them into one call per batch.
+- `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
+  a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule and per-agent `files` override the global globs.
 - `--config` replaces upward discovery and is repeatable (first entry supplies
@@ -44,9 +58,12 @@ logic is also covered hermetically via `file://` plugins.
   as its `--cwd`.
 - `--rule` and `--agent` filters limit which rules run; an empty selection exits
   0; rules with no matching files are skipped.
-- `--timeout` is forwarded to oneharness; the oneharness `model` is forwarded,
-  with a per-agent `model` overriding the global default; multiple oneharness
-  configs warn and use the first; `--oneharness-bin` resolves from the env.
+- `--timeout` is forwarded to oneharness; a config `oneharness.timeout` is
+  forwarded when no CLI flag is given; `schema_max_retries` is forwarded as
+  `--schema-max-retries`; the oneharness `model` is forwarded, with a per-agent
+  `model` overriding the global default; multiple oneharness configs warn and use
+  the first; `--oneharness-bin` resolves from the env, and a config
+  `oneharness.bin` resolves the binary with no flag or env at all.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
@@ -54,9 +71,15 @@ logic is also covered hermetically via `file://` plugins.
   self-lint is clean.
 - `config` prints the merged config + sources and rejects an invalid config;
   `doctor` reports the oneharness version and fails clearly when it is missing.
-- Failure/recovery: missing config, malformed config, duplicate rule names, an
-  even `judges` count (exit 2); schema-invalid, missing-structured, unparseable,
-  empty-results, and bad-verdict-shape oneharness output are surfaced (exit 2).
+- `--format json` is a stable machine contract: a passing run lists rule names; a
+  failing run carries `summary` counts and located `violations` (exit 1); a
+  run-error carries the `errors` array (exit 2).
+- Failure/recovery: missing config, malformed config, and each deterministic
+  validation error — duplicate rule names, an even `judges` count, an invalid
+  rule name, an empty description, `judges: 0`, `batch_size: 0`, and a rule
+  referencing an unknown agent (exit 2); schema-invalid, missing-structured,
+  unparseable, empty-results, and bad-verdict-shape oneharness output are
+  surfaced (exit 2).
 
 ## Live tier (`scripts/live-*.sh`)
 
