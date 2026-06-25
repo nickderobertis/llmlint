@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.7](https://github.com/nickderobertis/llmlint/compare/v0.2.6...v0.2.7) - 2026-06-25
+
+### Added
+
+- rationales option with strict verdict ordering and per-judge breakdown ([#40](https://github.com/nickderobertis/llmlint/pull/40))
+
 ## [0.2.6](https://github.com/nickderobertis/llmlint/compare/v0.2.5...v0.2.6) - 2026-06-25
 
 ### Fixed
