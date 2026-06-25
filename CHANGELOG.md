@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/nickderobertis/llmlint/compare/v0.2.4...v0.2.5) - 2026-06-25
+
+### Added
+
+- *(init)* publish a config JSON Schema, derived from the model, and reference it from init configs ([#37](https://github.com/nickderobertis/llmlint/pull/37))
+
 ## [0.2.4](https://github.com/nickderobertis/llmlint/compare/v0.2.3...v0.2.4) - 2026-06-25
 
 ### Added
