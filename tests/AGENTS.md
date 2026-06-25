@@ -64,8 +64,13 @@ logic is also covered hermetically via `file://` plugins.
   honors a relative path resolved against `--cwd`.
 - `--cwd` drives both config discovery and the directory forwarded to oneharness
   as its `--cwd`.
-- `--rule` and `--agent` filters limit which rules run; an empty selection exits
-  0; rules with no matching files are skipped.
+- `--rule` and `--agent` filters limit which rules run: `--rule` is repeatable
+  (selects exactly the named rules) and `--agent default` targets the
+  unassigned rules. A valid-but-empty selection (real names that don't
+  intersect) exits 0; a `--rule`/`--agent` name that matches nothing in the
+  config is a clear exit-2 error listing the available names — even when mixed
+  with a valid name — so a typo isn't a silent false green; rules with no
+  matching files are skipped.
 - `--timeout` is forwarded to oneharness; a config `oneharness.timeout` is
   forwarded when no CLI flag is given; `schema_max_retries` is forwarded as
   `--schema-max-retries`; the oneharness `model` is forwarded, with a per-agent

@@ -859,6 +859,32 @@ fn lint_project() -> Project {
 
 #[test]
 fn empty_rule_selection_exits_zero() {
+    // A *valid* but empty selection: `default_rule` exists and agent `special`
+    // exists, but the rule isn't assigned to that agent, so they don't
+    // intersect. That is a legitimate "nothing to run" -> exit 0, distinct from
+    // a typo'd name (which is an error; see below).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  special:\n    \
+             harness: claude-code\nrules:\n  \
+             - {{ name: default_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.lint()
+        .arg("--rule")
+        .arg("default_rule")
+        .arg("--agent")
+        .arg("special")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 rules"));
+}
+
+#[test]
+fn unknown_rule_name_is_an_error() {
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -872,8 +898,128 @@ fn empty_rule_selection_exits_zero() {
         .arg("--rule")
         .arg("nonexistent")
         .assert()
-        .success()
-        .stdout(predicate::str::contains("0 rules"));
+        .code(2)
+        .stderr(predicate::str::contains("no rule named nonexistent"))
+        .stderr(predicate::str::contains("available rules: only_rule"));
+}
+
+#[test]
+fn unknown_agent_name_is_an_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  special:\n    \
+             harness: claude-code\nrules:\n  \
+             - {{ name: only_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.lint()
+        .arg("--agent")
+        .arg("typo")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no agent named typo"))
+        .stderr(predicate::str::contains(
+            "available agents: default, special",
+        ));
+}
+
+#[test]
+fn rule_filter_is_repeatable() {
+    // `--rule` is documented as repeatable: two flags select exactly those two
+    // of three rules (the headline "target individual rules" capability).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: keep_a, description: \"{RULE}\" }}\n  \
+             - {{ name: keep_b, description: \"{RULE}\" }}\n  \
+             - {{ name: drop_c, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"keep_a": true, "keep_b": true, "drop_c": true}"#);
+
+    let out = p
+        .lint()
+        .arg("--rule")
+        .arg("keep_a")
+        .arg("--rule")
+        .arg("keep_b")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["keep_a", "keep_b"]);
+}
+
+#[test]
+fn partial_unknown_rule_is_an_error() {
+    // One valid name does not excuse a typo in another `--rule`: the typo is
+    // still an exit-2 error (it would otherwise be a silent false green).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: only_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.lint()
+        .arg("--rule")
+        .arg("only_rule")
+        .arg("--rule")
+        .arg("typo")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no rule named typo"));
+}
+
+#[test]
+fn agent_default_selects_only_unassigned_rules() {
+    // `--agent default` is the documented way to target rules with no explicit
+    // agent, even when other agents are declared.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  special:\n    \
+             harness: claude-code\nrules:\n  \
+             - {{ name: free_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: special_rule, description: \"{RULE}\", agent: special }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"free_rule": true, "special_rule": true}"#);
+    let out = p
+        .lint()
+        .arg("--agent")
+        .arg("default")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["free_rule"]);
 }
 
 #[test]

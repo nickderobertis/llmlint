@@ -30,6 +30,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let loaded = configfs::load(&args.config, &cwd)?;
     let config = loaded.config;
     validate(&config)?;
+    validate_filters(&config, &args)?;
 
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
@@ -141,6 +142,65 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let report = Report::new(outcomes, run_errors);
     emit(&report, args.format, args.verbose);
     Ok(report.exit_code())
+}
+
+/// Reject `--rule`/`--agent` targets that name nothing in the config. Without
+/// this a typo (`--rule no_todos` vs `no_todo`) selects zero rules and exits 0 —
+/// a false green. A genuinely-empty-but-valid selection (real names that just
+/// don't intersect) is allowed through to exit 0 by `select_rules`. `default`
+/// is always a valid agent target (it runs rules with no explicit agent).
+fn validate_filters(config: &Config, args: &LintArgs) -> Result<()> {
+    let mut problems: Vec<String> = Vec::new();
+
+    if !args.rule.is_empty() {
+        let known: HashSet<&str> = config.rules.iter().map(|r| r.name.as_str()).collect();
+        let mut unknown: Vec<&str> = args
+            .rule
+            .iter()
+            .map(String::as_str)
+            .filter(|n| !known.contains(n))
+            .collect();
+        if !unknown.is_empty() {
+            unknown.sort_unstable();
+            unknown.dedup();
+            let mut available: Vec<&str> = known.into_iter().collect();
+            available.sort_unstable();
+            problems.push(format!(
+                "no rule named {}; available rules: {}",
+                unknown.join(", "),
+                join_or_none(&available)
+            ));
+        }
+    }
+
+    if let Some(agent) = &args.agent {
+        if agent != "default" && !config.agents.contains_key(agent) {
+            let mut available: Vec<&str> = config.agents.keys().map(String::as_str).collect();
+            if !available.contains(&"default") {
+                available.push("default");
+            }
+            available.sort_unstable();
+            problems.push(format!(
+                "no agent named {}; available agents: {}",
+                agent,
+                join_or_none(&available)
+            ));
+        }
+    }
+
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::UnknownFilter(problems.join("; ")))
+    }
+}
+
+fn join_or_none(names: &[&str]) -> String {
+    if names.is_empty() {
+        "(none)".to_string()
+    } else {
+        names.join(", ")
+    }
 }
 
 fn select_rules<'a>(config: &'a Config, args: &LintArgs) -> Vec<&'a Rule> {
@@ -293,5 +353,94 @@ fn emit(report: &Report, format: OutputFormat, verbosity: u8) {
                 serde_json::to_string_pretty(&report.to_json()).unwrap_or_default()
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(name: &str, agent: Option<&str>) -> Rule {
+        Rule {
+            name: name.into(),
+            description: "TRUE when ok; FALSE otherwise.".into(),
+            agent: agent.map(Into::into),
+            judges: None,
+            files: None,
+        }
+    }
+
+    fn config_with(rules: Vec<Rule>, agents: &[&str]) -> Config {
+        let mut c = Config {
+            rules,
+            ..Default::default()
+        };
+        for a in agents {
+            c.agents.insert((*a).into(), Agent::default());
+        }
+        c
+    }
+
+    fn args(rules: &[&str], agent: Option<&str>) -> LintArgs {
+        LintArgs {
+            rule: rules.iter().map(|s| (*s).to_string()).collect(),
+            agent: agent.map(Into::into),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_filters_is_ok() {
+        let cfg = config_with(vec![rule("a_rule", None)], &[]);
+        assert!(validate_filters(&cfg, &args(&[], None)).is_ok());
+    }
+
+    #[test]
+    fn known_rule_and_agent_are_ok() {
+        let cfg = config_with(vec![rule("a_rule", Some("special"))], &["special"]);
+        assert!(validate_filters(&cfg, &args(&["a_rule"], Some("special"))).is_ok());
+    }
+
+    #[test]
+    fn default_agent_is_always_valid() {
+        let cfg = config_with(vec![rule("a_rule", None)], &[]);
+        assert!(validate_filters(&cfg, &args(&[], Some("default"))).is_ok());
+    }
+
+    #[test]
+    fn unknown_rule_lists_available_sorted() {
+        let cfg = config_with(vec![rule("beta", None), rule("alpha", None)], &[]);
+        let err = validate_filters(&cfg, &args(&["typo", "alpha"], None)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no rule named typo"), "got: {msg}");
+        assert!(msg.contains("available rules: alpha, beta"), "got: {msg}");
+    }
+
+    #[test]
+    fn unknown_agent_lists_available_with_default() {
+        let cfg = config_with(vec![rule("a_rule", Some("special"))], &["special"]);
+        let err = validate_filters(&cfg, &args(&[], Some("ghost"))).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no agent named ghost"), "got: {msg}");
+        assert!(
+            msg.contains("available agents: default, special"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_rule_with_no_rules_says_none() {
+        let cfg = config_with(vec![], &[]);
+        let err = validate_filters(&cfg, &args(&["x"], None)).unwrap_err();
+        assert!(err.to_string().contains("available rules: (none)"));
+    }
+
+    #[test]
+    fn both_unknown_rule_and_agent_are_reported() {
+        let cfg = config_with(vec![rule("a_rule", None)], &[]);
+        let err = validate_filters(&cfg, &args(&["nope"], Some("ghost"))).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no rule named nope"), "got: {msg}");
+        assert!(msg.contains("no agent named ghost"), "got: {msg}");
     }
 }

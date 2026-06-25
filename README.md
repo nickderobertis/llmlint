@@ -230,7 +230,9 @@ The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 ## Commands & exit codes
 
 - `llmlint [FILES...]` — lint (the default). `--format human|json`, `--agent`,
-  `--rule`, `--max-parallel`, `--timeout`, `--cwd`.
+  `--rule`, `--max-parallel`, `--timeout`, `--cwd`. Target individual rules with
+  `--rule NAME` (repeatable) or a whole group with `--agent NAME`; an unknown
+  rule/agent name is an exit-2 error that lists the available names.
 - `llmlint init` — write a starter config (`--with-template`, `--global`, `--force`).
 - `llmlint config` — print the merged config and its sources as JSON.
 - `llmlint doctor` — check that oneharness is installed and reachable.
