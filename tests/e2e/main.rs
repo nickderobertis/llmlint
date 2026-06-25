@@ -149,13 +149,17 @@ fn all_rules_pass_exits_zero() {
     p.write("src/lib.rs", "// code\n");
     let verdicts = p.write_verdicts(r#"{"a_rule": true, "b_rule": true}"#);
 
-    p.lint_v()
+    // Default verbosity: passing rules are only counted, so the output is just
+    // the summary line — no `PASS`/`FAIL` lines at all.
+    p.lint()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .success()
-        .stdout(predicate::str::contains("PASS a_rule"))
-        .stdout(predicate::str::contains("PASS b_rule"))
-        .stdout(predicate::str::contains("2 rules: 2 passed"));
+        .stdout(predicate::str::contains(
+            "2 rules: 2 passed, 0 failed, 0 skipped",
+        ))
+        .stdout(predicate::str::contains("PASS").not())
+        .stdout(predicate::str::contains("FAIL").not());
 }
 
 #[test]
@@ -775,6 +779,60 @@ fn unparseable_oneharness_output_is_surfaced() {
         .stdout(predicate::str::contains(
             "could not parse oneharness output",
         ));
+}
+
+#[test]
+fn verbose_debug_view_is_shown_even_when_a_judge_errors() {
+    // At `-v`, a judge that produces unusable output still errors the run
+    // (exit 2, error on stdout) AND its exact command + raw result are traced
+    // to stderr, so the failure can be debugged.
+    let p = lint_project();
+    p.lint_v()
+        .env("LLMLINT_MOCK_GARBAGE", "1")
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(
+            "could not parse oneharness output",
+        ))
+        .stderr(predicate::str::contains("# oneharness: agent default"))
+        .stderr(predicate::str::contains("run --system"))
+        // The raw (unparseable) result the mock printed is captured verbatim.
+        .stderr(predicate::str::contains("result:"))
+        .stderr(predicate::str::contains("this is not json"));
+}
+
+#[test]
+fn json_format_is_unaffected_by_verbosity() {
+    // `-v` must not leak the debug view into the JSON report: stdout stays pure
+    // JSON, and the oneharness trace still goes to stderr.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: j_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts =
+        p.write_verdicts(r#"{"j_rule": {"holds": false, "violations": [{"message": "nope"}]}}"#);
+
+    let out = p
+        .lint_v()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // stdout parses cleanly as the JSON report (no debug text mixed in).
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["summary"]["failed"], 1);
+    assert_eq!(v["rules"][0]["name"], "j_rule");
+    // The debug view is still emitted, but on stderr.
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("# oneharness:"));
+    assert!(err.contains("run --system"));
 }
 
 /// A minimal one-rule project used by the failure-path tests.

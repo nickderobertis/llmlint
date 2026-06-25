@@ -28,12 +28,15 @@ logic is also covered hermetically via `file://` plugins.
 
 ## Journeys covered
 
-- All rules hold -> exit 0; a violation -> exit 1.
+- All rules hold -> exit 0 (default output is just the `N rules: …` summary);
+  a violation -> exit 1.
 - Output by default lists failing rules with `file:line: message` plus the
-  `N rules: …` summary; passed/skipped rules are only counted. `-v` additionally
-  itemizes every passed/skipped rule on stdout and prints the oneharness debug
-  view (exact command + raw result per judge) to stderr. Verbosity never changes
-  the exit code, and operational (exit-2) errors are surfaced at every level.
+  summary; passed/skipped rules are only counted. `-v` additionally itemizes
+  every passed/skipped rule on stdout and prints the oneharness debug view
+  (exact command + raw result per judge) to stderr — including when a judge
+  errors, so a bad run can be debugged. Verbosity never changes the exit code,
+  surfaces operational (exit-2) errors at every level, and leaves `--format
+  json` untouched (the debug view stays on stderr; stdout stays pure JSON).
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
   `http://` URL is fetched once over HTTPS and reused from cache (not refetched);
