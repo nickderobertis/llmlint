@@ -17,10 +17,21 @@
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
+//! - `LLMLINT_MOCK_RUNLOG=<dir>` — record one file per invocation listing the
+//!   rule names it judged (comma-joined), so a test can count invocations and
+//!   assert how rules were batched into oneharness calls.
+//! - `LLMLINT_MOCK_BARRIER=<dir>` (+ `LLMLINT_MOCK_BARRIER_N`, default 1, and
+//!   `LLMLINT_MOCK_BARRIER_MS`, default 2000) — a rendezvous: each invocation
+//!   registers itself and blocks until `N` peers are present, or fails like a
+//!   judge that couldn't complete after the timeout. With `N` peers required, a
+//!   clean exit proves `N` invocations ran concurrently (i.e. `--max-parallel`
+//!   actually overlapped them); a serial wave never reaches `N` and times out.
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
@@ -64,6 +75,77 @@ fn verdict_for(rule: &str, verdicts: &Map<String, Value>) -> Value {
     }
 }
 
+/// Atomically claim the next free `{prefix}-{i}` file in `dir`. `create_new`
+/// (O_EXCL) makes concurrent claimers pick distinct indices, so the file count
+/// is an exact invocation count even under parallelism.
+fn claim_indexed(dir: &Path, prefix: &str) -> PathBuf {
+    let _ = fs::create_dir_all(dir);
+    let mut i = 0usize;
+    loop {
+        let p = dir.join(format!("{prefix}-{i}"));
+        match fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(_) => return p,
+            Err(_) => i += 1,
+        }
+    }
+}
+
+/// Rendezvous on `LLMLINT_MOCK_BARRIER`: register, then block until `N` peers
+/// are present (concurrency proof) or the timeout elapses. Returns `false` on
+/// timeout so the caller can fail like a judge that couldn't complete.
+fn barrier_ok() -> bool {
+    let Some(dir) = env::var_os("LLMLINT_MOCK_BARRIER") else {
+        return true;
+    };
+    let dir = PathBuf::from(dir);
+    let n: usize = env::var("LLMLINT_MOCK_BARRIER_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let timeout = Duration::from_millis(
+        env::var("LLMLINT_MOCK_BARRIER_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2000),
+    );
+    claim_indexed(&dir, "peer");
+    let start = Instant::now();
+    loop {
+        let present = fs::read_dir(&dir).map(|rd| rd.count()).unwrap_or(0);
+        if present >= n {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Print a oneharness report whose single result carries no structured output
+/// (the shape returned on a timeout / nonzero run).
+fn emit_no_structured(harness: &str) {
+    let result = json!({
+        "harness": harness,
+        "status": "timeout",
+        "exit_code": null,
+        "structured": null,
+        "schema_valid": null,
+        "schema_attempts": null,
+        "schema_error": null,
+        "error": "mock: barrier timed out (ran alone in its wave)",
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "results": [result],
+        }))
+        .unwrap()
+    );
+}
+
 fn next_count(rule: &str) -> usize {
     let Some(dir) = env::var_os("LLMLINT_MOCK_STATE") else {
         return 0;
@@ -102,6 +184,24 @@ fn main() {
         if let Some(system) = arg_value(&args, "--system") {
             let _ = fs::write(PathBuf::from(dump), system);
         }
+    }
+
+    let schema_path = arg_value(&args, "--schema").unwrap_or_default();
+    let names = rule_names(&schema_path);
+
+    // Optionally record one file per invocation listing the rules it judged, so
+    // a test can count oneharness calls and assert how rules were batched.
+    if let Some(dir) = env::var_os("LLMLINT_MOCK_RUNLOG") {
+        let path = claim_indexed(&PathBuf::from(dir), "run");
+        let _ = fs::write(&path, names.join(","));
+    }
+
+    // Optionally rendezvous with concurrent invocations to prove `--max-parallel`
+    // actually overlapped them. A timeout means this judge ran alone in its wave
+    // -> behave like one that couldn't complete (no structured output).
+    if !barrier_ok() {
+        emit_no_structured(&harness);
+        std::process::exit(1);
     }
 
     if flag("LLMLINT_MOCK_GARBAGE") {
@@ -155,16 +255,15 @@ fn main() {
             "error": "mock: no structured output",
         })
     } else {
-        let schema_path = arg_value(&args, "--schema").unwrap_or_default();
         let verdicts: Map<String, Value> = env::var("LLMLINT_MOCK_VERDICTS")
             .ok()
             .and_then(|p| fs::read_to_string(p).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let mut structured = Map::new();
-        for rule in rule_names(&schema_path) {
-            let v = verdict_for(&rule, &verdicts);
-            structured.insert(rule, v);
+        for rule in &names {
+            let v = verdict_for(rule, &verdicts);
+            structured.insert(rule.clone(), v);
         }
         json!({
             "harness": harness,
