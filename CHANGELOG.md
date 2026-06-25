@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/nickderobertis/llmlint/compare/v0.2.5...v0.2.6) - 2026-06-25
+
+### Fixed
+
+- *(lint)* error on unknown --rule/--agent targets instead of a false green ([#36](https://github.com/nickderobertis/llmlint/pull/36))
+
 ## [0.2.5](https://github.com/nickderobertis/llmlint/compare/v0.2.4...v0.2.5) - 2026-06-25
 
 ### Added
