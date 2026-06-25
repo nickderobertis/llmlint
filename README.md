@@ -133,8 +133,9 @@ rules:
 ### Judges and voting
 
 `judges: N` runs a rule through `N` independent judges and takes the **majority**
-verdict (a tie fails). Only rules that opt in pay the extra cost: judge 1 runs all
-rules, judge 2 only the rules with `judges >= 2`, and so on.
+verdict. `N` must be **odd** (1, 3, 5, …) so the vote can't tie — an even count is
+a config error. Only rules that opt in pay the extra cost: judge 1 runs all rules,
+judge 2 only the rules with `judges >= 2`, and so on.
 
 ### oneharness passthrough
 

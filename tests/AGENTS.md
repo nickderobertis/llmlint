@@ -54,9 +54,9 @@ logic is also covered hermetically via `file://` plugins.
   self-lint is clean.
 - `config` prints the merged config + sources and rejects an invalid config;
   `doctor` reports the oneharness version and fails clearly when it is missing.
-- Failure/recovery: missing config, malformed config, duplicate rule names (exit
-  2); schema-invalid, missing-structured, unparseable, empty-results, and
-  bad-verdict-shape oneharness output are surfaced (exit 2).
+- Failure/recovery: missing config, malformed config, duplicate rule names, an
+  even `judges` count (exit 2); schema-invalid, missing-structured, unparseable,
+  empty-results, and bad-verdict-shape oneharness output are surfaced (exit 2).
 
 ## Live tier (`scripts/live-*.sh`)
 

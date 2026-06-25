@@ -174,6 +174,13 @@ pub fn validate(config: &Config) -> Result<()> {
         }
         if rule.judges == Some(0) {
             problems.push(format!("rule {:?} has judges: 0 (must be >= 1)", rule.name));
+        } else if let Some(judges) = rule.judges {
+            if judges % 2 == 0 {
+                problems.push(format!(
+                    "rule {:?} has judges: {} (must be odd so the majority verdict can't tie)",
+                    rule.name, judges
+                ));
+            }
         }
         if let Some(agent) = &rule.agent {
             if !config.agents.contains_key(agent) {
@@ -297,6 +304,32 @@ mod tests {
             root.agents["shared"].harness.as_deref(),
             Some("claude-code")
         );
+    }
+
+    #[test]
+    fn even_judges_is_invalid() {
+        let c = Config {
+            rules: vec![Rule {
+                judges: Some(2),
+                ..rule("even_judges")
+            }],
+            ..Default::default()
+        };
+        let err = validate(&c).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("must be odd"), "got: {msg}");
+    }
+
+    #[test]
+    fn odd_judges_is_valid() {
+        let c = Config {
+            rules: vec![Rule {
+                judges: Some(3),
+                ..rule("odd_judges")
+            }],
+            ..Default::default()
+        };
+        assert!(validate(&c).is_ok());
     }
 
     #[test]
