@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.8](https://github.com/nickderobertis/llmlint/compare/v0.2.7...v0.2.8) - 2026-06-25
+
+### Added
+
+- colorized report and terminal screenshots via screencomp ([#42](https://github.com/nickderobertis/llmlint/pull/42))
+
 ## [0.2.7](https://github.com/nickderobertis/llmlint/compare/v0.2.6...v0.2.7) - 2026-06-25
 
 ### Added
