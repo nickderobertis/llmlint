@@ -8,17 +8,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::version::Version;
 use crate::errors::{Error, Result};
 
 /// Include/exclude glob set used to select target files.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FileFilter {
+    /// Globs selecting files to lint.
     #[serde(default)]
     pub include: Vec<String>,
+    /// Globs subtracted from the included set.
     #[serde(default)]
     pub exclude: Vec<String>,
 }
@@ -30,10 +33,11 @@ impl FileFilter {
 }
 
 /// Passthrough/defaults for how llmlint invokes `oneharness`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct OneharnessCfg {
-    /// oneharness config file(s) to forward via `--config` (single-file today).
+    /// oneharness config file(s) to forward via `--config` (single-file today;
+    /// extras are warned and dropped).
     #[serde(default)]
     pub config: Vec<String>,
     /// Override the oneharness binary path.
@@ -44,6 +48,7 @@ pub struct OneharnessCfg {
     pub model: Option<String>,
     /// Per-judge timeout in seconds (default 120).
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub timeout: Option<u64>,
     /// Schema-validation re-prompt budget passed to oneharness `--schema-max-retries`.
     #[serde(default)]
@@ -51,17 +56,19 @@ pub struct OneharnessCfg {
 }
 
 /// A group of rules sharing reviewer context and harness/model/batch config.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {
     /// Harness id from `oneharness list`. When unset, llmlint omits `--harness`
     /// and oneharness selects its own configured default harness.
     #[serde(default)]
     pub harness: Option<String>,
+    /// Model override for this agent's judges.
     #[serde(default)]
     pub model: Option<String>,
     /// Max rules per judge run (default 20).
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub batch_size: Option<usize>,
     /// Extra prompt text appended to the master template before rendering.
     #[serde(default)]
@@ -72,15 +79,25 @@ pub struct Agent {
 }
 
 /// A single lint rule: a statement judged true/false about the target files.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
+    /// Terse snake_case identifier: an ASCII letter followed by letters, digits,
+    /// or underscores. Used as a JSON Schema key for the judge's verdict.
+    #[schemars(regex(pattern = r"^[A-Za-z][A-Za-z0-9_]*$"))]
     pub name: String,
+    /// The invariant the judge evaluates. State clearly what is TRUE (passes)
+    /// and what is FALSE (a violation).
+    #[schemars(length(min = 1))]
     pub description: String,
+    /// Name of the agent (under `agents`) this rule runs on. Defaults to the
+    /// `default` agent.
     #[serde(default)]
     pub agent: Option<String>,
-    /// Independent judges to run; the majority verdict wins (default 1).
+    /// Independent judges to run; the majority verdict wins (default 1). Must be
+    /// odd so the vote can't tie.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub judges: Option<u32>,
     /// Override the target files for this rule.
     #[serde(default)]
@@ -96,17 +113,32 @@ impl Rule {
 /// A whole llmlint config (one file, before include-merging) or the merged
 /// result. Unknown *top-level* keys are allowed so anchors can be stashed in a
 /// throwaway key (e.g. `x-prompts:`); nested structs reject unknown fields.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// This type is the single source of the published config JSON Schema: the
+/// `JsonSchema` derive (post-processed in [`crate::domain::config_schema`])
+/// generates `assets/llmlint.schema.json`, so the schema can never drift from
+/// the model. Field doc comments become the schema's property descriptions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[schemars(
+    title = "llmlint configuration",
+    description = "Configuration for llmlint, an LLM-as-judge linter for code-quality checks \
+                   deterministic linters can't express. Docs: https://github.com/nickderobertis/llmlint"
+)]
 pub struct Config {
     /// The config's published version (`1`, `1.1`, or `1.1.1`). Set this when
     /// the config is consumed as a plugin: a consumer pins a desired version
     /// with an `@` suffix on the plugin URL, validated against this value.
     #[serde(default)]
     pub version: Option<Version>,
+    /// Master minijinja prompt template, rendered with `rules` (each with name +
+    /// description) and `files` (the target paths). Overrides the built-in one.
     #[serde(default)]
     pub prompt_template: Option<String>,
+    /// Default include/exclude globs selecting target files when none are passed
+    /// on the CLI.
     #[serde(default)]
     pub files: FileFilter,
+    /// Defaults for how llmlint invokes the oneharness subprocess.
     #[serde(default)]
     pub oneharness: OneharnessCfg,
     /// Plugins (shared rule sets) merged in, one entry each: a local file path
@@ -115,8 +147,12 @@ pub struct Config {
     /// with `files.include`. Resolution lives in [`crate::io::plugins`].
     #[serde(default)]
     pub plugins: Vec<String>,
+    /// Named agents that group rules and share harness/model/batch config. A
+    /// rule with no `agent` uses the `default` agent.
     #[serde(default)]
     pub agents: BTreeMap<String, Agent>,
+    /// The lint rules. Each is a positive invariant judged true/false about the
+    /// target files (holds=true passes; holds=false is a violation).
     #[serde(default)]
     pub rules: Vec<Rule>,
 }

@@ -9,8 +9,10 @@
 //! `1.2.3`. The pin is therefore both an assertion (the fetched config must
 //! satisfy it) and the cache key (see [`crate::io::plugins`]).
 
+use std::borrow::Cow;
 use std::fmt;
 
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 /// A declared config version: 1–3 numeric components.
@@ -113,6 +115,21 @@ impl<'de> Deserialize<'de> for Version {
             }
         };
         Version::parse(&text).map_err(de::Error::custom)
+    }
+}
+
+// A version accepts a YAML integer (`1`), float (`1.2`), or string (`"1.2.3"`),
+// so the schema admits all three. (The 1–3-component constraint is enforced at
+// parse time, not expressible cleanly here.)
+impl JsonSchema for Version {
+    fn schema_name() -> Cow<'static, str> {
+        "Version".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": ["integer", "number", "string"],
+        })
     }
 }
 

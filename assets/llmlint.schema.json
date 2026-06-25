@@ -1,36 +1,64 @@
 {
   "$defs": {
-    "agent": {
+    "Agent": {
       "additionalProperties": false,
+      "description": "A group of rules sharing reviewer context and harness/model/batch config.",
       "properties": {
         "batch_size": {
+          "default": null,
           "description": "Max rules per judge run (default 20).",
+          "format": "uint",
           "minimum": 1,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "files": {
-          "$ref": "#/$defs/fileFilter",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
           "description": "Override the target files for this agent's rules."
         },
         "harness": {
-          "description": "Harness id from `oneharness list`. Omit to let oneharness pick its own configured default harness.",
-          "type": "string"
+          "default": null,
+          "description": "Harness id from `oneharness list`. When unset, llmlint omits `--harness`\nand oneharness selects its own configured default harness.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "model": {
+          "default": null,
           "description": "Model override for this agent's judges.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "prompt_template": {
+          "default": null,
           "description": "Extra prompt text appended to the master template before rendering.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
     },
-    "fileFilter": {
+    "FileFilter": {
       "additionalProperties": false,
+      "description": "Include/exclude glob set used to select target files.",
       "properties": {
         "exclude": {
+          "default": [],
           "description": "Globs subtracted from the included set.",
           "items": {
             "type": "string"
@@ -38,6 +66,7 @@
           "type": "array"
         },
         "include": {
+          "default": [],
           "description": "Globs selecting files to lint.",
           "items": {
             "type": "string"
@@ -47,60 +76,98 @@
       },
       "type": "object"
     },
-    "oneharness": {
+    "OneharnessCfg": {
       "additionalProperties": false,
+      "description": "Passthrough/defaults for how llmlint invokes `oneharness`.",
       "properties": {
         "bin": {
+          "default": null,
           "description": "Override the oneharness binary path.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "config": {
-          "description": "oneharness config file(s) to forward via `--config` (single-file today; extras are warned and dropped).",
+          "default": [],
+          "description": "oneharness config file(s) to forward via `--config` (single-file today;\nextras are warned and dropped).",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "model": {
+          "default": null,
           "description": "Default model for every judge (an agent's `model` overrides it).",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "schema_max_retries": {
+          "default": null,
           "description": "Schema-validation re-prompt budget passed to oneharness `--schema-max-retries`.",
+          "format": "uint32",
           "minimum": 0,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "timeout": {
+          "default": null,
           "description": "Per-judge timeout in seconds (default 120).",
+          "format": "uint64",
           "minimum": 1,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "type": "object"
     },
-    "rule": {
+    "Rule": {
       "additionalProperties": false,
+      "description": "A single lint rule: a statement judged true/false about the target files.",
       "properties": {
         "agent": {
-          "description": "Name of the agent (under `agents`) this rule runs on. Defaults to the `default` agent.",
-          "type": "string"
+          "default": null,
+          "description": "Name of the agent (under `agents`) this rule runs on. Defaults to the\n`default` agent.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "description": {
-          "description": "The invariant the judge evaluates. State clearly what is TRUE (passes) and what is FALSE (a violation).",
+          "description": "The invariant the judge evaluates. State clearly what is TRUE (passes)\nand what is FALSE (a violation).",
           "minLength": 1,
           "type": "string"
         },
         "files": {
-          "$ref": "#/$defs/fileFilter",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
           "description": "Override the target files for this rule."
         },
         "judges": {
-          "description": "Independent judges to run; the majority verdict wins (default 1). Must be odd so the vote can't tie.",
+          "default": null,
+          "description": "Independent judges to run; the majority verdict wins (default 1). Must be\nodd so the vote can't tie.",
+          "format": "uint32",
           "minimum": 1,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "name": {
-          "description": "Terse snake_case identifier: an ASCII letter followed by letters, digits, or underscores. Used as a JSON Schema key.",
+          "description": "Terse snake_case identifier: an ASCII letter followed by letters, digits,\nor underscores. Used as a JSON Schema key for the judge's verdict.",
           "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
           "type": "string"
         }
@@ -110,53 +177,81 @@
         "description"
       ],
       "type": "object"
+    },
+    "Version": {
+      "type": [
+        "integer",
+        "number",
+        "string"
+      ]
     }
   },
   "$id": "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/llmlint.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": true,
   "description": "Configuration for llmlint, an LLM-as-judge linter for code-quality checks deterministic linters can't express. Docs: https://github.com/nickderobertis/llmlint",
   "properties": {
     "agents": {
       "additionalProperties": {
-        "$ref": "#/$defs/agent"
+        "$ref": "#/$defs/Agent"
       },
-      "description": "Named agents that group rules and share harness/model/batch config. A rule with no `agent` uses the `default` agent.",
+      "default": {},
+      "description": "Named agents that group rules and share harness/model/batch config. A\nrule with no `agent` uses the `default` agent.",
       "type": "object"
     },
     "files": {
-      "$ref": "#/$defs/fileFilter",
-      "description": "Default include/exclude globs selecting target files when none are passed on the CLI."
+      "$ref": "#/$defs/FileFilter",
+      "default": {
+        "exclude": [],
+        "include": []
+      },
+      "description": "Default include/exclude globs selecting target files when none are passed\non the CLI."
     },
     "oneharness": {
-      "$ref": "#/$defs/oneharness",
+      "$ref": "#/$defs/OneharnessCfg",
+      "default": {
+        "bin": null,
+        "config": [],
+        "model": null,
+        "schema_max_retries": null,
+        "timeout": null
+      },
       "description": "Defaults for how llmlint invokes the oneharness subprocess."
     },
     "plugins": {
-      "description": "Shared rule sets merged in, one entry each: a local file path or a URL (http(s)://, file://), the URL optionally pinned to a version with an `@` suffix (e.g. `…/rules.yml@1.2`).",
+      "default": [],
+      "description": "Plugins (shared rule sets) merged in, one entry each: a local file path\nor a URL (`http(s)://`, `file://`), the URL optionally pinned with an\n`@version` suffix. Named `plugins` (not `include`) to avoid confusion\nwith `files.include`. Resolution lives in [`crate::io::plugins`].",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "prompt_template": {
-      "description": "Master minijinja prompt template, rendered with `rules` (each with name + description) and `files` (the target paths). Overrides the built-in template.",
-      "type": "string"
+      "default": null,
+      "description": "Master minijinja prompt template, rendered with `rules` (each with name +\ndescription) and `files` (the target paths). Overrides the built-in one.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "rules": {
-      "description": "The lint rules. Each is a positive invariant judged true/false about the target files (holds=true passes; holds=false is a violation).",
+      "default": [],
+      "description": "The lint rules. Each is a positive invariant judged true/false about the\ntarget files (holds=true passes; holds=false is a violation).",
       "items": {
-        "$ref": "#/$defs/rule"
+        "$ref": "#/$defs/Rule"
       },
       "type": "array"
     },
     "version": {
-      "description": "This config's own published version (1, 1.2, or \"1.2.3\"). It matters when the config is consumed elsewhere as a plugin: that consumer pins a desired version with an `@` suffix on the URL.",
-      "type": [
-        "integer",
-        "number",
-        "string"
-      ]
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Version"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The config's published version (`1`, `1.1`, or `1.1.1`). Set this when\nthe config is consumed as a plugin: a consumer pins a desired version\nwith an `@` suffix on the plugin URL, validated against this value."
     }
   },
   "title": "llmlint configuration",

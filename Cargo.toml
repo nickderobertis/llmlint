@@ -61,6 +61,10 @@ tempfile = "3"
 # `curl`) and no system TLS/OpenSSL link. Minimal features: the rustls backend
 # with bundled Mozilla roots — no gzip/json/cookies/charset.
 ureq = { version = "3", default-features = false, features = ["rustls", "rustls-webpki-roots"] }
+# Derives the public config JSON Schema (`assets/llmlint.schema.json`) straight
+# from the `Config` model, so the schema referenced by `llmlint init` can never
+# drift from the Rust types. Default features only (derive + std); emits 2020-12.
+schemars = "1"
 
 [dev-dependencies]
 assert_cmd = "2"
