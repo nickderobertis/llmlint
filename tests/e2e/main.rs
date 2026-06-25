@@ -55,23 +55,18 @@ impl Project {
         c.current_dir(self.path());
         c
     }
-    /// A default-`lint` command wired to the mock harness. Output is minimal
-    /// (summary line only) unless a verbosity flag is added.
+    /// A default-`lint` command wired to the mock harness. Output lists failing
+    /// rules + the summary; passed/skipped rules are only counted.
     fn lint(&self) -> Command {
         let mut c = self.bare();
         c.arg("--oneharness-bin").arg(mock_path());
         c
     }
-    /// `lint` at `-v`: itemizes failing rules and their locations.
+    /// `lint` at `-v`: itemizes every rule (passed/skipped too) and prints the
+    /// oneharness debug view to stderr.
     fn lint_v(&self) -> Command {
         let mut c = self.lint();
         c.arg("-v");
-        c
-    }
-    /// `lint` at `-vv`: itemizes every rule (passed/skipped too).
-    fn lint_vv(&self) -> Command {
-        let mut c = self.lint();
-        c.arg("-vv");
         c
     }
 }
@@ -154,7 +149,7 @@ fn all_rules_pass_exits_zero() {
     p.write("src/lib.rs", "// code\n");
     let verdicts = p.write_verdicts(r#"{"a_rule": true, "b_rule": true}"#);
 
-    p.lint_vv()
+    p.lint_v()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .success()
@@ -179,7 +174,7 @@ fn violation_fails_with_file_and_line() {
             {"file": "src/db.rs", "line": 12, "message": "inline SQL"}]}}"#,
     );
 
-    p.lint_v()
+    p.lint()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .code(1)
@@ -188,7 +183,7 @@ fn violation_fails_with_file_and_line() {
 }
 
 #[test]
-fn output_is_minimal_by_default_and_verbosity_escalates() {
+fn default_shows_failures_and_verbose_adds_rules_and_debug() {
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -205,35 +200,35 @@ fn output_is_minimal_by_default_and_verbosity_escalates() {
                 {"file": "src/lib.rs", "line": 1, "message": "nope"}]}}"#,
     );
 
-    // Default: just the summary line — no per-rule lines, no violation detail.
+    // Default: failing rules + locations + summary, but passing rules are only
+    // counted (not itemized) and there is no oneharness debug on stderr.
     p.lint()
-        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
-        .assert()
-        .code(1)
-        .stdout(predicate::str::contains(
-            "2 rules: 1 passed, 1 failed, 0 skipped",
-        ))
-        .stdout(predicate::str::contains("FAIL").not())
-        .stdout(predicate::str::contains("PASS").not())
-        .stdout(predicate::str::contains("nope").not());
-
-    // `-v`: failing rules and their locations appear; passing rules stay counted.
-    p.lint_v()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .code(1)
         .stdout(predicate::str::contains("FAIL failing_rule"))
         .stdout(predicate::str::contains("src/lib.rs:1: nope"))
-        .stdout(predicate::str::contains("PASS passing_rule").not());
+        .stdout(predicate::str::contains(
+            "2 rules: 1 passed, 1 failed, 0 skipped",
+        ))
+        .stdout(predicate::str::contains("PASS passing_rule").not())
+        .stderr(predicate::str::contains("oneharness:").not());
 
-    // `-vv`: every rule is itemized, passing ones included.
-    p.lint_vv()
+    // `-v`: every rule is itemized on stdout, and the oneharness debug view
+    // (exact command + raw result) is printed to stderr.
+    p.lint_v()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .code(1)
         .stdout(predicate::str::contains("PASS passing_rule"))
         .stdout(predicate::str::contains("FAIL failing_rule"))
-        .stdout(predicate::str::contains("src/lib.rs:1: nope"));
+        .stdout(predicate::str::contains("src/lib.rs:1: nope"))
+        // The debug view goes to stderr: the exact `oneharness run …` command
+        // and the raw JSON result it returned.
+        .stderr(predicate::str::contains("# oneharness: agent default"))
+        .stderr(predicate::str::contains("run --system"))
+        .stderr(predicate::str::contains("result:"))
+        .stderr(predicate::str::contains("\"oneharness_version\":\"mock\""));
 }
 
 // ---- multi-judge majority vote -------------------------------------------
@@ -253,7 +248,7 @@ fn majority_vote_flips_a_single_dissent_to_pass() {
     let verdicts = p.write_verdicts(r#"{"voted_rule": [false, true, true]}"#);
     let state = p.path().join("state");
 
-    p.lint_vv()
+    p.lint_v()
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
@@ -279,7 +274,7 @@ fn majority_vote_fails_when_most_judges_dissent() {
     );
     let state = p.path().join("state");
 
-    p.lint_v()
+    p.lint()
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
@@ -344,7 +339,7 @@ fn config_lint_plugin_catches_a_bad_rule() {
             "name_matches_description": true}"#,
     );
 
-    p.lint_v()
+    p.lint()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .code(1)
@@ -606,7 +601,7 @@ fn rules_with_no_matching_files_are_skipped() {
     );
     let verdicts = p.write_verdicts(r#"{"lonely_rule": true}"#);
 
-    p.lint_vv()
+    p.lint_v()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .success()
@@ -954,7 +949,7 @@ fn oneharness_bin_from_env_is_used() {
     let verdicts = p.write_verdicts(r#"{"env_rule": true}"#);
     // No --oneharness-bin; resolve it from the environment instead.
     p.bare()
-        .arg("-vv")
+        .arg("-v")
         .env("LLMLINT_ONEHARNESS_BIN", mock_path())
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
@@ -1156,7 +1151,7 @@ fn cwd_flag_drives_discovery_and_the_harness_directory() {
 
     // The process runs from the project root (no config there); `--cwd ./proj`
     // is where discovery happens. Success proves discovery used `--cwd`.
-    p.lint_vv()
+    p.lint_v()
         .arg("--cwd")
         .arg(&proj)
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)

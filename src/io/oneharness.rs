@@ -6,6 +6,7 @@
 //! pass the schema/system/prompt and read `results[0].structured`.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -25,6 +26,21 @@ pub const DEFAULT_BIN: &str = "oneharness";
 /// A handle to the oneharness binary (existence is checked lazily on use).
 pub struct Client {
     pub bin: PathBuf,
+}
+
+/// A record of one oneharness invocation, for the `-v` debug view: the exact
+/// command line and the raw subprocess result. Empty/`None` fields mean that
+/// stage wasn't reached (e.g. the binary was not found, so there is no output).
+#[derive(Debug, Default, Clone)]
+pub struct RunTrace {
+    /// The exact command line (program + args), shell-quoted for copy/paste.
+    pub command: String,
+    /// Process exit code, if the child ran to completion.
+    pub exit_code: Option<i32>,
+    /// Raw stdout (the oneharness JSON report).
+    pub stdout: String,
+    /// Raw stderr.
+    pub stderr: String,
 }
 
 /// One judge invocation request.
@@ -92,117 +108,187 @@ impl Client {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    /// Run one judge and return its per-rule verdicts.
+    /// Run one judge and return its per-rule verdicts. Convenience wrapper over
+    /// [`Client::run_with_trace`] that discards the debug trace.
     pub fn run(&self, req: &RunRequest) -> Result<BTreeMap<String, RuleVerdict>> {
+        self.run_with_trace(req).1
+    }
+
+    /// Run one judge, returning both a [`RunTrace`] (the exact command + raw
+    /// result, for `-v` debug output) and the parsed per-rule verdicts. The
+    /// trace is always returned — even when the run errors — so a failure can
+    /// be inspected; its fields are best-effort and empty before the relevant
+    /// stage is reached.
+    pub fn run_with_trace(
+        &self,
+        req: &RunRequest,
+    ) -> (RunTrace, Result<BTreeMap<String, RuleVerdict>>) {
         // A human-readable harness label for error messages; when unset, the
         // harness is whichever default oneharness resolves from its own config.
         let harness = req.harness.unwrap_or("oneharness default");
-        let mut schema_file = tempfile::Builder::new()
+        let mut trace = RunTrace::default();
+
+        let mut schema_file = match tempfile::Builder::new()
             .prefix("llmlint-schema-")
             .suffix(".json")
             .tempfile()
-            .map_err(|e| io_err("creating schema temp file", e))?;
-        let bytes = serde_json::to_vec(req.schema).map_err(|e| Error::Io(e.to_string()))?;
-        schema_file
-            .write_all(&bytes)
-            .map_err(|e| io_err("writing schema temp file", e))?;
-        schema_file
-            .flush()
-            .map_err(|e| io_err("flushing schema temp file", e))?;
+        {
+            Ok(f) => f,
+            Err(e) => return (trace, Err(io_err("creating schema temp file", e))),
+        };
+        match serde_json::to_vec(req.schema)
+            .map_err(|e| Error::Io(e.to_string()))
+            .and_then(|bytes| {
+                schema_file
+                    .write_all(&bytes)
+                    .and_then(|_| schema_file.flush())
+                    .map_err(|e| io_err("writing schema temp file", e))
+            }) {
+            Ok(()) => {}
+            Err(e) => return (trace, Err(e)),
+        }
 
-        let mut cmd = Command::new(&self.bin);
-        cmd.arg("run")
-            .arg("--system")
-            .arg(req.system)
-            .arg("--prompt")
-            .arg(req.prompt)
-            .arg("--schema")
-            .arg(schema_file.path())
-            .arg("--cwd")
-            .arg(req.cwd)
-            .arg("--timeout")
-            .arg(req.timeout_secs.to_string())
-            .arg("--require-available")
-            .arg("--compact");
+        // Build the arg vector once, so the spawned command and the displayed
+        // trace command can never drift apart.
+        let mut args: Vec<OsString> = vec![
+            "run".into(),
+            "--system".into(),
+            req.system.into(),
+            "--prompt".into(),
+            req.prompt.into(),
+            "--schema".into(),
+            schema_file.path().as_os_str().to_os_string(),
+            "--cwd".into(),
+            req.cwd.as_os_str().to_os_string(),
+            "--timeout".into(),
+            req.timeout_secs.to_string().into(),
+            "--require-available".into(),
+            "--compact".into(),
+        ];
         if let Some(h) = req.harness {
-            cmd.arg("--harness").arg(h);
+            args.push("--harness".into());
+            args.push(h.into());
         }
         if let Some(m) = req.model {
-            cmd.arg("--model").arg(m);
+            args.push("--model".into());
+            args.push(m.into());
         }
         if let Some(n) = req.schema_max_retries {
-            cmd.arg("--schema-max-retries").arg(n.to_string());
+            args.push("--schema-max-retries".into());
+            args.push(n.to_string().into());
         }
         if req.no_config {
-            cmd.arg("--no-config");
+            args.push("--no-config".into());
         } else if let Some(c) = req.oneharness_config {
-            cmd.arg("--config").arg(c);
+            args.push("--config".into());
+            args.push(c.as_os_str().to_os_string());
         }
-        cmd.stdin(Stdio::null())
+        trace.command = render_command(&self.bin, &args);
+
+        let mut cmd = Command::new(&self.bin);
+        cmd.args(&args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         let child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(Error::OneharnessNotFound(self.bin.display().to_string()))
+                return (
+                    trace,
+                    Err(Error::OneharnessNotFound(self.bin.display().to_string())),
+                )
             }
-            Err(e) => return Err(io_err("spawning oneharness", e)),
+            Err(e) => return (trace, Err(io_err("spawning oneharness", e))),
         };
 
         // Give oneharness its own timeout plus a margin before we hard-kill it,
         // so a clean per-harness `timeout` result can still come back as JSON.
         let wall = Duration::from_secs(req.timeout_secs.saturating_add(30));
-        let capture = match wait_capture(child, wall)? {
-            Some(c) => c,
-            None => {
-                return Err(Error::Oneharness(format!(
-                    "oneharness did not exit within {}s (harness {})",
-                    wall.as_secs(),
-                    harness
-                )))
+        let capture = match wait_capture(child, wall) {
+            Ok(Some(c)) => c,
+            Ok(None) => {
+                return (
+                    trace,
+                    Err(Error::Oneharness(format!(
+                        "oneharness did not exit within {}s (harness {})",
+                        wall.as_secs(),
+                        harness
+                    ))),
+                )
             }
+            Err(e) => return (trace, Err(e)),
         };
+        trace.exit_code = capture.status.code();
+        trace.stdout = String::from_utf8_lossy(&capture.stdout).into_owned();
+        trace.stderr = String::from_utf8_lossy(&capture.stderr).into_owned();
 
-        let report: Report = serde_json::from_slice(&capture.stdout).map_err(|e| {
-            Error::Oneharness(format!(
-                "could not parse oneharness output ({e}); exit {:?}; stderr: {}",
-                capture.status.code(),
-                String::from_utf8_lossy(&capture.stderr).trim()
-            ))
-        })?;
+        let verdicts = parse_verdicts(&capture, harness);
+        (trace, verdicts)
+    }
+}
 
-        let result = report.results.into_iter().next().ok_or_else(|| {
-            Error::Oneharness(format!(
-                "oneharness returned no results for harness {harness}"
-            ))
-        })?;
+/// Parse one captured oneharness run into its per-rule verdicts (the verdict
+/// extraction split out so `run_with_trace` can keep the trace on every path).
+fn parse_verdicts(capture: &Capture, harness: &str) -> Result<BTreeMap<String, RuleVerdict>> {
+    let report: Report = serde_json::from_slice(&capture.stdout).map_err(|e| {
+        Error::Oneharness(format!(
+            "could not parse oneharness output ({e}); exit {:?}; stderr: {}",
+            capture.status.code(),
+            String::from_utf8_lossy(&capture.stderr).trim()
+        ))
+    })?;
 
-        if result.schema_valid == Some(false) {
+    let result = report.results.into_iter().next().ok_or_else(|| {
+        Error::Oneharness(format!(
+            "oneharness returned no results for harness {harness}"
+        ))
+    })?;
+
+    if result.schema_valid == Some(false) {
+        return Err(Error::Oneharness(format!(
+            "harness {} produced output that failed schema validation: {}",
+            harness,
+            result
+                .schema_error
+                .unwrap_or_else(|| "unknown error".into())
+        )));
+    }
+
+    let structured = match result.structured {
+        Some(v) if !v.is_null() => v,
+        _ => {
             return Err(Error::Oneharness(format!(
-                "harness {} produced output that failed schema validation: {}",
+                "harness {} returned no structured output (status {:?}): {}",
                 harness,
-                result
-                    .schema_error
-                    .unwrap_or_else(|| "unknown error".into())
-            )));
+                result.status.as_deref().unwrap_or("?"),
+                result.error.unwrap_or_else(|| "no error reported".into())
+            )))
         }
+    };
 
-        let structured = match result.structured {
-            Some(v) if !v.is_null() => v,
-            _ => {
-                return Err(Error::Oneharness(format!(
-                    "harness {} returned no structured output (status {:?}): {}",
-                    harness,
-                    result.status.as_deref().unwrap_or("?"),
-                    result.error.unwrap_or_else(|| "no error reported".into())
-                )))
-            }
-        };
+    serde_json::from_value(structured).map_err(|e| {
+        Error::Oneharness(format!("invalid verdict shape from harness {harness}: {e}"))
+    })
+}
 
-        serde_json::from_value(structured).map_err(|e| {
-            Error::Oneharness(format!("invalid verdict shape from harness {harness}: {e}"))
-        })
+/// Render `bin` + `args` as a single shell-quoted command line for display.
+fn render_command(bin: &Path, args: &[OsString]) -> String {
+    let mut parts = vec![shell_quote(&bin.to_string_lossy())];
+    parts.extend(args.iter().map(|a| shell_quote(&a.to_string_lossy())));
+    parts.join(" ")
+}
+
+/// Quote a single argument for copy/paste into a POSIX shell. Bare when it is
+/// safe (common path/flag characters), single-quoted otherwise.
+fn shell_quote(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:=@,+".contains(&b));
+    if safe {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
     }
 }
 
@@ -281,6 +367,39 @@ mod tests {
             client.run(&req(&schema, &cwd)),
             Err(Error::OneharnessNotFound(_))
         ));
+    }
+
+    #[test]
+    fn trace_records_the_command_even_when_the_run_fails() {
+        let client = Client::new(Some("definitely-not-a-real-binary-xyz"));
+        let schema = json!({"type": "object"});
+        let cwd = std::env::temp_dir();
+        let (trace, result) = client.run_with_trace(&req(&schema, &cwd));
+        // The exact command is captured for `-v` even though spawning failed.
+        assert!(trace.command.contains("definitely-not-a-real-binary-xyz"));
+        assert!(trace.command.contains("run --system sys"));
+        assert!(trace.command.contains("--harness claude-code"));
+        // No process ran, so there is no output and the run errored.
+        assert!(trace.exit_code.is_none());
+        assert!(trace.stdout.is_empty());
+        assert!(matches!(result, Err(Error::OneharnessNotFound(_))));
+    }
+
+    #[test]
+    fn shell_quote_is_bare_when_safe_and_quoted_otherwise() {
+        assert_eq!(shell_quote("run"), "run");
+        assert_eq!(shell_quote("--harness"), "--harness");
+        assert_eq!(shell_quote("/tmp/a.json"), "/tmp/a.json");
+        assert_eq!(shell_quote(""), "''");
+        assert_eq!(shell_quote("a b"), "'a b'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn render_command_joins_program_and_args() {
+        let args: Vec<OsString> = vec!["run".into(), "--system".into(), "hi there".into()];
+        let rendered = render_command(Path::new("oneharness"), &args);
+        assert_eq!(rendered, "oneharness run --system 'hi there'");
     }
 
     #[cfg(unix)]

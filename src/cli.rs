@@ -63,9 +63,10 @@ pub struct LintArgs {
     #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
     pub format: OutputFormat,
 
-    /// Increase human-output detail; repeatable. Default prints only the
-    /// summary line; `-v` adds failing rules and their locations; `-vv` adds
-    /// every rule (passed/skipped) too. Ignored for `--format json`.
+    /// Increase output detail. By default, failing rules (with their locations)
+    /// and the summary line are shown. `-v` additionally itemizes every passed
+    /// and skipped rule, and prints the oneharness debug view (exact command +
+    /// result) to stderr. Ignored for `--format json`.
     #[arg(long = "verbose", short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
 
