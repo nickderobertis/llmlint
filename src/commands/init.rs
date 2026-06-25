@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use crate::cli::InitArgs;
+use crate::domain::config_schema;
 use crate::errors::{io_err, Error, Result};
 use crate::io::assets;
 
@@ -35,10 +36,15 @@ fn target_path(args: &InitArgs) -> Result<PathBuf> {
 }
 
 fn render(with_template: bool) -> String {
+    // The `$schema` modeline must lead the file so the YAML language server
+    // picks it up; editors then complete and validate against the published
+    // schema.
+    let mut s = config_schema::modeline();
     if !with_template {
-        return assets::INIT_CONFIG.to_string();
+        s.push_str(assets::INIT_CONFIG);
+        return s;
     }
-    let mut s = String::from(
+    s.push_str(
         "# Master prompt template (customize freely). The judge renders this with\n\
          # `rules` (each with name + description) and `files` (the target paths).\n\
          prompt_template: |\n",
@@ -86,11 +92,17 @@ mod tests {
         assert!(out.contains("plugins:"));
         assert!(out.contains("config_lint.yml@1"));
         assert!(!out.contains("prompt_template: |"));
+        // The schema modeline leads the file so the YAML language server uses it.
+        assert!(out.starts_with("# yaml-language-server: $schema="));
+        assert!(out.contains(config_schema::SCHEMA_URL));
+        // The modeline is a comment, so the body still parses.
+        assert!(configfs::parse(&out, "generated").is_ok());
     }
 
     #[test]
     fn with_template_embeds_a_parseable_prompt_template() {
         let out = render(true);
+        assert!(out.starts_with("# yaml-language-server: $schema="));
         assert!(out.contains("prompt_template: |"));
         // The generated config must still parse and carry the template.
         let cfg = configfs::parse(&out, "generated").unwrap();

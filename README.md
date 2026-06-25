@@ -99,7 +99,12 @@ llmlint --format json        # machine-readable output
 ## Configuration
 
 `llmlint.yml` (discovered by walking up from the working directory; override with
-`-c/--config`, repeatable):
+`-c/--config`, repeatable). `llmlint init` writes it with a leading
+`# yaml-language-server: $schema=…` modeline pointing at llmlint's
+[published JSON Schema](assets/llmlint.schema.json), so editors with the YAML
+language server (e.g. VS Code's [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml))
+give completion and validation as you write. Add the same line to a hand-written
+config to opt in.
 
 ```yaml
 version: 1                     # this config's published version (used when it is consumed as a plugin)

@@ -621,6 +621,12 @@ fn init_scaffolds_a_config_then_refuses_to_clobber() {
     let cfg = fs::read_to_string(p.path().join("llmlint.yml")).unwrap();
     assert!(cfg.contains("plugins:"));
     assert!(cfg.contains("config_lint.yml@1"));
+    // The `$schema` modeline leads the file so editors validate against the
+    // published JSON Schema.
+    assert!(cfg.starts_with(
+        "# yaml-language-server: $schema=https://raw.githubusercontent.com/\
+         nickderobertis/llmlint/main/assets/llmlint.schema.json"
+    ));
 
     // Second init without --force fails (exit 2).
     p.bare().arg("init").assert().code(2);

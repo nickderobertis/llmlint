@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "agent": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_size": {
+          "description": "Max rules per judge run (default 20).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "files": {
+          "$ref": "#/$defs/fileFilter",
+          "description": "Override the target files for this agent's rules."
+        },
+        "harness": {
+          "description": "Harness id from `oneharness list`. Omit to let oneharness pick its own configured default harness.",
+          "type": "string"
+        },
+        "model": {
+          "description": "Model override for this agent's judges.",
+          "type": "string"
+        },
+        "prompt_template": {
+          "description": "Extra prompt text appended to the master template before rendering.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "fileFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "exclude": {
+          "description": "Globs subtracted from the included set.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include": {
+          "description": "Globs selecting files to lint.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "oneharness": {
+      "additionalProperties": false,
+      "properties": {
+        "bin": {
+          "description": "Override the oneharness binary path.",
+          "type": "string"
+        },
+        "config": {
+          "description": "oneharness config file(s) to forward via `--config` (single-file today; extras are warned and dropped).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "model": {
+          "description": "Default model for every judge (an agent's `model` overrides it).",
+          "type": "string"
+        },
+        "schema_max_retries": {
+          "description": "Schema-validation re-prompt budget passed to oneharness `--schema-max-retries`.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout": {
+          "description": "Per-judge timeout in seconds (default 120).",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "rule": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "description": "Name of the agent (under `agents`) this rule runs on. Defaults to the `default` agent.",
+          "type": "string"
+        },
+        "description": {
+          "description": "The invariant the judge evaluates. State clearly what is TRUE (passes) and what is FALSE (a violation).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "files": {
+          "$ref": "#/$defs/fileFilter",
+          "description": "Override the target files for this rule."
+        },
+        "judges": {
+          "description": "Independent judges to run; the majority verdict wins (default 1). Must be odd so the vote can't tie.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Terse snake_case identifier: an ASCII letter followed by letters, digits, or underscores. Used as a JSON Schema key.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/llmlint.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Configuration for llmlint, an LLM-as-judge linter for code-quality checks deterministic linters can't express. Docs: https://github.com/nickderobertis/llmlint",
+  "properties": {
+    "agents": {
+      "additionalProperties": {
+        "$ref": "#/$defs/agent"
+      },
+      "description": "Named agents that group rules and share harness/model/batch config. A rule with no `agent` uses the `default` agent.",
+      "type": "object"
+    },
+    "files": {
+      "$ref": "#/$defs/fileFilter",
+      "description": "Default include/exclude globs selecting target files when none are passed on the CLI."
+    },
+    "oneharness": {
+      "$ref": "#/$defs/oneharness",
+      "description": "Defaults for how llmlint invokes the oneharness subprocess."
+    },
+    "plugins": {
+      "description": "Shared rule sets merged in, one entry each: a local file path or a URL (http(s)://, file://), the URL optionally pinned to a version with an `@` suffix (e.g. `…/rules.yml@1.2`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "prompt_template": {
+      "description": "Master minijinja prompt template, rendered with `rules` (each with name + description) and `files` (the target paths). Overrides the built-in template.",
+      "type": "string"
+    },
+    "rules": {
+      "description": "The lint rules. Each is a positive invariant judged true/false about the target files (holds=true passes; holds=false is a violation).",
+      "items": {
+        "$ref": "#/$defs/rule"
+      },
+      "type": "array"
+    },
+    "version": {
+      "description": "This config's own published version (1, 1.2, or \"1.2.3\"). It matters when the config is consumed elsewhere as a plugin: that consumer pins a desired version with an `@` suffix on the URL.",
+      "type": [
+        "integer",
+        "number",
+        "string"
+      ]
+    }
+  },
+  "title": "llmlint configuration",
+  "type": "object"
+}
