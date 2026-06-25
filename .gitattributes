@@ -2,3 +2,12 @@
 # this, Windows checkouts default to CRLF and `cargo fmt --check` fails against
 # rustfmt's `newline_style = "Unix"`, and shell scripts break on a CRLF shebang.
 * text=auto eol=lf
+
+# The vendored screenshot font is binary: never apply EOL/text munging to it.
+# Any byte change would alter the font freeze embeds into every SVG, silently
+# drifting the screencomp baseline on the next capture.
+*.ttf binary
+
+# Generated terminal-screenshot SVGs are LF text (freeze emits LF); pin it so a
+# Windows checkout cannot rewrite them to CRLF and diverge from the baseline.
+*.svg text eol=lf

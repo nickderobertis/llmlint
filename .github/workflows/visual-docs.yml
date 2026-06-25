@@ -1,0 +1,48 @@
+# Terminal screenshots via screencomp's reusable workflow. The capture step is
+# ours (scripts/screenshots.sh); screencomp owns the classify gate, the HTML
+# gallery, the GitHub Pages deploy, and the sticky before/after PR comment.
+#
+# Which CPU arch(es) CI captures is read from [capture].arches in screencomp.toml
+# — one lane per arch. llmlint's shots are deterministic SVGs (vendored, pinned
+# font), so a single x86_64 lane covers every machine; no pinned capture
+# container is needed.
+name: Visual docs
+
+on:
+  pull_request:
+    # `closed` lets screencomp delete this PR's gh-pages preview once it closes,
+    # so stale /pr-<n>/ galleries do not accumulate on the branch.
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+  schedule:
+    # Monthly: prune the gh-pages gallery history so committed images do not grow
+    # the branch without bound (keeps the 20 most recent versions; see below).
+    - cron: "27 4 1 * *"
+
+permissions:
+  contents: write       # push the gh-pages gallery
+  pull-requests: write  # post the diff comment
+
+jobs:
+  visual-docs:
+    uses: nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2
+    with:
+      # Strict gate (the safe default): CI FAILS if the capture drifts from the
+      # committed baseline (shots/baseline/<arch>.json). Regenerate it locally
+      # with `just screenshots` (the pre-push guard does this for you) and commit.
+      fail-on-drift: true
+      # Keep the gh-pages gallery bounded: delete this PR's preview on close and
+      # prune history on the monthly schedule above.
+      gh-pages-maintenance: true
+      gh-pages-history-versions: 20
+      # Our capture: install the pinned `freeze` (the renderer), then run the
+      # script. The reusable workflow exports $SHOTS_OUT as shots/current/<arch>
+      # per lane; the script builds the release binaries (Rust is preinstalled on
+      # the runner) and writes $SHOTS_OUT/captures.json + the SVGs it references.
+      # The SVG bytes depend only on the report text + freeze + the vendored font,
+      # not on the compiler, so the runner's stock toolchain is fine.
+      capture-command: |
+        go install github.com/charmbracelet/freeze@v0.2.2
+        export PATH="$(go env GOPATH)/bin:$PATH"
+        bash scripts/screenshots.sh

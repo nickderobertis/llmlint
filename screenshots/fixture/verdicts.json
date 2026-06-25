@@ -1,0 +1,31 @@
+{
+  "modules_have_doc_comments": true,
+  "handlers_delegate_to_services": [
+    {
+      "holds": false,
+      "rationale": "user creation logic lives in the handler",
+      "violations": [
+        {
+          "file": "src/api/users.rs",
+          "line": 48,
+          "message": "user creation logic lives in the handler, not a service"
+        }
+      ]
+    },
+    {
+      "holds": false,
+      "rationale": "business logic in the handler",
+      "violations": [
+        {
+          "file": "src/api/users.rs",
+          "line": 48,
+          "message": "user creation logic lives in the handler, not a service"
+        }
+      ]
+    },
+    {
+      "holds": true,
+      "rationale": "delegates to UserService"
+    }
+  ]
+}

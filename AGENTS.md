@@ -94,6 +94,21 @@ Use the `just` recipes; do not hand-roll equivalents.
   runners, so it reports rather than blocks. The bench/profile tools (hyperfine,
   critcmp, samply) are *not* installed by `just setup` — `just bench-tools`
   installs them on demand; CI installs them via `taiki-e/install-action`.
+- **Terminal screenshots** (`just screenshots`, `screenshots-tools`,
+  `screenshots-bless`) — *informational, never a gate*. See `screenshots/AGENTS.md`.
+  `scripts/screenshots.sh` drives the real binary against the **mock-oneharness
+  fixture** (`screenshots/fixture/`) with `--color always` and renders the real
+  colorized output to **deterministic SVGs** via `freeze` + a vendored, pinned
+  font — byte-identical on every machine (no container), so [screencomp](https://github.com/nickderobertis/screencomp)
+  can hash-gate them. The `Visual docs` workflow (`.github/workflows/visual-docs.yml`,
+  screencomp's reusable workflow) classifies against the committed baseline
+  (`shots/baseline/<arch>.json`), publishes a GitHub Pages gallery, and posts a
+  sticky before/after PR comment; `fail-on-drift` makes unexpected drift a red
+  build. The local pre-push guard (`.githooks/pre-push`) regenerates the baseline
+  on drift. `freeze` is *not* installed by `just setup` — `just screenshots-tools`
+  installs the pinned version; screencomp is installed separately (CI installs
+  both). Keep the three `freeze` version pins in sync (justfile, `visual-docs.yml`,
+  `screenshots-tools`).
 
 ## How llmlint drives oneharness
 

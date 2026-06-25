@@ -26,6 +26,8 @@ FAIL handlers_delegate_to_services (2/3 judges held)
 3 rules: 1 passed, 1 failed, 1 skipped
 ```
 
+![llmlint's default report: a red FAIL with its pinned violation and a colorized summary line](docs/screenshots/lint-report-default.svg)
+
 Add `-v` to itemize *every* rule (passed and skipped too) and to print the
 oneharness debug view — the exact `oneharness run …` command and the raw result
 for each judge — to **stderr**, so the report on stdout stays clean:
@@ -39,6 +41,12 @@ SKIP no_todo_without_ticket (no files matched)
 
 3 rules: 1 passed, 1 failed, 1 skipped
 ```
+
+![llmlint's verbose report: green PASS, red FAIL, and yellow SKIP lines above the summary](docs/screenshots/lint-report-verbose.svg)
+
+> These are real captures of the CLI, rendered from the actual colorized output
+> by [`just screenshots`](screenshots/AGENTS.md) and gated by
+> [screencomp](https://github.com/nickderobertis/screencomp).
 
 The exit code is unaffected by verbosity (`0` all-pass, `1` a violation, `2`
 the run couldn't complete); operational errors are always shown. Use
