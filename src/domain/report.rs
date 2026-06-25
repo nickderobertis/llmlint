@@ -49,31 +49,47 @@ impl Report {
         }
     }
 
-    pub fn to_human(&self) -> String {
+    /// Render the report for humans at the given verbosity. Level `0` (default)
+    /// prints only the one-line summary; `1` adds failing rules and their
+    /// locations; `2`+ adds every rule (passed/skipped) too. Operational errors
+    /// (a run that couldn't complete) are surfaced at every level, since they
+    /// explain a `2` exit the summary only counts. A blank line separates any
+    /// per-rule/error detail from the trailing summary.
+    pub fn to_human(&self, verbosity: u8) -> String {
         let mut out = String::new();
-        for o in &self.outcomes {
-            match o.outcome {
-                Outcome::Fail => {
-                    let votes = if o.votes_total > 1 {
-                        format!(" ({}/{} judges held)", o.votes_hold, o.votes_total)
-                    } else {
-                        String::new()
-                    };
-                    out.push_str(&format!("FAIL {}{}\n", o.name, votes));
-                    for v in &o.violations {
-                        out.push_str(&format!("     {}\n", format_violation(v)));
+        if verbosity >= 1 {
+            for o in &self.outcomes {
+                match o.outcome {
+                    Outcome::Fail => {
+                        let votes = if o.votes_total > 1 {
+                            format!(" ({}/{} judges held)", o.votes_hold, o.votes_total)
+                        } else {
+                            String::new()
+                        };
+                        out.push_str(&format!("FAIL {}{}\n", o.name, votes));
+                        for v in &o.violations {
+                            out.push_str(&format!("     {}\n", format_violation(v)));
+                        }
                     }
+                    // Passing and skipped rules are only itemized at `-vv`; at
+                    // `-v` the summary alone accounts for them.
+                    Outcome::Pass if verbosity >= 2 => out.push_str(&format!("PASS {}\n", o.name)),
+                    Outcome::Skipped if verbosity >= 2 => {
+                        out.push_str(&format!("SKIP {} (no files matched)\n", o.name))
+                    }
+                    Outcome::Pass | Outcome::Skipped => {}
                 }
-                Outcome::Pass => out.push_str(&format!("PASS {}\n", o.name)),
-                Outcome::Skipped => out.push_str(&format!("SKIP {} (no files matched)\n", o.name)),
             }
         }
         for e in &self.run_errors {
             out.push_str(&format!("ERROR {e}\n"));
         }
+        if !out.is_empty() {
+            out.push('\n');
+        }
         let (pass, fail, skip) = self.counts();
         out.push_str(&format!(
-            "\n{} rules: {} passed, {} failed, {} skipped",
+            "{} rules: {} passed, {} failed, {} skipped",
             self.outcomes.len(),
             pass,
             fail,
@@ -155,7 +171,29 @@ mod tests {
     }
 
     #[test]
-    fn human_output_lists_failures_and_locations() {
+    fn default_human_output_is_just_the_summary() {
+        let r = Report::new(
+            vec![
+                fail(
+                    "no_inline_sql",
+                    vec![Violation {
+                        file: Some("src/db.rs".into()),
+                        line: Some(42),
+                        end_line: Some(45),
+                        message: Some("inline SQL".into()),
+                    }],
+                ),
+                pass("layered"),
+                RuleOutcome::skipped("nofiles"),
+            ],
+            vec![],
+        );
+        // Verbosity 0: one line, no per-rule detail, no leading blank line.
+        assert_eq!(r.to_human(0), "3 rules: 1 passed, 1 failed, 1 skipped\n");
+    }
+
+    #[test]
+    fn verbose_lists_failures_and_locations_but_not_passes() {
         let r = Report::new(
             vec![
                 fail(
@@ -174,19 +212,49 @@ mod tests {
                     ],
                 ),
                 pass("layered"),
+                RuleOutcome::skipped("nofiles"),
             ],
             vec![],
         );
-        let text = r.to_human();
+        let text = r.to_human(1);
+        // Failing rule and its locations are shown...
         assert!(text.contains("FAIL no_inline_sql"));
         assert!(text.contains("src/db.rs:42-45: inline SQL"));
         assert!(text.contains("architectural drift"));
-        assert!(text.contains("PASS layered"));
-        assert!(text.contains("2 rules: 1 passed, 1 failed, 0 skipped"));
+        // ...but passing/skipped rules are only counted, not itemized.
+        assert!(!text.contains("PASS layered"));
+        assert!(!text.contains("SKIP nofiles"));
+        assert!(text.contains("3 rules: 1 passed, 1 failed, 1 skipped"));
     }
 
     #[test]
-    fn human_output_shows_vote_split_and_skip_and_errors() {
+    fn very_verbose_itemizes_every_rule() {
+        let r = Report::new(
+            vec![
+                fail(
+                    "no_inline_sql",
+                    vec![Violation {
+                        file: Some("src/db.rs".into()),
+                        line: Some(42),
+                        end_line: Some(45),
+                        message: Some("inline SQL".into()),
+                    }],
+                ),
+                pass("layered"),
+                RuleOutcome::skipped("nofiles"),
+            ],
+            vec![],
+        );
+        let text = r.to_human(2);
+        assert!(text.contains("FAIL no_inline_sql"));
+        assert!(text.contains("src/db.rs:42-45: inline SQL"));
+        assert!(text.contains("PASS layered"));
+        assert!(text.contains("SKIP nofiles (no files matched)"));
+        assert!(text.contains("3 rules: 1 passed, 1 failed, 1 skipped"));
+    }
+
+    #[test]
+    fn verbose_shows_vote_split_and_errors() {
         let r = Report::new(
             vec![
                 RuleOutcome {
@@ -200,11 +268,19 @@ mod tests {
             ],
             vec!["judge timed out".into()],
         );
-        let text = r.to_human();
+        let text = r.to_human(1);
         assert!(text.contains("FAIL voted (1/3 judges held)"));
-        assert!(text.contains("SKIP nofiles (no files matched)"));
         assert!(text.contains("ERROR judge timed out"));
         assert!(text.contains("1 errored"));
+        // The skipped rule is not itemized at `-v`.
+        assert!(!text.contains("SKIP nofiles"));
+
+        // Operational errors are surfaced even at the default level (they
+        // explain the `2` exit), though failing/skipped rules are not.
+        let quiet = r.to_human(0);
+        assert!(quiet.contains("ERROR judge timed out"));
+        assert!(quiet.contains("1 errored"));
+        assert!(!quiet.contains("FAIL voted"));
     }
 
     #[test]

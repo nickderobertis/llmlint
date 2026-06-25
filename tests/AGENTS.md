@@ -28,7 +28,11 @@ logic is also covered hermetically via `file://` plugins.
 
 ## Journeys covered
 
-- All rules hold -> exit 0; a violation -> exit 1 with `file:line: message`.
+- All rules hold -> exit 0; a violation -> exit 1.
+- Output is minimal by default (just the `N rules: …` summary line); `-v` adds
+  failing rules with `file:line: message`; `-vv` itemizes every rule (passed and
+  skipped too). Verbosity never changes the exit code, and operational (exit-2)
+  errors are surfaced at every level.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
   `http://` URL is fetched once over HTTPS and reused from cache (not refetched);

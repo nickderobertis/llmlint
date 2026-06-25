@@ -149,7 +149,8 @@ fn bench_report(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("human", n), &outcomes, |b, outcomes| {
             b.iter_batched(
                 || outcomes.clone(),
-                |o| report::Report::new(o, vec![]).to_human(),
+                // Verbosity 2 renders every rule line + violations (the heaviest path).
+                |o| report::Report::new(o, vec![]).to_human(2),
                 BatchSize::SmallInput,
             );
         });

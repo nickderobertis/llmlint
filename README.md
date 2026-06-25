@@ -15,8 +15,20 @@ files and decide, and reports the violations — with file and line numbers wher
 they can be pinned down. Because the gate is "just a config file," llmlint drops
 into CI next to your other linters.
 
+By default the output is a single summary line — add `-v` to see what failed,
+`-vv` to see every rule:
+
 ```console
 $ llmlint
+3 rules: 1 passed, 1 failed, 1 skipped
+
+$ llmlint -v          # failing rules + where they were pinned
+FAIL handlers_delegate_to_services (2/3 judges held)
+     src/api/users.rs:48: user creation logic lives in the handler, not a service
+
+3 rules: 1 passed, 1 failed, 1 skipped
+
+$ llmlint -vv         # every rule, including passed and skipped
 FAIL handlers_delegate_to_services (2/3 judges held)
      src/api/users.rs:48: user creation logic lives in the handler, not a service
 PASS modules_have_doc_comments
@@ -24,6 +36,10 @@ SKIP no_todo_without_ticket (no files matched)
 
 3 rules: 1 passed, 1 failed, 1 skipped
 ```
+
+The exit code is unaffected by verbosity (`0` all-pass, `1` a violation, `2`
+the run couldn't complete); operational errors are always shown. Use
+`--format json` for the full machine-readable report.
 
 ## How it works
 

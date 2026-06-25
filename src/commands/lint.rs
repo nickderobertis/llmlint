@@ -34,7 +34,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
         let report = Report::new(Vec::new(), Vec::new());
-        emit(&report, args.format);
+        emit(&report, args.format, args.verbose);
         return Ok(report.exit_code());
     }
 
@@ -135,7 +135,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     }
 
     let report = Report::new(outcomes, run_errors);
-    emit(&report, args.format);
+    emit(&report, args.format, args.verbose);
     Ok(report.exit_code())
 }
 
@@ -230,9 +230,9 @@ fn execute(
     client.run(&req)
 }
 
-fn emit(report: &Report, format: OutputFormat) {
+fn emit(report: &Report, format: OutputFormat, verbosity: u8) {
     match format {
-        OutputFormat::Human => print!("{}", report.to_human()),
+        OutputFormat::Human => print!("{}", report.to_human(verbosity)),
         OutputFormat::Json => {
             println!(
                 "{}",

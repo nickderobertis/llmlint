@@ -55,10 +55,23 @@ impl Project {
         c.current_dir(self.path());
         c
     }
-    /// A default-`lint` command wired to the mock harness.
+    /// A default-`lint` command wired to the mock harness. Output is minimal
+    /// (summary line only) unless a verbosity flag is added.
     fn lint(&self) -> Command {
         let mut c = self.bare();
         c.arg("--oneharness-bin").arg(mock_path());
+        c
+    }
+    /// `lint` at `-v`: itemizes failing rules and their locations.
+    fn lint_v(&self) -> Command {
+        let mut c = self.lint();
+        c.arg("-v");
+        c
+    }
+    /// `lint` at `-vv`: itemizes every rule (passed/skipped too).
+    fn lint_vv(&self) -> Command {
+        let mut c = self.lint();
+        c.arg("-vv");
         c
     }
 }
@@ -141,7 +154,7 @@ fn all_rules_pass_exits_zero() {
     p.write("src/lib.rs", "// code\n");
     let verdicts = p.write_verdicts(r#"{"a_rule": true, "b_rule": true}"#);
 
-    p.lint()
+    p.lint_vv()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .success()
@@ -166,12 +179,61 @@ fn violation_fails_with_file_and_line() {
             {"file": "src/db.rs", "line": 12, "message": "inline SQL"}]}}"#,
     );
 
-    p.lint()
+    p.lint_v()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .code(1)
         .stdout(predicate::str::contains("FAIL no_inline_sql"))
         .stdout(predicate::str::contains("src/db.rs:12: inline SQL"));
+}
+
+#[test]
+fn output_is_minimal_by_default_and_verbosity_escalates() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: passing_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: failing_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"passing_rule": true,
+            "failing_rule": {"holds": false, "violations": [
+                {"file": "src/lib.rs", "line": 1, "message": "nope"}]}}"#,
+    );
+
+    // Default: just the summary line — no per-rule lines, no violation detail.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "2 rules: 1 passed, 1 failed, 0 skipped",
+        ))
+        .stdout(predicate::str::contains("FAIL").not())
+        .stdout(predicate::str::contains("PASS").not())
+        .stdout(predicate::str::contains("nope").not());
+
+    // `-v`: failing rules and their locations appear; passing rules stay counted.
+    p.lint_v()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL failing_rule"))
+        .stdout(predicate::str::contains("src/lib.rs:1: nope"))
+        .stdout(predicate::str::contains("PASS passing_rule").not());
+
+    // `-vv`: every rule is itemized, passing ones included.
+    p.lint_vv()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("PASS passing_rule"))
+        .stdout(predicate::str::contains("FAIL failing_rule"))
+        .stdout(predicate::str::contains("src/lib.rs:1: nope"));
 }
 
 // ---- multi-judge majority vote -------------------------------------------
@@ -191,7 +253,7 @@ fn majority_vote_flips_a_single_dissent_to_pass() {
     let verdicts = p.write_verdicts(r#"{"voted_rule": [false, true, true]}"#);
     let state = p.path().join("state");
 
-    p.lint()
+    p.lint_vv()
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
@@ -217,7 +279,7 @@ fn majority_vote_fails_when_most_judges_dissent() {
     );
     let state = p.path().join("state");
 
-    p.lint()
+    p.lint_v()
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
@@ -282,7 +344,7 @@ fn config_lint_plugin_catches_a_bad_rule() {
             "name_matches_description": true}"#,
     );
 
-    p.lint()
+    p.lint_v()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .code(1)
@@ -544,7 +606,7 @@ fn rules_with_no_matching_files_are_skipped() {
     );
     let verdicts = p.write_verdicts(r#"{"lonely_rule": true}"#);
 
-    p.lint()
+    p.lint_vv()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .success()
@@ -892,6 +954,7 @@ fn oneharness_bin_from_env_is_used() {
     let verdicts = p.write_verdicts(r#"{"env_rule": true}"#);
     // No --oneharness-bin; resolve it from the environment instead.
     p.bare()
+        .arg("-vv")
         .env("LLMLINT_ONEHARNESS_BIN", mock_path())
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
@@ -1093,7 +1156,7 @@ fn cwd_flag_drives_discovery_and_the_harness_directory() {
 
     // The process runs from the project root (no config there); `--cwd ./proj`
     // is where discovery happens. Success proves discovery used `--cwd`.
-    p.lint()
+    p.lint_vv()
         .arg("--cwd")
         .arg(&proj)
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)

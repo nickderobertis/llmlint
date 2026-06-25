@@ -63,6 +63,12 @@ pub struct LintArgs {
     #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
     pub format: OutputFormat,
 
+    /// Increase human-output detail; repeatable. Default prints only the
+    /// summary line; `-v` adds failing rules and their locations; `-vv` adds
+    /// every rule (passed/skipped) too. Ignored for `--format json`.
+    #[arg(long = "verbose", short = 'v', action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
     /// Maximum judges to run in parallel.
     #[arg(long = "max-parallel", value_name = "N")]
     pub max_parallel: Option<usize>,
