@@ -1,0 +1,55 @@
+# Terminal screenshots via screencomp's reusable workflow. The capture step is
+# ours (scripts/screenshots.sh); screencomp owns the classify gate, the HTML
+# gallery, the GitHub Pages deploy, and the sticky before/after PR comment.
+#
+# Which CPU arch(es) CI captures is read from [capture].arches in screencomp.toml
+# — one lane per arch. llmlint's shots are deterministic SVGs (vendored, pinned
+# font), so a single x86_64 lane covers every machine; no pinned capture
+# container is needed.
+name: Visual docs
+
+on:
+  pull_request:
+    # `closed` lets screencomp delete this PR's gh-pages preview once it closes,
+    # so stale /pr-<n>/ galleries do not accumulate on the branch.
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+  schedule:
+    # Monthly: prune the gh-pages gallery history so committed images do not grow
+    # the branch without bound (keeps the 20 most recent versions; see below).
+    - cron: "27 4 1 * *"
+
+permissions:
+  contents: write       # push the gh-pages gallery
+  pull-requests: write  # post the diff comment
+
+jobs:
+  visual-docs:
+    uses: nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2
+    with:
+      # Strict gate (the safe default): CI FAILS if the capture drifts from the
+      # committed baseline (shots/baseline/<arch>.json). Regenerate it locally
+      # with `just screenshots` (the pre-push guard does this for you) and commit.
+      fail-on-drift: true
+      # Keep the gh-pages gallery bounded: delete this PR's preview on close and
+      # prune history on the monthly schedule above.
+      gh-pages-maintenance: true
+      gh-pages-history-versions: 20
+      # The capture-command runs INSIDE this container (the reusable workflow's
+      # default is a Playwright image for web apps). Ours needs Rust to build the
+      # binaries, so pin the matching Rust image (it carries curl/git/tar via
+      # buildpack-deps). The shots are deterministic SVGs (vendored font), so the
+      # image only has to build + render — no Playwright, no pinned-CPU concerns.
+      container: rust:1.96.0-bookworm
+      # Install the pinned `freeze` from its prebuilt release (no Go needed), then
+      # capture. RUSTUP_TOOLCHAIN bypasses rust-toolchain.toml so we build with the
+      # image's toolchain instead of syncing its extra components/targets (the SVG
+      # bytes don't depend on the compiler anyway). The reusable workflow exports
+      # $SHOTS_OUT as shots/current/<arch>; the script writes captures.json + SVGs.
+      capture-command: |
+        export RUSTUP_TOOLCHAIN=1.96.0
+        curl -fsSL -o /tmp/freeze.tgz https://github.com/charmbracelet/freeze/releases/download/v0.2.2/freeze_0.2.2_Linux_x86_64.tar.gz
+        tar -xzf /tmp/freeze.tgz -C /tmp
+        install /tmp/freeze_0.2.2_Linux_x86_64/freeze /usr/local/bin/freeze
+        bash scripts/screenshots.sh

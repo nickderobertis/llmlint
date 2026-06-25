@@ -24,6 +24,13 @@ hyperfine-version := "1.20.0"
 critcmp-version := "0.1.8"
 samply-version := "0.13.1"
 
+# Renderer for the terminal screenshots (`just screenshots`). NOT part of the
+# gate or `just setup`: screenshots are informational, like the benches. CI's
+# Visual-docs workflow installs the same pinned version; `just screenshots-tools`
+# installs it locally on demand. screencomp (the classify/gallery/PR-comment tool)
+# is installed separately — see https://github.com/nickderobertis/screencomp.
+freeze-version := "0.2.2"
+
 # List available recipes.
 default:
     @just --list
@@ -172,3 +179,27 @@ bench-all: bench bench-cli bench-allocs
 # Record a sampling/callgrind profile to find bottlenecks; see scripts/profile.sh for modes.
 profile *ARGS:
     @bash scripts/profile.sh {{ARGS}}
+
+# --- Terminal screenshots (informational; never part of `check` or CI's gate) -
+# Deterministic SVGs of the real CLI output, rendered by `freeze` from a vendored
+# pinned font, gated/galleried/PR-commented by screencomp (see screenshots/AGENTS.md).
+# Regenerating is out of the gate, like the benches; CI's Visual-docs workflow owns
+# the comparison, and the pre-push guard regenerates the baseline locally on drift.
+
+# Install the pinned screenshot renderer (`freeze`) on demand. Needs Go.
+screenshots-tools:
+    @command -v go >/dev/null || { echo "go not found: needed to install freeze; see https://go.dev/dl" >&2; exit 1; }
+    go install github.com/charmbracelet/freeze@v{{freeze-version}}
+    @echo "installed freeze to $(go env GOPATH)/bin (ensure it is on PATH)"
+
+# Capture the screenshots: drive the real binary against the mock fixture, render
+# each scene to shots/current/<arch>/ + docs/screenshots/. Needs `freeze` on PATH.
+screenshots:
+    @bash scripts/screenshots.sh
+
+# Refresh the committed baseline manifest from a fresh capture (after an intended
+# output change). Commit shots/baseline/*.json + docs/screenshots/ alongside.
+screenshots-bless: screenshots
+    @command -v screencomp >/dev/null || { echo "screencomp not installed: https://github.com/nickderobertis/screencomp#install" >&2; exit 1; }
+    screencomp manifest --input shots/current --output shots/baseline/$(uname -m | sed 's/amd64/x86_64/;s/aarch64/arm64/').json
+    @echo "baseline refreshed; commit shots/baseline/ + docs/screenshots/"

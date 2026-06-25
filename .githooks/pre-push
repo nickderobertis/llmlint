@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# screencomp local pre-push guard (adapted from `screencomp init`).
+#
+# Local half of the STRICT gate: CI fails on unexpected screenshot drift, and
+# this hook lets you regenerate and commit the baseline BEFORE pushing so CI
+# stays green. It re-captures only when screenshot-relevant files change
+# ([guard].paths in screencomp.toml) and blocks the push on drift.
+#
+# Unlike the scaffold's web-app capture, llmlint's shots are deterministic SVGs
+# (a vendored, pinned font), so the capture runs NATIVELY here — no Docker, no
+# pinned container — and still produces byte-identical output to CI.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# Bypass intentionally:   git push --no-verify
+set -euo pipefail
+
+case "$(uname -m)" in
+  arm64 | aarch64) ARCH="arm64" ;;
+  x86_64 | amd64)  ARCH="x86_64" ;;
+  *) echo "pre-push: unsupported arch $(uname -m); bypass with git push --no-verify" >&2; exit 1 ;;
+esac
+
+MANIFEST="shots/baseline/${ARCH}.json"    # committed baseline for this arch
+GALLERY="shots/review"                     # [guard].gallery (review output)
+CURRENT="shots/current"                    # capture root, mirrors visual-docs.yml
+
+# No-op under CI: the visual-docs workflow is the source of truth there.
+[ -n "${CI:-}" ] && exit 0
+
+# Without the CLI the guard CANNOT evaluate the push, so do NOT skip silently.
+# Warn loudly and skip; set SCREENCOMP_GUARD_REQUIRE=1 to fail here instead.
+if ! command -v screencomp >/dev/null 2>&1; then
+  {
+    echo "pre-push: screencomp is NOT on PATH — the visual guard cannot run."
+    echo "          Install it: https://github.com/nickderobertis/screencomp#install"
+    echo "          then enable the hook: git config core.hooksPath .githooks"
+    echo "          Set SCREENCOMP_GUARD_REQUIRE=1 to fail here instead."
+  } >&2
+  [ -n "${SCREENCOMP_GUARD_REQUIRE:-}" ] && exit 1
+  exit 0
+fi
+
+# --- 1. Compute the push range(s) from git's stdin ---------------------------
+ranges=()
+if [ -n "${SCREENCOMP_GUARD_RANGE:-}" ]; then
+  ranges+=("$SCREENCOMP_GUARD_RANGE")   # test/override: diff this range directly
+else
+  zero='^0+$'
+  while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ -z "${local_sha:-}" ] && continue
+    if [[ "$local_sha" =~ $zero ]]; then
+      continue                            # branch deletion: nothing to capture
+    elif [[ "$remote_sha" =~ $zero ]]; then
+      base="$(git merge-base origin/HEAD "$local_sha" 2>/dev/null || true)"
+      [ -n "$base" ] && ranges+=("${base}..${local_sha}") || ranges+=("$local_sha")
+    else
+      ranges+=("${remote_sha}..${local_sha}")
+    fi
+  done
+fi
+[ "${#ranges[@]}" -eq 0 ] && exit 0
+
+changed="$(for r in "${ranges[@]}"; do git diff --name-only "$r"; done | sort -u)"
+
+# --- 2. Cheap path: is anything screenshot-relevant? -------------------------
+# `scope` exits 3 when a changed path matches [guard].paths, 0 when none do, and
+# any OTHER non-zero on error. Treat ONLY exit 3 as relevant; on an error, warn
+# and skip rather than force a slow capture — CI is the backstop.
+set +e
+printf '%s\n' "$changed" | screencomp scope --changed-from - --exit-code --quiet
+scope_status=$?
+set -e
+case "$scope_status" in
+  0) exit 0 ;;                            # nothing relevant: pass silently
+  3) : ;;                                 # a relevant path matched: capture below
+  *)
+    echo "pre-push: 'screencomp scope' failed (exit $scope_status); skipping the" >&2
+    echo "          visual guard. Is screencomp current? CI still gates this." >&2
+    exit 0
+    ;;
+esac
+
+# --- 3. Relevant change: re-capture natively (needs the pinned freeze) --------
+if ! command -v freeze >/dev/null 2>&1; then
+  echo "pre-push: screenshot-relevant files changed but 'freeze' is not installed" >&2
+  echo "          to re-capture. Install it: just screenshots-tools" >&2
+  echo "          then retry, or bypass with: git push --no-verify" >&2
+  exit 1
+fi
+SHOTS_OUT="$CURRENT/$ARCH" bash scripts/screenshots.sh
+
+# --- 4. Classify the capture against the committed baseline manifest ---------
+set +e
+screencomp classify --baseline-manifest "$MANIFEST" --current "$CURRENT" --exit-code
+status=$?
+set -e
+
+if [ "$status" -eq 0 ]; then
+  echo "pre-push: screenshots unchanged against $MANIFEST — ok to push"
+  exit 0
+elif [ "$status" -ne 3 ]; then
+  echo "pre-push: screencomp classify failed (exit $status)" >&2
+  exit "$status"
+fi
+
+# --- On drift (classify exit 3): regenerate, build a gallery, BLOCK. ---------
+screencomp manifest --input "$CURRENT" --output "$MANIFEST"
+screencomp gallery --input "$CURRENT" \
+  --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null
+
+{
+  echo
+  echo "  SCREENSHOTS CHANGED — push blocked for review"
+  echo "  Review the rendered gallery: $GALLERY/index.html"
+  echo "  Also commit the refreshed README images in docs/screenshots/."
+  echo "  If intended: git add $MANIFEST docs/screenshots && git commit, push again."
+  echo "  If not: investigate the diff. Bypass with: git push --no-verify"
+  echo
+} >&2
+exit 1

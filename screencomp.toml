@@ -1,0 +1,34 @@
+# screencomp configuration. See https://github.com/nickderobertis/screencomp.
+
+[capture]
+# Captures run in a Linux container, but llmlint's shots are deterministic SVGs
+# (a vendored, pinned font embedded into each file), so the bytes are identical
+# on every arch and runner. One arch lane is therefore enough; its committed
+# baseline is shots/baseline/x86_64.json.
+arches = ["x86_64"]
+
+[comment]
+title = "Terminal screenshots"
+marker = "screencomp"        # [A-Za-z0-9_-]; one sticky comment per marker
+embed_limit = 10             # embed images inline when <= N shots differ (0 disables)
+
+# One card, `lint-report`, that the gallery flips between the default report and
+# the `-v` verbose report (which itemizes PASS/SKIP too). Scripted in
+# scripts/screenshots.sh.
+[[toggle]]
+key = "view"
+label = "View"
+values = ["default", "verbose"]
+
+[guard]
+# Local pre-push guard (.githooks/pre-push): re-capture only when something that
+# can change the rendered report changes — the formatter, the CLI surface, the
+# capture machinery, or the vendored font.
+paths = [
+  "src/domain/report.rs",
+  "src/cli.rs",
+  "src/commands/lint.rs",
+  "scripts/screenshots.sh",
+  "screenshots/**",
+]
+gallery = "shots/review"

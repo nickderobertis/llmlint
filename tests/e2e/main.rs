@@ -235,6 +235,72 @@ fn default_shows_failures_and_verbose_adds_rules_and_debug() {
         .stderr(predicate::str::contains("\"oneharness_version\":\"mock\""));
 }
 
+#[test]
+fn color_is_off_when_piped_but_forced_by_color_always() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: passing_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: failing_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"passing_rule": true,
+            "failing_rule": {"holds": false, "violations": [
+                {"file": "src/lib.rs", "line": 1, "message": "nope"}]}}"#,
+    );
+
+    // `assert_cmd` captures stdout through a pipe (not a terminal), so the
+    // default `auto` policy resolves to no color: the report is plain text.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL failing_rule"))
+        .stdout(predicate::str::contains('\u{1b}').not());
+
+    // `--color always` forces ANSI even through a pipe: the FAIL word is wrapped
+    // in red (bold `1m` + red `31m`) and the summary's failed count is red too,
+    // while the passing count is green (`32m`).
+    p.lint()
+        .arg("--color")
+        .arg("always")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "\u{1b}[1m\u{1b}[31mFAIL\u{1b}[0m failing_rule",
+        ))
+        .stdout(predicate::str::contains(
+            "\u{1b}[1m\u{1b}[31m1 failed\u{1b}[0m",
+        ))
+        .stdout(predicate::str::contains(
+            "\u{1b}[1m\u{1b}[32m1 passed\u{1b}[0m",
+        ));
+
+    // `--color never` keeps it plain even if a terminal would otherwise color,
+    // and `NO_COLOR` disables `auto` regardless of the stream.
+    p.lint()
+        .arg("--color")
+        .arg("never")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains('\u{1b}').not());
+    p.lint()
+        .arg("--color")
+        .arg("always")
+        .env("NO_COLOR", "1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        // `always` still wins over NO_COLOR (NO_COLOR only governs `auto`).
+        .stdout(predicate::str::contains('\u{1b}'));
+}
+
 // ---- multi-judge majority vote -------------------------------------------
 
 #[test]

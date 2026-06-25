@@ -95,6 +95,13 @@ pub struct LintArgs {
     #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
     pub format: OutputFormat,
 
+    /// When to colorize the human report: `auto` (default) colors only when
+    /// stdout is a terminal and `NO_COLOR` is unset, `always` forces color
+    /// (e.g. through a pager or for a screenshot), `never` disables it. Has no
+    /// effect on `--format json`.
+    #[arg(long = "color", value_enum, default_value_t = ColorChoice::Auto)]
+    pub color: ColorChoice,
+
     /// Increase output detail. By default, failing rules (with their locations)
     /// and the summary line are shown. `-v` additionally itemizes every passed
     /// and skipped rule, and prints the oneharness debug view (exact command +
@@ -136,6 +143,57 @@ pub enum OutputFormat {
     #[default]
     Human,
     Json,
+}
+
+/// When to apply ANSI color to the human report.
+#[derive(ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorChoice {
+    /// Color only when stdout is a terminal and `NO_COLOR` is unset.
+    #[default]
+    Auto,
+    /// Always emit color, even when stdout is not a terminal.
+    Always,
+    /// Never emit color.
+    Never,
+}
+
+impl ColorChoice {
+    /// Resolve to a concrete on/off decision. `Auto` honors the `NO_COLOR`
+    /// convention (any non-empty value disables color) and otherwise colors
+    /// only when `stdout` is a terminal. `is_tty` is injected so the pure
+    /// resolution stays testable without a real terminal.
+    pub fn resolve(self, is_tty: bool, no_color: bool) -> bool {
+        match self {
+            ColorChoice::Always => true,
+            ColorChoice::Never => false,
+            ColorChoice::Auto => is_tty && !no_color,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_always_and_never_ignore_tty_and_no_color() {
+        for &tty in &[true, false] {
+            for &no_color in &[true, false] {
+                assert!(ColorChoice::Always.resolve(tty, no_color));
+                assert!(!ColorChoice::Never.resolve(tty, no_color));
+            }
+        }
+    }
+
+    #[test]
+    fn color_auto_needs_a_tty_and_an_unset_no_color() {
+        assert!(ColorChoice::Auto.resolve(true, false));
+        // A terminal but NO_COLOR set: off (the convention wins).
+        assert!(!ColorChoice::Auto.resolve(true, true));
+        // Not a terminal (piped/redirected): off regardless of NO_COLOR.
+        assert!(!ColorChoice::Auto.resolve(false, false));
+        assert!(!ColorChoice::Auto.resolve(false, true));
+    }
 }
 
 #[derive(Args, Debug)]

@@ -47,6 +47,11 @@ mock-oneharness = []
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
+# ANSI styling for the human report (red FAIL / green PASS). Tiny and dependency-
+# free — already in the tree via clap — so it adds color without growing the
+# `cargo deny` surface. Pure style definitions; the TTY/`NO_COLOR`/`--color`
+# decision lives in the command layer, not here.
+anstyle = "1"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps JSON object keys in insertion order, so the structured-
 # output schema can present each rule's fields in the exact order the judge

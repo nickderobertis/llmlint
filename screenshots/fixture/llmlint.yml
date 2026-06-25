@@ -1,0 +1,19 @@
+# Fixture project for the terminal screenshots (see scripts/screenshots.sh).
+# It is linted by the real llmlint binary driving the mock oneharness fixture
+# (no model, no network), so the captured output is real CLI output — only the
+# verdicts are scripted (screenshots/fixture/verdicts.json). The rules are chosen
+# to exercise every status the report can show: a multi-judge FAIL with a pinned
+# violation, a PASS, and a SKIP (a rule whose glob matches nothing).
+version: 1
+files:
+  include: ["src/**"]
+rules:
+  - name: handlers_delegate_to_services
+    description: "Request handlers delegate business logic to a service layer."
+    judges: 3
+  - name: modules_have_doc_comments
+    description: "Every module begins with a doc comment explaining its purpose."
+  - name: no_todo_without_ticket
+    description: "No TODO comment without a tracking ticket reference."
+    files:
+      include: ["migrations/**"]

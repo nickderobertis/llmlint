@@ -105,7 +105,7 @@ fn main() {
     println!("| vote_tally | 9 judges (dissent) | {calls} | {bytes} |");
 
     let (calls, bytes) =
-        measure(|| report::Report::new(support::outcomes(100), vec![]).to_human(1));
+        measure(|| report::Report::new(support::outcomes(100), vec![]).to_human(1, false));
     println!("| report:human | 100 outcomes | {calls} | {bytes} |");
 
     let (calls, bytes) = measure(|| report::Report::new(support::outcomes(100), vec![]).to_json());

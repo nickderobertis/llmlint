@@ -19,3 +19,10 @@
 /.claude/settings.local.json
 # Machine-local setup state (stamp/log from scripts/setup.sh; per-machine)
 /.dev
+
+# screencomp: commit the digest baseline (shots/baseline/*.json) and the README
+# images (docs/screenshots/*.svg), but not the regenerated capture trees.
+/shots/current/
+/shots/verify/
+/shots/review/
+/site/

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "shots": [
+    {
+      "name": "lint-report",
+      "toggles": {
+        "view": "default"
+      },
+      "hash": "9ff582302e5835cdbaabdf00f1c6f711c67b7fa63d06c962cfe6879b9f79c7d1"
+    },
+    {
+      "name": "lint-report",
+      "toggles": {
+        "view": "verbose"
+      },
+      "hash": "29b7000f7daa4c43b0f219dfa9b1aca55719e8c5c56e7b26a740eb8cb5fdebcf"
+    }
+  ]
+}
