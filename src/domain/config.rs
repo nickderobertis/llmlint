@@ -101,8 +101,8 @@ pub struct Rule {
     /// or underscores. Used as a JSON Schema key for the judge's verdict.
     #[schemars(regex(pattern = r"^[A-Za-z][A-Za-z0-9_]*$"))]
     pub name: String,
-    /// The invariant the judge evaluates. State clearly what is TRUE (passes)
-    /// and what is FALSE (a violation).
+    /// The invariant the judge evaluates. State clearly what is true (passes)
+    /// and what is false (a violation).
     #[schemars(length(min = 1))]
     pub description: String,
     /// Name of the agent (under `agents`) this rule runs on. Defaults to the
@@ -299,7 +299,7 @@ mod tests {
     fn rule(name: &str) -> Rule {
         Rule {
             name: name.into(),
-            description: "TRUE when ok; FALSE otherwise.".into(),
+            description: "true when ok; false otherwise.".into(),
             agent: None,
             judges: None,
             files: None,

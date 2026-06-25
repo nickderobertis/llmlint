@@ -71,7 +71,7 @@ impl Project {
     }
 }
 
-const RULE: &str = "TRUE when ok; FALSE otherwise.";
+const RULE: &str = "true when ok; false otherwise.";
 
 /// The bundled config-lint plugin, referenced by URL + version pin (resolved
 /// offline from the binary's embedded copy).
@@ -1737,7 +1737,7 @@ fn global_prompt_template_override_reaches_the_judge() {
          files:\n  include: [\"src/**\"]\n\
          rules:\n  \
            - name: templated_rule\n    \
-             description: \"TRUE when ok; FALSE otherwise.\"\n",
+             description: \"true when ok; false otherwise.\"\n",
     );
     p.write("src/lib.rs", "// code\n");
     let verdicts = p.write_verdicts(r#"{"templated_rule": true}"#);
@@ -1768,7 +1768,7 @@ fn agent_prompt_template_is_appended_for_its_rules() {
          agents:\n  reviewer:\n    prompt_template: \"AGENT_APPENDED_MARKER\"\n\
          rules:\n  \
            - name: reviewed_rule\n    \
-             description: \"TRUE when ok; FALSE otherwise.\"\n    \
+             description: \"true when ok; false otherwise.\"\n    \
              agent: reviewer\n",
     );
     p.write("src/lib.rs", "// code\n");
@@ -1803,7 +1803,7 @@ fn yaml_anchors_merge_keys_and_stash_keys_resolve() {
          agents:\n  reviewer:\n    <<: *agent_defaults\n    prompt_template: *guidance\n\
          rules:\n  \
            - name: anchored_rule\n    \
-             description: \"TRUE when ok; FALSE otherwise.\"\n    \
+             description: \"true when ok; false otherwise.\"\n    \
              agent: reviewer\n",
     );
     p.write("src/lib.rs", "// code\n");
@@ -2123,8 +2123,8 @@ fn two_run_project() -> Project {
          files:\n  include: [\"src/**\"]\n\
          agents:\n  a: {}\n  b: {}\n\
          rules:\n  \
-           - name: rule_a\n    description: \"TRUE when ok; FALSE otherwise.\"\n    agent: a\n  \
-           - name: rule_b\n    description: \"TRUE when ok; FALSE otherwise.\"\n    agent: b\n",
+           - name: rule_a\n    description: \"true when ok; false otherwise.\"\n    agent: a\n  \
+           - name: rule_b\n    description: \"true when ok; false otherwise.\"\n    agent: b\n",
     );
     p.write("src/lib.rs", "// code\n");
     p
@@ -2441,7 +2441,7 @@ fn cli_prompt_template_file_overrides_config_template() {
          files:\n  include: [\"src/**\"]\n\
          rules:\n  \
            - name: templated_rule\n    \
-             description: \"TRUE when ok; FALSE otherwise.\"\n",
+             description: \"true when ok; false otherwise.\"\n",
     );
     p.write(
         "cli-template.md",

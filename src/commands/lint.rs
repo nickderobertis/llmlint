@@ -428,7 +428,7 @@ mod tests {
     fn rule(name: &str, agent: Option<&str>) -> Rule {
         Rule {
             name: name.into(),
-            description: "TRUE when ok; FALSE otherwise.".into(),
+            description: "true when ok; false otherwise.".into(),
             agent: agent.map(Into::into),
             judges: None,
             files: None,

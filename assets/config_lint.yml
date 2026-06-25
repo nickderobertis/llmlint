@@ -31,23 +31,23 @@ rules:
   - name: description_states_clear_true_and_false
     agent: config_lint
     description: |
-      TRUE when every lint rule's `description` unambiguously states the
+      true when every lint rule's `description` unambiguously states the
       condition under which the verdict is true AND the condition under which it
-      is false, and the two conditions are mutually exclusive. FALSE when any
+      is false, and the two conditions are mutually exclusive. false when any
       description is ambiguous, omits one side, or its true and false conditions
       overlap.
 
   - name: name_is_descriptive_not_placeholder
     agent: config_lint
     description: |
-      TRUE when every lint rule `name` is a descriptive, meaningful identifier
-      that conveys what the rule checks. FALSE when any name is a placeholder or
+      true when every lint rule `name` is a descriptive, meaningful identifier
+      that conveys what the rule checks. false when any name is a placeholder or
       nonsense token (for example rule1, foo, bar, baz, test, todo, asdf, temp,
       thing, xxx) that does not describe what is being checked.
 
   - name: name_matches_description
     agent: config_lint
     description: |
-      TRUE when every lint rule `name` describes the same property that its
-      `description` actually checks. FALSE when any name refers to something
+      true when every lint rule `name` describes the same property that its
+      `description` actually checks. false when any name refers to something
       different from what its description evaluates.

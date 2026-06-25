@@ -90,11 +90,11 @@ agents:
     harness: claude-code
 rules:
   - name: public_items_are_documented
-    description: "TRUE when every public item has a doc comment; FALSE otherwise."
+    description: "true when every public item has a doc comment; false otherwise."
   - name: no_unwrap_in_library
-    description: "TRUE when no library code calls unwrap/expect; FALSE otherwise."
+    description: "true when no library code calls unwrap/expect; false otherwise."
   - name: layered_architecture
-    description: "TRUE when domain logic stays free of I/O; FALSE otherwise."
+    description: "true when domain logic stays free of I/O; false otherwise."
 YAML
 printf '// sample source for the benchmark sandbox\npub fn answer() -> u32 { 42 }\n' \
     >"$proj/src/lib.rs"

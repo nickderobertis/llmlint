@@ -56,12 +56,12 @@ mod tests {
         vec![
             RuleSpec {
                 name: "no_inline_sql".into(),
-                description: "TRUE when no SQL is inline; FALSE otherwise.".into(),
+                description: "true when no SQL is inline; false otherwise.".into(),
                 rationale: true,
             },
             RuleSpec {
                 name: "layered".into(),
-                description: "TRUE when layered.".into(),
+                description: "true when layered.".into(),
                 rationale: true,
             },
         ]
@@ -80,8 +80,8 @@ mod tests {
         .unwrap();
         assert!(out.contains("- src/a.rs"));
         assert!(out.contains("- src/b.rs"));
-        assert!(out.contains("* no_inline_sql: TRUE when no SQL is inline"));
-        assert!(out.contains("* layered: TRUE when layered."));
+        assert!(out.contains("* no_inline_sql: true when no SQL is inline"));
+        assert!(out.contains("* layered: true when layered."));
     }
 
     #[test]
