@@ -69,6 +69,12 @@ shot_name="lint-report"
 # window styling. Auto width/height follow the content, so they only move when the
 # report does.
 freeze_flags=(
+  # Force terminal/ANSI mode. freeze's content-based auto-detection is flaky —
+  # it intermittently misreads the colored report as a source file ("Language
+  # Unknown") and then ignores --font.file and hangs fetching a default font over
+  # the network. `--language ansi` is unconditional, offline, and byte-identical
+  # to the auto-detected render, so it is both the determinism and the CI fix.
+  --language ansi
   --font.file "$font"
   --font.family "JetBrains Mono"
   --font.size 14
