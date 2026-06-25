@@ -10,6 +10,13 @@ use crate::domain::version::VersionReq;
 use crate::errors::{io_err, Error, Result};
 use crate::io::plugins::{self, ResolveOpts};
 
+/// Maximum depth of transitive `plugins:` resolution. A config's `plugins`
+/// pull in further configs, whose own `plugins` are pulled in turn, and so on.
+/// Cycles are already made safe by the visited-set dedup (a key is loaded once),
+/// so this is a defense-in-depth bound that stops a pathologically deep *acyclic*
+/// include graph from exhausting the stack — it surfaces a clear error instead.
+const MAX_PLUGIN_DEPTH: usize = 100;
+
 /// Config file names searched for, in priority order, when walking up the tree.
 pub const CONFIG_NAMES: &[&str] = &[
     "llmlint.yml",
@@ -71,7 +78,9 @@ pub fn parse(text: &str, origin: &str) -> Result<Config> {
 /// `entries` is empty, the nearest discovered config above `cwd`. `plugins`
 /// (local files or remote/versioned URLs) are merged recursively; the first
 /// entry provides the top-level scalars, the rest contribute rules and agents.
-/// Diamonds and cycles are de-duplicated by absolute path / plugin key.
+/// Each pulled-in config's own `plugins` are resolved transitively. Diamonds and
+/// cycles are de-duplicated by absolute path / plugin key, and the transitive
+/// depth is bounded by [`MAX_PLUGIN_DEPTH`].
 pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     let entry_paths: Vec<PathBuf> = if entries.is_empty() {
         match discover(cwd) {
@@ -95,6 +104,7 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     for path in &entry_paths {
         load_node(
             Node::File(path.clone()),
+            0,
             &opts,
             &mut visited,
             &mut sources,
@@ -178,11 +188,20 @@ impl Node {
 
 fn load_node(
     node: Node,
+    depth: usize,
     opts: &ResolveOpts,
     visited: &mut BTreeSet<String>,
     sources: &mut Vec<String>,
     acc: &mut Option<Config>,
 ) -> Result<()> {
+    // Entry files are depth 0; their `plugins` are depth 1, and so on. Bound the
+    // transitive chain before doing any I/O so a pathological graph fails fast.
+    if depth > MAX_PLUGIN_DEPTH {
+        return Err(Error::PluginDepthExceeded {
+            max: MAX_PLUGIN_DEPTH,
+        });
+    }
+
     let key = node.key();
     if !visited.insert(key.clone()) {
         return Ok(()); // already loaded (diamond/cycle) — skip
@@ -200,7 +219,7 @@ fn load_node(
 
     for spec in child_specs {
         let child = Node::resolve(&spec, base_dir.as_deref())?;
-        load_node(child, opts, visited, sources, acc)?;
+        load_node(child, depth + 1, opts, visited, sources, acc)?;
     }
     Ok(())
 }
@@ -329,6 +348,59 @@ rules:
         fs::write(&root, "include:\n  - ./team.yml\n").unwrap();
         let err = load(&[root], dir.path()).unwrap_err();
         assert!(err.to_string().contains("renamed to `plugins`"));
+    }
+
+    #[test]
+    fn plugins_resolve_transitively() {
+        // root -> mid -> leaf: each config's own `plugins` are pulled in, so a
+        // rule three levels deep lands in the merged config.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("leaf.yml"),
+            "rules:\n  - name: leaf_rule\n    description: \"TRUE when ok; FALSE otherwise.\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("mid.yml"),
+            "plugins:\n  - ./leaf.yml\nrules:\n  - name: mid_rule\n    \
+             description: \"TRUE when ok; FALSE otherwise.\"\n",
+        )
+        .unwrap();
+        let root = dir.path().join("llmlint.yml");
+        fs::write(
+            &root,
+            "version: 1\nplugins:\n  - ./mid.yml\nrules:\n  - name: root_rule\n    \
+             description: \"TRUE when ok; FALSE otherwise.\"\n",
+        )
+        .unwrap();
+
+        let loaded = load(&[root], dir.path()).unwrap();
+        let names: Vec<&str> = loaded
+            .config
+            .rules
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(names, ["root_rule", "mid_rule", "leaf_rule"]);
+    }
+
+    #[test]
+    fn plugin_chain_deeper_than_max_depth_errors() {
+        // A straight, acyclic chain longer than MAX_PLUGIN_DEPTH can't be
+        // dedup'd away (every file is distinct), so it trips the depth bound.
+        let dir = tempdir().unwrap();
+        let total = MAX_PLUGIN_DEPTH + 2;
+        for i in 0..total {
+            let path = dir.path().join(format!("c{i}.yml"));
+            let body = if i + 1 < total {
+                format!("plugins:\n  - ./c{}.yml\nrules: []\n", i + 1)
+            } else {
+                "rules: []\n".to_string()
+            };
+            fs::write(&path, body).unwrap();
+        }
+        let err = load(&[dir.path().join("c0.yml")], dir.path()).unwrap_err();
+        assert!(matches!(err, Error::PluginDepthExceeded { .. }));
     }
 
     #[test]
