@@ -2,10 +2,11 @@
 //! drive oneharness in parallel, aggregate votes, and report.
 
 use std::collections::{BTreeMap, HashSet};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use crate::cli::{LintArgs, OutputFormat};
+use crate::cli::{ColorChoice, LintArgs, OutputFormat};
 use crate::domain::config::{validate, Agent, Config, FileFilter, Rule};
 use crate::domain::plan::{self, JudgeRun};
 use crate::domain::report::Report;
@@ -41,7 +42,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
         let report = Report::new(Vec::new(), Vec::new());
-        emit(&report, args.format, args.verbose);
+        emit(&report, args.format, args.verbose, args.color);
         return Ok(report.exit_code());
     }
 
@@ -164,7 +165,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     }
 
     let report = Report::new(outcomes, run_errors);
-    emit(&report, args.format, args.verbose);
+    emit(&report, args.format, args.verbose, args.color);
     Ok(report.exit_code())
 }
 
@@ -401,9 +402,16 @@ fn execute(
     }
 }
 
-fn emit(report: &Report, format: OutputFormat, verbosity: u8) {
+fn emit(report: &Report, format: OutputFormat, verbosity: u8, color: ColorChoice) {
     match format {
-        OutputFormat::Human => print!("{}", report.to_human(verbosity)),
+        OutputFormat::Human => {
+            // Resolve `--color` against the live stdout: `auto` colors only an
+            // interactive terminal with `NO_COLOR` unset. The decision is made
+            // here (the I/O boundary) and handed to the pure formatter as a bool.
+            let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+            let on = color.resolve(std::io::stdout().is_terminal(), no_color);
+            print!("{}", report.to_human(verbosity, on));
+        }
         OutputFormat::Json => {
             println!(
                 "{}",

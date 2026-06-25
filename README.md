@@ -44,6 +44,12 @@ The exit code is unaffected by verbosity (`0` all-pass, `1` a violation, `2`
 the run couldn't complete); operational errors are always shown. Use
 `--format json` for the full machine-readable report.
 
+The human report is **colorized** — green `PASS`, red `FAIL`/`ERROR` — when
+stdout is a terminal. Coloring follows the [`NO_COLOR`](https://no-color.org)
+convention and a `--color <auto|always|never>` flag: `auto` (the default) colors
+only an interactive terminal, `always` forces it (e.g. through a pager or to
+capture a screenshot), `never` disables it. `--format json` is never colorized.
+
 ## How it works
 
 1. You declare **rules** (and optionally **agents** that group them) in a YAML

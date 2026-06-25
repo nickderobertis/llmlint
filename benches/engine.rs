@@ -157,7 +157,7 @@ fn bench_report(c: &mut Criterion) {
             b.iter_batched(
                 || outcomes.clone(),
                 // Verbosity 1 renders every rule line + violations (the heaviest path).
-                |o| report::Report::new(o, vec![]).to_human(1),
+                |o| report::Report::new(o, vec![]).to_human(1, false),
                 BatchSize::SmallInput,
             );
         });

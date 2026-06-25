@@ -1,9 +1,32 @@
 //! Assemble rule outcomes into a report: human-readable text or stable JSON,
 //! plus the process exit code.
 
+use anstyle::{AnsiColor, Style};
 use serde_json::{json, Value};
 
 use crate::domain::verdict::{Outcome, RuleOutcome, Violation};
+
+// Status styling for the human report. A red failure and green pass are the
+// signal a reader scans for; skips are de-emphasized (dim yellow) and run errors
+// share the failure red since they too mean "not OK". Whether these are applied
+// is the caller's decision (a plain `bool`) so this module stays pure — TTY
+// detection, `NO_COLOR`, and the `--color` flag are resolved in the io/command
+// layer, never here.
+const FAIL_STYLE: Style = AnsiColor::Red.on_default().bold();
+const PASS_STYLE: Style = AnsiColor::Green.on_default().bold();
+const SKIP_STYLE: Style = AnsiColor::Yellow.on_default().dimmed();
+const ERROR_STYLE: Style = AnsiColor::Red.on_default().bold();
+
+/// Wrap `text` in `style`'s SGR codes when `color` is on, else return it plain.
+/// anstyle renders the prefix via `Display` and the reset via the alternate
+/// (`{:#}`) form, so a styled span never leaks past its text.
+fn paint(text: &str, style: Style, color: bool) -> String {
+    if color {
+        format!("{style}{text}{style:#}")
+    } else {
+        text.to_string()
+    }
+}
 
 /// The full result of a lint run.
 #[derive(Debug, Clone)]
@@ -56,14 +79,19 @@ impl Report {
     /// summary only counts. A blank line separates any per-rule/error detail
     /// from the trailing summary. (The oneharness command/result debug view is
     /// emitted separately to stderr at `-v` by the `lint` command.)
-    pub fn to_human(&self, verbosity: u8) -> String {
+    ///
+    /// `color` paints the status words (red for `FAIL`/`ERROR`, green for
+    /// `PASS`, dim yellow for `SKIP`) and the summary counts with ANSI codes;
+    /// the caller decides it (TTY/`NO_COLOR`/`--color`) so this stays pure.
+    pub fn to_human(&self, verbosity: u8, color: bool) -> String {
         let mut out = String::new();
         for o in &self.outcomes {
             match o.outcome {
                 // Failures are shown even at the default level — they are the
                 // actionable result of a lint run.
                 Outcome::Fail => {
-                    out.push_str(&format!("FAIL {}{}\n", o.name, votes_suffix(o)));
+                    let label = paint("FAIL", FAIL_STYLE, color);
+                    out.push_str(&format!("{label} {}{}\n", o.name, votes_suffix(o)));
                     // A failure is the actionable result, so its reasoning shows
                     // at every level (right after the header, before locations).
                     push_reasoning(&mut out, o);
@@ -74,31 +102,45 @@ impl Report {
                 // Passing and skipped rules are only itemized at `-v`; at the
                 // default level the summary alone accounts for them.
                 Outcome::Pass if verbosity >= 1 => {
-                    out.push_str(&format!("PASS {}{}\n", o.name, votes_suffix(o)));
+                    let label = paint("PASS", PASS_STYLE, color);
+                    out.push_str(&format!("{label} {}{}\n", o.name, votes_suffix(o)));
                     push_reasoning(&mut out, o);
                 }
                 Outcome::Skipped if verbosity >= 1 => {
-                    out.push_str(&format!("SKIP {} (no files matched)\n", o.name))
+                    let label = paint("SKIP", SKIP_STYLE, color);
+                    out.push_str(&format!("{label} {} (no files matched)\n", o.name))
                 }
                 Outcome::Pass | Outcome::Skipped => {}
             }
         }
         for e in &self.run_errors {
-            out.push_str(&format!("ERROR {e}\n"));
+            let label = paint("ERROR", ERROR_STYLE, color);
+            out.push_str(&format!("{label} {e}\n"));
         }
         if !out.is_empty() {
             out.push('\n');
         }
         let (pass, fail, skip) = self.counts();
+        // Color the counts that carry signal: passes green, failures red (only
+        // when there are any — a green-tinted "0 failed" reads wrong), errors
+        // red. The skip count stays plain; it is neither good nor bad news.
+        let passed = paint(&format!("{pass} passed"), PASS_STYLE, color);
+        let failed = if fail > 0 {
+            paint(&format!("{fail} failed"), FAIL_STYLE, color)
+        } else {
+            format!("{fail} failed")
+        };
         out.push_str(&format!(
-            "{} rules: {} passed, {} failed, {} skipped",
+            "{} rules: {passed}, {failed}, {skip} skipped",
             self.outcomes.len(),
-            pass,
-            fail,
-            skip
         ));
         if !self.run_errors.is_empty() {
-            out.push_str(&format!(", {} errored", self.run_errors.len()));
+            let errored = paint(
+                &format!("{} errored", self.run_errors.len()),
+                ERROR_STYLE,
+                color,
+            );
+            out.push_str(&format!(", {errored}"));
         }
         out.push('\n');
         out
@@ -246,7 +288,7 @@ mod tests {
             ],
             vec![],
         );
-        let text = r.to_human(0);
+        let text = r.to_human(0, false);
         // Failing rule and its locations are shown at the default level...
         assert!(text.contains("FAIL no_inline_sql"));
         assert!(text.contains("src/db.rs:42-45: inline SQL"));
@@ -261,7 +303,73 @@ mod tests {
     fn all_passing_default_output_is_just_the_summary() {
         let r = Report::new(vec![pass("a"), pass("b")], vec![]);
         // No failures, default verbosity: a single line, no leading blank line.
-        assert_eq!(r.to_human(0), "2 rules: 2 passed, 0 failed, 0 skipped\n");
+        assert_eq!(
+            r.to_human(0, false),
+            "2 rules: 2 passed, 0 failed, 0 skipped\n"
+        );
+    }
+
+    #[test]
+    fn color_paints_status_words_and_counts_when_enabled() {
+        let r = Report::new(
+            vec![
+                fail("broke", vec![]),
+                pass("ok"),
+                RuleOutcome::skipped("nofiles"),
+            ],
+            vec!["judge timed out".into()],
+        );
+        let plain = r.to_human(1, false);
+        // Without color the output is byte-for-byte the legacy text: no escapes.
+        assert!(!plain.contains('\u{1b}'), "no ANSI when color is off");
+
+        let colored = r.to_human(1, true);
+        // The status words keep their plain text but are now wrapped in SGR codes
+        // — anstyle emits bold (`1m`) then the color (red `31m` for FAIL/ERROR,
+        // green `32m` for PASS) as separate escapes, each span reset (`0m`) so
+        // color never bleeds past it.
+        const RED: &str = "\u{1b}[1m\u{1b}[31m";
+        const GREEN: &str = "\u{1b}[1m\u{1b}[32m";
+        const RESET: &str = "\u{1b}[0m";
+        assert!(colored.contains(&format!("{RED}FAIL{RESET} broke")));
+        assert!(colored.contains(&format!("{GREEN}PASS{RESET} ok")));
+        assert!(colored.contains(&format!("{RED}ERROR{RESET} judge timed out")));
+        // The signal-bearing summary counts are painted too.
+        assert!(colored.contains(&format!("{GREEN}1 passed{RESET}")));
+        assert!(colored.contains(&format!("{RED}1 failed{RESET}")));
+        assert!(colored.contains(&format!("{RED}1 errored{RESET}")));
+        // Stripping the escapes recovers exactly the uncolored rendering.
+        assert_eq!(strip_ansi(&colored), plain);
+    }
+
+    #[test]
+    fn color_leaves_a_zero_failure_count_unpainted() {
+        // A green "0 failed" would misread as good news about failures; an
+        // all-pass summary should carry no red at all.
+        let r = Report::new(vec![pass("a")], vec![]);
+        let colored = r.to_human(0, true);
+        assert!(colored.contains("0 failed"));
+        assert!(!colored.contains("\u{1b}[31m"), "no red on a clean run");
+    }
+
+    /// Drop ANSI SGR sequences (`ESC [ ... m`) so a colored render can be
+    /// compared to its plain counterpart.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                // Skip until the terminating 'm' of the CSI sequence.
+                for c in chars.by_ref() {
+                    if c == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
     }
 
     #[test]
@@ -282,7 +390,7 @@ mod tests {
             ],
             vec![],
         );
-        let text = r.to_human(1);
+        let text = r.to_human(1, false);
         assert!(text.contains("FAIL no_inline_sql"));
         assert!(text.contains("src/db.rs:42-45: inline SQL"));
         assert!(text.contains("PASS layered"));
@@ -309,14 +417,14 @@ mod tests {
         );
         // Default: the failure (with vote split) and the operational error are
         // both shown; the skipped rule is not itemized.
-        let quiet = r.to_human(0);
+        let quiet = r.to_human(0, false);
         assert!(quiet.contains("FAIL voted (1/3 judges held)"));
         assert!(quiet.contains("ERROR judge timed out"));
         assert!(quiet.contains("1 errored"));
         assert!(!quiet.contains("SKIP nofiles"));
 
         // Verbose itemizes the skipped rule as well.
-        let text = r.to_human(1);
+        let text = r.to_human(1, false);
         assert!(text.contains("SKIP nofiles (no files matched)"));
     }
 
@@ -341,7 +449,7 @@ mod tests {
 
         // Default: the failing rule's rationale is shown (before its violation);
         // the passing rule isn't itemized at all, so neither is its rationale.
-        let quiet = r.to_human(0);
+        let quiet = r.to_human(0, false);
         assert!(quiet.contains("FAIL no_inline_sql"));
         assert!(quiet.contains("     rationale: raw SQL string built in db.rs"));
         let fail_idx = quiet.find("rationale:").unwrap();
@@ -350,7 +458,7 @@ mod tests {
         assert!(!quiet.contains("imports only flow downward"));
 
         // Verbose: every evaluated rule shows its rationale.
-        let loud = r.to_human(1);
+        let loud = r.to_human(1, false);
         assert!(loud.contains("PASS layered"));
         assert!(loud.contains("     rationale: imports only flow downward"));
     }
@@ -383,7 +491,7 @@ mod tests {
 
         // Default: the failure shows every judge's result + rationale (a missing
         // rationale still shows the bare result), plus the aggregated violation.
-        let quiet = r.to_human(0);
+        let quiet = r.to_human(0, false);
         assert!(quiet.contains("FAIL voted_rule (1/3 judges held)"));
         assert!(quiet.contains("judge 1 violated: raw SQL at db.rs:42"));
         assert!(quiet.contains("judge 2 held: uses the query layer"));
@@ -394,7 +502,7 @@ mod tests {
 
         // Verbose: the passing multi-judge rule shows its breakdown too, with the
         // dissent visible.
-        let loud = r.to_human(1);
+        let loud = r.to_human(1, false);
         assert!(loud.contains("PASS agreed (2/3 judges held)"));
         assert!(loud.contains("judge 2 violated: looked off"));
     }
