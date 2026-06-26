@@ -119,7 +119,7 @@ if ($buf -eq $invalid -or $buf -eq [IntPtr]::Zero) { throw "CreateConsoleScreenB
 # wires the process up (console attach, or explicit std-handle inheritance when a
 # stream is redirected).
 [void][Con]::SetHandleInformation($buf, [Con]::HANDLE_FLAG_INHERIT, [Con]::HANDLE_FLAG_INHERIT)
-[void][Con]::SetConsoleScreenBufferSize($buf, [Con+COORD]::new([short]120, [short]300))
+[void][Con]::SetConsoleScreenBufferSize($buf, [Con+COORD]::new([int16]120, [int16]300))
 [void][Con]::SetConsoleActiveScreenBuffer($buf)
 $oldStdOut = [Con]::GetStdHandle([Con]::STD_OUTPUT_HANDLE)
 [void][Con]::SetStdHandle([Con]::STD_OUTPUT_HANDLE, $buf)
@@ -160,8 +160,8 @@ $rows = [Math]::Min([int]$info.dwSize.Y, 60)
 
 $cells = New-Object 'Con+CHAR_INFO[]' ($width * $rows)
 $region = New-Object Con+SMALL_RECT
-$region.Left = 0; $region.Top = 0; $region.Right = [short]($width - 1); $region.Bottom = [short]($rows - 1)
-$ok = [Con]::ReadConsoleOutput($buf, $cells, [Con+COORD]::new([short]$width, [short]$rows), [Con+COORD]::new([short]0, [short]0), [ref]$region)
+$region.Left = 0; $region.Top = 0; $region.Right = [int16]($width - 1); $region.Bottom = [int16]($rows - 1)
+$ok = [Con]::ReadConsoleOutput($buf, $cells, [Con+COORD]::new([int16]$width, [int16]$rows), [Con+COORD]::new([int16]0, [int16]0), [ref]$region)
 if (-not $ok) { throw "ReadConsoleOutput failed: $(Win32Msg)" }
 
 # Win32 console foreground attribute bits.
