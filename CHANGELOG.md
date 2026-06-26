@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.11](https://github.com/nickderobertis/llmlint/compare/v0.2.10...v0.2.11) - 2026-06-26
+
+### Added
+
+- add relevance gating to the rule framework ([#49](https://github.com/nickderobertis/llmlint/pull/49))
+
 ## [0.2.10](https://github.com/nickderobertis/llmlint/compare/v0.2.9...v0.2.10) - 2026-06-25
 
 ### Documentation
