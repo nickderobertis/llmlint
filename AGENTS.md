@@ -147,14 +147,19 @@ tools (bypass mode is oneharness's default).
   one instead of every `description` carrying its own "or not applicable" clause.
   A not-relevant outcome is neither pass nor fail — it never fails the build.
 - **Ignore directives (convention):** target files may carry inline
-  `llmlint: ignore[rule, ...] <reason>` (line-scoped) or
-  `llmlint: ignore-file[...] <reason>` (file-scoped) comments. llmlint validates
-  only their *structure* deterministically — specific configured rule(s) + a
-  reason, else exit 2 (`src/domain/ignore.rs`, scanned over the resolved files via
-  `io::files::read_text` in `commands/lint.rs`). **Honoring** them is the judge's
-  job, specified in the default template; there is no separate suppression pass in
-  llmlint, so a custom `prompt_template` must carry the same guidance to keep the
-  behavior.
+  `llmlint: ignore[rule, ...] <reason>` (line-scoped),
+  `llmlint: ignore-file[...] <reason>` (file-scoped), or the block-scoped pair
+  `llmlint: ignore-block[...] <reason>` … `llmlint: ignore-end[...]` (the close
+  names the same rule(s) and carries no reason) comments. llmlint validates only
+  their *structure* deterministically — specific configured rule(s) + a reason
+  (except `ignore-end`), plus block pairing (every `ignore-block` closes, every
+  `ignore-end` matches an open block, no double-open of a rule; blocks track each
+  rule independently, so two opened together may close separately and blocks for
+  different rules may overlap), else exit 2 (`src/domain/ignore.rs`, scanned over
+  the resolved files via `io::files::read_text` in `commands/lint.rs`).
+  **Honoring** them is the judge's job, specified in the default template; there
+  is no separate suppression pass in llmlint, so a custom `prompt_template` must
+  carry the same guidance to keep the behavior.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

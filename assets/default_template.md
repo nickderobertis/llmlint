@@ -57,6 +57,14 @@ treat that rule as holding at that location and omit the violation.
   trailing comment) or the line immediately below it (a comment on its own line).
 - `llmlint: ignore-file[...]` is **file-scoped** — it covers the whole file it
   appears in.
+- `llmlint: ignore-block[...] <reason>` and `llmlint: ignore-end[...]` are
+  **block-scoped** — `ignore-block` opens a suppressed region for the rule(s) it
+  names, and the matching `ignore-end` (which names the same rule(s) and needs no
+  reason) closes it. Every line *between* the opening directive and its close is
+  covered for those rules. Blocks track each rule independently: rules opened
+  together in one `ignore-block` may be closed by separate `ignore-end`
+  directives at different points, and blocks for different rules may overlap. A
+  rule is suppressed only on lines that fall inside an open block for that rule.
 
 A directive only ever silences the rules it explicitly lists; it never affects a
 rule it does not name, and an unrelated comment never silences anything. If
