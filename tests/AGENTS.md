@@ -103,7 +103,13 @@ logic is also covered hermetically via `file://` plugins.
   `-v`, its own `not relevant` summary segment, `outcome: "not_relevant"` in
   `--format json`) and exits clean — never conflated with a pass; a relevant
   rule still evaluates its verdict normally. `relevance: false` disables a rule
-  deterministically (reported not relevant with no oneharness call at all).
+  deterministically (reported not relevant with no oneharness call at all). For a
+  multi-judge conditional rule, relevance is decided by majority first (a majority
+  of not-relevant judges skips the verdict, the lone violation never failing the
+  build) and otherwise the verdict is tallied over the relevant judges only (the
+  held fraction is `held/relevant`, not `held/total`); the per-judge breakdown
+  shows each judge's `not relevant`/`held`/`violated`. An empty relevance
+  condition is a deterministic config error (exit 2).
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their
@@ -125,8 +131,9 @@ logic is also covered hermetically via `file://` plugins.
   run-error carries the `errors` array (exit 2).
 - Failure/recovery: missing config, malformed config, and each deterministic
   validation error — duplicate rule names, an even `judges` count, an invalid
-  rule name, an empty description, `judges: 0`, `batch_size: 0`, and a rule
-  referencing an unknown agent (exit 2); schema-invalid, missing-structured,
+  rule name, an empty description, an empty relevance condition, `judges: 0`,
+  `batch_size: 0`, and a rule referencing an unknown agent (exit 2);
+  schema-invalid, missing-structured,
   unparseable, empty-results, and bad-verdict-shape oneharness output are
   surfaced (exit 2).
 

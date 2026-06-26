@@ -2810,6 +2810,108 @@ fn relevance_false_skips_the_judge_entirely() {
 }
 
 #[test]
+fn multi_judge_relevance_majority_not_relevant_skips_the_verdict() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: scoped_rule, description: \"{RULE}\", judges: 3, \
+             relevance: the change touches SQL }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Three sequential judges: two rule it not relevant, one finds it relevant
+    // and violated. Relevance is decided first -> majority says not relevant, so
+    // the lone violation never fails the build.
+    let verdicts = p.write_verdicts(
+        r#"{"scoped_rule": [
+            {"relevant": false, "rationale": "no SQL in this change"},
+            {"relevant": false, "rationale": "still no SQL"},
+            {"relevant": true, "holds": false, "rationale": "raw SQL at lib.rs",
+             "violations": [{"message": "raw SQL"}]}
+        ]}"#,
+    );
+    let state = p.path().join("state");
+
+    p.lint_v()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N/A scoped_rule (not relevant)"))
+        // The per-judge breakdown shows each judge's relevance, dissent included.
+        .stdout(predicate::str::contains(
+            "judge 1 not relevant: no SQL in this change",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 3 violated: raw SQL at lib.rs",
+        ))
+        .stdout(predicate::str::contains("1 not relevant"));
+}
+
+#[test]
+fn multi_judge_relevance_majority_relevant_then_tallies_the_verdict() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: scoped_rule, description: \"{RULE}\", judges: 3, \
+             relevance: the change touches SQL }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Two judges find it relevant and holding, one abstains as not relevant. The
+    // rule is relevant (2/3), and the verdict is tallied over the relevant judges
+    // only (2/2 held) -> pass; the abstainer doesn't vote on the verdict.
+    let verdicts = p.write_verdicts(
+        r#"{"scoped_rule": [
+            {"relevant": true, "holds": true, "rationale": "parameterized"},
+            {"relevant": true, "holds": true, "rationale": "uses the query builder"},
+            {"relevant": false, "rationale": "this hunk has no SQL"}
+        ]}"#,
+    );
+    let state = p.path().join("state");
+
+    p.lint_v()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .assert()
+        .success()
+        // Held fraction is over the relevant judges (2/2), not all three.
+        .stdout(predicate::str::contains(
+            "PASS scoped_rule (2/2 judges held)",
+        ))
+        .stdout(predicate::str::contains(
+            "judge 3 not relevant: this hunk has no SQL",
+        ));
+}
+
+#[test]
+fn empty_relevance_condition_is_rejected() {
+    // A relevance condition that is a blank string is a deterministic config
+    // error (use `true`/`false` for always/never), surfaced as exit 2.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: blank_rule, description: \"{RULE}\", relevance: \"   \" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("empty relevance condition"));
+}
+
+#[test]
 fn relevance_guidance_and_condition_reach_the_prompt_only_when_conditional() {
     let p = Project::new();
     p.write(
