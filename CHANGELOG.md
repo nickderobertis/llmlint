@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.15](https://github.com/nickderobertis/llmlint/compare/v0.2.14...v0.2.15) - 2026-06-26
+
+### Documentation
+
+- add terminal screenshots for every command + lint verbosities ([#58](https://github.com/nickderobertis/llmlint/pull/58))
+
 ## [0.2.14](https://github.com/nickderobertis/llmlint/compare/v0.2.13...v0.2.14) - 2026-06-26
 
 ### Added
