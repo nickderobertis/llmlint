@@ -124,6 +124,17 @@ _live-build:
 live-claude: _live-build
     bash scripts/live-claude.sh
 
+# Windows-only: prove the colorized report actually RENDERS on a real Windows
+# console (cell attributes are red/green), not just that ANSI bytes are emitted.
+# Drives the release binary against the mock-oneharness fixture (no model, no
+# cost), so it is deterministic and free; the CI workflow
+# (`.github/workflows/win-color.yml`) runs it on windows-latest. The hermetic e2e
+# + screenshots only assert ANSI is *emitted* (platform-independent); this asserts
+# a Windows console *interprets* it. A rendering regression is a HARD FAILURE.
+win-color:
+    cargo build --release --locked --features mock-oneharness --bin llmlint --bin llmlint-mock-oneharness
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win-console-color.ps1
+
 # Verbose, install-free diagnostics (kept out of the gate).
 doctor:
     rustc --version

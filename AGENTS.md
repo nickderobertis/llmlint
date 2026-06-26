@@ -82,6 +82,17 @@ Use the `just` recipes; do not hand-roll equivalents.
   failure to complete the run — is a **hard failure** (red build); the tier never
   skips. Auth + the `CLAUDE_E2E_MODEL` override are documented in `tests/AGENTS.md`.
   Makes real (paid) model calls — out of `check`.
+- `just win-color` — the **Windows color-rendering gate**: builds the release
+  binary + mock oneharness and runs `scripts/win-console-color.ps1`, which drives
+  llmlint against the mock-oneharness fixture with `--color always` into a real
+  Windows console screen buffer, then reads the buffer back and asserts the
+  `FAIL`/`PASS` labels carry the red/green console attributes (and no raw ESC
+  survives). The hermetic e2e + screenshots only prove ANSI is *emitted*
+  (platform-independent); this proves a Windows console *renders* it — the thing
+  anstream's `AutoStream` exists to guarantee (enable VT, else translate to Win32
+  console calls). Windows-only, no model/cost; CI runs it on `windows-latest`
+  (`.github/workflows/win-color.yml`) as a real gate, separate from the paid live
+  tier. See `tests/AGENTS.md`.
 - **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
   `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
   gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the

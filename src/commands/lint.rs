@@ -2,7 +2,7 @@
 //! drive oneharness in parallel, aggregate votes, and report.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 
@@ -476,7 +476,26 @@ fn emit(report: &Report, format: OutputFormat, verbosity: u8, color: ColorChoice
             // here (the I/O boundary) and handed to the pure formatter as a bool.
             let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
             let on = color.resolve(std::io::stdout().is_terminal(), no_color);
-            print!("{}", report.to_human(verbosity, on));
+            // Write through anstream's `AutoStream` so the ANSI we emit renders
+            // everywhere, not just on Unix. On a *legacy* Windows console (no
+            // virtual-terminal processing) raw ANSI prints as `←[31m` garbage;
+            // `AutoStream` enables VT when it can and otherwise translates the SGR
+            // codes into Win32 console attribute calls (`anstyle-wincon`). The
+            // `--color` decision already lives in `on`, so feed the stream a
+            // concrete choice rather than letting it re-detect: `Always` when
+            // color is on (never second-guess `--color always`), `Never`
+            // otherwise — a no-op strip over already-plain text that keeps the
+            // sink uniform. On a pipe/redirect (no console) `Always` still emits
+            // plain ANSI on every OS, so `--color always` and the screenshot/e2e
+            // byte assertions stay byte-identical.
+            let choice = if on {
+                anstream::ColorChoice::Always
+            } else {
+                anstream::ColorChoice::Never
+            };
+            let mut out = anstream::AutoStream::new(std::io::stdout().lock(), choice);
+            let _ = write!(out, "{}", report.to_human(verbosity, on));
+            let _ = out.flush();
         }
         OutputFormat::Json => {
             println!(

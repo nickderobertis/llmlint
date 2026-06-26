@@ -52,6 +52,15 @@ clap = { version = "4.6", features = ["derive"] }
 # `cargo deny` surface. Pure style definitions; the TTY/`NO_COLOR`/`--color`
 # decision lives in the command layer, not here.
 anstyle = "1"
+# The platform-correct sink for the colored report. `AutoStream` passes ANSI
+# straight through on a VT-capable terminal but, on a *legacy* Windows console
+# (no virtual-terminal processing), enables VT or translates the SGR codes into
+# Win32 console attribute calls (`anstyle-wincon`) — so the colors render instead
+# of printing as raw `←[31m` escapes. Already in the tree via clap (with its
+# `wincon` default feature), so it adds no new `cargo deny` surface; the command
+# layer still owns the `--color`/`NO_COLOR`/TTY decision and hands this a concrete
+# on/off choice.
+anstream = "1"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps JSON object keys in insertion order, so the structured-
 # output schema can present each rule's fields in the exact order the judge
