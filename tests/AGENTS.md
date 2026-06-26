@@ -53,9 +53,10 @@ logic is also covered hermetically via `file://` plugins.
   URL resolved offline from the embedded copy) catches a bad rule in a config.
 - A rule with `override: true` extends a same-named plugin rule, inheriting every
   field it leaves unset (including `description`) and replacing only those it
-  sets — asserted via the merged `config` dump. A duplicate rule name *without*
-  `override`, and an `override` with no base rule to extend, are each clear exit-2
-  errors.
+  sets — asserted via the merged `config` dump, and proven to reach the planner
+  by a real run where an override bumps `judges` 1 → 3 and three judges execute.
+  A duplicate rule name *without* `override`, and an `override` with no base rule
+  to extend, are each clear exit-2 errors.
 - YAML anchors, `<<` merge keys, and `x-` stash keys resolve end to end: an
   aliased anchor reaches the rendered prompt and a merged field reaches oneharness.
 - A custom top-level `prompt_template` drives the prompt, and an agent's

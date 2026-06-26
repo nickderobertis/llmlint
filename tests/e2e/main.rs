@@ -602,6 +602,45 @@ fn override_extends_a_plugin_rule_by_name() {
 }
 
 #[test]
+fn override_changes_the_actual_lint_run() {
+    // Beyond the config dump: prove a resolved override reaches the planner and
+    // changes execution. The plugin ships a 1-judge rule; the root overrides it
+    // to 3 judges (inheriting the description), and the run executes all three.
+    let p = Project::new();
+    p.write(
+        "team.yml",
+        &format!("rules:\n  - {{ name: voted_rule, description: \"{RULE}\", judges: 1 }}\n"),
+    );
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - ./team.yml\nrules:\n  \
+         - { name: voted_rule, override: true, judges: 3 }\n",
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Three verdicts -> the override took effect (a 1-judge run takes one).
+    let verdicts = p.write_verdicts(r#"{"voted_rule": [true, true, true]}"#);
+    let state = p.path().join("state");
+
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rules = v["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 1, "override should collapse to one rule");
+    assert_eq!(rules[0]["name"], "voted_rule");
+    let judges = rules[0]["judges"].as_array().unwrap();
+    assert_eq!(judges.len(), 3, "override should have bumped judges 1 -> 3");
+}
+
+#[test]
 fn duplicate_rule_name_without_override_is_an_error() {
     let p = Project::new();
     p.write(
