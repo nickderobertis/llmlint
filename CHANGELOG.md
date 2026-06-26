@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.13](https://github.com/nickderobertis/llmlint/compare/v0.2.12...v0.2.13) - 2026-06-26
+
+### Added
+
+- add strict inline `llmlint: ignore` directives ([#51](https://github.com/nickderobertis/llmlint/pull/51))
+
 ## [0.2.12](https://github.com/nickderobertis/llmlint/compare/v0.2.11...v0.2.12) - 2026-06-26
 
 ### Added
