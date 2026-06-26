@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.16](https://github.com/nickderobertis/llmlint/compare/v0.2.15...v0.2.16) - 2026-06-26
+
+### Added
+
+- support block-scoped ignore directives ([#60](https://github.com/nickderobertis/llmlint/pull/60))
+
 ## [0.2.15](https://github.com/nickderobertis/llmlint/compare/v0.2.14...v0.2.15) - 2026-06-26
 
 ### Documentation
