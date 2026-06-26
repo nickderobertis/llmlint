@@ -54,6 +54,17 @@ pub fn resolve(root: &Path, filter: &FileFilter) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// Read a target file (given relative to `root`) as UTF-8 text, for scanning
+/// inline `llmlint: ignore` directives. Returns `Ok(None)` for a non-UTF-8
+/// (binary) file — it can't carry a text directive, so it is skipped rather than
+/// failing the run. A genuine read error (e.g. permissions) is propagated.
+pub fn read_text(root: &Path, rel: &Path) -> Result<Option<String>> {
+    let path = root.join(rel);
+    let bytes =
+        std::fs::read(&path).map_err(|e| Error::Io(format!("reading {}: {e}", path.display())))?;
+    Ok(String::from_utf8(bytes).ok())
+}
+
 /// Normalize explicit CLI file paths to be relative to `root` where possible
 /// (tidier prompts and output); paths outside `root` are kept as given.
 pub fn from_cli(root: &Path, files: &[PathBuf]) -> Vec<PathBuf> {
@@ -132,6 +143,28 @@ mod tests {
         assert!(matches!(
             resolve(Path::new("."), &filter),
             Err(Error::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn read_text_reads_utf8_and_skips_binary() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.rs"), "// llmlint: ignore[r] x\n").unwrap();
+        // An invalid UTF-8 byte sequence: not text, so it carries no directive.
+        fs::write(dir.path().join("blob.bin"), [0xff, 0xfe, 0x00]).unwrap();
+        assert_eq!(
+            read_text(dir.path(), Path::new("a.rs")).unwrap().as_deref(),
+            Some("// llmlint: ignore[r] x\n")
+        );
+        assert_eq!(read_text(dir.path(), Path::new("blob.bin")).unwrap(), None);
+    }
+
+    #[test]
+    fn read_text_missing_file_is_an_error() {
+        let dir = tempdir().unwrap();
+        assert!(matches!(
+            read_text(dir.path(), Path::new("nope.rs")),
+            Err(Error::Io(_))
         ));
     }
 

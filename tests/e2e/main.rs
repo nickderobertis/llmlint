@@ -2090,6 +2090,183 @@ fn rule_referencing_unknown_agent_is_rejected() {
         .stderr(predicate::str::contains("unknown agent"));
 }
 
+// ---- inline `llmlint: ignore` directive journeys --------------------------
+
+/// A project with one rule (`no_todo`) over `src/**`, plus `src/lib.rs` carrying
+/// `body`. The directive *structure* is validated by llmlint; honoring it is the
+/// judge's job, so the mock just returns the given verdict.
+fn ignore_project(body: &str) -> Project {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", body);
+    p
+}
+
+#[test]
+fn well_formed_ignore_directives_pass_validation() {
+    // Line- and file-scoped directives in the supported comment styles, plus a
+    // prose mention of the marker that must NOT be treated as a directive.
+    let p = ignore_project(
+        "// llmlint: ignore[no_todo] tracked in JIRA-1\n\
+         /* llmlint: ignore-file[no_todo] vendored, reviewed upstream */\n\
+         // see llmlint: docs for the ignore feature\n",
+    );
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+}
+
+#[test]
+fn ignore_directive_without_brackets_is_rejected() {
+    let p = ignore_project("// llmlint: ignore please skip this\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("llmlint: ignore"))
+        .stderr(predicate::str::contains("brackets"))
+        .stderr(predicate::str::contains("src/lib.rs:1:"));
+}
+
+#[test]
+fn ignore_directive_with_empty_rule_list_is_rejected() {
+    let p = ignore_project("// llmlint: ignore[] no rules named\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("at least one rule"));
+}
+
+#[test]
+fn ignore_directive_naming_unknown_rule_is_rejected() {
+    let p = ignore_project("// llmlint: ignore[no_todoo] typo'd rule name\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown rule"))
+        .stderr(predicate::str::contains("configured rules: no_todo"));
+}
+
+#[test]
+fn ignore_directive_without_reason_is_rejected() {
+    let p = ignore_project("// llmlint: ignore[no_todo]\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("give a reason"));
+}
+
+#[test]
+fn default_prompt_documents_ignore_directives() {
+    let p = ignore_project("// code\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    let dump = p.path().join("system.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let prompt = fs::read_to_string(&dump).unwrap();
+    assert!(
+        prompt.contains("llmlint: ignore["),
+        "prompt should document the ignore directive: {prompt}"
+    );
+    assert!(
+        prompt.contains("ignore-file"),
+        "prompt should document the file-scoped form: {prompt}"
+    );
+}
+
+#[test]
+fn malformed_directive_in_an_excluded_file_does_not_fail() {
+    // Only resolved *target* files are scanned. A malformed directive in an
+    // excluded file must not fail the run.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\n  exclude: [\"src/generated/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.write("src/generated/api.rs", "// llmlint: ignore[bogus]\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+}
+
+#[test]
+fn directive_naming_a_configured_but_unselected_rule_is_accepted() {
+    // The known set is the full config, not the `--rule` selection, so a
+    // directive may reference any configured rule even when this run skips it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n  \
+             - {{ name: no_sql, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "src/lib.rs",
+        "// llmlint: ignore[no_sql] handled by the query layer\n",
+    );
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    p.lint()
+        .arg("--rule")
+        .arg("no_todo")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+}
+
+#[test]
+fn malformed_directives_across_files_all_report_before_any_judge_runs() {
+    // Every malformed directive surfaces in one error (located per file:line),
+    // and validation precedes oneharness — so no judge is invoked at all.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// llmlint: ignore[no_todo]\n");
+    p.write("src/b.rs", "// llmlint: ignore[ghost] a reason\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    let runlog = p.path().join("runlog");
+    fs::create_dir(&runlog).unwrap();
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("src/a.rs:1:"))
+        .stderr(predicate::str::contains("src/b.rs:1:"))
+        .stderr(predicate::str::contains("give a reason"))
+        .stderr(predicate::str::contains("unknown rule"));
+
+    // Fail-fast: validation ran before planning, so the mock was never invoked.
+    assert_eq!(
+        fs::read_dir(&runlog).unwrap().count(),
+        0,
+        "no oneharness call should happen when a directive is malformed"
+    );
+}
+
 // ---- oneharness passthrough actually forwarded ----------------------------
 
 #[test]

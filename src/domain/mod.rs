@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod config_schema;
+pub mod ignore;
 pub mod plan;
 pub mod report;
 pub mod schema;
