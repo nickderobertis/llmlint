@@ -9,14 +9,26 @@ workflow (`.github/workflows/visual-docs.yml`) owns the comparison on PRs.
 
 `scripts/screenshots.sh` drives the **real release `llmlint` binary** against the
 mock-oneharness fixture in `fixture/` — exactly as the e2e suite does — so the
-captured text is genuine CLI output with real ANSI color (`--color always`); only
-the judge verdicts are scripted (`fixture/verdicts.json`), so there is no model,
-network, or cost. Each scene is rendered to an SVG by [`freeze`](https://github.com/charmbracelet/freeze).
+captured text is genuine CLI output; only the judge verdicts are scripted
+(`fixture/verdicts.json`), so there is no model, network, or cost. Each scene is
+rendered to an SVG by [`freeze`](https://github.com/charmbracelet/freeze).
 
-One shot, `lint-report`, with a `view` toggle the gallery flips between:
+One shot per command, so the gallery documents the whole CLI surface:
 
-- `default` — the report a user sees (failing rule + locations + summary), and
-- `verbose` — `-v`, itemizing every rule so PASS (green) and SKIP (yellow) show.
+- `lint` — the report, with a `view` toggle the gallery flips between `default`
+  (the report a user sees: failing rule + locations + summary) and `verbose`
+  (`-v`, itemizing every rule so PASS green and SKIP yellow show too). This scene
+  is colorized via `--color always` (real ANSI); the three below are plain text.
+- `init` — writing a starter config (`wrote llmlint.yml`).
+- `config` — the effective merged config + its sources, as JSON.
+- `doctor` — the oneharness preflight check.
+
+Two outputs carry a per-machine path, so the script normalizes them to keep the
+bytes (and hashes) identical everywhere: `config`'s lone source is captured with
+its fixture-dir prefix stripped (leaving the natural `llmlint.yml`), and `doctor`
+resolves the mock via `PATH` as a bare `oneharness` (no absolute override path).
+The mock reports its version as `oneharness 0.2.529 (mock)`, so the `doctor` shot
+shows that `(mock)` marker — honest about where the number comes from.
 
 ## Why it is byte-reproducible (and needs no container)
 

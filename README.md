@@ -18,13 +18,13 @@ into CI next to your other linters.
 By default llmlint reports the failing rules (with the locations it could pin
 down) and a one-line summary — passing and skipped rules are just counted:
 
-![llmlint's default report: a red FAIL with its pinned violation and a colorized summary line](docs/screenshots/lint-report-default.svg)
+![llmlint's default report: a red FAIL with its pinned violation and a colorized summary line](docs/screenshots/lint-default.svg)
 
 Add `-v` to itemize *every* rule (passed and skipped too) and to print the
 oneharness debug view — the exact `oneharness run …` command and the raw result
 for each judge — to **stderr**, so the report on stdout stays clean:
 
-![llmlint's verbose report: green PASS, red FAIL, and yellow SKIP lines above the summary](docs/screenshots/lint-report-verbose.svg)
+![llmlint's verbose report: green PASS, red FAIL, and yellow SKIP lines above the summary](docs/screenshots/lint-verbose.svg)
 
 > These are real captures of the CLI, rendered from the actual colorized output
 > by [`just screenshots`](screenshots/AGENTS.md) and gated by
@@ -422,8 +422,15 @@ The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
   `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
   `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`.
 - `llmlint init` — write a starter config (`--with-template`, `--global`, `--force`).
-- `llmlint config` — print the merged config and its sources as JSON.
+
+  ![llmlint init writing a starter llmlint.yml](docs/screenshots/init.svg)
+- `llmlint config` — print the merged config and the ordered list of sources that
+  contributed, as JSON.
+
+  ![llmlint config printing the merged config and its sources as JSON](docs/screenshots/config.svg)
 - `llmlint doctor` — check that oneharness is installed and reachable.
+
+  ![llmlint doctor reporting the resolved oneharness version](docs/screenshots/doctor.svg)
 
 Exit codes: `0` all rules hold · `1` at least one violation · `2` usage,
 configuration, or harness error (could not complete the lint).

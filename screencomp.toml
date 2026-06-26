@@ -12,9 +12,10 @@ title = "Terminal screenshots"
 marker = "screencomp"        # [A-Za-z0-9_-]; one sticky comment per marker
 embed_limit = 10             # embed images inline when <= N shots differ (0 disables)
 
-# One card, `lint-report`, that the gallery flips between the default report and
-# the `-v` verbose report (which itemizes PASS/SKIP too). Scripted in
-# scripts/screenshots.sh.
+# One card per command (`lint`, `init`, `config`, `doctor`), all scripted in
+# scripts/screenshots.sh. The `lint` card carries a `view` toggle the gallery
+# flips between the default report and the `-v` verbose report (which itemizes
+# PASS/SKIP too); the other cards have no toggles.
 [[toggle]]
 key = "view"
 label = "View"
@@ -26,8 +27,14 @@ values = ["default", "verbose"]
 # capture machinery, or the vendored font.
 paths = [
   "src/domain/report.rs",
+  "src/domain/config.rs",
   "src/cli.rs",
   "src/commands/lint.rs",
+  "src/commands/init.rs",
+  "src/commands/config.rs",
+  "src/commands/doctor.rs",
+  "src/io/configfs.rs",
+  "src/io/oneharness.rs",
   "scripts/screenshots.sh",
   "screenshots/**",
 ]
