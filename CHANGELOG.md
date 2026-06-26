@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.14](https://github.com/nickderobertis/llmlint/compare/v0.2.13...v0.2.14) - 2026-06-26
+
+### Added
+
+- render report color correctly on Windows + verify it on a real console ([#55](https://github.com/nickderobertis/llmlint/pull/55))
+
 ## [0.2.13](https://github.com/nickderobertis/llmlint/compare/v0.2.12...v0.2.13) - 2026-06-26
 
 ### Added
