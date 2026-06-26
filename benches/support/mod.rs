@@ -41,6 +41,7 @@ pub fn example_rule_specs() -> Vec<RuleSpec> {
             name: r.name,
             description: r.description,
             rationale: true,
+            relevance: None,
         })
         .collect()
 }
@@ -68,6 +69,7 @@ pub fn example_resolved() -> Vec<ResolvedRule> {
             agent: "default".into(),
             files: vec![PathBuf::from("src/lib.rs")],
             rationale: true,
+            relevance: None,
         })
         .collect()
 }
@@ -85,6 +87,7 @@ pub fn synthetic_resolved(n: usize, judges: u32) -> Vec<ResolvedRule> {
             agent: "default".into(),
             files: vec![PathBuf::from("src/lib.rs")],
             rationale: true,
+            relevance: None,
         })
         .collect()
 }
@@ -108,6 +111,7 @@ pub fn synthetic_rule_specs(n: usize) -> Vec<RuleSpec> {
             name: format!("rule_{i}"),
             description: format!("TRUE when rule {i} holds; FALSE otherwise."),
             rationale: true,
+            relevance: None,
         })
         .collect()
 }
@@ -124,6 +128,7 @@ pub fn synthetic_schema_rules(names: &[String]) -> Vec<llmlint::domain::schema::
         .map(|n| llmlint::domain::schema::SchemaRule {
             name: n.as_str(),
             rationale: true,
+            relevance: false,
         })
         .collect()
 }
@@ -136,6 +141,7 @@ pub fn judge_verdicts(n: usize, dissent: bool) -> Vec<RuleVerdict> {
         .map(|i| {
             let holds = if dissent { i % 2 == 0 } else { true };
             RuleVerdict {
+                relevant: None,
                 holds,
                 violations: if holds {
                     vec![]
@@ -179,14 +185,17 @@ pub fn outcomes(n: usize) -> Vec<RuleOutcome> {
                 votes_hold: 1,
                 judges: vec![
                     JudgeOpinion {
+                        relevant: true,
                         holds: false,
                         rationale: Some(format!("judge a: rule {i} violated")),
                     },
                     JudgeOpinion {
+                        relevant: true,
                         holds: true,
                         rationale: Some(format!("judge b: rule {i} held")),
                     },
                     JudgeOpinion {
+                        relevant: true,
                         holds: false,
                         rationale: Some(format!("judge c: rule {i} violated")),
                     },

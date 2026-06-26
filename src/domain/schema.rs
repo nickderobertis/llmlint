@@ -13,12 +13,16 @@
 
 use serde_json::{json, Map, Value};
 
-/// One rule's slot in the structured-output schema: its name and whether the
-/// judge must supply a `rationale` for it.
+/// One rule's slot in the structured-output schema: its name, whether the judge
+/// must supply a `rationale` for it, and whether the judge must first decide the
+/// rule's `relevance` to the change.
 #[derive(Debug, Clone, Copy)]
 pub struct SchemaRule<'a> {
     pub name: &'a str,
     pub rationale: bool,
+    /// When true, the judge gates the verdict on a `relevant` boolean: it may
+    /// report `relevant=false` (no `holds`), or `relevant=true` then the verdict.
+    pub relevance: bool,
 }
 
 /// Build the structured-output schema for a batch of rules.
@@ -39,7 +43,8 @@ pub fn build(rules: &[SchemaRule]) -> Value {
 
 fn rule_schema(rule: &SchemaRule) -> Value {
     // Insertion order is the emission order we want: name -> [rationale] ->
-    // holds -> violations. `required` lists the same fields in the same order.
+    // [relevant] -> holds -> violations. `required` lists the same fields in the
+    // same order.
     let mut properties = Map::new();
     let mut required: Vec<Value> = Vec::new();
 
@@ -52,22 +57,41 @@ fn rule_schema(rule: &SchemaRule) -> Value {
     required.push(json!("name"));
 
     // 2. The rationale (only when this rule wants one): a terse justification
-    //    written before the verdict.
+    //    written before the verdict. With relevance gating, it also explains why
+    //    a rule is (not) relevant.
     if rule.rationale {
+        let description = if rule.relevance {
+            "Terse, evidence-citing justification, written before `relevant`/`holds`: why the rule is (or isn't) relevant, and — when relevant — the verdict."
+        } else {
+            "Terse, evidence-citing justification for `holds`, written before the verdict."
+        };
         properties.insert(
             "rationale".to_string(),
-            json!({
-                "type": "string",
-                "minLength": 1,
-                "description": "Terse, evidence-citing justification for `holds`, written before the verdict.",
-            }),
+            json!({ "type": "string", "minLength": 1, "description": description }),
         );
         required.push(json!("rationale"));
     }
 
-    // 3. The verdict itself.
+    // 3. The relevance gate (only when the judge decides relevance): decided
+    //    before the verdict. `holds` is required only when `relevant` is true
+    //    (enforced by the if/then below); an irrelevant rule stops here.
+    if rule.relevance {
+        properties.insert(
+            "relevant".to_string(),
+            json!({
+                "type": "boolean",
+                "description": "Whether this rule applies to the change. Decide before the verdict; when false, omit `holds`/`violations`.",
+            }),
+        );
+        required.push(json!("relevant"));
+    }
+
+    // 4. The verdict itself. `holds` is unconditionally required only when the
+    //    judge does not decide relevance; otherwise it is gated on `relevant`.
     properties.insert("holds".to_string(), json!({ "type": "boolean" }));
-    required.push(json!("holds"));
+    if !rule.relevance {
+        required.push(json!("holds"));
+    }
     properties.insert(
         "violations".to_string(),
         json!({
@@ -85,12 +109,21 @@ fn rule_schema(rule: &SchemaRule) -> Value {
         }),
     );
 
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": Value::Array(required),
-        "properties": Value::Object(properties),
-    })
+    let mut obj = Map::new();
+    obj.insert("type".to_string(), json!("object"));
+    obj.insert("additionalProperties".to_string(), json!(false));
+    obj.insert("required".to_string(), Value::Array(required));
+    obj.insert("properties".to_string(), Value::Object(properties));
+    if rule.relevance {
+        // Require the verdict only once the rule is judged relevant, so an
+        // irrelevant verdict legitimately ends after `relevant`.
+        obj.insert(
+            "if".to_string(),
+            json!({ "properties": { "relevant": { "const": true } }, "required": ["relevant"] }),
+        );
+        obj.insert("then".to_string(), json!({ "required": ["holds"] }));
+    }
+    Value::Object(obj)
 }
 
 #[cfg(test)]
@@ -98,7 +131,19 @@ mod tests {
     use super::*;
 
     fn with(name: &str, rationale: bool) -> SchemaRule<'_> {
-        SchemaRule { name, rationale }
+        SchemaRule {
+            name,
+            rationale,
+            relevance: false,
+        }
+    }
+
+    fn with_relevance(name: &str, rationale: bool) -> SchemaRule<'_> {
+        SchemaRule {
+            name,
+            rationale,
+            relevance: true,
+        }
     }
 
     /// The order of keys in a `properties` object, as they will serialize (relies
@@ -166,6 +211,44 @@ mod tests {
         let s = build(&[with("zed", true), with("alpha", true)]);
         // Not alphabetized — emission order matches the batch order.
         assert_eq!(key_order(&s["properties"]), ["zed", "alpha"]);
+    }
+
+    #[test]
+    fn relevance_inserts_a_gate_before_holds_and_requires_holds_only_when_relevant() {
+        let s = build(&[with_relevance("gated", true)]);
+        let rule = &s["properties"]["gated"];
+        // The relevant gate sits between the rationale and the verdict.
+        assert_eq!(
+            key_order(&rule["properties"]),
+            ["name", "rationale", "relevant", "holds", "violations"]
+        );
+        // `holds` is NOT unconditionally required — only `relevant` is.
+        assert_eq!(rule["required"], json!(["name", "rationale", "relevant"]));
+        assert_eq!(rule["properties"]["relevant"]["type"], "boolean");
+        // ...but an if/then makes `holds` required once the rule is relevant.
+        assert_eq!(rule["if"]["properties"]["relevant"]["const"], true);
+        assert_eq!(rule["then"]["required"], json!(["holds"]));
+    }
+
+    #[test]
+    fn relevance_without_rationale_still_gates_holds() {
+        let s = build(&[with_relevance("gated", false)]);
+        let rule = &s["properties"]["gated"];
+        assert_eq!(
+            key_order(&rule["properties"]),
+            ["name", "relevant", "holds", "violations"]
+        );
+        assert_eq!(rule["required"], json!(["name", "relevant"]));
+        assert_eq!(rule["then"]["required"], json!(["holds"]));
+    }
+
+    #[test]
+    fn non_relevance_rules_have_no_if_then_gate() {
+        let s = build(&[with("plain", true)]);
+        let rule = &s["properties"]["plain"];
+        assert!(rule.get("if").is_none());
+        assert!(rule.get("then").is_none());
+        assert!(rule["properties"].get("relevant").is_none());
     }
 
     #[test]

@@ -93,6 +93,34 @@ pub struct Agent {
     pub files: Option<FileFilter>,
 }
 
+/// When a rule should be evaluated. Mirrors the `description`/verdict split: a
+/// boolean is resolved deterministically by llmlint, a string is a
+/// natural-language condition the judge decides about the change first.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Relevance {
+    /// `true` (the default): always evaluate — the judge may not opt out.
+    /// `false`: never evaluate — the rule is statically not applicable and is
+    /// reported as not relevant without calling a judge.
+    Always(bool),
+    /// A natural-language condition describing when the rule applies. The judge
+    /// decides whether it holds for the change *before* evaluating the verdict,
+    /// and reports the rule "not relevant" (with no verdict) when it does not.
+    When(String),
+}
+
+/// How a rule's relevance resolves once the default is applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelevanceMode {
+    /// Always evaluate; the judge does not get to opt out.
+    Always,
+    /// Never evaluate; statically not applicable (reported not relevant with no
+    /// judge call).
+    Never,
+    /// The judge first decides whether this condition holds for the change.
+    Conditional(String),
+}
+
 /// A single lint rule: a statement judged true/false about the target files.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -122,6 +150,14 @@ pub struct Rule {
     /// inherits it.
     #[serde(default)]
     pub rationale: Option<bool>,
+    /// When this rule should be evaluated. `true` (the default) always
+    /// evaluates; `false` never does (the rule is reported not relevant without
+    /// a judge call); a string is a condition the judge decides about the change
+    /// first, reporting the rule "not relevant" when it does not hold. Lets a
+    /// rule scope itself to applicable changes instead of every `description`
+    /// needing its own "or not applicable" escape hatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevance: Option<Relevance>,
 }
 
 impl Rule {
@@ -133,6 +169,16 @@ impl Rule {
     /// (from config `rationales` or the `--rationales`/`--no-rationales` flag).
     pub fn wants_rationale(&self, session_default: bool) -> bool {
         self.rationale.unwrap_or(session_default)
+    }
+
+    /// How this rule's relevance resolves, applying the default (always evaluate
+    /// when `relevance` is unset or `true`).
+    pub fn relevance_mode(&self) -> RelevanceMode {
+        match &self.relevance {
+            None | Some(Relevance::Always(true)) => RelevanceMode::Always,
+            Some(Relevance::Always(false)) => RelevanceMode::Never,
+            Some(Relevance::When(cond)) => RelevanceMode::Conditional(cond.clone()),
+        }
     }
 }
 
@@ -259,6 +305,15 @@ pub fn validate(config: &Config) -> Result<()> {
         if rule.description.trim().is_empty() {
             problems.push(format!("rule {:?} has an empty description", rule.name));
         }
+        if let Some(Relevance::When(cond)) = &rule.relevance {
+            if cond.trim().is_empty() {
+                problems.push(format!(
+                    "rule {:?} has an empty relevance condition (use `true`/`false` for an \
+                     always/never rule, or a non-empty condition)",
+                    rule.name
+                ));
+            }
+        }
         if rule.judges == Some(0) {
             problems.push(format!("rule {:?} has judges: 0 (must be >= 1)", rule.name));
         } else if let Some(judges) = rule.judges {
@@ -304,6 +359,7 @@ mod tests {
             judges: None,
             files: None,
             rationale: None,
+            relevance: None,
         }
     }
 
@@ -480,6 +536,43 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(&c).is_ok());
+    }
+
+    #[test]
+    fn relevance_mode_resolves_the_default_and_the_three_forms() {
+        // Unset and `true` both mean always-evaluate (the judge can't opt out).
+        assert_eq!(rule("r").relevance_mode(), RelevanceMode::Always);
+        let always = Rule {
+            relevance: Some(Relevance::Always(true)),
+            ..rule("r")
+        };
+        assert_eq!(always.relevance_mode(), RelevanceMode::Always);
+        let never = Rule {
+            relevance: Some(Relevance::Always(false)),
+            ..rule("r")
+        };
+        assert_eq!(never.relevance_mode(), RelevanceMode::Never);
+        let when = Rule {
+            relevance: Some(Relevance::When("the change touches SQL".into())),
+            ..rule("r")
+        };
+        assert_eq!(
+            when.relevance_mode(),
+            RelevanceMode::Conditional("the change touches SQL".into())
+        );
+    }
+
+    #[test]
+    fn empty_relevance_condition_is_invalid() {
+        let c = Config {
+            rules: vec![Rule {
+                relevance: Some(Relevance::When("   ".into())),
+                ..rule("blank_relevance")
+            }],
+            ..Default::default()
+        };
+        let err = validate(&c).unwrap_err();
+        assert!(err.to_string().contains("empty relevance condition"));
     }
 
     #[test]

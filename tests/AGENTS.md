@@ -10,8 +10,8 @@ reporting). Add a journey here when a user-facing behavior lands.
 ## Fixture control (env vars read by the mock)
 
 - `LLMLINT_MOCK_VERDICTS=<path>` — JSON map `rule -> spec`; a spec is a bool
-  (`holds`), an object (`{holds, violations}`), or an array of specs (one per
-  judge call).
+  (`holds`), an object (`{holds, violations}`, optionally `{relevant, rationale}`
+  for a relevance-gated rule), or an array of specs (one per judge call).
 - `LLMLINT_MOCK_STATE=<dir>` — per-rule call counter backing array specs; use
   `--max-parallel 1` so the sequence is deterministic.
 - `LLMLINT_MOCK_DUMP=<file>` — record the rendered `--system` prompt, to assert
@@ -94,6 +94,16 @@ logic is also covered hermetically via `file://` plugins.
   itemize *each* judge's result (`held`/`violated`) and rationale — at every
   failure and for every evaluated rule at `-v` — so judge disagreement is
   visible, not collapsed to one representative.
+- Relevance gating: a rule with a `relevance` condition makes the judge decide
+  applicability first — its schema inserts a `relevant` boolean between the
+  `rationale` and the verdict, requiring `holds` only via an if/then on
+  `relevant == true`, and the default template renders the relevance guidance +
+  the per-rule condition (absent for always-evaluated rules). A judge ruling a
+  rule not relevant reports it distinctly (a dim `N/A … (not relevant)` line at
+  `-v`, its own `not relevant` summary segment, `outcome: "not_relevant"` in
+  `--format json`) and exits clean — never conflated with a pass; a relevant
+  rule still evaluates its verdict normally. `relevance: false` disables a rule
+  deterministically (reported not relevant with no oneharness call at all).
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their

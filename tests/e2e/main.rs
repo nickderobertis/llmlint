@@ -2662,3 +2662,197 @@ fn rationale_guidance_reaches_the_prompt_only_when_enabled() {
     let off = fs::read_to_string(&dump).unwrap();
     assert!(!off.contains("## Rationale"), "system:\n{off}");
 }
+
+// ---- relevance ------------------------------------------------------------
+
+#[test]
+fn conditional_relevance_gates_the_schema_with_an_if_then() {
+    let p = Project::new();
+    // One always-evaluated rule and one gated on a relevance condition, sharing a
+    // file set so both land in one schema where they must differ per rule.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: always_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: scoped_rule, description: \"{RULE}\", \
+             relevance: the change touches SQL }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"always_rule": true, "scoped_rule": {"relevant": true, "holds": true}}"#,
+    );
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .success();
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    // The gated rule inserts `relevant` before the verdict and requires `holds`
+    // only via an if/then on `relevant == true`.
+    let scoped = &schema["properties"]["scoped_rule"];
+    assert_eq!(
+        key_order(&scoped["properties"]),
+        ["name", "rationale", "relevant", "holds", "violations"]
+    );
+    assert_eq!(
+        scoped["required"],
+        serde_json::json!(["name", "rationale", "relevant"])
+    );
+    assert_eq!(scoped["if"]["properties"]["relevant"]["const"], true);
+    assert_eq!(scoped["then"]["required"], serde_json::json!(["holds"]));
+    // The always-evaluated rule has no relevance gate at all.
+    let always = &schema["properties"]["always_rule"];
+    assert_eq!(
+        always["required"],
+        serde_json::json!(["name", "rationale", "holds"])
+    );
+    assert!(always.get("if").is_none());
+    assert!(always["properties"].get("relevant").is_none());
+}
+
+#[test]
+fn judge_ruling_not_relevant_is_reported_distinctly_and_exits_clean() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: sql_rule, description: \"{RULE}\", \
+             relevance: the change touches SQL }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // The judge rules it not applicable: no holds, just a rationale.
+    let verdicts =
+        p.write_verdicts(r#"{"sql_rule": {"relevant": false, "rationale": "change adds no SQL"}}"#);
+
+    // Not relevant is not a failure -> exit 0, and it gets its own summary
+    // segment so it isn't conflated with a pass.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 not relevant"))
+        .stdout(predicate::str::contains("sql_rule").not());
+
+    // `-v` itemizes it as N/A with the judge's reason, distinct from a PASS.
+    p.lint_v()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N/A sql_rule (not relevant)"))
+        .stdout(predicate::str::contains("rationale: change adds no SQL"))
+        .stdout(predicate::str::contains("PASS sql_rule").not());
+
+    // The machine contract carries the not_relevant outcome + summary count.
+    p.lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"not_relevant\": 1"))
+        .stdout(predicate::str::contains("\"outcome\": \"not_relevant\""));
+}
+
+#[test]
+fn relevant_rule_still_evaluates_its_verdict() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: sql_rule, description: \"{RULE}\", \
+             relevance: the change touches SQL }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Relevant and violated -> a normal failure with its violation.
+    let verdicts = p.write_verdicts(
+        r#"{"sql_rule": {"relevant": true, "holds": false,
+            "violations": [{"file": "src/lib.rs", "line": 1, "message": "inline SQL"}]}}"#,
+    );
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL sql_rule"))
+        .stdout(predicate::str::contains("src/lib.rs:1: inline SQL"));
+}
+
+#[test]
+fn relevance_false_skips_the_judge_entirely() {
+    let p = Project::new();
+    // `relevance: false` disables the rule deterministically — no judge call.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: off_rule, description: \"{RULE}\", relevance: false }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let runlog = p.path().join("runlog");
+
+    p.lint_v()
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N/A off_rule (not relevant)"))
+        .stdout(predicate::str::contains("1 not relevant"));
+    // No oneharness invocation happened at all for the never-relevant rule.
+    assert!(!runlog.exists() || fs::read_dir(&runlog).unwrap().count() == 0);
+}
+
+#[test]
+fn relevance_guidance_and_condition_reach_the_prompt_only_when_conditional() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: scoped_rule, description: \"{RULE}\", \
+             relevance: the change touches SQL }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"scoped_rule": {"relevant": false, "rationale": "n/a"}}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("## Relevance"), "system:\n{system}");
+    assert!(
+        system.contains("Relevant only when: the change touches SQL"),
+        "system:\n{system}"
+    );
+
+    // A config with no conditional rules renders no relevance guidance.
+    let p2 = Project::new();
+    p2.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: plain_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p2.write("src/lib.rs", "// code\n");
+    let v2 = p2.write_verdicts(r#"{"plain_rule": true}"#);
+    let dump2 = p2.path().join("system.txt");
+    p2.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &v2)
+        .env("LLMLINT_MOCK_DUMP", &dump2)
+        .assert()
+        .success();
+    let off = fs::read_to_string(&dump2).unwrap();
+    assert!(!off.contains("## Relevance"), "system:\n{off}");
+}

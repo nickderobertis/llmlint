@@ -78,7 +78,7 @@ fn main() {
     for (_, text) in support::example_configs() {
         black_box(configfs::parse(text, "warmup").ok());
     }
-    black_box(template::render(tmpl, &rule_specs, &files, true).ok());
+    black_box(template::render(tmpl, &rule_specs, &files, true, false).ok());
 
     println!("| operation | case | allocator calls | bytes requested |");
     println!("|---|---|---:|---:|");
@@ -92,7 +92,8 @@ fn main() {
         measure(|| plan::build(&cfg, tmpl, 20, support::synthetic_resolved(100, 3)));
     println!("| plan_build | 100 rules × 3 judges | {calls} | {bytes} |");
 
-    let (calls, bytes) = measure(|| template::render(tmpl, &rule_specs, &files, true).unwrap());
+    let (calls, bytes) =
+        measure(|| template::render(tmpl, &rule_specs, &files, true, false).unwrap());
     println!("| template_render | examples | {calls} | {bytes} |");
 
     let names = support::synthetic_rule_names(100);

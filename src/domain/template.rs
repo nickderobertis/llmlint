@@ -18,6 +18,11 @@ pub struct RuleSpec {
     pub description: String,
     /// Whether this rule requires a `rationale` in the judge's verdict.
     pub rationale: bool,
+    /// The relevance condition the judge must decide before evaluating this rule,
+    /// or `None` for an always-evaluated rule. Exposed to the template so it can
+    /// show the condition and gate the verdict on a `relevant` decision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relevance: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -27,15 +32,20 @@ struct Context<'a> {
     /// True when at least one rule in this batch wants a rationale, so the
     /// template can show (or omit) the rationale guidance.
     rationales: bool,
+    /// True when at least one rule in this batch carries a relevance condition,
+    /// so the template can show (or omit) the relevance guidance.
+    relevance: bool,
 }
 
 /// Render `template` with the given rules and target file paths. `rationales`
-/// gates the rationale guidance and is true when any rule in this batch wants one.
+/// gates the rationale guidance (true when any rule in this batch wants one) and
+/// `relevance` gates the relevance guidance (true when any rule is conditional).
 pub fn render(
     template: &str,
     rules: &[RuleSpec],
     files: &[String],
     rationales: bool,
+    relevance: bool,
 ) -> Result<String> {
     let mut env = minijinja::Environment::new();
     env.set_keep_trailing_newline(true);
@@ -43,6 +53,7 @@ pub fn render(
         rules,
         files,
         rationales,
+        relevance,
     };
     env.render_str(template, ctx)
         .map_err(|e| Error::Template(e.to_string()))
@@ -58,11 +69,13 @@ mod tests {
                 name: "no_inline_sql".into(),
                 description: "TRUE when no SQL is inline; FALSE otherwise.".into(),
                 rationale: true,
+                relevance: None,
             },
             RuleSpec {
                 name: "layered".into(),
                 description: "TRUE when layered.".into(),
                 rationale: true,
+                relevance: None,
             },
         ]
     }
@@ -76,6 +89,7 @@ mod tests {
             &rules(),
             &["src/a.rs".into(), "src/b.rs".into()],
             true,
+            false,
         )
         .unwrap();
         assert!(out.contains("- src/a.rs"));
@@ -88,16 +102,32 @@ mod tests {
     fn rationales_flag_and_per_rule_rationale_are_in_scope() {
         let tmpl = "{% if rationales %}WANT{% else %}SKIP{% endif %}\n\
                     {% for r in rules %}{{ r.name }}={{ r.rationale }}\n{% endfor %}";
-        let on = render(tmpl, &rules(), &[], true).unwrap();
+        let on = render(tmpl, &rules(), &[], true, false).unwrap();
         assert!(on.contains("WANT"));
         assert!(on.contains("no_inline_sql=true"));
-        let off = render(tmpl, &rules(), &[], false).unwrap();
+        let off = render(tmpl, &rules(), &[], false, false).unwrap();
         assert!(off.contains("SKIP"));
     }
 
     #[test]
+    fn relevance_flag_and_per_rule_condition_are_in_scope() {
+        let tmpl = "{% if relevance %}GATE{% else %}NOGATE{% endif %}\n\
+                    {% for r in rules %}{% if r.relevance %}{{ r.name }}: {{ r.relevance }}\n\
+                    {% endif %}{% endfor %}";
+        let mut rs = rules();
+        rs[0].relevance = Some("the change touches SQL".into());
+        let on = render(tmpl, &rs, &[], true, true).unwrap();
+        assert!(on.contains("GATE"));
+        assert!(on.contains("no_inline_sql: the change touches SQL"));
+        // The always-evaluated rule renders no condition line.
+        assert!(!on.contains("layered:"));
+        let off = render(tmpl, &rules(), &[], true, false).unwrap();
+        assert!(off.contains("NOGATE"));
+    }
+
+    #[test]
     fn invalid_template_is_a_template_error() {
-        let err = render("{% for x in %}", &rules(), &[], true).unwrap_err();
+        let err = render("{% for x in %}", &rules(), &[], true, false).unwrap_err();
         assert!(matches!(err, Error::Template(_)));
     }
 }
