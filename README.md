@@ -137,6 +137,7 @@ rules:
       false when a handler performs business logic (DB queries, domain rules)
       inline.
     agent: architecture        # optional; omit to use the default agent
+    # override: true           # optional; extend a same-named plugin rule, inheriting unset fields
     judges: 3                  # optional; independent judges, majority wins (default 1)
     rationale: true            # optional; override the session-wide `rationales` for this rule
     relevance: true            # optional; when to evaluate — see Relevance below (default true)
@@ -370,6 +371,31 @@ Commands). Each entry is a config file:
 Resolution is **transitive**: a pulled-in config's own `plugins` are pulled in
 turn, and so on. Diamonds and cycles are de-duplicated (each config loads once),
 and the chain is bounded at a depth of 100 to fail fast on a pathological graph.
+
+By default a rule name is **unique** across the whole merged config — declaring
+the same name twice is an error. To **adjust** a rule a plugin gave you without
+restating it, re-declare it with `override: true` and set only the fields you
+want to change; every other field (including the `description`) is inherited from
+the plugin's rule:
+
+```yaml
+plugins:
+  - "https://example.com/org-rules.yml@1"   # ships `no_inline_sql`, 1 judge
+
+rules:
+  # Keep the org rule's text, but vote it across 3 judges and scope it tighter.
+  - name: no_inline_sql
+    override: true
+    judges: 3
+    files:
+      include: ["src/db/**"]
+```
+
+The override must be set on the **nearer-root** config, and there must be exactly
+one base rule (the same name declared *without* `override`) for it to extend — an
+`override` with nothing to override is an error, so a typo'd name can't silently
+do nothing. When several configs override the same base, the nearest-root
+override wins each field.
 
 URL fetching is built in (a pure-Rust HTTPS client — no `curl` or other external
 tools, no system OpenSSL) and honors the standard `HTTP(S)_PROXY` / `NO_PROXY`

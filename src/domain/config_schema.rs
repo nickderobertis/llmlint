@@ -67,15 +67,24 @@ mod tests {
         ] {
             assert!(props.contains_key(key), "missing property {key}");
         }
-        // A rule requires name + description, like the Rust model. Resolve the
-        // `rules` item `$ref` rather than hardcoding the schemars-derived def name.
+        // A rule requires `name`, like the Rust model. `description` is only
+        // *required-in-practice* (enforced by `validate`): the schema leaves it
+        // optional so an `override` rule can omit it and inherit the base's text.
+        // Resolve the `rules` item `$ref` rather than hardcoding the
+        // schemars-derived def name.
         let rule_ref = s["properties"]["rules"]["items"]["$ref"]
             .as_str()
             .expect("rules.items is a $ref");
         let rule_def = rule_ref.rsplit('/').next().unwrap();
-        let required = s["$defs"][rule_def]["required"].as_array().unwrap();
+        let rule = &s["$defs"][rule_def];
+        let required = rule["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v == "name"));
-        assert!(required.iter().any(|v| v == "description"));
+        assert!(!required.iter().any(|v| v == "description"));
+        // The `override` flag is part of the published rule shape.
+        assert!(rule["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("override"));
     }
 
     #[test]

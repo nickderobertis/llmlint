@@ -7,6 +7,18 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.12](https://github.com/nickderobertis/llmlint/compare/v0.2.11...v0.2.12) - 2026-06-26
+
+### Added
+
+- override plugin rules by name with `override: true` ([#52](https://github.com/nickderobertis/llmlint/pull/52))
+
+## [0.2.11](https://github.com/nickderobertis/llmlint/compare/v0.2.10...v0.2.11) - 2026-06-26
+
+### Added
+
+- add relevance gating to the rule framework ([#49](https://github.com/nickderobertis/llmlint/pull/49))
+
 ## [0.2.10](https://github.com/nickderobertis/llmlint/compare/v0.2.9...v0.2.10) - 2026-06-25
 
 ### Documentation

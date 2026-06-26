@@ -121,6 +121,12 @@ pub enum RelevanceMode {
     Conditional(String),
 }
 
+/// `skip_serializing_if` predicate for the rarely-set `override` flag, so a
+/// serialized config (e.g. `llmlint config`) stays clean.
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A single lint rule: a statement judged true/false about the target files.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -130,9 +136,18 @@ pub struct Rule {
     #[schemars(regex(pattern = r"^[A-Za-z][A-Za-z0-9_]*$"))]
     pub name: String,
     /// The invariant the judge evaluates. State clearly what is true (passes)
-    /// and what is false (a violation).
+    /// and what is false (a violation). Required for a normal rule (an empty one
+    /// is rejected); an `override` rule may omit it to inherit the base rule's
+    /// text, so the schema leaves it optional.
+    #[serde(default)]
     #[schemars(length(min = 1))]
     pub description: String,
+    /// Override a same-named rule contributed by a plugin: inherit all of the
+    /// base rule's fields, replacing only the ones set here. Without this, a
+    /// duplicate rule name is an error. Set it on the consuming (nearer-root)
+    /// config; the override is resolved into the base when the config loads.
+    #[serde(default, rename = "override", skip_serializing_if = "is_false")]
+    pub r#override: bool,
     /// Name of the agent (under `agents`) this rule runs on. Defaults to the
     /// `default` agent.
     #[serde(default)]
@@ -272,6 +287,98 @@ impl Config {
     }
 }
 
+/// Layer `override` rules onto the base rule they extend, in place. For each
+/// rule name, the single rule declared without `override` is the *base*; rules
+/// marked `override` inherit every field they leave unset from it, replacing
+/// only the ones they set. The resolved rule keeps the position of the first
+/// occurrence (nearest the include root).
+///
+/// Precedence follows the merge order ([`Config::merge_plugin`] appends rules
+/// nearer the root first), so when more than one override targets the same base
+/// the nearest-root override wins each field. Errors are collected, not
+/// fail-fast: an `override` with no base to extend, and a duplicate name where
+/// no occurrence opts into `override`, are each reported (the latter is the
+/// "duplicate rule name" error, surfaced here so the message can point at the
+/// fix).
+pub fn resolve_overrides(config: &mut Config) -> Result<()> {
+    // Group the rule indices by name, remembering first-seen order so the output
+    // is stable and a resolved rule lands where its name first appeared.
+    let mut order: Vec<&str> = Vec::new();
+    let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, r) in config.rules.iter().enumerate() {
+        let group = groups.entry(r.name.as_str()).or_default();
+        if group.is_empty() {
+            order.push(r.name.as_str());
+        }
+        group.push(i);
+    }
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut resolved: Vec<Rule> = Vec::new();
+    for name in &order {
+        let idxs = &groups[name];
+        let bases: Vec<&Rule> = idxs
+            .iter()
+            .map(|&i| &config.rules[i])
+            .filter(|r| !r.r#override)
+            .collect();
+        let overrides: Vec<&Rule> = idxs
+            .iter()
+            .map(|&i| &config.rules[i])
+            .filter(|r| r.r#override)
+            .collect();
+
+        match bases.as_slice() {
+            [] => problems.push(format!(
+                "rule {name:?} is marked `override` but no base rule with that name is defined \
+                 (a plugin must declare it first)"
+            )),
+            [base] if overrides.is_empty() => resolved.push((*base).clone()),
+            [base] => resolved.push(merge_override(base, &overrides)),
+            _ => problems.push(format!(
+                "duplicate rule name {name:?} (set `override: true` to extend a plugin's rule \
+                 instead of redefining it)"
+            )),
+        }
+    }
+
+    if problems.is_empty() {
+        config.rules = resolved;
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(problems.join("; ")))
+    }
+}
+
+/// Fold `overrides` (ordered nearest-root first) onto a clone of `base`. Applied
+/// farthest-root first so the nearest-root override wins each field it sets; an
+/// unset field (`None`, or an empty `description`) leaves the base's value.
+fn merge_override(base: &Rule, overrides: &[&Rule]) -> Rule {
+    let mut out = base.clone();
+    out.r#override = false;
+    for ov in overrides.iter().rev() {
+        if !ov.description.trim().is_empty() {
+            out.description = ov.description.clone();
+        }
+        if ov.agent.is_some() {
+            out.agent = ov.agent.clone();
+        }
+        if ov.judges.is_some() {
+            out.judges = ov.judges;
+        }
+        if ov.files.is_some() {
+            out.files = ov.files.clone();
+        }
+        if ov.rationale.is_some() {
+            out.rationale = ov.rationale;
+        }
+        if ov.relevance.is_some() {
+            out.relevance = ov.relevance.clone();
+        }
+    }
+    out
+}
+
 /// Whether `name` is a valid, terse rule identifier: an ASCII letter followed
 /// by letters, digits, or underscores. Keeps names safe as JSON Schema keys and
 /// nudges toward descriptive snake_case. (Placeholder/nonsense names are a
@@ -355,6 +462,7 @@ mod tests {
         Rule {
             name: name.into(),
             description: "true when ok; false otherwise.".into(),
+            r#override: false,
             agent: None,
             judges: None,
             files: None,
@@ -573,6 +681,125 @@ mod tests {
         };
         let err = validate(&c).unwrap_err();
         assert!(err.to_string().contains("empty relevance condition"));
+    }
+
+    #[test]
+    fn override_inherits_unset_fields_and_replaces_set_ones() {
+        // Base (as if from a plugin) carries the full text + judges; the override
+        // (nearer the root, so listed first) bumps judges and adds an agent,
+        // leaving description to inherit.
+        let base = Rule {
+            judges: Some(1),
+            ..rule("style")
+        };
+        let over = Rule {
+            name: "style".into(),
+            description: String::new(), // omitted -> inherit
+            r#override: true,
+            agent: Some("strict".into()),
+            judges: Some(3),
+            ..rule("style")
+        };
+        let mut c = Config {
+            rules: vec![over, base],
+            ..Default::default()
+        };
+        resolve_overrides(&mut c).unwrap();
+        assert_eq!(c.rules.len(), 1);
+        let r = &c.rules[0];
+        assert_eq!(r.name, "style");
+        assert_eq!(r.description, "true when ok; false otherwise."); // inherited
+        assert_eq!(r.judges, Some(3)); // replaced
+        assert_eq!(r.agent.as_deref(), Some("strict")); // added
+        assert!(!r.r#override); // flag cleared on the resolved rule
+    }
+
+    #[test]
+    fn override_can_replace_the_description() {
+        let base = rule("r");
+        let over = Rule {
+            name: "r".into(),
+            description: "a sharper invariant.".into(),
+            r#override: true,
+            ..rule("r")
+        };
+        let mut c = Config {
+            rules: vec![over, base],
+            ..Default::default()
+        };
+        resolve_overrides(&mut c).unwrap();
+        assert_eq!(c.rules[0].description, "a sharper invariant.");
+    }
+
+    #[test]
+    fn override_without_a_base_is_an_error() {
+        let mut c = Config {
+            rules: vec![Rule {
+                r#override: true,
+                ..rule("orphan")
+            }],
+            ..Default::default()
+        };
+        let err = resolve_overrides(&mut c).unwrap_err();
+        assert!(err.to_string().contains("no base rule"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_name_without_override_is_an_error() {
+        let mut c = Config {
+            rules: vec![rule("dup"), rule("dup")],
+            ..Default::default()
+        };
+        let err = resolve_overrides(&mut c).unwrap_err();
+        assert!(err.to_string().contains("duplicate rule name"), "{err}");
+    }
+
+    #[test]
+    fn nearest_root_override_wins_each_field() {
+        // Two overrides target one base; the first-listed (nearest root) wins.
+        let near = Rule {
+            name: "r".into(),
+            r#override: true,
+            judges: Some(5),
+            ..rule("r")
+        };
+        let far = Rule {
+            name: "r".into(),
+            r#override: true,
+            judges: Some(3),
+            agent: Some("far".into()),
+            ..rule("r")
+        };
+        let base = rule("r");
+        let mut c = Config {
+            rules: vec![near, far, base],
+            ..Default::default()
+        };
+        resolve_overrides(&mut c).unwrap();
+        assert_eq!(c.rules.len(), 1);
+        assert_eq!(c.rules[0].judges, Some(5)); // nearest wins
+        assert_eq!(c.rules[0].agent.as_deref(), Some("far")); // only the far set it
+    }
+
+    #[test]
+    fn override_keeps_first_occurrence_position() {
+        let mut c = Config {
+            rules: vec![
+                rule("a"),
+                Rule {
+                    r#override: true,
+                    judges: Some(3),
+                    ..rule("b")
+                },
+                rule("c"),
+                rule("b"), // the base, declared later (as if by a plugin)
+            ],
+            ..Default::default()
+        };
+        resolve_overrides(&mut c).unwrap();
+        let names: Vec<&str> = c.rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert_eq!(c.rules[1].judges, Some(3));
     }
 
     #[test]
