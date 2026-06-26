@@ -9,14 +9,41 @@ workflow (`.github/workflows/visual-docs.yml`) owns the comparison on PRs.
 
 `scripts/screenshots.sh` drives the **real release `llmlint` binary** against the
 mock-oneharness fixture in `fixture/` — exactly as the e2e suite does — so the
-captured text is genuine CLI output with real ANSI color (`--color always`); only
-the judge verdicts are scripted (`fixture/verdicts.json`), so there is no model,
-network, or cost. Each scene is rendered to an SVG by [`freeze`](https://github.com/charmbracelet/freeze).
+captured text is genuine CLI output; only the judge verdicts are scripted
+(`fixture/verdicts.json`), so there is no model, network, or cost. Each scene is
+rendered to an SVG by [`freeze`](https://github.com/charmbracelet/freeze).
 
-One shot, `lint-report`, with a `view` toggle the gallery flips between:
+One shot per command, so the gallery documents the whole CLI surface:
 
-- `default` — the report a user sees (failing rule + locations + summary), and
-- `verbose` — `-v`, itemizing every rule so PASS (green) and SKIP (yellow) show.
+- `lint` — the report, with a `view` toggle the gallery flips between three
+  levels of detail:
+  - `default` — the report a user sees: failing rule + locations + summary.
+  - `verbose` — `-v`, itemizing every rule so PASS (green) and SKIP (yellow) show
+    too. (`default`/`verbose` are colorized via `--color always`; real ANSI.)
+  - `debug` — the oneharness debug view `-v` prints to **stderr**: the exact
+    `oneharness run …` command and the raw result for each judge. This is the
+    only thing the verbose level adds beyond the itemized report (a literal `-vv`
+    is byte-identical to `-v`), so it is its own scene. Plain text, captured from
+    stderr; tall (it embeds the full system prompt per judge).
+- `init` — writing a starter config (`wrote llmlint.yml`).
+- `config` — the effective merged config + its sources, as JSON.
+- `doctor` — the oneharness preflight check.
+
+**Consistent text size.** Every scene is rendered at a fixed window width
+(`freeze --width 835`, with `--wrap 92` folding the few over-wide lines), so the
+gallery/README — which display each SVG at one fixed width — render the text at
+the same size on every card. Without this, auto-width made a narrow `init` scale
+up huge and a wide `config` shrink.
+
+**Path normalization** (so the bytes/hashes are identical on every machine):
+- `config`'s lone source is captured with its fixture-dir prefix stripped
+  (leaving the natural `llmlint.yml`).
+- `doctor` resolves the mock via `PATH` as a bare `oneharness` (no absolute
+  override path). The mock reports `oneharness 0.2.529 (mock)`, so the shot shows
+  that `(mock)` marker — honest about where the number comes from.
+- `debug` carries three per-run paths (the mock binary, the generated `--schema`
+  tempfile, and `--cwd`); the script rewrites each to a fixed placeholder
+  (`oneharness`, `/tmp/llmlint-schema.json`, `.`).
 
 ## Why it is byte-reproducible (and needs no container)
 

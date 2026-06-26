@@ -108,9 +108,13 @@ Use the `just` recipes; do not hand-roll equivalents.
 - **Terminal screenshots** (`just screenshots`, `screenshots-tools`,
   `screenshots-bless`) — *informational, never a gate*. See `screenshots/AGENTS.md`.
   `scripts/screenshots.sh` drives the real binary against the **mock-oneharness
-  fixture** (`screenshots/fixture/`) with `--color always` and renders the real
-  colorized output to **deterministic SVGs** via `freeze` + a vendored, pinned
-  font — byte-identical on every machine (no container), so [screencomp](https://github.com/nickderobertis/screencomp)
+  fixture** (`screenshots/fixture/`) — one scene per command (`lint`, with a
+  `view` toggle over `default`/`-v` `verbose`/`-v` `debug` (the stderr oneharness
+  debug view), plus `init`, `config`, `doctor`) — and renders the real output to
+  **deterministic SVGs** via `freeze` + a vendored, pinned font, all at one fixed
+  width (`--width`/`--wrap`) so on-page text size is uniform (the `default`/
+  `verbose` lint views are colorized via `--color always`; the rest are plain
+  text) — byte-identical on every machine (no container), so [screencomp](https://github.com/nickderobertis/screencomp)
   can hash-gate them. The `Visual docs` workflow (`.github/workflows/visual-docs.yml`,
   screencomp's reusable workflow) classifies against the committed baseline
   (`shots/baseline/<arch>.json`), publishes a GitHub Pages gallery, and posts a
