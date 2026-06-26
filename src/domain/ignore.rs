@@ -5,6 +5,8 @@
 //! ```text
 //! // llmlint: ignore[rule_name, other_rule] why it is safe here
 //! /* llmlint: ignore-file[rule_name] generated file, reviewed elsewhere */
+//! // llmlint: ignore-block[rule_name] reason the block below is exempt
+//! // llmlint: ignore-end[rule_name]
 //! ```
 //!
 //! **llmlint validates only the *structure* of these directives** — the
@@ -13,17 +15,28 @@
 //! structure is strict on purpose: a directive must name specific, configured
 //! rule(s) and give a reason, so a typo fails the run loudly instead of silently
 //! ignoring nothing (an unknown rule) — or being mistaken for a blanket ignore.
+//! The exception is `ignore-end`, which merely closes an open `ignore-block` and
+//! so carries no reason of its own.
+//!
+//! `ignore-block` / `ignore-end` come in matched pairs scoped per rule: a block
+//! opens for the rules it names and stays open until an `ignore-end` naming the
+//! same rule(s). Blocks track each rule independently, so two rules opened
+//! together may be closed at different points. llmlint checks the pairing
+//! deterministically — every opened block must close, an `ignore-end` must have a
+//! matching open block, and a rule cannot be opened twice without closing.
 //!
 //! This module is pure: it scans text and reports problems; reading files lives
 //! in [`crate::io::files`] and the wiring in [`crate::commands`].
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use crate::domain::config::is_valid_rule_name;
 
 /// The reserved marker that introduces a directive. Detection is case-sensitive
-/// and only fires when the marker is followed by an `ignore` / `ignore-file`
-/// keyword, so prose that merely mentions `llmlint:` is left alone.
+/// and only fires when the marker is followed by a recognized keyword
+/// (`ignore` / `ignore-file` / `ignore-block` / `ignore-end`), so prose that
+/// merely mentions `llmlint:` is left alone.
 const MARKER: &str = "llmlint:";
 
 /// A single malformed directive, located for a `file:line: message` report.
@@ -35,33 +48,128 @@ pub struct Problem {
     pub message: String,
 }
 
-/// Scan `text` for `llmlint: ignore` / `llmlint: ignore-file` directives and
-/// return every structural problem (an empty vec means all directives — if any —
-/// are well-formed). `known_rules` is the set of configured rule names a
-/// directive may reference; a directive naming anything else is a typo and an
-/// error. Only the first marker on a line is treated as a directive.
+/// Which directive a line carries, with the keyword used to build help text.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    /// `ignore` — line-scoped; needs a reason.
+    Line,
+    /// `ignore-file` — file-scoped; needs a reason.
+    File,
+    /// `ignore-block` — opens a block for the named rules; needs a reason.
+    BlockStart,
+    /// `ignore-end` — closes a block for the named rules; needs no reason.
+    BlockEnd,
+}
+
+impl Kind {
+    /// The keyword spelling, used to tailor help-text examples to the directive.
+    fn keyword(self) -> &'static str {
+        match self {
+            Kind::Line => "ignore",
+            Kind::File => "ignore-file",
+            Kind::BlockStart => "ignore-block",
+            Kind::BlockEnd => "ignore-end",
+        }
+    }
+
+    /// Whether a reason is required after the bracketed rule list.
+    fn needs_reason(self) -> bool {
+        !matches!(self, Kind::BlockEnd)
+    }
+}
+
+/// Scan `text` for `llmlint: ignore*` directives and return every structural
+/// problem (an empty vec means all directives — if any — are well-formed).
+/// `known_rules` is the set of configured rule names a directive may reference;
+/// a directive naming anything else is a typo and an error. Only the first
+/// marker on a line is treated as a directive. Problems are returned in line
+/// order.
 pub fn validate(text: &str, known_rules: &BTreeSet<&str>) -> Vec<Problem> {
     let mut problems = Vec::new();
+    // Rules with an open `ignore-block`, mapped to the line that opened them, so
+    // an unclosed block can be reported at its origin and a re-open can name the
+    // earlier one. Each rule is tracked independently.
+    let mut open: BTreeMap<&str, usize> = BTreeMap::new();
+
     for (idx, raw) in text.lines().enumerate() {
+        let line = idx + 1;
         let Some(pos) = raw.find(MARKER) else {
             continue;
         };
         let after = raw[pos + MARKER.len()..].trim_start();
-        // Only `ignore` / `ignore-file` are directives; `ignore-file` is tried
-        // first so its `-file` suffix isn't swallowed by the `ignore` branch.
-        // Anything else after `llmlint:` is treated as prose and skipped.
-        let body = strip_keyword(after, "ignore-file").or_else(|| strip_keyword(after, "ignore"));
-        let Some(body) = body else {
+        let Some((kind, body)) = classify(after) else {
             continue;
         };
-        for message in check_body(body, known_rules) {
-            problems.push(Problem {
-                line: idx + 1,
-                message,
-            });
+
+        let (messages, rules) = check_body(body, known_rules, kind);
+        for message in messages {
+            problems.push(Problem { line, message });
+        }
+
+        match kind {
+            Kind::Line | Kind::File => {}
+            Kind::BlockStart => {
+                for r in rules {
+                    if let Some(prev) = open.get(r) {
+                        problems.push(Problem {
+                            line,
+                            message: format!(
+                                "rule {r:?} already has an open ignore-block at line {prev}; \
+                                 close it with `ignore-end[{r}]` before opening another"
+                            ),
+                        });
+                    } else {
+                        open.insert(r, line);
+                    }
+                }
+            }
+            Kind::BlockEnd => {
+                for r in rules {
+                    if open.remove(r).is_none() {
+                        problems.push(Problem {
+                            line,
+                            message: format!(
+                                "ignore-end for rule {r:?} with no open ignore-block above it"
+                            ),
+                        });
+                    }
+                }
+            }
         }
     }
+
+    // Anything still open at end of file was never closed.
+    for (r, opened) in open {
+        problems.push(Problem {
+            line: opened,
+            message: format!(
+                "unclosed ignore-block for rule {r:?}; add a matching `llmlint: ignore-end[{r}]`"
+            ),
+        });
+    }
+
+    // Keep the report in source order even though unclosed blocks are appended
+    // last; the stable sort preserves per-line message order.
+    problems.sort_by_key(|p| p.line);
     problems
+}
+
+/// Classify the text after the `llmlint:` marker into a directive kind plus the
+/// `[rules] …` body. The `-file` / `-block` / `-end` variants are tried before
+/// bare `ignore` so their suffix isn't swallowed by the `ignore` branch.
+/// Anything else after `llmlint:` is prose and yields `None`.
+fn classify(after: &str) -> Option<(Kind, &str)> {
+    for (keyword, kind) in [
+        ("ignore-file", Kind::File),
+        ("ignore-block", Kind::BlockStart),
+        ("ignore-end", Kind::BlockEnd),
+        ("ignore", Kind::Line),
+    ] {
+        if let Some(body) = strip_keyword(after, keyword) {
+            return Some((kind, body));
+        }
+    }
+    None
 }
 
 /// If `s` starts with `keyword` followed by a boundary (end of line, whitespace,
@@ -76,22 +184,33 @@ fn strip_keyword<'a>(s: &'a str, keyword: &str) -> Option<&'a str> {
     }
 }
 
-/// Validate the `[rules] reason` body of a recognized directive, returning a
-/// message per problem (empty = well-formed). Collects every problem so one run
-/// surfaces all fixes for the directive at once.
-fn check_body(body: &str, known_rules: &BTreeSet<&str>) -> Vec<String> {
+/// Validate the `[rules] reason` body of a recognized directive. Returns a
+/// message per structural problem (empty = well-formed) plus the valid, configured
+/// rule names parsed from the brackets — the latter feeds block pairing, so it
+/// excludes any rule that is itself malformed or unknown (those surface as their
+/// own problems). Collects every problem so one run surfaces all fixes at once.
+fn check_body<'a>(
+    body: &'a str,
+    known_rules: &BTreeSet<&str>,
+    kind: Kind,
+) -> (Vec<String>, Vec<&'a str>) {
     let mut issues = Vec::new();
+    let mut valid = Vec::new();
     let body = body.trim_start();
+    let keyword = kind.keyword();
+    let example = if kind.needs_reason() {
+        format!("`{keyword}[rule_name] <reason>`")
+    } else {
+        format!("`{keyword}[rule_name]`")
+    };
 
     if !body.starts_with('[') {
-        issues.push(
-            "name the rule(s) to ignore in brackets, e.g. `ignore[rule_name] <reason>`".into(),
-        );
-        return issues;
+        issues.push(format!("name the rule(s) in brackets, e.g. {example}"));
+        return (issues, valid);
     }
     let Some(close) = body.find(']') else {
         issues.push("unterminated rule list: add a closing `]` after the rule name(s)".into());
-        return issues;
+        return (issues, valid);
     };
 
     let inside = &body[1..close];
@@ -101,7 +220,7 @@ fn check_body(body: &str, known_rules: &BTreeSet<&str>) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect();
     if rules.is_empty() {
-        issues.push("name at least one rule to ignore inside the brackets".into());
+        issues.push("name at least one rule inside the brackets".into());
     }
     for r in &rules {
         if !is_valid_rule_name(r) {
@@ -114,14 +233,16 @@ fn check_body(body: &str, known_rules: &BTreeSet<&str>) -> Vec<String> {
                 "unknown rule {r:?}; configured rules: {}",
                 available(known_rules)
             ));
+        } else {
+            valid.push(*r);
         }
     }
 
-    if reason_of(&body[close + 1..]).is_empty() {
+    if kind.needs_reason() && reason_of(&body[close + 1..]).is_empty() {
         issues
             .push("give a reason after the brackets explaining why the rule(s) are ignored".into());
     }
-    issues
+    (issues, valid)
 }
 
 /// The reason text following the `]`, with trailing whitespace and the common
@@ -257,5 +378,126 @@ mod tests {
         // A trailing comment on a code line is still found and validated.
         let msgs = messages("let x = todo();  // llmlint: ignore[r]\n", &["r"]);
         assert!(msgs.iter().any(|m| m.contains("give a reason")));
+    }
+
+    #[test]
+    fn matched_block_open_and_close_is_accepted() {
+        let text = "// llmlint: ignore-block[r] legacy region, see #7\n\
+                    fn f() {}\n\
+                    // llmlint: ignore-end[r]\n";
+        assert!(validate(text, &known(&["r"])).is_empty());
+    }
+
+    #[test]
+    fn block_open_without_reason_is_rejected() {
+        let msgs = messages(
+            "// llmlint: ignore-block[r]\n// llmlint: ignore-end[r]\n",
+            &["r"],
+        );
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(msgs[0].contains("give a reason"), "got: {msgs:?}");
+    }
+
+    #[test]
+    fn block_end_needs_no_reason() {
+        // A bare `ignore-end` (no trailing text) is well-formed.
+        let text = "// llmlint: ignore-block[r] reason\n// llmlint: ignore-end[r]\n";
+        assert!(validate(text, &known(&["r"])).is_empty());
+    }
+
+    #[test]
+    fn unclosed_block_is_reported_at_its_opening_line() {
+        let msgs = messages(
+            "// code\n// llmlint: ignore-block[r] never closed\nmore code\n",
+            &["r"],
+        );
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(msgs[0].starts_with("2:"), "got: {msgs:?}");
+        assert!(msgs[0].contains("unclosed ignore-block"), "got: {msgs:?}");
+    }
+
+    #[test]
+    fn block_end_without_a_matching_open_is_rejected() {
+        let msgs = messages("// llmlint: ignore-end[r]\n", &["r"]);
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(msgs[0].starts_with("1:"));
+        assert!(msgs[0].contains("no open ignore-block"), "got: {msgs:?}");
+    }
+
+    #[test]
+    fn reopening_an_open_block_for_the_same_rule_is_rejected() {
+        let msgs = messages(
+            "// llmlint: ignore-block[r] first\n\
+             // llmlint: ignore-block[r] second\n\
+             // llmlint: ignore-end[r]\n",
+            &["r"],
+        );
+        // The second open is rejected; the first open is still closed by the end.
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(msgs[0].starts_with("2:"), "got: {msgs:?}");
+        assert!(
+            msgs[0].contains("already has an open ignore-block at line 1"),
+            "got: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn two_rules_opened_together_can_close_at_different_lines() {
+        let text = "// llmlint: ignore-block[a, b] both exempt here\n\
+                    fn f() {}\n\
+                    // llmlint: ignore-end[a]\n\
+                    fn g() {}\n\
+                    // llmlint: ignore-end[b]\n";
+        assert!(validate(text, &known(&["a", "b"])).is_empty());
+    }
+
+    #[test]
+    fn one_of_two_opened_rules_left_unclosed_is_reported() {
+        let text = "// llmlint: ignore-block[a, b] reason\n\
+                    // llmlint: ignore-end[a]\n";
+        let msgs = messages(text, &["a", "b"]);
+        assert_eq!(msgs.len(), 1, "got: {msgs:?}");
+        assert!(msgs[0].starts_with("1:"), "got: {msgs:?}");
+        assert!(msgs[0].contains("unclosed ignore-block"), "got: {msgs:?}");
+        assert!(msgs[0].contains("\"b\""), "got: {msgs:?}");
+    }
+
+    #[test]
+    fn overlapping_blocks_for_distinct_rules_are_accepted() {
+        // a opens, b opens inside it, a closes, then b closes — independent
+        // per-rule tracking allows the interleave.
+        let text = "// llmlint: ignore-block[a] outer\n\
+                    // llmlint: ignore-block[b] inner\n\
+                    // llmlint: ignore-end[a]\n\
+                    // llmlint: ignore-end[b]\n";
+        assert!(validate(text, &known(&["a", "b"])).is_empty());
+    }
+
+    #[test]
+    fn block_directives_naming_unknown_rules_are_rejected() {
+        // An unknown rule in a block directive surfaces as the unknown-rule error
+        // and does not also produce spurious pairing errors.
+        let msgs = messages(
+            "// llmlint: ignore-block[ghost] reason\n// llmlint: ignore-end[ghost]\n",
+            &["real"],
+        );
+        assert_eq!(msgs.len(), 2, "got: {msgs:?}");
+        assert!(
+            msgs.iter().all(|m| m.contains("unknown rule")),
+            "got: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn block_problems_are_reported_in_line_order() {
+        // An end-without-open on line 1 and an unclosed open on line 2: the
+        // report is ordered by line even though the unclosed one is found last.
+        let msgs = messages(
+            "// llmlint: ignore-end[a]\n// llmlint: ignore-block[b] reason\n",
+            &["a", "b"],
+        );
+        assert_eq!(msgs.len(), 2, "got: {msgs:?}");
+        assert!(msgs[0].starts_with("1:"), "got: {msgs:?}");
+        assert!(msgs[1].starts_with("2:"), "got: {msgs:?}");
     }
 }

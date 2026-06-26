@@ -328,19 +328,33 @@ let q = format!("SELECT * FROM users WHERE id = {id}"); // llmlint: ignore[no_in
 # llmlint: ignore-file[public_items_are_documented] generated stubs, documented upstream
 ```
 
+```rust
+// llmlint: ignore-block[no_inline_sql] legacy query layer, migration tracked in JIRA-42
+fn legacy_queries() { /* … */ }
+// llmlint: ignore-end[no_inline_sql]
+```
+
 - `llmlint: ignore[rule, ...] <reason>` is **line-scoped** — it covers the line it
   sits on (a trailing comment) or the line right below it (a comment on its own line).
 - `llmlint: ignore-file[rule, ...] <reason>` is **file-scoped** — it covers the
   whole file.
+- `llmlint: ignore-block[rule, ...] <reason>` … `llmlint: ignore-end[rule, ...]` is
+  **block-scoped** — it covers every line between the open and its matching close.
+  The closing `ignore-end` names the same rule(s) and needs no reason. Blocks track
+  each rule independently, so rules opened together may be closed at different points
+  and blocks for different rules may overlap.
 
 Use whatever comment syntax the file's language uses (`//`, `#`, `/* … */`, `<!-- … -->`);
-llmlint keys off the reserved `llmlint: ignore` / `llmlint: ignore-file` prefix.
+llmlint keys off the reserved `llmlint: ignore` / `llmlint: ignore-file` /
+`llmlint: ignore-block` / `llmlint: ignore-end` prefix.
 
 **Two layers, by design.** llmlint deterministically validates each directive's
 *structure* before any judge runs — it must name **specific, configured** rule(s)
-and carry a **reason**. A directive with no brackets, an empty list, an unknown or
-misspelled rule, or no reason is a hard `file:line:` error (exit 2), so a typo
-fails loudly instead of silently suppressing nothing. Actually *honoring* a
+and carry a **reason** (except `ignore-end`, which only closes a block). A directive
+with no brackets, an empty list, an unknown or misspelled rule, or no reason is a
+hard `file:line:` error (exit 2), so a typo fails loudly instead of silently
+suppressing nothing. Block pairing is checked too: an unclosed `ignore-block`, an
+`ignore-end` with no open block, or re-opening a rule already open is a hard error. Actually *honoring* a
 well-formed directive is the judge's job: the default prompt tells it to skip a
 named rule's violation at the directive's location. (A custom `prompt_template`
 should carry the same guidance if you want directives honored.) Because the

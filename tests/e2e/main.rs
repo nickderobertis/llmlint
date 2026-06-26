@@ -2267,6 +2267,71 @@ fn malformed_directives_across_files_all_report_before_any_judge_runs() {
     );
 }
 
+#[test]
+fn well_formed_block_directives_pass_validation() {
+    // A block opened for two rules and closed at different points, all matched.
+    let p = ignore_project(
+        "// llmlint: ignore-block[no_todo] legacy region, tracked in JIRA-9\n\
+         fn legacy() {}\n\
+         // llmlint: ignore-end[no_todo]\n",
+    );
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+}
+
+#[test]
+fn unclosed_block_directive_is_rejected() {
+    let p = ignore_project("// llmlint: ignore-block[no_todo] forgot to close it\nfn f() {}\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unclosed ignore-block"))
+        .stderr(predicate::str::contains("src/lib.rs:1:"));
+}
+
+#[test]
+fn block_end_without_a_matching_open_is_rejected() {
+    let p = ignore_project("// llmlint: ignore-end[no_todo]\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no open ignore-block"))
+        .stderr(predicate::str::contains("src/lib.rs:1:"));
+}
+
+#[test]
+fn block_open_without_reason_is_rejected() {
+    let p = ignore_project("// llmlint: ignore-block[no_todo]\n// llmlint: ignore-end[no_todo]\n");
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("give a reason"));
+}
+
+#[test]
+fn default_prompt_documents_block_directives() {
+    let p = ignore_project("// code\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    let dump = p.path().join("system.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let prompt = fs::read_to_string(&dump).unwrap();
+    assert!(
+        prompt.contains("ignore-block"),
+        "prompt should document the block-open directive: {prompt}"
+    );
+    assert!(
+        prompt.contains("ignore-end"),
+        "prompt should document the block-close directive: {prompt}"
+    );
+}
+
 // ---- oneharness passthrough actually forwarded ----------------------------
 
 #[test]
