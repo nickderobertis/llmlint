@@ -123,6 +123,14 @@ tools (bypass mode is oneharness's default).
 - **Verdict polarity (convention):** rules are authored as positive invariants.
   `holds=true` = property holds (pass); `holds=false` = **violation** (fail).
   llmlint exits non-zero when any rule's final verdict is `false`.
+- **Relevance (convention):** a rule's `relevance` declares when it should be
+  evaluated — `true` (default, always evaluate; the judge may not opt out),
+  `false` (never; reported not relevant with no judge call), or a natural-language
+  condition the judge decides *before* the verdict. A conditional rule's schema
+  inserts a `relevant` boolean before `holds` (gated so `holds` is required only
+  when `relevant=true`), so a not-applicable rule is distinguishable from a true
+  one instead of every `description` carrying its own "or not applicable" clause.
+  A not-relevant outcome is neither pass nor fail — it never fails the build.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

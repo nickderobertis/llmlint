@@ -24,6 +24,10 @@ pub struct ResolvedRule {
     pub files: Vec<PathBuf>,
     /// Whether the judge must justify this rule's verdict with a `rationale`.
     pub rationale: bool,
+    /// The relevance condition the judge must decide before evaluating, or `None`
+    /// for an always-evaluated rule. (Statically never-relevant rules are filtered
+    /// out before planning and never reach here.)
+    pub relevance: Option<String>,
 }
 
 /// One judge invocation: a batch of rules to evaluate against a file set.
@@ -104,6 +108,7 @@ pub fn build(
                                 name: r.name.clone(),
                                 description: r.description.clone(),
                                 rationale: r.rationale,
+                                relevance: r.relevance.clone(),
                             })
                             .collect(),
                     });
@@ -128,6 +133,7 @@ mod tests {
             agent: agent.into(),
             files: files.iter().map(PathBuf::from).collect(),
             rationale: true,
+            relevance: None,
         }
     }
 
@@ -204,6 +210,29 @@ mod tests {
         let find = |n: &str| specs.iter().find(|r| r.name == n).unwrap().rationale;
         assert!(find("on"));
         assert!(!find("off"));
+    }
+
+    #[test]
+    fn relevance_condition_flows_into_the_rule_spec() {
+        let cfg = Config::default();
+        let mut conditional = rr("conditional", 1, "default", &["f.rs"]);
+        let always = rr("always", 1, "default", &["f.rs"]);
+        conditional.relevance = Some("the change touches SQL".into());
+        let plan = build(&cfg, "T", 20, vec![conditional, always]);
+        let specs = &plan.runs[0].rules;
+        let find = |n: &str| {
+            specs
+                .iter()
+                .find(|r| r.name == n)
+                .unwrap()
+                .relevance
+                .clone()
+        };
+        assert_eq!(
+            find("conditional").as_deref(),
+            Some("the change touches SQL")
+        );
+        assert_eq!(find("always"), None);
     }
 
     #[test]

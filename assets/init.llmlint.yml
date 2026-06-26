@@ -50,3 +50,15 @@ rules:
       true when every public function, struct, enum, and module has a doc
       comment explaining its purpose. false when any public item is undocumented.
     judges: 1
+
+  # `relevance` scopes a rule to the changes it applies to, so you don't have to
+  # bolt "or not applicable" onto every description. It is `true` by default
+  # (always evaluated); set `false` to disable a rule (reported "not relevant"
+  # with no judge call), or give a condition the judge decides first — it reports
+  # "not relevant" (no pass/fail) when the condition does not hold.
+  #
+  # - name: errors_are_contextualized
+  #   description: |
+  #     TRUE when every returned error adds context about the operation that
+  #     failed. FALSE when an error is propagated with no added context.
+  #   relevance: the change adds or modifies error handling

@@ -139,6 +139,7 @@ rules:
     agent: architecture        # optional; omit to use the default agent
     judges: 3                  # optional; independent judges, majority wins (default 1)
     rationale: true            # optional; override the session-wide `rationales` for this rule
+    relevance: true            # optional; when to evaluate — see Relevance below (default true)
     files:                     # optional; override the target files for this rule
       include: ["src/api/**"]
 ```
@@ -153,6 +154,9 @@ rules:
   descriptive (non-placeholder) names that match what each rule checks.
 - **Names** are unique, terse, and descriptive (`^[A-Za-z][A-Za-z0-9_]*$`); they
   become the JSON keys of the structured output.
+- **Scope a rule to the changes it applies to with `relevance`** (see below)
+  instead of bolting "…or not applicable" onto the description — that keeps the
+  true/false outcome clean and lets llmlint tell "didn't apply" apart from "true".
 
 ### The prompt template
 
@@ -169,8 +173,9 @@ Three variables are in scope when a template renders:
 | Variable | Type | Description |
 | --- | --- | --- |
 | `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
-| `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), and `.rationale` (whether this rule wants a justification). |
+| `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), `.rationale` (whether this rule wants a justification), and `.relevance` (the relevance condition string, or unset for an always-evaluated rule). |
 | `rationales` | bool | True when any rule in this batch wants a rationale — gate the rationale guidance on it. |
+| `relevance` | bool | True when any rule in this batch carries a relevance condition — gate the relevance guidance on it. |
 
 ```jinja
 ## Target files
@@ -247,6 +252,59 @@ FAIL no_inline_sql (1/3 judges held)
      judge 3 violated: f-string SQL in the helper
      src/db.rs:3: inline SQL
 ```
+
+### Relevance
+
+Not every rule applies to every change. Rather than make each `description`
+carry its own "…or not applicable" escape hatch — which muddies the true/false
+outcome and hides *why* a rule passed — declare when a rule should be evaluated
+with **`relevance`**:
+
+```yaml
+rules:
+  # Always evaluated (the default). The judge may not opt out.
+  - name: public_items_are_documented
+    description: ...
+    # relevance: true            # implicit
+
+  # Never evaluated — disabled deterministically, with no judge call.
+  - name: legacy_only_check
+    description: ...
+    relevance: false
+
+  # Conditionally evaluated. The judge decides whether the condition holds for
+  # the change *before* the verdict; if it doesn't, the rule is "not relevant".
+  - name: errors_are_contextualized
+    description: |
+      TRUE when every returned error adds context about the operation that
+      failed. FALSE when an error is propagated with no added context.
+    relevance: the change adds or modifies error handling
+```
+
+For a conditional rule the structured output gains a `relevant` boolean, decided
+before the verdict — so a not-applicable rule is distinguishable from a true one:
+
+```jsonc
+// Not relevant: the object ends after `relevant`; the rationale explains why.
+{ "errors_are_contextualized": {
+    "name": "errors_are_contextualized",
+    "rationale": "the change only renames a struct field; no error handling touched",
+    "relevant": false } }
+
+// Relevant: proceed to the verdict as usual.
+{ "errors_are_contextualized": {
+    "name": "errors_are_contextualized",
+    "rationale": "every `?` propagation wraps with `.context(...)`",
+    "relevant": true,
+    "holds": true } }
+```
+
+A **not-relevant** rule is neither a pass nor a violation — it never fails the
+build. The human report counts it in a `… not relevant` summary segment and, at
+`-v`, itemizes it as a dim `N/A <rule> (not relevant)` line with the reason;
+`--format json` carries `"outcome": "not_relevant"` and a `not_relevant` summary
+count. For a multi-judge rule, relevance is decided by majority first, then the
+verdict is tallied over the judges that found it relevant.
 
 ### Judges and voting
 

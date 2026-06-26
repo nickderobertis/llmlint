@@ -36,6 +36,14 @@ impl Violation {
 /// echoed `name`, which we already know from the map key).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleVerdict {
+    /// Whether the rule applies to the change. `None` when the judge was not
+    /// asked to decide relevance (an always-evaluated rule); `Some(false)` when
+    /// the judge ruled the rule not applicable (and so gave no `holds`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevant: Option<bool>,
+    /// The verdict. Defaults to `false` (a conservative fail) when omitted, which
+    /// only happens for a `relevant=false` verdict — where it is ignored anyway.
+    #[serde(default)]
     pub holds: bool,
     #[serde(default)]
     pub violations: Vec<Violation>,
@@ -44,13 +52,25 @@ pub struct RuleVerdict {
     pub rationale: Option<String>,
 }
 
+impl RuleVerdict {
+    /// Whether this verdict counts as relevant: true unless the judge explicitly
+    /// ruled the rule not applicable. An always-evaluated rule (`relevant`
+    /// absent) is always relevant.
+    pub fn is_relevant(&self) -> bool {
+        self.relevant != Some(false)
+    }
+}
+
 /// Final state of a rule after aggregating all of its judges' verdicts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Outcome {
     Pass,
     Fail,
     Skipped,
+    /// The rule did not apply to the change (statically `relevance: false`, or a
+    /// majority of judges ruled it not relevant). Not a violation — exits clean.
+    NotRelevant,
 }
 
 /// One judge's opinion, kept per rule so a multi-judge breakdown can show how the
@@ -58,9 +78,18 @@ pub enum Outcome {
 /// judge (a single judge is fully described by the rule's own `rationale`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct JudgeOpinion {
+    /// False only when this judge ruled the rule not applicable; omitted from
+    /// machine output otherwise (an always-relevant judge). `holds` is moot when
+    /// this is false.
+    #[serde(skip_serializing_if = "is_relevant")]
+    pub relevant: bool,
     pub holds: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rationale: Option<String>,
+}
+
+fn is_relevant(relevant: &bool) -> bool {
+    *relevant
 }
 
 /// The aggregated result for a single rule, ready for reporting. Fields serialize
@@ -92,6 +121,20 @@ impl RuleOutcome {
             name: name.into(),
             rationale: None,
             outcome: Outcome::Skipped,
+            votes_total: 0,
+            votes_hold: 0,
+            judges: Vec::new(),
+            violations: Vec::new(),
+        }
+    }
+
+    /// A rule declared statically not relevant (`relevance: false`): no judge was
+    /// run, and the rationale records why it was skipped.
+    pub fn not_relevant(name: impl Into<String>) -> Self {
+        RuleOutcome {
+            name: name.into(),
+            rationale: Some("declared not relevant (relevance: false)".to_string()),
+            outcome: Outcome::NotRelevant,
             votes_total: 0,
             votes_hold: 0,
             judges: Vec::new(),

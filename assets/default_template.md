@@ -19,7 +19,21 @@ organization objectives — that deterministic linters cannot express.
   file and across files. If a violation genuinely cannot be tied to an exact
   source location, omit `file`/`line` and just give a `message`.
 - When `holds = true`, return an empty `violations` list.
-{% if rationales %}
+{% if relevance %}
+## Relevance
+
+Some rules apply only to certain changes and carry a **relevance condition**
+(shown as "Relevant only when:" under the rule). For each such rule, decide
+relevance *first*, before the verdict:
+
+- Set `relevant = false` when the condition does not hold for this change. Then
+  the rule does not apply: give no `holds` and no `violations` — the object ends
+  after `relevant`. Use the `rationale` to explain *why* it is not relevant.
+- Set `relevant = true` when the condition holds. Then evaluate the rule
+  normally and supply `holds` (and any `violations`) as usual.
+- A rule with no relevance condition always applies: it has no `relevant` field —
+  evaluate it directly.
+{% endif %}{% if rationales %}
 ## Rationale
 
 Some rules require a `rationale`: one short justification for the verdict, given
@@ -37,11 +51,13 @@ restating the rule, no hedging, no preamble. One sentence is plenty.
 {% for r in rules %}### {{ r.name }}
 
 {{ r.description }}
-
+{% if r.relevance %}
+Relevant only when: {{ r.relevance }}
+{% endif %}
 {% endfor %}
 ## Response
 
 Respond with **only** the JSON object required by the response schema: one key
 per rule name above. Fill each rule's object in the exact field order the schema
-lists — first echo the rule's `name`,{% if rationales %} then its `rationale`,{% endif %} then the verdict `holds` and any `violations`. Do not include any prose
+lists — first echo the rule's `name`,{% if rationales %} then its `rationale`,{% endif %}{% if relevance %} then `relevant` for any rule with a relevance condition (and, when it is false, stop there),{% endif %} then the verdict `holds` and any `violations`. Do not include any prose
 outside the JSON.

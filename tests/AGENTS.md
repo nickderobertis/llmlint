@@ -10,8 +10,8 @@ reporting). Add a journey here when a user-facing behavior lands.
 ## Fixture control (env vars read by the mock)
 
 - `LLMLINT_MOCK_VERDICTS=<path>` — JSON map `rule -> spec`; a spec is a bool
-  (`holds`), an object (`{holds, violations}`), or an array of specs (one per
-  judge call).
+  (`holds`), an object (`{holds, violations}`, optionally `{relevant, rationale}`
+  for a relevance-gated rule), or an array of specs (one per judge call).
 - `LLMLINT_MOCK_STATE=<dir>` — per-rule call counter backing array specs; use
   `--max-parallel 1` so the sequence is deterministic.
 - `LLMLINT_MOCK_DUMP=<file>` — record the rendered `--system` prompt, to assert
@@ -94,6 +94,22 @@ logic is also covered hermetically via `file://` plugins.
   itemize *each* judge's result (`held`/`violated`) and rationale — at every
   failure and for every evaluated rule at `-v` — so judge disagreement is
   visible, not collapsed to one representative.
+- Relevance gating: a rule with a `relevance` condition makes the judge decide
+  applicability first — its schema inserts a `relevant` boolean between the
+  `rationale` and the verdict, requiring `holds` only via an if/then on
+  `relevant == true`, and the default template renders the relevance guidance +
+  the per-rule condition (absent for always-evaluated rules). A judge ruling a
+  rule not relevant reports it distinctly (a dim `N/A … (not relevant)` line at
+  `-v`, its own `not relevant` summary segment, `outcome: "not_relevant"` in
+  `--format json`) and exits clean — never conflated with a pass; a relevant
+  rule still evaluates its verdict normally. `relevance: false` disables a rule
+  deterministically (reported not relevant with no oneharness call at all). For a
+  multi-judge conditional rule, relevance is decided by majority first (a majority
+  of not-relevant judges skips the verdict, the lone violation never failing the
+  build) and otherwise the verdict is tallied over the relevant judges only (the
+  held fraction is `held/relevant`, not `held/total`); the per-judge breakdown
+  shows each judge's `not relevant`/`held`/`violated`. An empty relevance
+  condition is a deterministic config error (exit 2).
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their
@@ -115,8 +131,9 @@ logic is also covered hermetically via `file://` plugins.
   run-error carries the `errors` array (exit 2).
 - Failure/recovery: missing config, malformed config, and each deterministic
   validation error — duplicate rule names, an even `judges` count, an invalid
-  rule name, an empty description, `judges: 0`, `batch_size: 0`, and a rule
-  referencing an unknown agent (exit 2); schema-invalid, missing-structured,
+  rule name, an empty description, an empty relevance condition, `judges: 0`,
+  `batch_size: 0`, and a rule referencing an unknown agent (exit 2);
+  schema-invalid, missing-structured,
   unparseable, empty-results, and bad-verdict-shape oneharness output are
   surfaced (exit 2).
 

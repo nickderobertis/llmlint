@@ -261,12 +261,36 @@
             "null"
           ],
           "default": null
+        },
+        "relevance": {
+          "description": "When this rule should be evaluated. `true` (the default) always\nevaluates; `false` never does (the rule is reported not relevant without\na judge call); a string is a condition the judge decides about the change\nfirst, reporting the rule \"not relevant\" when it does not hold. Lets a\nrule scope itself to applicable changes instead of every `description`\nneeding its own \"or not applicable\" escape hatch.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Relevance"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
         "description"
+      ]
+    },
+    "Relevance": {
+      "description": "When a rule should be evaluated. Mirrors the `description`/verdict split: a\nboolean is resolved deterministically by llmlint, a string is a\nnatural-language condition the judge decides about the change first.",
+      "anyOf": [
+        {
+          "description": "`true` (the default): always evaluate — the judge may not opt out.\n`false`: never evaluate — the rule is statically not applicable and is\nreported as not relevant without calling a judge.",
+          "type": "boolean"
+        },
+        {
+          "description": "A natural-language condition describing when the rule applies. The judge\ndecides whether it holds for the change *before* evaluating the verdict,\nand reports the rule \"not relevant\" (with no verdict) when it does not.",
+          "type": "string"
+        }
       ]
     }
   },

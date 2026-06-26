@@ -16,6 +16,8 @@ const FAIL_STYLE: Style = AnsiColor::Red.on_default().bold();
 const PASS_STYLE: Style = AnsiColor::Green.on_default().bold();
 const SKIP_STYLE: Style = AnsiColor::Yellow.on_default().dimmed();
 const ERROR_STYLE: Style = AnsiColor::Red.on_default().bold();
+// Not-relevant rules are neither pass nor fail; de-emphasized like skips.
+const NA_STYLE: Style = AnsiColor::Yellow.on_default().dimmed();
 
 /// Wrap `text` in `style`'s SGR codes when `color` is on, else return it plain.
 /// anstyle renders the prefix via `Display` and the reset via the alternate
@@ -26,6 +28,15 @@ fn paint(text: &str, style: Style, color: bool) -> String {
     } else {
         text.to_string()
     }
+}
+
+/// Outcome tallies for the summary line and machine output.
+#[derive(Debug, Default, Clone, Copy)]
+struct Counts {
+    pass: usize,
+    fail: usize,
+    skip: usize,
+    not_relevant: usize,
 }
 
 /// The full result of a lint run.
@@ -46,18 +57,17 @@ impl Report {
         }
     }
 
-    fn counts(&self) -> (usize, usize, usize) {
-        let mut pass = 0;
-        let mut fail = 0;
-        let mut skip = 0;
+    fn counts(&self) -> Counts {
+        let mut c = Counts::default();
         for o in &self.outcomes {
             match o.outcome {
-                Outcome::Pass => pass += 1,
-                Outcome::Fail => fail += 1,
-                Outcome::Skipped => skip += 1,
+                Outcome::Pass => c.pass += 1,
+                Outcome::Fail => c.fail += 1,
+                Outcome::Skipped => c.skip += 1,
+                Outcome::NotRelevant => c.not_relevant += 1,
             }
         }
-        (pass, fail, skip)
+        c
     }
 
     /// Exit code: `2` if any judge run errored (incomplete), else `1` if any
@@ -110,7 +120,15 @@ impl Report {
                     let label = paint("SKIP", SKIP_STYLE, color);
                     out.push_str(&format!("{label} {} (no files matched)\n", o.name))
                 }
-                Outcome::Pass | Outcome::Skipped => {}
+                // Not-relevant rules carry an explanation worth surfacing at
+                // `-v`, so the reader can tell "the judge ruled this N/A" apart
+                // from "the property held".
+                Outcome::NotRelevant if verbosity >= 1 => {
+                    let label = paint("N/A", NA_STYLE, color);
+                    out.push_str(&format!("{label} {} (not relevant)\n", o.name));
+                    push_reasoning(&mut out, o);
+                }
+                Outcome::Pass | Outcome::Skipped | Outcome::NotRelevant => {}
             }
         }
         for e in &self.run_errors {
@@ -120,7 +138,12 @@ impl Report {
         if !out.is_empty() {
             out.push('\n');
         }
-        let (pass, fail, skip) = self.counts();
+        let Counts {
+            pass,
+            fail,
+            skip,
+            not_relevant,
+        } = self.counts();
         // Color the counts that carry signal: passes green, failures red (only
         // when there are any — a green-tinted "0 failed" reads wrong), errors
         // red. The skip count stays plain; it is neither good nor bad news.
@@ -134,6 +157,11 @@ impl Report {
             "{} rules: {passed}, {failed}, {skip} skipped",
             self.outcomes.len(),
         ));
+        // Append the not-relevant count only when there are any, so a run with no
+        // conditional rules keeps the familiar three-part summary unchanged.
+        if not_relevant > 0 {
+            out.push_str(&format!(", {not_relevant} not relevant"));
+        }
         if !self.run_errors.is_empty() {
             let errored = paint(
                 &format!("{} errored", self.run_errors.len()),
@@ -147,13 +175,19 @@ impl Report {
     }
 
     pub fn to_json(&self) -> Value {
-        let (pass, fail, skip) = self.counts();
+        let Counts {
+            pass,
+            fail,
+            skip,
+            not_relevant,
+        } = self.counts();
         json!({
             "summary": {
                 "total": self.outcomes.len(),
                 "passed": pass,
                 "failed": fail,
                 "skipped": skip,
+                "not_relevant": not_relevant,
                 "errored": self.run_errors.len(),
             },
             "rules": self.outcomes,
@@ -177,7 +211,13 @@ fn votes_suffix(o: &RuleOutcome) -> String {
 fn push_reasoning(out: &mut String, o: &RuleOutcome) {
     if !o.judges.is_empty() {
         for (i, j) in o.judges.iter().enumerate() {
-            let verdict = if j.holds { "held" } else { "violated" };
+            let verdict = if !j.relevant {
+                "not relevant"
+            } else if j.holds {
+                "held"
+            } else {
+                "violated"
+            };
             match j
                 .rationale
                 .as_deref()
@@ -249,8 +289,20 @@ mod tests {
     }
     fn opinion(holds: bool, why: Option<&str>) -> JudgeOpinion {
         JudgeOpinion {
+            relevant: true,
             holds,
             rationale: why.map(Into::into),
+        }
+    }
+    fn not_relevant(name: &str) -> RuleOutcome {
+        RuleOutcome {
+            name: name.into(),
+            rationale: Some("change does not touch SQL".into()),
+            outcome: Outcome::NotRelevant,
+            votes_total: 1,
+            votes_hold: 0,
+            judges: vec![],
+            violations: vec![],
         }
     }
 
@@ -517,6 +569,66 @@ mod tests {
         assert_eq!(j["rules"][0]["rationale"], "all good");
         // A rule with no rationale omits the key entirely.
         assert!(j["rules"][1].get("rationale").is_none());
+    }
+
+    #[test]
+    fn not_relevant_is_hidden_by_default_itemized_at_verbose_and_exits_clean() {
+        let r = Report::new(vec![pass("a"), not_relevant("sql_rule")], vec![]);
+        // Not relevant is not a failure: a run with only passes + not-relevant
+        // rules exits 0.
+        assert_eq!(r.exit_code(), 0);
+
+        // Default level: the not-relevant rule is only counted, with its own
+        // summary segment so it isn't conflated with passes or skips.
+        let quiet = r.to_human(0, false);
+        assert!(!quiet.contains("sql_rule"));
+        assert!(quiet.contains("2 rules: 1 passed, 0 failed, 0 skipped, 1 not relevant"));
+
+        // `-v`: the rule is itemized as N/A with its rationale.
+        let loud = r.to_human(1, false);
+        assert!(loud.contains("N/A sql_rule (not relevant)"));
+        assert!(loud.contains("rationale: change does not touch SQL"));
+    }
+
+    #[test]
+    fn summary_omits_not_relevant_segment_when_there_are_none() {
+        // No conditional rules -> the familiar three-part summary is unchanged.
+        let r = Report::new(vec![pass("a")], vec![]);
+        assert_eq!(
+            r.to_human(0, false),
+            "1 rules: 1 passed, 0 failed, 0 skipped\n"
+        );
+    }
+
+    #[test]
+    fn multi_judge_breakdown_shows_a_not_relevant_judge() {
+        let mut o = not_relevant("scoped");
+        o.votes_total = 3;
+        o.judges = vec![
+            opinion(false, Some("touches SQL, violated")),
+            JudgeOpinion {
+                relevant: false,
+                holds: false,
+                rationale: Some("no SQL in this change".into()),
+            },
+            JudgeOpinion {
+                relevant: false,
+                holds: false,
+                rationale: None,
+            },
+        ];
+        let r = Report::new(vec![o], vec![]);
+        let loud = r.to_human(1, false);
+        assert!(loud.contains("N/A scoped (not relevant)"));
+        assert!(loud.contains("judge 2 not relevant: no SQL in this change"));
+        assert!(loud.contains("judge 3 not relevant\n"));
+
+        // JSON omits `relevant` for the relevant judge and emits it (false) for
+        // the abstaining ones.
+        let j = r.to_json();
+        let judges = j["rules"][0]["judges"].as_array().unwrap();
+        assert!(judges[0].get("relevant").is_none());
+        assert_eq!(judges[1]["relevant"], false);
     }
 
     #[test]

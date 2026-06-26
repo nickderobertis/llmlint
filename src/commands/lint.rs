@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use crate::cli::{ColorChoice, LintArgs, OutputFormat};
-use crate::domain::config::{validate, Agent, Config, FileFilter, Rule};
+use crate::domain::config::{validate, Agent, Config, FileFilter, RelevanceMode, Rule};
 use crate::domain::plan::{self, JudgeRun};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
@@ -53,7 +53,18 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let cli_files = files::from_cli(&cwd, &args.files);
 
     let mut resolved = Vec::new();
+    // Rules declared statically not relevant (`relevance: false`) never reach a
+    // judge — they are reported as not relevant directly.
+    let mut not_relevant: Vec<String> = Vec::new();
     for rule in &selected {
+        let relevance = match rule.relevance_mode() {
+            RelevanceMode::Never => {
+                not_relevant.push(rule.name.clone());
+                continue;
+            }
+            RelevanceMode::Always => None,
+            RelevanceMode::Conditional(cond) => Some(cond),
+        };
         let agent_name = rule.agent.clone().unwrap_or_else(|| "default".to_string());
         let agent = config.agent_or_default(&agent_name);
         let target = resolve_files(&cwd, rule, &agent, &cli_files, &config.files)?;
@@ -64,6 +75,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
             agent: agent_name,
             files: target,
             rationale: rule.wants_rationale(session_rationales),
+            relevance,
         });
     }
 
@@ -162,6 +174,9 @@ pub fn run(args: LintArgs) -> Result<i32> {
     }
     for name in &the_plan.skipped {
         outcomes.push(RuleOutcome::skipped(name));
+    }
+    for name in &not_relevant {
+        outcomes.push(RuleOutcome::not_relevant(name));
     }
 
     let report = Report::new(outcomes, run_errors);
@@ -365,9 +380,17 @@ fn execute(
     Result<BTreeMap<String, RuleVerdict>>,
 ) {
     let files_str: Vec<String> = run.files.iter().map(|p| to_slash(p)).collect();
-    // Show the rationale guidance when any rule in this batch wants a rationale.
+    // Show the rationale guidance when any rule in this batch wants a rationale,
+    // and the relevance guidance when any rule is conditional on relevance.
     let want_rationale = run.rules.iter().any(|r| r.rationale);
-    let system = match template::render(&run.template, &run.rules, &files_str, want_rationale) {
+    let want_relevance = run.rules.iter().any(|r| r.relevance.is_some());
+    let system = match template::render(
+        &run.template,
+        &run.rules,
+        &files_str,
+        want_rationale,
+        want_relevance,
+    ) {
         Ok(s) => s,
         // A render failure happens before any oneharness call, so there is no
         // command to trace.
@@ -379,6 +402,7 @@ fn execute(
         .map(|r| schema::SchemaRule {
             name: r.name.as_str(),
             rationale: r.rationale,
+            relevance: r.relevance.is_some(),
         })
         .collect();
     let schema = schema::build(&specs);
@@ -433,6 +457,7 @@ mod tests {
             judges: None,
             files: None,
             rationale: None,
+            relevance: None,
         }
     }
 
