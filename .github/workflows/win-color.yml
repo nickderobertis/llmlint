@@ -1,0 +1,42 @@
+name: Windows color
+
+# Proves the colorized report actually RENDERS on a real Windows console, not
+# just that ANSI bytes are emitted. On a legacy Windows console (no
+# virtual-terminal processing) bare ANSI prints as `<-[31m` garbage; llmlint
+# routes its report through anstream's `AutoStream` (enable VT, else translate to
+# Win32 console attribute calls) to avoid that. This is the only tier that
+# verifies the end result on a genuine console.
+#
+# It drives the release binary against the mock-oneharness fixture
+# (screenshots/fixture/) with `--color always` into a fresh console screen
+# buffer, then reads the buffer back and asserts the FAIL/PASS labels carry the
+# red/green foreground attributes and no raw ESC survives. No model, no network,
+# no cost — deterministic. The hermetic e2e + screenshot tiers cover ANSI
+# *emission* (platform-independent); this covers Windows *rendering*, so it is a
+# gate, not informational. A rendering regression turns this red.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: win-color-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  win-color:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Render-on-a-real-Windows-console check
+        shell: bash
+        run: just win-color
