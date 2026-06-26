@@ -14,12 +14,14 @@ embed_limit = 10             # embed images inline when <= N shots differ (0 dis
 
 # One card per command (`lint`, `init`, `config`, `doctor`), all scripted in
 # scripts/screenshots.sh. The `lint` card carries a `view` toggle the gallery
-# flips between the default report and the `-v` verbose report (which itemizes
-# PASS/SKIP too); the other cards have no toggles.
+# flips between three levels of detail: the default report, the `-v` verbose
+# report (which itemizes PASS/SKIP too), and the `-v` debug view (the oneharness
+# command + raw result per judge, normally on stderr). The other cards have no
+# toggles.
 [[toggle]]
 key = "view"
 label = "View"
-values = ["default", "verbose"]
+values = ["default", "verbose", "debug"]
 
 [guard]
 # Local pre-push guard (.githooks/pre-push): re-capture only when something that

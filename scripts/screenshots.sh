@@ -14,14 +14,16 @@
 # otherwise it does not.
 #
 # Scenes — one per command, so the gallery documents the whole CLI surface:
-#   lint    the default report a user sees (failing rule + locations + summary),
-#           with a `view` toggle the gallery flips between `default` and the
-#           `-v` `verbose` report (which itemizes PASS/SKIP too).
+#   lint    the report, with a `view` toggle the gallery flips between three
+#           levels of detail: `default` (failing rule + locations + summary),
+#           `verbose` (`-v`, itemizing PASS/SKIP too), and `debug` (the `-v`
+#           oneharness debug view from stderr: the exact command + result/judge).
 #   init    writing a starter config.
 #   config  the effective merged config + its sources, as JSON.
 #   doctor  the oneharness preflight check.
-# The `lint` scene is colorized (real ANSI through `--color always`); the other
-# three are plain text — freeze renders both the same way (`--language ansi`).
+# The `default`/`verbose` lint views are colorized (real ANSI through
+# `--color always`); `debug`, `init`, `config`, and `doctor` are plain text —
+# freeze renders both the same way (`--language ansi`).
 #
 # Output (screencomp's capture contract):
 #   $SHOTS_OUT/captures.json   index: {schema, shots:[{name,toggles,hash,image}]}
@@ -90,6 +92,16 @@ freeze_flags=(
   --padding "20,30"
   --margin 0
   --border.radius 8
+  # Fixed window width + line wrap so EVERY scene renders at the SAME pixel width.
+  # The gallery and README display each SVG at one fixed width, so a per-scene
+  # auto-width made the on-page text size wildly inconsistent — a narrow `init`
+  # scaled up huge, a wide `config` shrank. A constant width keeps the rendered
+  # text size uniform across cards; `--wrap` folds the few genuinely over-wide
+  # lines (the `-v` debug view's command + result JSON) at the same column budget
+  # so nothing overflows the box. 92 columns clears the widest real scene
+  # (`config`, 88 cols) with margin; 835px = 30+30 padding + 92*~8.42px/char.
+  --width 835
+  --wrap 92
 )
 
 rm -rf "$SHOTS_OUT"
@@ -132,11 +144,15 @@ render_scene() {
   cp "$SHOTS_OUT/$image" "$docs_dir/$image"
 }
 
-# --- lint: the report, default and `-v` verbose ------------------------------
+# --- lint: the report (default + `-v` verbose) and the `-v` debug view --------
 # `--color always` forces ANSI through the pipe; `--max-parallel 1` keeps the
 # multi-judge order stable so the per-judge lines render identically every run.
 # `-c` pins the fixture config so upward config discovery never picks up a parent
 # llmlint.yml from wherever the repo is checked out (CI).
+mock_run=(
+  "$llmlint_bin" -c "$fixture/llmlint.yml" --oneharness-bin "$mock_bin"
+  --color always --max-parallel 1
+)
 for view in default verbose; do
   verbosity=()
   [ "$view" = "verbose" ] && verbosity=(-v)
@@ -144,10 +160,28 @@ for view in default verbose; do
   ( cd "$fixture" \
       && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
          LLMLINT_MOCK_STATE="$tmp_state/state-$view" \
-         "$llmlint_bin" -c "$fixture/llmlint.yml" --oneharness-bin "$mock_bin" \
-         --color always --max-parallel 1 "${verbosity[@]}" ) >"$out" 2>/dev/null || true
+         "${mock_run[@]}" "${verbosity[@]}" ) >"$out" 2>/dev/null || true
   render_scene "lint" "{\"view\":\"$view\"}" "lint-$view.svg" "$out" 1
 done
+
+# `-v` also prints the oneharness debug view — the exact `oneharness run …`
+# command and the raw result per judge — to STDERR (the report on stdout stays
+# clean). That deeper view is the only thing the verbose level adds, so capture
+# it as its own `view=debug` scene. It is plain text (no ANSI) and carries three
+# values that vary by machine/run: the mock binary path, the generated `--schema`
+# tempfile, and `--cwd`. Normalize all three to fixed placeholders so the bytes
+# (and hash) are identical on every machine — exactly as `config`'s path is.
+out="$tmp_state/lint-debug.ansi"
+( cd "$fixture" \
+    && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
+       LLMLINT_MOCK_STATE="$tmp_state/state-debug" \
+       "${mock_run[@]}" -v ) >/dev/null 2>"$out" || true
+sed -i \
+  -e "s|$mock_bin|oneharness|g" \
+  -e "s|$fixture|.|g" \
+  -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
+  "$out"
+render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
 
 # --- init: write a starter config (in a clean dir so the message is stable) ---
 init_dir="$tmp_state/init"

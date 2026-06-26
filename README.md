@@ -26,6 +26,13 @@ for each judge — to **stderr**, so the report on stdout stays clean:
 
 ![llmlint's verbose report: green PASS, red FAIL, and yellow SKIP lines above the summary](docs/screenshots/lint-verbose.svg)
 
+<details>
+<summary>The <code>-v</code> debug view (oneharness command + raw result per judge, on stderr)</summary>
+
+![llmlint's -v oneharness debug view: the exact oneharness run command and the raw JSON result for each judge](docs/screenshots/lint-debug.svg)
+
+</details>
+
 > These are real captures of the CLI, rendered from the actual colorized output
 > by [`just screenshots`](screenshots/AGENTS.md) and gated by
 > [screencomp](https://github.com/nickderobertis/screencomp).

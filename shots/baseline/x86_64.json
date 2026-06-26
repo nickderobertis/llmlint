@@ -4,31 +4,38 @@
     {
       "name": "config",
       "toggles": {},
-      "hash": "e2c935520f9e381e0886d77bc17e54fb1e9e42601ae182c7e116c6fdfd917fb1"
+      "hash": "79bfa10bb54f3d8ce67c55696a463edd5071cbdd32f640eff1a234618a5211cc"
     },
     {
       "name": "doctor",
       "toggles": {},
-      "hash": "868d0a7420aa7f042f975e32d323430bcfe26fd27835d6b5825f3580959fff19"
+      "hash": "6280e7156cd82daafc3e854220cd32df2e5395f372b87795c34f63e07346c452"
     },
     {
       "name": "init",
       "toggles": {},
-      "hash": "54498de014ddd0aef8c8be988121b934517bba397e44d15f8cd1ff8ba471249f"
+      "hash": "1a3e18e3aee5667894df5c1f389a9dc5b49dc20dd69cc12b858c3c913a4c919b"
+    },
+    {
+      "name": "lint",
+      "toggles": {
+        "view": "debug"
+      },
+      "hash": "1a4b287f5add514a1bb19c51885d73950a0582bc2fa0f93165bffcc32c8b932d"
     },
     {
       "name": "lint",
       "toggles": {
         "view": "default"
       },
-      "hash": "9ff582302e5835cdbaabdf00f1c6f711c67b7fa63d06c962cfe6879b9f79c7d1"
+      "hash": "20d88749484a7fb4026d9e1c186adcf14eea68b39be3450dfd8e01c5aac190e7"
     },
     {
       "name": "lint",
       "toggles": {
         "view": "verbose"
       },
-      "hash": "29b7000f7daa4c43b0f219dfa9b1aca55719e8c5c56e7b26a740eb8cb5fdebcf"
+      "hash": "f79831acc7c2b119f893444a5411c304dea503bfbb4b65926a70375f7a4c37cc"
     }
   ]
 }
