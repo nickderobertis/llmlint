@@ -119,6 +119,14 @@ logic is also covered hermetically via `file://` plugins.
   `llmlint config` on a root -> mid -> leaf chain.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
+- Inline `llmlint: ignore[rule, ...] <reason>` (line-scoped) and
+  `llmlint: ignore-file[...] <reason>` (file-scoped) directives in target files
+  pass validation when well-formed (in any comment style; a prose mention of the
+  marker is not a directive), and the default prompt documents how a judge should
+  honor them. Their *structure* is enforced deterministically: a directive with
+  no brackets, an empty rule list, an unknown/invalid rule name, or no reason is a
+  clear exit-2 error located as `file:line:` — honoring them is the judge's job,
+  llmlint never suppresses anything itself.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`

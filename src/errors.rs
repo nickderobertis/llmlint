@@ -72,6 +72,13 @@ pub enum Error {
 
     #[error("template error: {0}")]
     Template(String),
+
+    #[error(
+        "invalid `llmlint: ignore` directive(s):\n{0}\n\
+         each must name specific configured rule(s) and a reason, e.g. \
+         `// llmlint: ignore[rule_name] why it is safe here`"
+    )]
+    IgnoreDirective(String),
 }
 
 impl Error {
@@ -150,6 +157,9 @@ mod tests {
         assert!(Error::Template("bad".into())
             .to_string()
             .contains("template error"));
+        assert!(Error::IgnoreDirective("src/a.rs:3: no reason".into())
+            .to_string()
+            .contains("invalid `llmlint: ignore` directive"));
         assert!(Error::UnknownFilter("no rule named \"x\"".into())
             .to_string()
             .contains("no rule named"));

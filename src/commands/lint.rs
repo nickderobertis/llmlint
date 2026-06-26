@@ -1,7 +1,7 @@
 //! `llmlint lint` (the default): load config, resolve files, plan judge runs,
 //! drive oneharness in parallel, aggregate votes, and report.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -12,7 +12,7 @@ use crate::domain::plan::{self, JudgeRun};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{RuleOutcome, RuleVerdict};
-use crate::domain::{schema, vote};
+use crate::domain::{ignore, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::{assets, configfs, files, oneharness};
 
@@ -78,6 +78,13 @@ pub fn run(args: LintArgs) -> Result<i32> {
             relevance,
         });
     }
+
+    // Reject malformed inline `llmlint: ignore` directives in the target files
+    // before spending any judge calls. Honoring well-formed ones is the judge's
+    // job (the default template tells it how); their *structure* is enforced here
+    // so a typo'd or reason-less ignore fails loudly instead of silently doing
+    // nothing.
+    check_ignore_directives(&cwd, &resolved, &config)?;
 
     // Rules whose rationale is disabled: llmlint is authoritative, so we drop any
     // rationale a harness returns anyway, keeping `--no-rationales` deterministic
@@ -262,6 +269,41 @@ fn select_rules<'a>(config: &'a Config, args: &LintArgs) -> Vec<&'a Rule> {
             agent_ok && name_ok
         })
         .collect()
+}
+
+/// Scan the resolved target files for inline `llmlint: ignore` directives and
+/// reject any whose structure is malformed (no rule named, an unknown/invalid
+/// rule, or no reason). Each target file is read once; non-UTF-8 files can't
+/// carry a directive and are skipped. A directive may reference any configured
+/// rule (not just the selected ones), so the known set is the full config.
+fn check_ignore_directives(
+    cwd: &Path,
+    resolved: &[plan::ResolvedRule],
+    config: &Config,
+) -> Result<()> {
+    let known: BTreeSet<&str> = config.rules.iter().map(|r| r.name.as_str()).collect();
+    let mut targets: BTreeSet<&Path> = BTreeSet::new();
+    for r in resolved {
+        for f in &r.files {
+            targets.insert(f.as_path());
+        }
+    }
+
+    let mut problems: Vec<String> = Vec::new();
+    for rel in targets {
+        let Some(text) = files::read_text(cwd, rel)? else {
+            continue;
+        };
+        for p in ignore::validate(&text, &known) {
+            problems.push(format!("  {}:{}: {}", to_slash(rel), p.line, p.message));
+        }
+    }
+
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::IgnoreDirective(problems.join("\n")))
+    }
 }
 
 fn resolve_files(

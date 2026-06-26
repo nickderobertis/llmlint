@@ -42,6 +42,28 @@ pithy — the fewest tokens that still cite the specific evidence (the file,
 symbol, or pattern) a reviewer needs to confirm the verdict at a glance. No
 restating the rule, no hedging, no preamble. One sentence is plenty.
 {% endif %}
+## Inline ignore directives
+
+A target file may suppress a specific rule at a specific place with an inline
+comment directive (in whatever comment syntax the file's language uses):
+
+    <comment> llmlint: ignore[rule_name, other_rule] <reason>
+
+Honor these as you read the files. When you would otherwise report a violation of
+a rule whose **exact name** appears in an applicable directive, do not report it:
+treat that rule as holding at that location and omit the violation.
+
+- `llmlint: ignore[...]` is **line-scoped** — it covers the line it sits on (a
+  trailing comment) or the line immediately below it (a comment on its own line).
+- `llmlint: ignore-file[...]` is **file-scoped** — it covers the whole file it
+  appears in.
+
+A directive only ever silences the rules it explicitly lists; it never affects a
+rule it does not name, and an unrelated comment never silences anything. If
+suppressing a rule's only would-be violations leaves none, that rule
+`holds = true`. Never invent or honor a directive that isn't actually present in
+the code.
+
 ## Target files
 
 {% for f in files %}- {{ f }}

@@ -306,6 +306,39 @@ build. The human report counts it in a `… not relevant` summary segment and, a
 count. For a multi-judge rule, relevance is decided by majority first, then the
 verdict is tallied over the judges that found it relevant.
 
+### Ignore directives
+
+Suppress a rule at a specific place with an inline comment in the target file —
+the same idea as `# noqa` / `// eslint-disable`, but **strict**: a directive must
+name the specific rule(s) and give a reason.
+
+```rust
+let q = format!("SELECT * FROM users WHERE id = {id}"); // llmlint: ignore[no_inline_sql] one-off migration, not user-facing
+```
+
+```python
+# llmlint: ignore-file[public_items_are_documented] generated stubs, documented upstream
+```
+
+- `llmlint: ignore[rule, ...] <reason>` is **line-scoped** — it covers the line it
+  sits on (a trailing comment) or the line right below it (a comment on its own line).
+- `llmlint: ignore-file[rule, ...] <reason>` is **file-scoped** — it covers the
+  whole file.
+
+Use whatever comment syntax the file's language uses (`//`, `#`, `/* … */`, `<!-- … -->`);
+llmlint keys off the reserved `llmlint: ignore` / `llmlint: ignore-file` prefix.
+
+**Two layers, by design.** llmlint deterministically validates each directive's
+*structure* before any judge runs — it must name **specific, configured** rule(s)
+and carry a **reason**. A directive with no brackets, an empty list, an unknown or
+misspelled rule, or no reason is a hard `file:line:` error (exit 2), so a typo
+fails loudly instead of silently suppressing nothing. Actually *honoring* a
+well-formed directive is the judge's job: the default prompt tells it to skip a
+named rule's violation at the directive's location. (A custom `prompt_template`
+should carry the same guidance if you want directives honored.) Because the
+prefix is reserved, a *linted* file that merely documents the feature must use
+real rule names or avoid the literal `llmlint: ignore[…]` form.
+
 ### Judges and voting
 
 `judges: N` runs a rule through `N` independent judges and takes the **majority**
