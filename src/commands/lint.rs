@@ -453,6 +453,7 @@ mod tests {
         Rule {
             name: name.into(),
             description: "true when ok; false otherwise.".into(),
+            r#override: false,
             agent: agent.map(Into::into),
             judges: None,
             files: None,
