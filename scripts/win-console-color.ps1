@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Verify that llmlint's colorized report actually RENDERS on a real Windows
-  console — not just that it emits ANSI bytes.
+  console - not just that it emits ANSI bytes.
 
 .DESCRIPTION
   The hermetic e2e suite and the screenshot tooling both assert that llmlint
@@ -13,8 +13,8 @@
   that end result on a genuine console.
 
   It drives the REAL release binary against the mock-oneharness fixture
-  (screenshots/fixture/) with `--color always` — no model, no network, no cost,
-  deterministic — into a freshly created console screen buffer, waits for it to
+  (screenshots/fixture/) with `--color always` - no model, no network, no cost,
+  deterministic - into a freshly created console screen buffer, waits for it to
   exit, then reads the buffer back cell-by-cell with `ReadConsoleOutput`. The
   signal is the per-cell *attributes*: the `FAIL` label must carry the red
   foreground, `PASS` the green one, and no cell may contain a literal ESC (0x1b).
@@ -22,7 +22,7 @@
   the cells and fails here; the AutoStream build renders real color and passes.
 
   Run from the repo root. Exits 0 on success, 1 on a rendering assertion
-  failure, and throws (non-zero) on a setup/Win32 error — never a silent skip.
+  failure, and throws (non-zero) on a setup/Win32 error - never a silent skip.
 #>
 [CmdletBinding()]
 param(
@@ -119,7 +119,7 @@ if ($buf -eq $invalid -or $buf -eq [IntPtr]::Zero) { throw "CreateConsoleScreenB
 # wires the process up (console attach, or explicit std-handle inheritance when a
 # stream is redirected).
 [void][Con]::SetHandleInformation($buf, [Con]::HANDLE_FLAG_INHERIT, [Con]::HANDLE_FLAG_INHERIT)
-[void][Con]::SetConsoleScreenBufferSize($buf, [Con+COORD]::new([short]120, [short]300))
+[void][Con]::SetConsoleScreenBufferSize($buf, [Con+COORD]::new([int16]120, [int16]300))
 [void][Con]::SetConsoleActiveScreenBuffer($buf)
 $oldStdOut = [Con]::GetStdHandle([Con]::STD_OUTPUT_HANDLE)
 [void][Con]::SetStdHandle([Con]::STD_OUTPUT_HANDLE, $buf)
@@ -160,15 +160,15 @@ $rows = [Math]::Min([int]$info.dwSize.Y, 60)
 
 $cells = New-Object 'Con+CHAR_INFO[]' ($width * $rows)
 $region = New-Object Con+SMALL_RECT
-$region.Left = 0; $region.Top = 0; $region.Right = [short]($width - 1); $region.Bottom = [short]($rows - 1)
-$ok = [Con]::ReadConsoleOutput($buf, $cells, [Con+COORD]::new([short]$width, [short]$rows), [Con+COORD]::new([short]0, [short]0), [ref]$region)
+$region.Left = 0; $region.Top = 0; $region.Right = [int16]($width - 1); $region.Bottom = [int16]($rows - 1)
+$ok = [Con]::ReadConsoleOutput($buf, $cells, [Con+COORD]::new([int16]$width, [int16]$rows), [Con+COORD]::new([int16]0, [int16]0), [ref]$region)
 if (-not $ok) { throw "ReadConsoleOutput failed: $(Win32Msg)" }
 
 # Win32 console foreground attribute bits.
 $RED = 0x4; $GREEN = 0x2; $BLUE = 0x1
 
 # Reconstruct the text grid and watch for any raw ESC byte (proof that ANSI was
-# NOT interpreted — it would render as visible escape garbage).
+# NOT interpreted - it would render as visible escape garbage).
 $lines = New-Object System.Collections.Generic.List[string]
 $escFound = $false
 for ($y = 0; $y -lt $rows; $y++) {
@@ -207,7 +207,7 @@ $lines | Where-Object { $_ -ne "" } | Select-Object -First 12 | ForEach-Object {
 
 $failed = $false
 if ($escFound) {
-    Write-Host "ASSERT FAIL: a raw ESC (0x1b) is present in the console buffer — ANSI was NOT interpreted; colors would render as escape garbage."
+    Write-Host "ASSERT FAIL: a raw ESC (0x1b) is present in the console buffer - ANSI was NOT interpreted; colors would render as escape garbage."
     $failed = $true
 }
 if (-not $failRed) {
@@ -225,5 +225,5 @@ if ($failed) {
     exit 1
 }
 
-Write-Host "OK: the Windows console rendered FAIL red and PASS green with no raw escapes — terminal coloring works on a real Windows console."
+Write-Host "OK: the Windows console rendered FAIL red and PASS green with no raw escapes - terminal coloring works on a real Windows console."
 exit 0
