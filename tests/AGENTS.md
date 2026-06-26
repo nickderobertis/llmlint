@@ -126,7 +126,14 @@ logic is also covered hermetically via `file://` plugins.
   honor them. Their *structure* is enforced deterministically: a directive with
   no brackets, an empty rule list, an unknown/invalid rule name, or no reason is a
   clear exit-2 error located as `file:line:` — honoring them is the judge's job,
-  llmlint never suppresses anything itself.
+  llmlint never suppresses anything itself. Scope and timing: only resolved
+  *target* files are scanned (a malformed directive in an excluded file is
+  ignored), the known-rule set is the full config (a directive may name a
+  configured rule this run didn't `--rule`-select), and every malformed directive
+  across files reports in one error *before* any judge runs (no wasted oneharness
+  call). The finer parsing variants (invalid rule name, unterminated bracket,
+  multiple problems on one directive, block-comment-terminator stripping,
+  binary-file skip) are unit-tested in `domain::ignore` / `io::files`.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`
