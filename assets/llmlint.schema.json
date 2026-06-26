@@ -220,9 +220,14 @@
           "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
         },
         "description": {
-          "description": "The invariant the judge evaluates. State clearly what is true (passes)\nand what is false (a violation).",
+          "description": "The invariant the judge evaluates. State clearly what is true (passes)\nand what is false (a violation). Required for a normal rule (an empty one\nis rejected); an `override` rule may omit it to inherit the base rule's\ntext, so the schema leaves it optional.",
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "default": ""
+        },
+        "override": {
+          "description": "Override a same-named rule contributed by a plugin: inherit all of the\nbase rule's fields, replacing only the ones set here. Without this, a\nduplicate rule name is an error. Set it on the consuming (nearer-root)\nconfig; the override is resolved into the base when the config loads.",
+          "type": "boolean"
         },
         "agent": {
           "description": "Name of the agent (under `agents`) this rule runs on. Defaults to the\n`default` agent.",
@@ -276,8 +281,7 @@
       },
       "additionalProperties": false,
       "required": [
-        "name",
-        "description"
+        "name"
       ]
     },
     "Relevance": {

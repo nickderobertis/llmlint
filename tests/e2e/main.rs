@@ -572,6 +572,73 @@ fn renamed_top_level_include_key_is_rejected() {
 }
 
 #[test]
+fn override_extends_a_plugin_rule_by_name() {
+    let p = Project::new();
+    // The plugin contributes `shared_rule` with full text and 1 judge.
+    p.write(
+        "team.yml",
+        &format!("rules:\n  - {{ name: shared_rule, description: \"{RULE}\", judges: 1 }}\n"),
+    );
+    // The root overrides it: bump judges, omit the description to inherit it.
+    p.write(
+        "llmlint.yml",
+        "version: 1\nplugins:\n  - ./team.yml\nrules:\n  \
+         - { name: shared_rule, override: true, judges: 3 }\n",
+    );
+    let out = p.bare().arg("config").output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rules = v["config"]["rules"].as_array().unwrap();
+    // Resolved to a single rule with the override's judges and the plugin's text.
+    let matches: Vec<&Value> = rules
+        .iter()
+        .filter(|r| r["name"] == "shared_rule")
+        .collect();
+    assert_eq!(matches.len(), 1, "override should collapse to one rule");
+    assert_eq!(matches[0]["judges"], 3);
+    assert_eq!(matches[0]["description"], RULE);
+    // The `override` flag is resolved away, not echoed back.
+    assert!(matches[0].get("override").is_none());
+}
+
+#[test]
+fn duplicate_rule_name_without_override_is_an_error() {
+    let p = Project::new();
+    p.write(
+        "team.yml",
+        &format!("rules:\n  - {{ name: shared_rule, description: \"{RULE}\" }}\n"),
+    );
+    // Re-declares `shared_rule` without `override` -> a clear exit-2 error.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nplugins:\n  - ./team.yml\nrules:\n  \
+             - {{ name: shared_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.bare()
+        .arg("config")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("duplicate rule name"))
+        .stderr(predicate::str::contains("override: true"));
+}
+
+#[test]
+fn override_without_a_base_rule_is_an_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nrules:\n  - { name: orphan, override: true }\n",
+    );
+    p.bare()
+        .arg("config")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no base rule"));
+}
+
+#[test]
 fn pinned_url_plugin_is_fetched_over_http_and_cached() {
     let p = Project::new();
     let server = HttpServer::serve(&format!(

@@ -116,10 +116,12 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
         )?;
     }
 
-    Ok(Loaded {
-        config: acc.unwrap_or_default(),
-        sources,
-    })
+    let mut config = acc.unwrap_or_default();
+    // After every plugin is folded in, layer `override` rules onto the base rule
+    // they extend (and surface a duplicate name that didn't opt into `override`).
+    crate::domain::config::resolve_overrides(&mut config)?;
+
+    Ok(Loaded { config, sources })
 }
 
 enum Node {
