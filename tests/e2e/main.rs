@@ -2091,6 +2091,53 @@ fn batch_size_splits_rules_into_separate_oneharness_calls() {
     );
 }
 
+#[test]
+fn batches_are_balanced_rather_than_packed() {
+    // 4 rules at batch_size 3: the fewest batches that respect the cap is 2, and
+    // those 2 are balanced into 2+2 — not packed into 3+1.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  default:\n    batch_size: 3\n\
+             rules:\n  \
+             - {{ name: rule_a, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_b, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_c, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_d, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts =
+        p.write_verdicts(r#"{"rule_a": true, "rule_b": true, "rule_c": true, "rule_d": true}"#);
+    let runlog = p.path().join("runlog");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success();
+
+    let calls = runlog_calls(&runlog);
+    assert_eq!(calls.len(), 2, "4 rules / cap 3 -> 2 batches: {calls:?}");
+    let mut sizes: Vec<usize> = calls.iter().map(|c| c.split(',').count()).collect();
+    sizes.sort_unstable();
+    assert_eq!(
+        sizes,
+        vec![2, 2],
+        "the 2 batches are balanced 2+2, not packed 3+1: {calls:?}"
+    );
+    // Every rule still appears exactly once across the batches.
+    let joined = calls.join(",");
+    for name in ["rule_a", "rule_b", "rule_c", "rule_d"] {
+        assert_eq!(
+            joined.matches(name).count(),
+            1,
+            "{name} should appear exactly once: {calls:?}"
+        );
+    }
+}
+
 /// Read the per-invocation run-log files the mock wrote, one entry per
 /// oneharness call (its comma-joined rule names).
 fn runlog_calls(dir: &Path) -> Vec<String> {

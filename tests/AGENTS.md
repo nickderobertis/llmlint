@@ -62,7 +62,9 @@ logic is also covered hermetically via `file://` plugins.
 - A custom top-level `prompt_template` drives the prompt, and an agent's
   `prompt_template` is appended for its rules (both asserted via the dumped prompt).
 - Rules for one agent share a single oneharness call by default; a per-agent
-  `batch_size` splits them into one call per batch.
+  `batch_size` splits them into one call per batch. When a split is needed the
+  batches are *balanced*, not packed: 4 rules at `batch_size` 3 run as 2+2 (the
+  fewest batches that respect the cap, sizes within one), never 3+1.
 - `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
   a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
