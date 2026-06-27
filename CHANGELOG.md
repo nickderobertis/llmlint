@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.17](https://github.com/nickderobertis/llmlint/compare/v0.2.16...v0.2.17) - 2026-06-27
+
+### Added
+
+- require oneharness >= 0.3.0 and run it in read-only mode ([#63](https://github.com/nickderobertis/llmlint/pull/63))
+
 ## [0.2.16](https://github.com/nickderobertis/llmlint/compare/v0.2.15...v0.2.16) - 2026-06-26
 
 ### Added
