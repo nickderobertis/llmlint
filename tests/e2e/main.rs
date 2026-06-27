@@ -940,18 +940,74 @@ fn config_command_prints_merged_config_and_sources() {
         .collect();
     assert!(names.contains(&"my_rule"));
     assert!(names.contains(&"name_matches_description"));
+}
 
-    // Per-item provenance traces each item to the source it came from: the
-    // root file declared `my_rule`, the bundled plugin declared its own rules.
-    let sources = &v["sources"];
-    let root_file = sources["rules"]["my_rule"][0].as_str().unwrap();
-    assert!(root_file.ends_with("llmlint.yml"), "got: {root_file}");
+#[test]
+fn config_command_traces_every_item_to_its_source() {
+    // One run exercising the whole `sources` block through the real binary:
+    // a local plugin file, a remote plugin URL, the root file, an agent, the
+    // top-level settings (first-writer-wins), and an `override` rule whose
+    // provenance lists both the override and the base it extends.
+    let p = Project::new();
+    // Local plugin: contributes a base rule, an agent, and a setting the root
+    // leaves unset (so the plugin is that setting's source).
+    p.write(
+        "team.yml",
+        &format!(
+            "oneharness:\n  model: team-model\nagents:\n  team_agent:\n    harness: claude-code\n\
+             rules:\n  - {{ name: team_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // Root: sets version + rationales, plugins the local file and the bundled
+    // URL, adds its own rule, and overrides the plugin's `team_rule`.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: false\nplugins:\n  - ./team.yml\n  - {CONFIG_LINT}\n\
+             rules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: team_rule, override: true, judges: 3 }}\n"
+        ),
+    );
+
+    let out = p.bare().arg("config").output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let s = &v["sources"];
+    let ends = |val: &Value, suffix: &str| {
+        let got = val.as_str().unwrap().to_string();
+        assert!(got.ends_with(suffix), "expected {suffix:?}, got {got:?}");
+    };
+
+    // Settings: root set version + rationales; only the plugin set the model.
+    ends(&s["settings"]["version"], "llmlint.yml");
+    ends(&s["settings"]["rationales"], "llmlint.yml");
+    ends(&s["settings"]["oneharness.model"], "team.yml");
+
+    // Agent declared only by the local plugin.
+    ends(&s["agents"]["team_agent"], "team.yml");
+
+    // Rule from the root file, and one from the remote plugin URL.
+    ends(&s["rules"]["root_rule"][0], "llmlint.yml");
     assert_eq!(
-        sources["rules"]["name_matches_description"][0]
-            .as_str()
-            .unwrap(),
+        s["rules"]["name_matches_description"][0].as_str().unwrap(),
         CONFIG_LINT
     );
+
+    // The override rule lists both sources, nearest-root (the override) first,
+    // then the base it extends — so a resolved rule traces to every file.
+    let team_sources = s["rules"]["team_rule"].as_array().unwrap();
+    assert_eq!(team_sources.len(), 2, "got: {team_sources:?}");
+    ends(&team_sources[0], "llmlint.yml");
+    ends(&team_sources[1], "team.yml");
+    // And the override actually resolved into the merged rule.
+    let team_rule = v["config"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "team_rule")
+        .unwrap();
+    assert_eq!(team_rule["judges"], 3);
+    assert_eq!(team_rule["description"].as_str().unwrap(), RULE);
 }
 
 #[test]

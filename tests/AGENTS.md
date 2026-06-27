@@ -129,8 +129,10 @@ logic is also covered hermetically via `file://` plugins.
   it is defined: the source of every rule (a base rule plus any `override`
   layers, nearest-root first), every agent, and every top-level setting
   (first-writer-wins, matching the merge) — so a rule can be traced to the file
-  to edit. Asserted via the `config` dump (root rule -> its file, bundled-plugin
-  rule -> its URL).
+  to edit. Asserted end to end over one root + local-plugin + bundled-URL run:
+  a root rule -> its file, a bundled-plugin rule -> its URL, a plugin-only agent
+  and setting -> the local plugin file, `version`/`rationales` -> the root file,
+  and an `override` rule -> both its override and base sources.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
