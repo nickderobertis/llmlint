@@ -9,7 +9,7 @@
     {
       "name": "doctor",
       "toggles": {},
-      "hash": "6280e7156cd82daafc3e854220cd32df2e5395f372b87795c34f63e07346c452"
+      "hash": "dcc3e705b1bf6521d4f2247d2e446473de9a46d24fbe8feb8c6bdec2e6aa070f"
     },
     {
       "name": "init",
@@ -21,7 +21,7 @@
       "toggles": {
         "view": "debug"
       },
-      "hash": "8ba8f70fef8e6ac9d59b27e6e1c1f6da32172de9105376c5a935f73d42b33739"
+      "hash": "f95d5471317bd435c1e667b60c2964ff116c602cfb05d31f37a3ba290363ecb5"
     },
     {
       "name": "lint",
