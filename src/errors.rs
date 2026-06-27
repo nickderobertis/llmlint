@@ -64,6 +64,13 @@ pub enum Error {
     )]
     OneharnessNotFound(String),
 
+    #[error(
+        "oneharness {found} is too old; llmlint requires oneharness >= {required} \
+         for read-only mode (the agent reads but never edits files). Upgrade \
+         oneharness (https://github.com/nickderobertis/oneharness)."
+    )]
+    OneharnessTooOld { found: String, required: String },
+
     #[error("oneharness run failed: {0}")]
     Oneharness(String),
 
@@ -120,6 +127,14 @@ mod tests {
         assert!(Error::OneharnessNotFound("oneharness".into())
             .to_string()
             .contains("not found"));
+        let too_old = Error::OneharnessTooOld {
+            found: "oneharness 0.2.529 (mock)".into(),
+            required: "0.3.0".into(),
+        }
+        .to_string();
+        assert!(too_old.contains("too old"), "got: {too_old}");
+        assert!(too_old.contains("0.3.0"), "got: {too_old}");
+        assert!(too_old.contains("read-only mode"), "got: {too_old}");
         assert!(Error::ConfigNotFound {
             names: "llmlint.yml".into(),
             dir: "/x".into()

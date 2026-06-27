@@ -23,6 +23,45 @@ use crate::errors::{io_err, Error, Result};
 /// Default binary name, resolved on `PATH`.
 pub const DEFAULT_BIN: &str = "oneharness";
 
+/// Minimum oneharness version llmlint requires, as `(major, minor, patch)`.
+/// Read-only mode (`--mode read-only`) — which guarantees the harness reads but
+/// never edits target files — landed in oneharness 0.3.0, so an older binary
+/// can't honor llmlint's "never make edits" contract and is rejected up front.
+pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 0);
+
+/// Render a `(major, minor, patch)` version as `major.minor.patch`.
+fn format_version((major, minor, patch): (u64, u64, u64)) -> String {
+    format!("{major}.{minor}.{patch}")
+}
+
+/// Extract `(major, minor, patch)` from a `oneharness --version` line such as
+/// `oneharness 0.3.0` or `oneharness 0.3.1 (abc)`. The first whitespace token
+/// that starts with a `major.minor[.patch]` numeric run wins; a missing patch
+/// defaults to 0 and any pre-release/build suffix is ignored. Returns `None`
+/// when no such token is present.
+fn parse_semver(version_line: &str) -> Option<(u64, u64, u64)> {
+    for token in version_line.split_whitespace() {
+        // Tolerate a leading `v` (e.g. `v0.3.0`).
+        let token = token.strip_prefix('v').unwrap_or(token);
+        // Take the leading numeric-dotted run, dropping any suffix like `-rc1`.
+        let core: String = token
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        let parts: Vec<&str> = core.split('.').filter(|p| !p.is_empty()).collect();
+        // Need at least `major.minor` to call it a version (so the bare program
+        // name and stray single integers don't masquerade as one).
+        if parts.len() < 2 {
+            continue;
+        }
+        let nums: Option<Vec<u64>> = parts.iter().map(|p| p.parse().ok()).collect();
+        if let Some(nums) = nums {
+            return Some((nums[0], nums[1], nums.get(2).copied().unwrap_or(0)));
+        }
+    }
+    None
+}
+
 /// A handle to the oneharness binary (existence is checked lazily on use).
 pub struct Client {
     pub bin: PathBuf,
@@ -108,6 +147,26 @@ impl Client {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
+    /// Confirm the installed oneharness satisfies [`MIN_VERSION`], returning its
+    /// raw `--version` string on success. A binary older than the minimum (or
+    /// one whose version can't be parsed) is rejected, since read-only mode —
+    /// llmlint's guarantee that the harness never edits files — requires it.
+    pub fn check_min_version(&self) -> Result<String> {
+        let raw = self.version()?;
+        match parse_semver(&raw) {
+            Some(v) if v >= MIN_VERSION => Ok(raw),
+            Some(_) => Err(Error::OneharnessTooOld {
+                found: raw,
+                required: format_version(MIN_VERSION),
+            }),
+            None => Err(Error::Oneharness(format!(
+                "could not determine the oneharness version from {raw:?}; llmlint \
+                 requires oneharness >= {} for read-only mode",
+                format_version(MIN_VERSION)
+            ))),
+        }
+    }
+
     /// Run one judge and return its per-rule verdicts. Convenience wrapper over
     /// [`Client::run_with_trace`] that discards the debug trace.
     pub fn run(&self, req: &RunRequest) -> Result<BTreeMap<String, RuleVerdict>> {
@@ -162,6 +221,11 @@ impl Client {
             req.cwd.as_os_str().to_os_string(),
             "--timeout".into(),
             req.timeout_secs.to_string().into(),
+            // llmlint is a judge, never an editor: run the harness in read-only
+            // mode so it may read target files but can't edit them or run
+            // commands. (Requires oneharness >= MIN_VERSION; checked up front.)
+            "--mode".into(),
+            "read-only".into(),
             "--require-available".into(),
             "--compact".into(),
         ];
@@ -383,6 +447,46 @@ mod tests {
         assert!(trace.exit_code.is_none());
         assert!(trace.stdout.is_empty());
         assert!(matches!(result, Err(Error::OneharnessNotFound(_))));
+    }
+
+    #[test]
+    fn parse_semver_reads_major_minor_patch() {
+        assert_eq!(parse_semver("oneharness 0.3.0"), Some((0, 3, 0)));
+        assert_eq!(parse_semver("oneharness 0.3.1 (abc)"), Some((0, 3, 1)));
+        assert_eq!(parse_semver("oneharness 0.2.529 (mock)"), Some((0, 2, 529)));
+        assert_eq!(parse_semver("oneharness 1.2.3"), Some((1, 2, 3)));
+        // A missing patch defaults to 0; a leading `v` and a pre-release suffix
+        // are tolerated.
+        assert_eq!(parse_semver("oneharness 0.4"), Some((0, 4, 0)));
+        assert_eq!(parse_semver("v0.5.0"), Some((0, 5, 0)));
+        assert_eq!(parse_semver("oneharness 0.3.0-rc1"), Some((0, 3, 0)));
+    }
+
+    #[test]
+    fn parse_semver_rejects_non_versions() {
+        assert_eq!(parse_semver("oneharness"), None);
+        assert_eq!(parse_semver(""), None);
+        // A bare integer is not a version (needs at least major.minor).
+        assert_eq!(parse_semver("oneharness 7"), None);
+    }
+
+    #[test]
+    fn min_version_comparison_uses_tuple_order() {
+        // Sanity-check the ordering the `check_min_version` gate relies on.
+        assert!((0, 3, 0) >= MIN_VERSION);
+        assert!((0, 3, 1) >= MIN_VERSION);
+        assert!((1, 0, 0) >= MIN_VERSION);
+        assert!((0, 2, 529) < MIN_VERSION);
+        assert!((0, 2, 9) < MIN_VERSION);
+    }
+
+    #[test]
+    fn check_min_version_errors_when_binary_missing() {
+        let client = Client::new(Some("definitely-not-a-real-binary-xyz"));
+        assert!(matches!(
+            client.check_min_version(),
+            Err(Error::OneharnessNotFound(_))
+        ));
     }
 
     #[test]

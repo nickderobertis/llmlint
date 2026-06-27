@@ -133,7 +133,16 @@ the rendered template via `--system`, a generated JSON Schema via `--schema`
 `structured` value. **oneharness is a runtime prerequisite** — found on PATH,
 overridable via `--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config;
 `llmlint doctor` checks it. The harness reads target files on-demand with its own
-tools (bypass mode is oneharness's default).
+tools.
+
+- **Read-only mode + minimum version:** llmlint is a judge, never an editor, so
+  every `run` passes `--mode read-only` — the harness may read target files but
+  can't edit them or run commands. That mode requires **oneharness >= 0.3.0**
+  (`oneharness::MIN_VERSION`); both `lint` (pre-flight, once per run) and `doctor`
+  parse `oneharness --version` and fail with a clear exit-2 error when the binary
+  is older (or its version can't be parsed) rather than letting `--mode read-only`
+  blow up mid-run. Bump `MIN_VERSION` in `src/io/oneharness.rs` (and the mock's
+  default in `tests/support/mock_oneharness.rs`) together when the floor moves.
 
 - **Verdict polarity (convention):** rules are authored as positive invariants.
   `holds=true` = property holds (pass); `holds=false` = **violation** (fail).

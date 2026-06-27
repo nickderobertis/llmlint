@@ -14,6 +14,8 @@
 //! - `LLMLINT_MOCK_FAIL_SCHEMA=1` — emit `schema_valid=false` (validation fail).
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
+//! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
+//!   (default `0.3.0`), so a test can drive llmlint's minimum-version gate.
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
@@ -166,9 +168,12 @@ fn next_count(rule: &str) -> usize {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    // `llmlint doctor` calls `<bin> --version`.
+    // `llmlint doctor` (and lint's pre-flight version gate) call `<bin>
+    // --version`. Default to a version that satisfies llmlint's minimum;
+    // `LLMLINT_MOCK_VERSION` overrides it so a test can drive the too-old path.
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("oneharness 0.2.529 (mock)");
+        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.0".into());
+        println!("oneharness {version} (mock)");
         return;
     }
 

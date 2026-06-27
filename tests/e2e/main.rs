@@ -956,6 +956,46 @@ fn doctor_fails_clearly_when_oneharness_is_missing() {
         .stderr(predicate::str::contains("oneharness not found"));
 }
 
+#[test]
+fn doctor_fails_clearly_when_oneharness_is_too_old() {
+    // A pre-0.3.0 oneharness can't run read-only mode, so doctor rejects it.
+    let p = Project::new();
+    p.bare()
+        .arg("doctor")
+        .env("LLMLINT_ONEHARNESS_BIN", mock_path())
+        .env("LLMLINT_MOCK_VERSION", "0.2.9")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("too old"))
+        .stderr(predicate::str::contains("0.3.0"));
+}
+
+#[test]
+fn lint_fails_clearly_when_oneharness_is_too_old() {
+    // The pre-flight version gate stops the run before any judge call.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: old_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let runlog = p.path().join("runlog");
+    p.lint()
+        .env("LLMLINT_MOCK_VERSION", "0.2.529")
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("too old"));
+    // The gate fires before planning, so no judge ran.
+    assert!(
+        !runlog.exists() || fs::read_dir(&runlog).unwrap().count() == 0,
+        "no oneharness `run` should happen when the version gate fails"
+    );
+}
+
 // ---- failure / recovery ---------------------------------------------------
 
 #[test]
@@ -1361,6 +1401,35 @@ fn harness_is_omitted_when_unset_and_forwarded_when_set() {
         .nth(1)
         .expect("--harness flag should be present for a pinned agent");
     assert_eq!(harness_val, "codex");
+}
+
+#[test]
+fn oneharness_runs_in_read_only_mode() {
+    // llmlint is a judge, never an editor: every `run` must carry
+    // `--mode read-only` so the harness can read target files but not edit them.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: ro_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"ro_rule": true}"#);
+    let args_dump = p.path().join("ro-args.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+    let dumped = fs::read_to_string(&args_dump).unwrap();
+    let mode = dumped
+        .lines()
+        .skip_while(|l| *l != "--mode")
+        .nth(1)
+        .expect("--mode flag should be forwarded on every run");
+    assert_eq!(mode, "read-only");
 }
 
 #[test]

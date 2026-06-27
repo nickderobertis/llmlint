@@ -125,6 +125,12 @@ logic is also covered hermetically via `file://` plugins.
   `llmlint config` on a root -> mid -> leaf chain.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
+- Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
+  via the dumped arg vector. The minimum-oneharness-version gate (>= 0.3.0,
+  needed for read-only mode) is exercised both ways: `doctor` and `lint` reject a
+  too-old oneharness with a clear exit-2 "too old" error (the mock's reported
+  version is driven by `LLMLINT_MOCK_VERSION`), and `lint`'s gate fires *before*
+  any judge runs (no oneharness `run` is recorded).
 - Inline `llmlint: ignore[rule, ...] <reason>` (line-scoped),
   `llmlint: ignore-file[...] <reason>` (file-scoped), and the block-scoped pair
   `llmlint: ignore-block[...] <reason>` / `llmlint: ignore-end[...]` (the close
@@ -152,7 +158,8 @@ logic is also covered hermetically via `file://` plugins.
   modeline pointing at the published config schema (`assets/llmlint.schema.json`,
   pinned to `domain::config_schema::build()` so it can't drift from the model).
 - `config` prints the merged config + sources and rejects an invalid config;
-  `doctor` reports the oneharness version and fails clearly when it is missing.
+  `doctor` reports the oneharness version and fails clearly when it is missing or
+  older than the minimum required for read-only mode.
 - `--format json` is a stable machine contract: a passing run lists rule names; a
   failing run carries `summary` counts and located `violations` (exit 1); a
   run-error carries the `errors` array (exit 2).

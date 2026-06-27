@@ -107,6 +107,10 @@ pub fn run(args: LintArgs) -> Result<i32> {
         })
         .or_else(|| config.oneharness.bin.clone());
     let client = oneharness::Client::new(bin.as_deref());
+    // Pre-flight: read-only mode (so the harness never edits target files)
+    // requires oneharness >= MIN_VERSION. Check once up front and fail with a
+    // clear message rather than letting every judge's `--mode read-only` error.
+    client.check_min_version()?;
     let timeout = args
         .timeout
         .or(config.oneharness.timeout)
