@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::domain::config::Config;
+use crate::domain::config::{Config, Provenance};
 use crate::domain::version::VersionReq;
 use crate::errors::{io_err, Error, Result};
 use crate::io::plugins::{self, ResolveOpts};
@@ -31,6 +31,10 @@ pub const CONFIG_NAMES: &[&str] = &[
 pub struct Loaded {
     pub config: Config,
     pub sources: Vec<String>,
+    /// Per-item provenance: which source contributed each rule, agent, and
+    /// top-level setting in `config`. Lets `llmlint config` show where an item
+    /// is defined, so a rule can be traced to the file that must be edited.
+    pub provenance: Provenance,
 }
 
 /// Walk up from `start` to the filesystem root, returning the nearest config.
@@ -103,6 +107,7 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     let opts = ResolveOpts::from_env();
     let mut visited: BTreeSet<String> = BTreeSet::new();
     let mut sources: Vec<String> = Vec::new();
+    let mut provenance = Provenance::default();
     let mut acc: Option<Config> = None;
 
     for path in &entry_paths {
@@ -112,6 +117,7 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
             &opts,
             &mut visited,
             &mut sources,
+            &mut provenance,
             &mut acc,
         )?;
     }
@@ -121,7 +127,11 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     // they extend (and surface a duplicate name that didn't opt into `override`).
     crate::domain::config::resolve_overrides(&mut config)?;
 
-    Ok(Loaded { config, sources })
+    Ok(Loaded {
+        config,
+        sources,
+        provenance,
+    })
 }
 
 enum Node {
@@ -192,12 +202,14 @@ impl Node {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_node(
     node: Node,
     depth: usize,
     opts: &ResolveOpts,
     visited: &mut BTreeSet<String>,
     sources: &mut Vec<String>,
+    provenance: &mut Provenance,
     acc: &mut Option<Config>,
 ) -> Result<()> {
     // Entry files are depth 0; their `plugins` are depth 1, and so on. Bound the
@@ -215,8 +227,13 @@ fn load_node(
     sources.push(key);
 
     let (text, base_dir) = node.read(opts)?;
-    let cfg = parse(&text, &node.origin())?;
+    let origin = node.origin();
+    let cfg = parse(&text, &origin)?;
     let child_specs = cfg.plugins.clone();
+
+    // Record provenance in merge order (before folding in), so first-writer-wins
+    // entries match the value that survives the merge.
+    provenance.record(&cfg, &origin);
 
     match acc {
         None => *acc = Some(cfg),
@@ -225,7 +242,7 @@ fn load_node(
 
     for spec in child_specs {
         let child = Node::resolve(&spec, base_dir.as_deref())?;
-        load_node(child, depth + 1, opts, visited, sources, acc)?;
+        load_node(child, depth + 1, opts, visited, sources, provenance, acc)?;
     }
     Ok(())
 }
@@ -422,6 +439,62 @@ rules:
         // only leaf set these -> they fill through.
         assert_eq!(cfg.oneharness.timeout, Some(7));
         assert_eq!(cfg.prompt_template.as_deref(), Some("leaf-tmpl"));
+    }
+
+    #[test]
+    fn provenance_traces_each_item_to_its_source() {
+        // root -> mid -> leaf. Each contributes rules/agents/settings; provenance
+        // must name the file each item came from, with first-writer-wins for
+        // settings/agents and every source for a rule (base + override).
+        let desc = "    description: \"true when ok; false otherwise.\"\n";
+        let dir = tempdir().unwrap();
+        let leaf = dir.path().join("leaf.yml");
+        fs::write(
+            &leaf,
+            format!(
+                "rationales: true\nagents:\n  shared:\n    harness: codex\nrules:\n  \
+                 - name: leaf_rule\n{desc}  - name: shared_rule\n{desc}"
+            ),
+        )
+        .unwrap();
+        let mid = dir.path().join("mid.yml");
+        fs::write(
+            &mid,
+            format!(
+                "plugins:\n  - ./leaf.yml\noneharness:\n  model: mid-model\nagents:\n  \
+                 shared:\n    harness: claude-code\nrules:\n  - name: mid_rule\n{desc}"
+            ),
+        )
+        .unwrap();
+        let root = dir.path().join("llmlint.yml");
+        fs::write(
+            &root,
+            format!(
+                "version: 1\nplugins:\n  - ./mid.yml\nrationales: false\nrules:\n  \
+                 - name: root_rule\n{desc}  - name: shared_rule\n    override: true\n    judges: 3\n"
+            ),
+        )
+        .unwrap();
+
+        let prov = load(std::slice::from_ref(&root), dir.path())
+            .unwrap()
+            .provenance;
+        let key = |p: &Path| normalize(p).display().to_string();
+
+        // Settings: root set version + rationales; only mid set the model; only
+        // the leaf set rationales originally but root wins (first writer).
+        assert_eq!(prov.settings["version"], key(&root));
+        assert_eq!(prov.settings["rationales"], key(&root));
+        assert_eq!(prov.settings["oneharness.model"], key(&mid));
+
+        // Agent declared by both mid and leaf -> nearest-root (mid) wins.
+        assert_eq!(prov.agents["shared"], key(&mid));
+
+        // Each rule names its source; the base + override rule lists both, root first.
+        assert_eq!(prov.rules["root_rule"], vec![key(&root)]);
+        assert_eq!(prov.rules["mid_rule"], vec![key(&mid)]);
+        assert_eq!(prov.rules["leaf_rule"], vec![key(&leaf)]);
+        assert_eq!(prov.rules["shared_rule"], vec![key(&root), key(&leaf)]);
     }
 
     #[test]

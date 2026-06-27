@@ -125,6 +125,12 @@ logic is also covered hermetically via `file://` plugins.
   top-level scalars (template, files, oneharness, rationales) and a deeper plugin
   only fills what shallower configs left unset — asserted end to end via
   `llmlint config` on a root -> mid -> leaf chain.
+- `llmlint config` also emits a `sources` block tracing each item back to where
+  it is defined: the source of every rule (a base rule plus any `override`
+  layers, nearest-root first), every agent, and every top-level setting
+  (first-writer-wins, matching the merge) — so a rule can be traced to the file
+  to edit. Asserted via the `config` dump (root rule -> its file, bundled-plugin
+  rule -> its URL).
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted

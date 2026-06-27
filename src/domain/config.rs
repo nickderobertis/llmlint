@@ -287,6 +287,77 @@ impl Config {
     }
 }
 
+/// Where each item in the merged config came from — built as configs are folded
+/// together during load (see [`crate::io::configfs::load`]), so a rule, agent,
+/// or setting in the merged result can be traced back to the file (or plugin
+/// URL) that contributed it. The source strings are exactly the keys in
+/// [`crate::io::configfs::Loaded::sources`].
+///
+/// Provenance mirrors the merge precedence ([`Config::merge_plugin`]): a scalar
+/// setting or an agent records the **first** (nearest-root) source that set it —
+/// the one that wins the merge — while a rule records **every** source that
+/// declared its name, in load order (nearest-root first), so a base rule and its
+/// `override` layers are all visible.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct Provenance {
+    /// Source of each top-level setting that was set, by field name (`version`,
+    /// `prompt_template`, `files`, `rationales`, and the `oneharness.*`
+    /// sub-fields). Only fields actually set by some config appear.
+    pub settings: BTreeMap<String, String>,
+    /// Source of each agent, by name.
+    pub agents: BTreeMap<String, String>,
+    /// Sources that declared each rule name, in load order (nearest-root first):
+    /// a base rule plus any `override` layers extending it.
+    pub rules: BTreeMap<String, Vec<String>>,
+}
+
+impl Provenance {
+    /// Record `cfg`'s contributions as coming from `origin`, applying the same
+    /// precedence as the merge: settings and agents keep the first (nearest-root)
+    /// writer, while rules accumulate every occurrence in load order.
+    ///
+    /// Call once per config as it is folded in, in merge order, so the
+    /// first-writer-wins entries line up with which value actually survives the
+    /// merge (see [`Config::merge_plugin`]).
+    pub fn record(&mut self, cfg: &Config, origin: &str) {
+        // Each top-level setting, paired with whether this config sets it. The
+        // predicates match the merge's "is unset" tests, so the recorded source
+        // is the one whose value wins.
+        let settings: &[(&str, bool)] = &[
+            ("version", cfg.version.is_some()),
+            ("prompt_template", cfg.prompt_template.is_some()),
+            ("files", !cfg.files.is_empty()),
+            ("oneharness.config", !cfg.oneharness.config.is_empty()),
+            ("oneharness.bin", cfg.oneharness.bin.is_some()),
+            ("oneharness.model", cfg.oneharness.model.is_some()),
+            ("oneharness.timeout", cfg.oneharness.timeout.is_some()),
+            (
+                "oneharness.schema_max_retries",
+                cfg.oneharness.schema_max_retries.is_some(),
+            ),
+            ("rationales", cfg.rationales.is_some()),
+        ];
+        for (key, present) in settings {
+            if *present {
+                self.settings
+                    .entry((*key).to_string())
+                    .or_insert_with(|| origin.to_string());
+            }
+        }
+        for name in cfg.agents.keys() {
+            self.agents
+                .entry(name.clone())
+                .or_insert_with(|| origin.to_string());
+        }
+        for rule in &cfg.rules {
+            self.rules
+                .entry(rule.name.clone())
+                .or_default()
+                .push(origin.to_string());
+        }
+    }
+}
+
 /// Layer `override` rules onto the base rule they extend, in place. For each
 /// rule name, the single rule declared without `override` is the *base*; rules
 /// marked `override` inherit every field they leave unset from it, replacing
@@ -800,6 +871,58 @@ mod tests {
         let names: Vec<&str> = c.rules.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["a", "b", "c"]);
         assert_eq!(c.rules[1].judges, Some(3));
+    }
+
+    #[test]
+    fn provenance_records_first_writer_for_settings_and_agents_all_for_rules() {
+        let mut prov = Provenance::default();
+
+        let mut near = Config {
+            version: Some(Version::parse("1").unwrap()),
+            rationales: Some(false),
+            files: FileFilter {
+                include: vec!["src/**".into()],
+                exclude: vec![],
+            },
+            rules: vec![rule("a"), rule("shared")],
+            ..Default::default()
+        };
+        near.oneharness.model = Some("opus".into());
+        near.oneharness.config = vec!["oh.yml".into()];
+        near.agents.insert("g".into(), Agent::default());
+
+        let mut far = Config {
+            // Clashes with `near` on version/model/agent -> near (recorded first) wins.
+            version: Some(Version::parse("2").unwrap()),
+            prompt_template: Some("t".into()), // gap near left open -> far is the source
+            rules: vec![rule("b"), rule("shared")],
+            ..Default::default()
+        };
+        far.oneharness.model = Some("haiku".into());
+        far.oneharness.timeout = Some(9); // only far set it
+        far.oneharness.schema_max_retries = Some(2);
+        far.agents.insert("g".into(), Agent::default());
+
+        prov.record(&near, "near.yml");
+        prov.record(&far, "far.yml");
+
+        // Settings + agents: first (nearest-root) writer wins.
+        assert_eq!(prov.settings["version"], "near.yml");
+        assert_eq!(prov.settings["rationales"], "near.yml");
+        assert_eq!(prov.settings["files"], "near.yml");
+        assert_eq!(prov.settings["oneharness.model"], "near.yml");
+        assert_eq!(prov.settings["oneharness.config"], "near.yml");
+        assert_eq!(prov.settings["prompt_template"], "far.yml");
+        assert_eq!(prov.settings["oneharness.timeout"], "far.yml");
+        assert_eq!(prov.settings["oneharness.schema_max_retries"], "far.yml");
+        assert_eq!(prov.agents["g"], "near.yml");
+        // A setting nobody set is absent (no `oneharness.bin` was given).
+        assert!(!prov.settings.contains_key("oneharness.bin"));
+
+        // Rules: every source that declared the name, in record order.
+        assert_eq!(prov.rules["a"], vec!["near.yml"]);
+        assert_eq!(prov.rules["b"], vec!["far.yml"]);
+        assert_eq!(prov.rules["shared"], vec!["near.yml", "far.yml"]);
     }
 
     #[test]

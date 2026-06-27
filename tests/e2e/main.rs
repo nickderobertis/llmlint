@@ -940,6 +940,18 @@ fn config_command_prints_merged_config_and_sources() {
         .collect();
     assert!(names.contains(&"my_rule"));
     assert!(names.contains(&"name_matches_description"));
+
+    // Per-item provenance traces each item to the source it came from: the
+    // root file declared `my_rule`, the bundled plugin declared its own rules.
+    let sources = &v["sources"];
+    let root_file = sources["rules"]["my_rule"][0].as_str().unwrap();
+    assert!(root_file.ends_with("llmlint.yml"), "got: {root_file}");
+    assert_eq!(
+        sources["rules"]["name_matches_description"][0]
+            .as_str()
+            .unwrap(),
+        CONFIG_LINT
+    );
 }
 
 #[test]
