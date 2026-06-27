@@ -971,6 +971,21 @@ fn doctor_fails_clearly_when_oneharness_is_too_old() {
 }
 
 #[test]
+fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
+    // A `--version` output with no numeric version can't be checked against the
+    // minimum, so the read-only-mode requirement can't be honored: hard error.
+    let p = Project::new();
+    p.bare()
+        .arg("doctor")
+        .env("LLMLINT_ONEHARNESS_BIN", mock_path())
+        .env("LLMLINT_MOCK_VERSION", "unreleased")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("could not determine"))
+        .stderr(predicate::str::contains("0.3.0"));
+}
+
+#[test]
 fn lint_fails_clearly_when_oneharness_is_too_old() {
     // The pre-flight version gate stops the run before any judge call.
     let p = Project::new();

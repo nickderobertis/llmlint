@@ -129,8 +129,9 @@ logic is also covered hermetically via `file://` plugins.
   via the dumped arg vector. The minimum-oneharness-version gate (>= 0.3.0,
   needed for read-only mode) is exercised both ways: `doctor` and `lint` reject a
   too-old oneharness with a clear exit-2 "too old" error (the mock's reported
-  version is driven by `LLMLINT_MOCK_VERSION`), and `lint`'s gate fires *before*
-  any judge runs (no oneharness `run` is recorded).
+  version is driven by `LLMLINT_MOCK_VERSION`), a version string with no parseable
+  number is a distinct exit-2 "could not determine" error, and `lint`'s gate
+  fires *before* any judge runs (no oneharness `run` is recorded).
 - Inline `llmlint: ignore[rule, ...] <reason>` (line-scoped),
   `llmlint: ignore-file[...] <reason>` (file-scoped), and the block-scoped pair
   `llmlint: ignore-block[...] <reason>` / `llmlint: ignore-end[...]` (the close
