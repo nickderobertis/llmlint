@@ -160,10 +160,13 @@ logic is also covered hermetically via `file://` plugins.
   harness yet validates well-formed directives (exit 0, "ignore directives OK")
   and rejects malformed ones (exit 2, located `file:line:`, all problems in one
   error) — proving it belongs in the fast static-check loop. It shares `lint`'s
-  file resolution: explicit `FILES` scope the scan (a malformed directive in an
-  unlisted file isn't caught), the known-rule set is the full config, `--cwd` is
-  the discovery + glob root, and an invalid config is a clear exit-2 error before
-  any scan.
+  file resolution, asserted for parity: explicit `FILES` scope the scan (a
+  malformed directive in an unlisted file isn't caught), a `relevance: false`
+  rule's files are skipped just as the lint pre-flight skips them, a binary
+  (non-UTF-8) file in the target set is skipped not failed, the known-rule set
+  is the full config, `-c/--config` replaces upward discovery, `--cwd` is the
+  discovery + glob root, and an invalid config is a clear exit-2 error before any
+  scan.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`

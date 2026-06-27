@@ -2579,6 +2579,58 @@ fn check_ignores_rejects_an_invalid_config() {
 }
 
 #[test]
+fn check_ignores_honors_explicit_config_flag() {
+    // `-c/--config` replaces upward discovery: with no `llmlint.yml` at the root,
+    // the run only succeeds because the custom-named config is loaded explicitly.
+    let p = Project::new();
+    p.write(
+        "custom.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// llmlint: ignore[no_todo] handled here\n");
+    p.check_ignores()
+        .arg("--config")
+        .arg("custom.yml")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ignore directives OK"));
+}
+
+#[test]
+fn check_ignores_skips_files_of_a_disabled_rule_like_lint() {
+    // Parity with the lint pre-flight: a `relevance: false` rule never runs, so
+    // its target files are not scanned. A malformed directive reachable only
+    // through the disabled rule is therefore not caught — were the rule enabled,
+    // this would be an exit-2 error.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: active, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: off_rule, description: \"{RULE}\", relevance: false, \
+                files: {{ include: [\"legacy/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.write("legacy/old.rs", "// llmlint: ignore[active]\n");
+    p.check_ignores().assert().success();
+}
+
+#[test]
+fn check_ignores_skips_binary_files_in_the_target_set() {
+    // A non-UTF-8 file matched by the globs can't carry a text directive; it is
+    // skipped rather than failing the scan, so a real directive elsewhere still
+    // validates and the run is clean.
+    let p = ignore_project("// llmlint: ignore[no_todo] handled here\n");
+    fs::write(p.path().join("src/blob.bin"), [0xff, 0xfe, 0x00, 0xff]).unwrap();
+    p.check_ignores().assert().success();
+}
+
+#[test]
 fn check_ignores_honors_cwd_for_discovery_and_scanning() {
     // `--cwd` is the base for config discovery and the glob root, so a malformed
     // directive under it is caught even when the process cwd is elsewhere.
