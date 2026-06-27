@@ -1978,6 +1978,78 @@ fn cwd_flag_drives_discovery_and_the_harness_directory() {
     assert_eq!(Path::new(cwd_val), proj);
 }
 
+// ---- nested discovery (walk up the tree; most-local wins) -----------------
+
+#[test]
+fn nested_configs_are_discovered_up_the_tree_and_most_local_wins() {
+    let p = Project::new();
+    // A user/project/local layout: a "user" config at the project root, a project
+    // config in a subdir, and a local config in the leaf where linting runs. All
+    // three are discovered by walking up; every config contributes its rules and
+    // the most-local config wins each top-level scalar.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"**/*.rs\"]\noneharness:\n  model: user-model\n\
+             rules:\n  - {{ name: user_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "proj/llmlint.yml",
+        &format!(
+            "oneharness:\n  model: proj-model\n\
+             rules:\n  - {{ name: proj_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "proj/src/llmlint.yml",
+        &format!("rules:\n  - {{ name: local_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write("proj/src/lib.rs", "// code\n");
+    let leaf = p.path().join("proj/src");
+    let verdicts =
+        p.write_verdicts(r#"{"user_rule": true, "proj_rule": true, "local_rule": true}"#);
+    let args_dump = p.path().join("args.txt");
+
+    let out = p
+        .lint()
+        .arg("--cwd")
+        .arg(&leaf)
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    // Every level along the walk contributes its rule.
+    assert!(names.contains(&"local_rule"), "got: {names:?}");
+    assert!(names.contains(&"proj_rule"), "got: {names:?}");
+    assert!(names.contains(&"user_rule"), "got: {names:?}");
+
+    // The most-local config that set `oneharness.model` wins: local left it unset,
+    // so the project config (nearer than the user root) supplies it.
+    let dumped = fs::read_to_string(&args_dump).unwrap();
+    let model = dumped
+        .lines()
+        .skip_while(|l| *l != "--model")
+        .nth(1)
+        .expect("--model forwarded to oneharness");
+    assert_eq!(model, "proj-model");
+}
+
 // ---- --timeout (forwarded to oneharness) ----------------------------------
 
 #[test]

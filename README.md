@@ -102,7 +102,13 @@ llmlint --format json        # machine-readable output
 ## Configuration
 
 `llmlint.yml` (discovered by walking up from the working directory; override with
-`-c/--config`, repeatable). `llmlint init` writes it with a leading
+`-c/--config`, repeatable). Discovery is **nested** — *every* config found along
+the walk is merged (one per directory), nearest first, so a config beside the
+files being linted, a project config above it, and a user-level config higher
+still layer together. The most-local config wins each top-level scalar, every
+config contributes its rules, and a more distant config fills only the gaps —
+the same nearest-wins precedence as [plugins](#plugins-shared-rule-sets).
+`llmlint init` writes it with a leading
 `# yaml-language-server: $schema=…` modeline pointing at llmlint's
 [published JSON Schema](assets/llmlint.schema.json), so editors with the YAML
 language server (e.g. VS Code's [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml))

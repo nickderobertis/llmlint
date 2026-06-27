@@ -222,6 +222,12 @@ tools.
   (local files and remote/versioned URLs, fetched over HTTPS with `ureq`/rustls
   and cached on disk — see `src/io/plugins.rs`), file globbing, the oneharness
   subprocess client, embedded assets. Never hide I/O in a helper that looks pure.
+  Discovery is **nested**: `configfs::discover_all` walks up from `cwd` to the
+  filesystem root and `load` merges *every* config found (one per directory),
+  nearest first — the most-local config is the include root and wins, each more
+  distant config (and its `plugins`) filling only what nearer ones leave unset.
+  Same nearest-root-wins precedence as `plugins`, so user/project/per-directory
+  configs layer for free; `--config` replaces the whole walk.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `init`, `config` (`--sources` adds per-item provenance), `where` (locate one
   config item's source), `doctor`. `commands/ignores.rs` holds the

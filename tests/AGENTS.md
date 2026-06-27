@@ -69,9 +69,16 @@ logic is also covered hermetically via `file://` plugins.
   a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule and per-agent `files` override the global globs.
-- `--config` replaces upward discovery and is repeatable (first entry supplies
-  the top-level scalars, the rest contribute rules/agents); `config --config`
-  honors a relative path resolved against `--cwd`.
+- `--config` replaces nested upward discovery and is repeatable (first entry
+  supplies the top-level scalars, the rest contribute rules/agents); `config
+  --config` honors a relative path resolved against `--cwd`.
+- Config files *nest*: discovery walks up from `--cwd` to the filesystem root and
+  merges **every** config it finds (one per directory), nearest first, so a local
+  config beside the target files, a project config above it, and a user-level
+  config higher still layer together — the most-local config is the include root
+  and wins each top-level scalar, every config contributes its rules, and a more
+  distant config fills only the gaps (a project `oneharness.model` fills through
+  when the local config leaves it unset).
 - `--cwd` drives both config discovery and the directory forwarded to oneharness
   as its `--cwd`.
 - `--rule` and `--agent` filters limit which rules run: `--rule` is repeatable

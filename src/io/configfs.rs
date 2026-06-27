@@ -39,17 +39,32 @@ pub struct Loaded {
 
 /// Walk up from `start` to the filesystem root, returning the nearest config.
 pub fn discover(start: &Path) -> Option<PathBuf> {
+    discover_all(start).into_iter().next()
+}
+
+/// Walk up from `start` to the filesystem root, collecting **every** config file
+/// found along the way, **nearest first**. Within a single directory the first
+/// name in [`CONFIG_NAMES`] priority order wins (at most one config per dir).
+///
+/// This is what makes configs *nest*: a config beside the files being linted, a
+/// project config above it, and a user-level config higher still all layer
+/// together, with the most-local one treated as the include root so it wins (see
+/// [`load`]) — each parent directory's config fills only what nearer ones leave
+/// unset, exactly as a plugin would.
+pub fn discover_all(start: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
     let mut dir = Some(start);
     while let Some(d) = dir {
         for name in CONFIG_NAMES {
             let p = d.join(name);
             if p.is_file() {
-                return Some(p);
+                found.push(p);
+                break; // one config per directory (highest-priority name)
             }
         }
         dir = d.parent();
     }
-    None
+    found
 }
 
 /// Parse one YAML document into a [`Config`], resolving anchors/aliases (done
@@ -79,27 +94,32 @@ pub fn parse(text: &str, origin: &str) -> Result<Config> {
 }
 
 /// Load and merge config from explicit entry files (from `--config`), or, when
-/// `entries` is empty, the nearest discovered config above `cwd`. `plugins`
-/// (local files or remote/versioned URLs) are merged recursively and **nearer
-/// the root wins**: a config's own top-level settings take precedence over its
-/// plugins', a plugin's over its own plugins', and an earlier-listed plugin over
-/// a later sibling; a plugin only fills settings the including config left unset
-/// (see [`Config::merge_plugin`]). Rules and agents from every config are
-/// contributed. Each pulled-in config's own `plugins` are resolved transitively.
-/// Diamonds and
+/// `entries` is empty, **every** config discovered walking up from `cwd` to the
+/// filesystem root (see [`discover_all`]) — nearest first, so a config beside the
+/// target files, a project config above it, and a user-level config higher still
+/// nest together. Each entry is loaded in order and folded under the accumulator,
+/// so **the most-local config is the include root and wins**.
+///
+/// `plugins` (local files or remote/versioned URLs) are merged recursively and
+/// **nearer the root wins**: a config's own top-level settings take precedence
+/// over its plugins', a plugin's over its own plugins', and an earlier-listed
+/// plugin over a later sibling; a plugin only fills settings the including config
+/// left unset (see [`Config::merge_plugin`]). The same precedence spans the
+/// discovered chain — a nearer-to-`cwd` config (and its plugins) win over a more
+/// distant one. Rules and agents from every config are contributed. Each
+/// pulled-in config's own `plugins` are resolved transitively. Diamonds and
 /// cycles are de-duplicated by absolute path / plugin key, and the transitive
 /// depth is bounded by `MAX_PLUGIN_DEPTH`.
 pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     let entry_paths: Vec<PathBuf> = if entries.is_empty() {
-        match discover(cwd) {
-            Some(p) => vec![p],
-            None => {
-                return Err(Error::ConfigNotFound {
-                    names: CONFIG_NAMES.join(", "),
-                    dir: cwd.display().to_string(),
-                })
-            }
+        let found = discover_all(cwd);
+        if found.is_empty() {
+            return Err(Error::ConfigNotFound {
+                names: CONFIG_NAMES.join(", "),
+                dir: cwd.display().to_string(),
+            });
         }
+        found
     } else {
         entries.iter().map(|p| absolutize(p, cwd)).collect()
     };
@@ -314,6 +334,71 @@ rules:
         fs::write(dir.path().join("llmlint.yml"), "version: 1\n").unwrap();
         let found = discover(&nested).unwrap();
         assert_eq!(found, dir.path().join("llmlint.yml"));
+    }
+
+    #[test]
+    fn discover_all_collects_every_ancestor_nearest_first() {
+        let dir = tempdir().unwrap();
+        let mid = dir.path().join("a");
+        let leaf = mid.join("b");
+        fs::create_dir_all(&leaf).unwrap();
+        fs::write(dir.path().join("llmlint.yml"), "version: 1\n").unwrap();
+        fs::write(mid.join("llmlint.yml"), "version: 1\n").unwrap();
+        fs::write(leaf.join("llmlint.yml"), "version: 1\n").unwrap();
+        // Nearest first: leaf, then mid, then the root — one config per directory.
+        let found = discover_all(&leaf);
+        assert_eq!(
+            found,
+            vec![
+                leaf.join("llmlint.yml"),
+                mid.join("llmlint.yml"),
+                dir.path().join("llmlint.yml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_configs_merge_with_most_local_winning() {
+        // A user/project/local layout discovered by walking up: a user-level
+        // config at the root, a project config a level down, a local config in the
+        // leaf where linting starts. The most-local config wins each scalar; every
+        // config contributes its rules; a deeper config fills only the gaps.
+        let dir = tempdir().unwrap();
+        let proj = dir.path().join("proj");
+        let leaf = proj.join("src");
+        fs::create_dir_all(&leaf).unwrap();
+        // User level (root): sets timeout + a rule; rationales true.
+        fs::write(
+            dir.path().join("llmlint.yml"),
+            "version: 1\nrationales: true\noneharness:\n  model: user-model\n  timeout: 9\n\
+             rules:\n  - name: user_rule\n    description: \"true when ok; false otherwise.\"\n",
+        )
+        .unwrap();
+        // Project level: overrides the model, leaves timeout unset, adds a rule.
+        fs::write(
+            proj.join("llmlint.yml"),
+            "oneharness:\n  model: proj-model\nrules:\n  - name: proj_rule\n    \
+             description: \"true when ok; false otherwise.\"\n",
+        )
+        .unwrap();
+        // Local level (where linting runs): flips rationales, adds a rule.
+        fs::write(
+            leaf.join("llmlint.yml"),
+            "rationales: false\nrules:\n  - name: local_rule\n    \
+             description: \"true when ok; false otherwise.\"\n",
+        )
+        .unwrap();
+
+        let cfg = load(&[], &leaf).unwrap().config;
+        // Local set rationales -> local wins over both ancestors.
+        assert_eq!(cfg.rationales, Some(false));
+        // Local left model unset; project is nearer than user -> project wins.
+        assert_eq!(cfg.oneharness.model.as_deref(), Some("proj-model"));
+        // Only the user level set timeout -> it fills through.
+        assert_eq!(cfg.oneharness.timeout, Some(9));
+        // Every config contributes its rule, most-local first.
+        let names: Vec<&str> = cfg.rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["local_rule", "proj_rule", "user_rule"]);
     }
 
     #[test]
