@@ -5,8 +5,10 @@
 //! Multi-judge majority vote (per the configured scheme): within an
 //! (agent, files) group, `maxJudges = max(rule.judges)`. For judge index
 //! `j ∈ 1..=maxJudges` the judge evaluates `{rules | judges >= j}`, split into
-//! `batch_size` chunks. So a `judges: N` rule appears in judges `1..=N` → N
-//! independent verdicts → majority; a `judges: 1` rule runs exactly once.
+//! balanced batches no larger than `batch_size` (the fewest batches that respect
+//! the cap, with sizes kept within one of each other — see `balanced_chunks`). So
+//! a `judges: N` rule appears in judges `1..=N` → N independent verdicts →
+//! majority; a `judges: 1` rule runs exactly once.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -93,7 +95,7 @@ pub fn build(
             let max_judges = group.iter().map(|r| r.judges).max().unwrap_or(1);
             for j in 1..=max_judges {
                 let subset: Vec<&ResolvedRule> = group.iter().filter(|r| r.judges >= j).collect();
-                for chunk in subset.chunks(batch_size) {
+                for chunk in balanced_chunks(&subset, batch_size) {
                     plan.runs.push(JudgeRun {
                         agent: agent_name.clone(),
                         harness: harness.clone(),
@@ -118,6 +120,33 @@ pub fn build(
     }
 
     plan
+}
+
+/// Split `items` into batches no larger than `batch_size`, balancing the load so
+/// the batch count is minimal *and* the sizes are as even as possible. E.g. 21
+/// items with `batch_size` 20 yields two batches of 11 and 10 — not 20 and 1.
+///
+/// The number of batches is `ceil(len / batch_size)` (the fewest that respect the
+/// cap); the remainder is then spread one-per-batch across the leading batches, so
+/// sizes differ by at most one and order is preserved.
+fn balanced_chunks<T>(items: &[T], batch_size: usize) -> Vec<&[T]> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let batch_size = batch_size.max(1);
+    let num_batches = items.len().div_ceil(batch_size);
+    let base = items.len() / num_batches;
+    let remainder = items.len() % num_batches;
+
+    let mut chunks = Vec::with_capacity(num_batches);
+    let mut start = 0;
+    for i in 0..num_batches {
+        // The first `remainder` batches take one extra item so sizes stay within 1.
+        let size = base + usize::from(i < remainder);
+        chunks.push(&items[start..start + size]);
+        start += size;
+    }
+    chunks
 }
 
 #[cfg(test)]
@@ -196,6 +225,57 @@ mod tests {
         assert_eq!(plan.runs.len(), 2); // 3 rules / batch 2 -> 2 batches
         assert!(plan.runs[0].template.contains("MASTER"));
         assert!(plan.runs[0].template.contains("be terse"));
+    }
+
+    #[test]
+    fn batches_are_balanced_not_packed() {
+        // 21 rules with batch_size 20 must split 11/10, not 20/1.
+        let mut cfg = Config::default();
+        cfg.agents.insert(
+            "big".into(),
+            Agent {
+                batch_size: Some(20),
+                ..Default::default()
+            },
+        );
+        let rules: Vec<ResolvedRule> = (0..21)
+            .map(|i| rr(&format!("r{i}"), 1, "big", &["f.rs"]))
+            .collect();
+        let plan = build(&cfg, "T", 20, rules);
+        let mut sizes: Vec<usize> = plan.runs.iter().map(|r| r.rules.len()).collect();
+        sizes.sort_unstable();
+        assert_eq!(sizes, vec![10, 11]);
+        // Every rule still appears exactly once across the batches.
+        let total: usize = plan.runs.iter().map(|r| r.rules.len()).sum();
+        assert_eq!(total, 21);
+    }
+
+    #[test]
+    fn balanced_chunks_covers_items_without_overlap() {
+        // 25 items, cap 10 -> 3 batches sized 9/8/8 (differ by at most one).
+        let items: Vec<usize> = (0..25).collect();
+        let chunks = balanced_chunks(&items, 10);
+        assert_eq!(chunks.len(), 3);
+        let mut sizes: Vec<usize> = chunks.iter().map(|c| c.len()).collect();
+        sizes.sort_unstable();
+        assert_eq!(sizes, vec![8, 8, 9]);
+        // Concatenation reproduces the input in order — no gaps, no overlap.
+        let flat: Vec<usize> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
+        assert_eq!(flat, items);
+    }
+
+    #[test]
+    fn balanced_chunks_single_full_batch() {
+        let items: Vec<usize> = (0..20).collect();
+        let chunks = balanced_chunks(&items, 20);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 20);
+    }
+
+    #[test]
+    fn balanced_chunks_empty_is_no_batches() {
+        let items: Vec<usize> = Vec::new();
+        assert!(balanced_chunks(&items, 5).is_empty());
     }
 
     #[test]
