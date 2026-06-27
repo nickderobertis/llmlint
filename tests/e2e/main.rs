@@ -69,6 +69,14 @@ impl Project {
         c.arg("-v");
         c
     }
+    /// `check-ignores`: the deterministic ignore-directive validation, wired with
+    /// no `--oneharness-bin` (it never spawns a harness) so a green run proves the
+    /// check is model-free.
+    fn check_ignores(&self) -> Command {
+        let mut c = self.bare();
+        c.arg("check-ignores");
+        c
+    }
 }
 
 const RULE: &str = "true when ok; false otherwise.";
@@ -2461,6 +2469,136 @@ fn default_prompt_documents_block_directives() {
         prompt.contains("ignore-end"),
         "prompt should document the block-close directive: {prompt}"
     );
+}
+
+// ---- standalone `check-ignores` command -----------------------------------
+
+#[test]
+fn check_ignores_validates_well_formed_directives_with_no_harness() {
+    // The point of the standalone command: a deterministic, model-free check.
+    // It is wired with no `--oneharness-bin` and never spawns oneharness, yet
+    // validates the directives and exits 0 — so it belongs in the fast loop.
+    let p = ignore_project(
+        "// llmlint: ignore[no_todo] tracked in JIRA-1\n\
+         // llmlint: ignore-block[no_todo] legacy region, see #7\n\
+         fn legacy() {}\n\
+         // llmlint: ignore-end[no_todo]\n",
+    );
+    p.check_ignores()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ignore directives OK"));
+}
+
+#[test]
+fn check_ignores_rejects_a_malformed_directive() {
+    let p = ignore_project("// llmlint: ignore[no_todo]\n");
+    p.check_ignores()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("give a reason"))
+        .stderr(predicate::str::contains("src/lib.rs:1:"));
+}
+
+#[test]
+fn check_ignores_reports_every_malformed_directive_across_files() {
+    // Same as the lint pre-flight: all problems surface in one located error.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// llmlint: ignore[no_todo]\n");
+    p.write("src/b.rs", "// llmlint: ignore[ghost] a reason\n");
+    p.check_ignores()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("src/a.rs:1:"))
+        .stderr(predicate::str::contains("src/b.rs:1:"))
+        .stderr(predicate::str::contains("give a reason"))
+        .stderr(predicate::str::contains("unknown rule"));
+}
+
+#[test]
+fn check_ignores_scopes_to_explicit_files_like_lint() {
+    // Passing files overrides the config globs: a malformed directive in a file
+    // not listed on the CLI is not scanned, exactly as for a lint run — so a
+    // pre-commit hook can pass just the changed files.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/good.rs", "// llmlint: ignore[no_todo] handled here\n");
+    p.write("src/bad.rs", "// llmlint: ignore[no_todo]\n");
+    p.check_ignores().arg("src/good.rs").assert().success();
+}
+
+#[test]
+fn check_ignores_known_set_is_the_full_config() {
+    // A directive may name any configured rule, not just one a lint run would
+    // select; an unconfigured name is still rejected.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n  \
+             - {{ name: no_sql, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "src/lib.rs",
+        "// llmlint: ignore[no_sql] handled by the query layer\n",
+    );
+    p.check_ignores().assert().success();
+}
+
+#[test]
+fn check_ignores_rejects_an_invalid_config() {
+    // Config is validated first, so a bad config is a clear exit-2 error rather
+    // than a confusing scan failure.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+         - { name: dupe, description: \"x\" }\n  \
+         - { name: dupe, description: \"y\" }\n",
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.check_ignores()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("invalid config"));
+}
+
+#[test]
+fn check_ignores_honors_cwd_for_discovery_and_scanning() {
+    // `--cwd` is the base for config discovery and the glob root, so a malformed
+    // directive under it is caught even when the process cwd is elsewhere.
+    let p = Project::new();
+    p.write(
+        "proj/llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("proj/src/lib.rs", "// llmlint: ignore[no_todo]\n");
+    let proj = p.path().join("proj");
+    p.check_ignores()
+        .arg("--cwd")
+        .arg(&proj)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("give a reason"))
+        .stderr(predicate::str::contains("src/lib.rs:1:"));
 }
 
 // ---- oneharness passthrough actually forwarded ----------------------------

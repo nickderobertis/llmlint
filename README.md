@@ -361,6 +361,14 @@ should carry the same guidance if you want directives honored.) Because the
 prefix is reserved, a *linted* file that merely documents the feature must use
 real rule names or avoid the literal `llmlint: ignore[…]` form.
 
+This structural check is **deterministic and free** — no model call — so it is
+also exposed as its own command, [`llmlint check-ignores`](#commands--exit-codes).
+Run it in your tight, fast linter loop (next to `cargo fmt` / `clippy`, in a
+pre-commit hook, or as a quick CI step), where it catches a typo'd or
+reason-less directive in milliseconds. The full `llmlint` run performs the same
+check as a pre-flight, so the two never disagree — `check-ignores` just gives you
+the fast feedback without waiting on (or paying for) a judge.
+
 ### Judges and voting
 
 `judges: N` runs a rule through `N` independent judges and takes the **majority**
@@ -442,6 +450,13 @@ The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
   top-level setting also has a flag that wins over the config:
   `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
   `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`.
+- `llmlint check-ignores [FILES...]` — validate the *structure* of inline
+  `llmlint: ignore` directives in the target files, **deterministically and with
+  no model call** (`-c/--config`, `--cwd`; pass `FILES` to scope it, e.g. the
+  changed files in a pre-commit hook). This is the same pre-flight `lint` runs,
+  split out for the fast static-check loop: exit `0` when every directive is
+  well-formed, exit `2` (located `file:line:`) on a typo'd / reason-less /
+  unbalanced one.
 - `llmlint init` — write a starter config (`--with-template`, `--global`, `--force`).
 
   ![llmlint init writing a starter llmlint.yml](docs/screenshots/init.svg)
