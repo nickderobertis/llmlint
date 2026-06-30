@@ -7,6 +7,16 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.23](https://github.com/nickderobertis/llmlint/compare/v0.2.22...v0.2.23) - 2026-06-30
+
+### Added
+
+- add require_line_attribution rule option ([#76](https://github.com/nickderobertis/llmlint/pull/76))
+
+### Fixed
+
+- keep the --diff template block purely additive (no-diff prompt unchanged) ([#77](https://github.com/nickderobertis/llmlint/pull/77))
+
 ## [0.2.22](https://github.com/nickderobertis/llmlint/compare/v0.2.21...v0.2.22) - 2026-06-30
 
 ### Added
