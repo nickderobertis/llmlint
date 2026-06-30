@@ -72,13 +72,22 @@ logic is also covered hermetically via `file://` plugins.
 - `--config` replaces nested upward discovery and is repeatable (first entry
   supplies the top-level scalars, the rest contribute rules/agents); `config
   --config` honors a relative path resolved against `--cwd`.
-- Config files *nest*: discovery walks up from `--cwd` to the filesystem root and
-  merges **every** config it finds (one per directory), nearest first, so a local
-  config beside the target files, a project config above it, and a user-level
-  config higher still layer together — the most-local config is the include root
-  and wins each top-level scalar, every config contributes its rules, and a more
-  distant config fills only the gaps (a project `oneharness.model` fills through
-  when the local config leaves it unset).
+- Config files *nest* in both directions. **Up:** discovery walks from `--cwd` to
+  the filesystem root and merges **every** config it finds (one per directory),
+  nearest first, so a local config beside the target files, a project config above
+  it, and a user-level config higher still layer together — the most-local config
+  is the include root and wins each top-level scalar, every config contributes its
+  rules, and a more distant config fills only the gaps (a project `oneharness.model`
+  fills through when the local config leaves it unset). **Down (cascade):**
+  discovery also walks into `--cwd`'s subtree, and a subdirectory's config governs
+  *its own* files — its `files` globs are rooted at that directory (a `frontend/`
+  config's `*.txt` reaches `frontend/`'s files, never a same-extension file outside
+  it), while resolved paths stay relative to `--cwd`. A subtree config scopes
+  *rules*, not session settings (model/timeout/template/rationales come from
+  `--cwd`-and-up only); its agents and rules are still contributed. Discovery
+  succeeds when only a subtree config exists (no config at `--cwd` or above).
+  Explicit `--config` replaces the whole walk with no cascade (globs rooted at
+  `--cwd`).
 - `--cwd` drives both config discovery and the directory forwarded to oneharness
   as its `--cwd`.
 - `--rule` and `--agent` filters limit which rules run: `--rule` is repeatable

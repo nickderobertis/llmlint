@@ -222,12 +222,24 @@ tools.
   (local files and remote/versioned URLs, fetched over HTTPS with `ureq`/rustls
   and cached on disk — see `src/io/plugins.rs`), file globbing, the oneharness
   subprocess client, embedded assets. Never hide I/O in a helper that looks pure.
-  Discovery is **nested**: `configfs::discover_all` walks up from `cwd` to the
-  filesystem root and `load` merges *every* config found (one per directory),
-  nearest first — the most-local config is the include root and wins, each more
-  distant config (and its `plugins`) filling only what nearer ones leave unset.
-  Same nearest-root-wins precedence as `plugins`, so user/project/per-directory
-  configs layer for free; `--config` replaces the whole walk.
+  Discovery is **nested** in both directions (`configfs::load_discovered`).
+  **Up:** `discover_all` walks from `cwd` to the filesystem root, merging *every*
+  config found (one per directory), nearest first — the most-local config is the
+  include root and wins, each more distant config (and its `plugins`) filling only
+  what nearer ones leave unset (same nearest-root-wins precedence as `plugins`),
+  so user/project configs layer for free. **Down (cascade):** `discover_subtree`
+  walks into `cwd`'s subtree, and each rule is scoped to **its own config's
+  directory** (`Loaded::scopes` → `files::resolve_scoped`), so a subtree config's
+  `files` globs root at that directory (`frontend/`'s `*.txt` → `frontend`'s
+  files) while resolved paths stay relative to `cwd`. Session settings
+  (model/timeout/template/rationales/default `files`) come from `cwd`-and-up only —
+  a leaf scopes *rules*, never the whole run; its agents/rules are still
+  contributed. Provenance (`Loaded::provenance`) tracks each item's source the
+  same way: a subtree rule traces to its own file, and a descendant's settings
+  never appear as a session setting's source (they don't take effect). Rule names
+  share one namespace (override spans the chain; a real duplicate is an error).
+  `--config` replaces the whole walk with no cascade (`load_explicit`, globs
+  rooted at `cwd`).
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `init`, `config` (`--sources` adds per-item provenance), `where` (locate one
   config item's source), `doctor`. `commands/ignores.rs` holds the

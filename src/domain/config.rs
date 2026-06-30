@@ -378,6 +378,30 @@ impl ProvenanceBuilder {
     /// line up with the value that survives the merge, and rule occurrences are
     /// collected nearest-root first (see [`Config::merge_plugin`]).
     pub fn record(&mut self, cfg: &Config, origin: &str) {
+        self.record_settings(cfg, origin);
+        self.record_items(cfg, origin);
+    }
+
+    /// Record only `cfg`'s agents and rules, not its top-level settings. Used for a
+    /// **cascaded subtree config** ([`crate::io::configfs`]): its settings never
+    /// retune the session (only `cwd`-and-up configs do), so they must not appear
+    /// as a setting's source — but its agents and rules are still contributed.
+    pub fn record_items(&mut self, cfg: &Config, origin: &str) {
+        for name in cfg.agents.keys() {
+            self.agents
+                .entry(name.clone())
+                .or_insert_with(|| origin.to_string());
+        }
+        for rule in &cfg.rules {
+            self.rule_occurrences
+                .entry(rule.name.clone())
+                .or_default()
+                .push((origin.to_string(), rule.clone()));
+        }
+    }
+
+    /// Record only `cfg`'s top-level settings (the first writer of each wins).
+    fn record_settings(&mut self, cfg: &Config, origin: &str) {
         // Each top-level setting, paired with whether this config sets it. The
         // predicates match the merge's "is unset" tests, so the recorded source
         // is the one whose value wins.
@@ -401,17 +425,6 @@ impl ProvenanceBuilder {
                     .entry((*key).to_string())
                     .or_insert_with(|| origin.to_string());
             }
-        }
-        for name in cfg.agents.keys() {
-            self.agents
-                .entry(name.clone())
-                .or_insert_with(|| origin.to_string());
-        }
-        for rule in &cfg.rules {
-            self.rule_occurrences
-                .entry(rule.name.clone())
-                .or_default()
-                .push((origin.to_string(), rule.clone()));
         }
     }
 

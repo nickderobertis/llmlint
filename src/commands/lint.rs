@@ -15,6 +15,7 @@ use crate::domain::template::{self};
 use crate::domain::verdict::{RuleOutcome, RuleVerdict};
 use crate::domain::{schema, vote};
 use crate::errors::{io_err, Error, Result};
+use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, files, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
@@ -30,6 +31,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     };
 
     let loaded = configfs::load(&args.config, &cwd)?;
+    let scopes = loaded.scopes;
     let mut config = loaded.config;
     validate(&config)?;
     validate_filters(&config, &args)?;
@@ -68,7 +70,19 @@ pub fn run(args: LintArgs) -> Result<i32> {
         };
         let agent_name = rule.agent.clone().unwrap_or_else(|| "default".to_string());
         let agent = config.agent_or_default(&agent_name);
-        let target = ignores::resolve_files(&cwd, rule, &agent, &cli_files, &config.files)?;
+        let fallback;
+        let scope = match scopes.get(&rule.name) {
+            Some(s) => s,
+            // Every selected rule has a scope; fall back to cwd defensively.
+            None => {
+                fallback = RuleScope {
+                    dir: cwd.clone(),
+                    files: config.files.clone(),
+                };
+                &fallback
+            }
+        };
+        let target = ignores::resolve_files(&cwd, rule, &agent, &cli_files, scope)?;
         resolved.push(plan::ResolvedRule {
             name: rule.name.clone(),
             description: rule.description.clone(),

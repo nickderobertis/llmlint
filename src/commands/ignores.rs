@@ -12,12 +12,13 @@
 //! each directive names specific, configured rule(s) and a reason; see
 //! [`crate::domain::ignore`] for the pure parser.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::domain::config::{Agent, Config, FileFilter, RelevanceMode, Rule};
+use crate::domain::config::{Agent, Config, RelevanceMode, Rule};
 use crate::domain::ignore;
 use crate::errors::{Error, Result};
+use crate::io::configfs::RuleScope;
 use crate::io::files;
 
 /// The configured rule names — the set a directive may legitimately reference.
@@ -31,10 +32,14 @@ pub fn known_rules(config: &Config) -> BTreeSet<&str> {
 /// de-duplicated and ordered. This mirrors what `lint` would scan: rules
 /// disabled with `relevance: false` never run, so their files are not scanned
 /// here either. `cli_files`, when non-empty, overrides the config globs exactly
-/// as it does for a lint run (per-rule / per-agent `files` still win).
+/// as it does for a lint run (per-rule / per-agent `files` still win). `scopes`
+/// are the per-rule directory scopes from [`crate::io::configfs::Loaded`], so a
+/// nested config's globs root at its own directory exactly as they do for a lint
+/// run — the two never disagree about which files carry directives.
 pub fn target_files(
     cwd: &Path,
     config: &Config,
+    scopes: &BTreeMap<String, RuleScope>,
     cli_files: &[PathBuf],
 ) -> Result<BTreeSet<PathBuf>> {
     let mut out: BTreeSet<PathBuf> = BTreeSet::new();
@@ -44,7 +49,18 @@ pub fn target_files(
         }
         let agent_name = rule.agent.clone().unwrap_or_else(|| "default".to_string());
         let agent = config.agent_or_default(&agent_name);
-        for f in resolve_files(cwd, rule, &agent, cli_files, &config.files)? {
+        let fallback;
+        let scope = match scopes.get(&rule.name) {
+            Some(s) => s,
+            None => {
+                fallback = RuleScope {
+                    dir: cwd.to_path_buf(),
+                    files: config.files.clone(),
+                };
+                &fallback
+            }
+        };
+        for f in resolve_files(cwd, rule, &agent, cli_files, scope)? {
             out.insert(f);
         }
     }
@@ -53,24 +69,26 @@ pub fn target_files(
 
 /// The target files for a single rule, applying the same precedence a lint run
 /// uses: a per-rule `files` filter wins, then the agent's, then explicit CLI
-/// files, then the global filter.
+/// files, then the rule's [`RuleScope`] fallback filter. Glob filters root at the
+/// rule's config directory (`scope.dir`) so a nested config's globs mean "relative
+/// to me", while resolved paths stay relative to `cwd`.
 pub fn resolve_files(
     cwd: &Path,
     rule: &Rule,
     agent: &Agent,
     cli_files: &[PathBuf],
-    global: &FileFilter,
+    scope: &RuleScope,
 ) -> Result<Vec<PathBuf>> {
     if let Some(f) = &rule.files {
-        return files::resolve(cwd, f);
+        return files::resolve_scoped(&scope.dir, cwd, f);
     }
     if let Some(f) = &agent.files {
-        return files::resolve(cwd, f);
+        return files::resolve_scoped(&scope.dir, cwd, f);
     }
     if !cli_files.is_empty() {
         return Ok(cli_files.to_vec());
     }
-    files::resolve(cwd, global)
+    files::resolve_scoped(&scope.dir, cwd, &scope.files)
 }
 
 /// Scan each file (read once, relative to `cwd`) for inline `llmlint: ignore`

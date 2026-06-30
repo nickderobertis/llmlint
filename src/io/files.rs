@@ -28,25 +28,57 @@ fn build_set(globs: &[String]) -> Result<Option<GlobSet>> {
 /// Resolve `filter` to a sorted, de-duplicated list of files **relative to
 /// `root`**. An empty `include` set yields no files (nothing to lint).
 pub fn resolve(root: &Path, filter: &FileFilter) -> Result<Vec<PathBuf>> {
+    resolve_scoped(root, root, filter)
+}
+
+/// Resolve `filter` with two roots: globs are matched **relative to `glob_root`**
+/// (a config's own directory, so a nested config's `*.txt` means
+/// `<that dir>/*.txt`), while the returned paths are **relative to `out_root`**
+/// (the run's cwd — what oneharness and the report speak). Only files under
+/// *both* roots are considered, so the deeper of the two bounds the walk; if the
+/// roots don't nest (neither contains the other) there is nothing in scope.
+///
+/// When `glob_root == out_root` this is the plain single-root case ([`resolve`]).
+pub fn resolve_scoped(
+    glob_root: &Path,
+    out_root: &Path,
+    filter: &FileFilter,
+) -> Result<Vec<PathBuf>> {
     let include = match build_set(&filter.include)? {
         Some(s) => s,
         None => return Ok(Vec::new()),
     };
     let exclude = build_set(&filter.exclude)?;
 
+    // Walk the more specific (deeper) root so every visited file is under both;
+    // if neither root contains the other the scopes don't overlap — no files.
+    let walk_root = if out_root.starts_with(glob_root) {
+        out_root
+    } else if glob_root.starts_with(out_root) {
+        glob_root
+    } else {
+        return Ok(Vec::new());
+    };
+
     let mut out = Vec::new();
     // `hidden(false)` so dotfiles like `.llmlint.yml` are visited; `.gitignore`
     // is still respected so we never lint ignored/build files.
-    for entry in WalkBuilder::new(root).hidden(false).build() {
-        let entry = entry.map_err(|e| Error::Io(format!("walking {}: {e}", root.display())))?;
+    for entry in WalkBuilder::new(walk_root).hidden(false).build() {
+        let entry =
+            entry.map_err(|e| Error::Io(format!("walking {}: {e}", walk_root.display())))?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
         let path = entry.path();
-        let rel = path.strip_prefix(root).unwrap_or(path);
-        let excluded = exclude.as_ref().is_some_and(|e| e.is_match(rel));
-        if include.is_match(rel) && !excluded {
-            out.push(rel.to_path_buf());
+        // Match globs against the config-dir-relative path; report cwd-relative.
+        let (Ok(rel_glob), Ok(rel_out)) =
+            (path.strip_prefix(glob_root), path.strip_prefix(out_root))
+        else {
+            continue;
+        };
+        let excluded = exclude.as_ref().is_some_and(|e| e.is_match(rel_glob));
+        if include.is_match(rel_glob) && !excluded {
+            out.push(rel_out.to_path_buf());
         }
     }
     out.sort();
@@ -135,6 +167,61 @@ mod tests {
         let files = resolve(dir.path(), &filter).unwrap();
         // `**/llmlint.yml` must match both the root and nested config file.
         assert_eq!(files.len(), 2, "got {files:?}");
+    }
+
+    #[test]
+    fn scoped_roots_globs_at_the_config_dir_but_reports_cwd_relative() {
+        // A nested config in `a/b` whose `*.txt` should mean "txt under a/b", run
+        // from cwd `a`. The glob is rooted at `a/b` (so it bounds to that subtree),
+        // and the returned paths are relative to the cwd `a` (what oneharness and
+        // the report use).
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "a/b/c.txt");
+        touch(dir.path(), "a/b/deep/d.txt"); // under a/b — included (`*` spans `/`)
+        touch(dir.path(), "a/top.txt"); // outside the `a/b` glob root — excluded
+        let filter = FileFilter {
+            include: vec!["*.txt".into()],
+            exclude: vec![],
+        };
+        let glob_root = dir.path().join("a/b");
+        let out_root = dir.path().join("a");
+        let files = resolve_scoped(&glob_root, &out_root, &filter).unwrap();
+        // Both files under a/b, reported relative to cwd `a`; `a/top.txt` is out.
+        assert_eq!(
+            files,
+            vec![PathBuf::from("b/c.txt"), PathBuf::from("b/deep/d.txt")]
+        );
+    }
+
+    #[test]
+    fn scoped_ancestor_glob_root_only_sees_files_under_cwd() {
+        // glob_root is an ancestor of cwd: the walk is still bounded to cwd, and a
+        // recursive `**/*.rs` rooted at the ancestor matches cwd files (reported
+        // relative to cwd).
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "proj/src/a.rs");
+        let filter = FileFilter {
+            include: vec!["**/*.rs".into()],
+            exclude: vec![],
+        };
+        let glob_root = dir.path().to_path_buf(); // ancestor
+        let out_root = dir.path().join("proj"); // cwd
+        let files = resolve_scoped(&glob_root, &out_root, &filter).unwrap();
+        assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
+    }
+
+    #[test]
+    fn scoped_non_overlapping_roots_yield_nothing() {
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "a/x.txt");
+        touch(dir.path(), "b/y.txt");
+        let filter = FileFilter {
+            include: vec!["**/*.txt".into()],
+            exclude: vec![],
+        };
+        // `a` and `b` are siblings — neither contains the other.
+        let files = resolve_scoped(&dir.path().join("a"), &dir.path().join("b"), &filter).unwrap();
+        assert!(files.is_empty());
     }
 
     #[test]

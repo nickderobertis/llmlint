@@ -2050,6 +2050,59 @@ fn nested_configs_are_discovered_up_the_tree_and_most_local_wins() {
     assert_eq!(model, "proj-model");
 }
 
+#[test]
+fn cascade_scopes_a_subtree_configs_globs_to_its_own_directory() {
+    let p = Project::new();
+    // Run from the project root. A subtree config in `frontend/` governs its own
+    // files: its `*.txt` is rooted at `frontend/`, not the run cwd. The root
+    // config lints `**/*.rs` tree-wide.
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nfiles:\n  include: [\"**/*.rs\"]\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "frontend/llmlint.yml",
+        &format!("files:\n  include: [\"*.txt\"]\nrules:\n  - {{ name: front_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write("top.rs", "// code\n");
+    p.write("frontend/note.txt", "frontend text\n");
+    p.write("outside.txt", "root text\n"); // a .txt OUTSIDE the frontend glob root
+
+    // Select only front_rule -> a single oneharness run, so the dumped system
+    // prompt is exactly that rule's file set.
+    let front_dump = p.path().join("front.txt");
+    let verdicts = p.write_verdicts(r#"{"front_rule": true}"#);
+    p.lint()
+        .arg("--rule")
+        .arg("front_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &front_dump)
+        .assert()
+        .success();
+    let front = fs::read_to_string(&front_dump).unwrap();
+    // front_rule sees its subtree file (reported relative to cwd as
+    // `frontend/note.txt`) and NOT the same-extension file outside its directory.
+    assert!(front.contains("frontend/note.txt"), "system:\n{front}");
+    assert!(
+        !front.contains("outside.txt"),
+        "a subtree config's `*.txt` must not reach files outside its directory:\n{front}"
+    );
+
+    // The root config still lints `**/*.rs` tree-wide; it does not pick up .txt.
+    let root_dump = p.path().join("root.txt");
+    let verdicts = p.write_verdicts(r#"{"root_rule": true}"#);
+    p.lint()
+        .arg("--rule")
+        .arg("root_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &root_dump)
+        .assert()
+        .success();
+    let root = fs::read_to_string(&root_dump).unwrap();
+    assert!(root.contains("top.rs"), "system:\n{root}");
+    assert!(!root.contains("note.txt"), "system:\n{root}");
+}
+
 // ---- --timeout (forwarded to oneharness) ----------------------------------
 
 #[test]
