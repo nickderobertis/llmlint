@@ -561,7 +561,10 @@ source.
   `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`. Pass
   `--diff [<backend>]` to add each changed file's diff to the judge prompt so it
   reviews only the changed lines; bare `--diff` uses the `git` backend (compared
-  against `HEAD`).
+  against `HEAD`). Add `--diff-base <REF>` to compare against a different git
+  revision instead of `HEAD` — a branch, tag, commit, or `A..B`/`A...B` range —
+  so `--diff --diff-base main` reviews exactly what the current branch changed
+  versus `main` (the PR-review case).
 - `llmlint check-ignores [FILES...]` — validate the *structure* of inline
   `llmlint: ignore` directives in the target files, **deterministically and with
   no model call** (`-c/--config`, `--cwd`; pass `FILES` to scope it, e.g. the

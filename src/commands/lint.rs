@@ -110,12 +110,14 @@ pub fn run(args: LintArgs) -> Result<i32> {
 
     // Under `--diff`, compute each target file's changed-line diff once (at the
     // I/O boundary) so every judge prompt can show exactly what changed. The
-    // backend is selected behind the `DiffProvider` trait; an unchanged file
-    // simply has no entry. Absent the flag this is empty and nothing renders.
+    // backend is selected behind the `DiffProvider` trait, comparing against
+    // `--diff-base` (a branch/tag/commit/range) or the backend default; an
+    // unchanged file simply has no entry. Absent the flag this is empty and
+    // nothing renders.
     let diffs: BTreeMap<PathBuf, String> = match args.diff {
         Some(backend) => {
             let targets: Vec<PathBuf> = targets.iter().cloned().collect();
-            diff::provider(backend).diffs(&cwd, &targets)?
+            diff::provider(backend, args.diff_base.clone()).diffs(&cwd, &targets)?
         }
         None => BTreeMap::new(),
     };

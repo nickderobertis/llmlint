@@ -89,6 +89,15 @@ logic is also covered hermetically via `file://` plugins.
   of fataling. Backend internals (only-changed-files, the `--cached` fallback,
   the non-repo/bare-repo/missing-git errors, `provider` dispatch) are also
   unit-tested in `io::diff`.
+- `--diff-base <REF>` compares against a chosen git revision instead of `HEAD`:
+  with a baseline on `main` and a committed change on a feature branch (a clean
+  worktree vs HEAD), `--diff --diff-base main` renders the branch's change in the
+  `## Changed lines` section, while plain `--diff` (default HEAD) renders no
+  section — proving the change surfaces *because* of the base, not by accident.
+  `--diff-base` without `--diff` is a clap usage error (exit 2 naming `--diff`),
+  and an unknown ref is a clear exit-2 `diff (git): …` error (an explicit base is
+  trusted, never silently falling back). Backend internals (named ref, `A..B`
+  range, unknown-ref error) are also unit-tested in `io::diff`.
 - `--config` replaces nested upward discovery and is repeatable (first entry
   supplies the top-level scalars, the rest contribute rules/agents); `config
   --config` honors a relative path resolved against `--cwd`.

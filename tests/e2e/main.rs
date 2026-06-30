@@ -1220,6 +1220,93 @@ fn diff_invalid_backend_is_rejected() {
         .stderr(predicate::str::contains("invalid value 'svn'"));
 }
 
+#[test]
+fn diff_base_reviews_changes_against_a_branch() {
+    // The PR-review case: a baseline on `main`, then a committed change on a
+    // feature branch. The worktree is clean vs HEAD, so the default `--diff`
+    // would show nothing — but `--diff-base main` surfaces exactly what the
+    // branch changed, which is what a reviewer wants the judge to focus on.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { feature(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { feature(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_default_head_shows_no_committed_branch_change() {
+    // The mirror of the test above: without `--diff-base`, the default `HEAD`
+    // base sees the clean worktree and renders no section — proving the branch
+    // change only surfaces because of the explicit base, not by accident.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { feature(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+}
+
+#[test]
+fn diff_base_requires_the_diff_flag() {
+    // `--diff-base` is meaningless without `--diff`; clap rejects it up front
+    // (exit 2) rather than silently ignoring the base.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.lint()
+        .arg("--diff-base")
+        .arg("main")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--diff"));
+}
+
+#[test]
+fn diff_base_unknown_ref_is_a_clear_error() {
+    // An explicit base is trusted, not probed: a ref that doesn't resolve is a
+    // clear exit-2 diff error, never a silent fallback to a different base.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.write("src/a.rs", "fn a() { changed(); }\n");
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("no-such-ref")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("diff (git)"));
+}
+
 // ---- filters --------------------------------------------------------------
 
 #[test]
