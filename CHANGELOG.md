@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.20](https://github.com/nickderobertis/llmlint/compare/v0.2.19...v0.2.20) - 2026-06-30
+
+### Added
+
+- *(config)* nest config discovery up the tree and cascade into subtrees ([#70](https://github.com/nickderobertis/llmlint/pull/70))
+
 ## [0.2.19](https://github.com/nickderobertis/llmlint/compare/v0.2.18...v0.2.19) - 2026-06-30
 
 ### Added
