@@ -65,6 +65,17 @@ pub fn read_text(root: &Path, rel: &Path) -> Result<Option<String>> {
     Ok(String::from_utf8(bytes).ok())
 }
 
+/// Render a (relative) path with forward slashes, so the prompt the judge sees —
+/// and the violation paths it echoes back — are consistent across platforms
+/// (a Windows `PathBuf` would otherwise render `\`). Pure string formatting; it
+/// lives here next to the other path helpers so `commands` shares one spelling.
+pub fn to_slash(path: &Path) -> String {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Normalize explicit CLI file paths to be relative to `root` where possible
 /// (tidier prompts and output); paths outside `root` are kept as given.
 pub fn from_cli(root: &Path, files: &[PathBuf]) -> Vec<PathBuf> {

@@ -31,6 +31,11 @@ pub struct Cli {
 pub enum Command {
     /// Run the LLM-as-judge lint (this is the default).
     Lint(LintArgs),
+    /// Validate inline `llmlint: ignore` directives (deterministic, no model
+    /// call). Runs as part of `lint`; split out so it can sit in the fast
+    /// static-check loop next to fmt/clippy.
+    #[command(name = "check-ignores")]
+    CheckIgnores(CheckIgnoresArgs),
     /// Write a starter llmlint config file.
     Init(InitArgs),
     /// Print the effective merged config and its sources as JSON.
@@ -213,6 +218,22 @@ pub struct InitArgs {
     /// Write to this path instead of the default.
     #[arg(long = "output", short = 'o', value_name = "PATH")]
     pub output: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct CheckIgnoresArgs {
+    /// Files to scan. When given, overrides the config's file globs (per-rule
+    /// and per-agent `files` still take precedence) — pass the changed files to
+    /// scope the check in a pre-commit hook.
+    pub files: Vec<PathBuf>,
+
+    /// llmlint config file(s); repeatable. Replaces upward config discovery.
+    #[arg(long = "config", short = 'c', value_name = "PATH")]
+    pub config: Vec<PathBuf>,
+
+    /// Directory to scan from (config discovery + glob root). Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, Default)]

@@ -7,12 +7,13 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use crate::cli::{ColorChoice, LintArgs, OutputFormat};
-use crate::domain::config::{validate, Agent, Config, FileFilter, RelevanceMode, Rule};
+use crate::commands::ignores;
+use crate::domain::config::{validate, Config, RelevanceMode, Rule};
 use crate::domain::plan::{self, JudgeRun};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{RuleOutcome, RuleVerdict};
-use crate::domain::{ignore, schema, vote};
+use crate::domain::{schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::{assets, configfs, files, oneharness};
 
@@ -67,7 +68,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
         };
         let agent_name = rule.agent.clone().unwrap_or_else(|| "default".to_string());
         let agent = config.agent_or_default(&agent_name);
-        let target = resolve_files(&cwd, rule, &agent, &cli_files, &config.files)?;
+        let target = ignores::resolve_files(&cwd, rule, &agent, &cli_files, &config.files)?;
         resolved.push(plan::ResolvedRule {
             name: rule.name.clone(),
             description: rule.description.clone(),
@@ -83,8 +84,13 @@ pub fn run(args: LintArgs) -> Result<i32> {
     // before spending any judge calls. Honoring well-formed ones is the judge's
     // job (the default template tells it how); their *structure* is enforced here
     // so a typo'd or reason-less ignore fails loudly instead of silently doing
-    // nothing.
-    check_ignore_directives(&cwd, &resolved, &config)?;
+    // nothing. This is the same check `llmlint check-ignores` runs standalone, so
+    // the fast static loop and the full run never disagree.
+    let targets: BTreeSet<PathBuf> = resolved
+        .iter()
+        .flat_map(|r| r.files.iter().cloned())
+        .collect();
+    ignores::check(&cwd, &targets, &ignores::known_rules(&config))?;
 
     // Rules whose rationale is disabled: llmlint is authoritative, so we drop any
     // rationale a harness returns anyway, keeping `--no-rationales` deterministic
@@ -275,60 +281,6 @@ fn select_rules<'a>(config: &'a Config, args: &LintArgs) -> Vec<&'a Rule> {
         .collect()
 }
 
-/// Scan the resolved target files for inline `llmlint: ignore` directives and
-/// reject any whose structure is malformed (no rule named, an unknown/invalid
-/// rule, or no reason). Each target file is read once; non-UTF-8 files can't
-/// carry a directive and are skipped. A directive may reference any configured
-/// rule (not just the selected ones), so the known set is the full config.
-fn check_ignore_directives(
-    cwd: &Path,
-    resolved: &[plan::ResolvedRule],
-    config: &Config,
-) -> Result<()> {
-    let known: BTreeSet<&str> = config.rules.iter().map(|r| r.name.as_str()).collect();
-    let mut targets: BTreeSet<&Path> = BTreeSet::new();
-    for r in resolved {
-        for f in &r.files {
-            targets.insert(f.as_path());
-        }
-    }
-
-    let mut problems: Vec<String> = Vec::new();
-    for rel in targets {
-        let Some(text) = files::read_text(cwd, rel)? else {
-            continue;
-        };
-        for p in ignore::validate(&text, &known) {
-            problems.push(format!("  {}:{}: {}", to_slash(rel), p.line, p.message));
-        }
-    }
-
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::IgnoreDirective(problems.join("\n")))
-    }
-}
-
-fn resolve_files(
-    cwd: &Path,
-    rule: &Rule,
-    agent: &Agent,
-    cli_files: &[PathBuf],
-    global: &FileFilter,
-) -> Result<Vec<PathBuf>> {
-    if let Some(f) = &rule.files {
-        return files::resolve(cwd, f);
-    }
-    if let Some(f) = &agent.files {
-        return files::resolve(cwd, f);
-    }
-    if !cli_files.is_empty() {
-        return Ok(cli_files.to_vec());
-    }
-    files::resolve(cwd, global)
-}
-
 /// Overlay the lint CLI's top-level overrides onto the merged config so the CLI
 /// wins over the config. Each knob also has a config field and (transitively) a
 /// plugin precedence; this is the final, highest-priority layer. `--oneharness-bin`,
@@ -365,16 +317,6 @@ fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Option<PathBuf
         );
     }
     all.into_iter().next()
-}
-
-/// Render a (relative) path with forward slashes, so the prompt the judge sees —
-/// and the violation paths it echoes back — are consistent across platforms
-/// (Windows `PathBuf` would otherwise render `\`).
-fn to_slash(path: &Path) -> String {
-    path.components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// A stable per-judge label used for both error messages and the `-v` debug
@@ -425,7 +367,7 @@ fn execute(
     Option<oneharness::RunTrace>,
     Result<BTreeMap<String, RuleVerdict>>,
 ) {
-    let files_str: Vec<String> = run.files.iter().map(|p| to_slash(p)).collect();
+    let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
     // Show the rationale guidance when any rule in this batch wants a rationale,
     // and the relevance guidance when any rule is conditional on relevance.
     let want_rationale = run.rules.iter().any(|r| r.rationale);
@@ -513,6 +455,7 @@ fn emit(report: &Report, format: OutputFormat, verbosity: u8, color: ColorChoice
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::config::Agent;
 
     fn rule(name: &str, agent: Option<&str>) -> Rule {
         Rule {

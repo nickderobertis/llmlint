@@ -164,8 +164,12 @@ tools.
   (except `ignore-end`), plus block pairing (every `ignore-block` closes, every
   `ignore-end` matches an open block, no double-open of a rule; blocks track each
   rule independently, so two opened together may close separately and blocks for
-  different rules may overlap), else exit 2 (`src/domain/ignore.rs`, scanned over
-  the resolved files via `io::files::read_text` in `commands/lint.rs`).
+  different rules may overlap), else exit 2. The parser is `src/domain/ignore.rs`;
+  the file-resolution + scan wiring is shared in `commands/ignores.rs`
+  (`io::files::read_text` per target file) and used by both the `lint` pre-flight
+  and the standalone, model-free `check-ignores` command (`commands/check_ignores.rs`),
+  so the fast static check and the full run can never disagree about what's valid.
+  Keep that one shared path — don't reimplement the scan in a command.
   **Honoring** them is the judge's job, specified in the default template; there
   is no separate suppression pass in llmlint, so a custom `prompt_template` must
   carry the same guidance to keep the behavior.
@@ -218,8 +222,9 @@ tools.
   (local files and remote/versioned URLs, fetched over HTTPS with `ureq`/rustls
   and cached on disk — see `src/io/plugins.rs`), file globbing, the oneharness
   subprocess client, embedded assets. Never hide I/O in a helper that looks pure.
-- **`src/commands/`** wires domain + io for `lint` (default), `init`, `config`,
-  `doctor`.
+- **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
+  `init`, `config`, `doctor`. `commands/ignores.rs` holds the ignore-directive
+  resolution + scan shared by `lint` and `check-ignores`.
 
 ## Tests are context engineering
 
