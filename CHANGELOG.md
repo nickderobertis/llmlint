@@ -7,6 +7,13 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.18](https://github.com/nickderobertis/llmlint/compare/v0.2.17...v0.2.18) - 2026-06-30
+
+### Added
+
+- add standalone check-ignores command for the fast linter loop ([#67](https://github.com/nickderobertis/llmlint/pull/67))
+- balance rules evenly across judge batches ([#65](https://github.com/nickderobertis/llmlint/pull/65))
+
 ## [0.2.17](https://github.com/nickderobertis/llmlint/compare/v0.2.16...v0.2.17) - 2026-06-27
 
 ### Added
