@@ -70,17 +70,25 @@ logic is also covered hermetically via `file://` plugins.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule and per-agent `files` override the global globs.
 - `--diff` adds each changed target file's diff to the judge prompt so it reviews
-  only the changed lines. Bare `--diff` defaults to the `git` backend (compared
-  against `HEAD`): a `## Changed lines` section renders with a per-file `diff`
-  block naming the changed file and carrying its `+`/`-` lines; an unchanged
-  target file gets no block but is still listed as a target (diffs are additive
-  context, not a file filter). Without `--diff` no section renders even in a git
-  repo with pending changes. The backend is selected behind a `DiffProvider`
-  trait (git is the first impl), so `--diff <backend>` validates against the
-  known backends and the rest of llmlint is VCS-agnostic. Running `--diff git`
-  outside a git work tree is a clear exit-2 error (`diff (git): …`) rather than a
-  silent "nothing changed". Backend internals (only-changed-files, the unborn-HEAD
-  `--cached` fallback, the non-repo error) are unit-tested in `io::diff`.
+  only the changed lines, exercised end to end against **real git repos**. Bare
+  `--diff` and the explicit `--diff git` both render a `## Changed lines` section
+  with a per-file `diff` block naming the changed file and carrying its `+`/`-`
+  lines (additions and deletions across multiple files); diffs use `git diff HEAD`
+  so **both staged and unstaged** edits show. Diffs are additive context, not a
+  file filter: an unchanged file, and a brand-new untracked file (no diff vs
+  HEAD), each get no block but stay listed as a target for whole-file review; a
+  clean work tree renders no section yet still lints; and without `--diff` no
+  section renders even in a git repo with pending changes. Diffs are **scoped to
+  each judge run's files** — a rule scoped to `src/a.rs` sees only `a.rs`'s diff,
+  never a sibling rule's `b.rs`. `--cwd` is the git root (the work tree can live
+  in a subdir the process cwd is not). The backend is selected behind a
+  `DiffProvider` trait (git is the first impl): an unknown `--diff <backend>` is a
+  clap usage error (exit 2) listing valid values, and `--diff git` outside a git
+  work tree is a clear exit-2 `diff (git): …` error (never a silent "nothing
+  changed"). An unborn HEAD (no commit) falls back to a `--cached` diff instead
+  of fataling. Backend internals (only-changed-files, the `--cached` fallback,
+  the non-repo/bare-repo/missing-git errors, `provider` dispatch) are also
+  unit-tested in `io::diff`.
 - `--config` replaces nested upward discovery and is repeatable (first entry
   supplies the top-level scalars, the rest contribute rules/agents); `config
   --config` honors a relative path resolved against `--cwd`.
