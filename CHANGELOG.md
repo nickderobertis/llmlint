@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.25](https://github.com/nickderobertis/llmlint/compare/v0.2.24...v0.2.25) - 2026-06-30
+
+### Added
+
+- scope rules per file with validation, rework, and deterministic ignores ([#80](https://github.com/nickderobertis/llmlint/pull/80))
+
 ## [0.2.24](https://github.com/nickderobertis/llmlint/compare/v0.2.23...v0.2.24) - 2026-06-30
 
 ### Added
