@@ -43,6 +43,7 @@ pub fn example_rule_specs() -> Vec<RuleSpec> {
             rationale: true,
             relevance: None,
             require_line_attribution: false,
+            files: example_files(),
         })
         .collect()
 }
@@ -116,6 +117,7 @@ pub fn synthetic_rule_specs(n: usize) -> Vec<RuleSpec> {
             rationale: true,
             relevance: None,
             require_line_attribution: false,
+            files: vec!["src/lib.rs".into()],
         })
         .collect()
 }

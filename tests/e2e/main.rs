@@ -893,16 +893,22 @@ fn diff_flag_adds_changed_lines_to_the_prompt() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    // The changed-lines section renders, names the changed file, and carries the
-    // added line as a `+` diff line — exactly which lines to review.
-    assert!(system.contains("## Changed lines"), "system:\n{system}");
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    // The changed file's diff is inlined under its target line, carrying the added
+    // line as a `+` diff line — exactly which lines to review.
+    assert!(system.contains("```diff"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { let x = 1; }"),
         "system:\n{system}"
     );
-    // The unchanged file gets no diff block (nothing changed in it).
-    assert!(!system.contains("### src/b.rs"), "system:\n{system}");
+    // The unchanged file gets no diff (nothing changed in it).
+    assert!(
+        !system.contains("diff --git a/src/b.rs"),
+        "system:\n{system}"
+    );
     // Both files are still listed as targets (diffs are additive context, not a
     // file filter).
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
@@ -937,7 +943,7 @@ fn without_diff_flag_no_changed_lines_section() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(!system.contains("```diff"), "system:\n{system}");
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
 }
 
@@ -983,8 +989,11 @@ fn diff_explicit_git_backend_adds_changed_lines() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("## Changed lines"), "system:\n{system}");
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(system.contains("```diff"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { explicit(); }"),
         "system:\n{system}"
@@ -1016,8 +1025,14 @@ fn diff_renders_additions_and_deletions_across_files() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
-    assert!(system.contains("### src/b.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("diff --git a/src/b.rs"),
+        "system:\n{system}"
+    );
     assert!(system.contains("+fn a() { added(); }"), "system:\n{system}");
     assert!(system.contains("-fn remove_me() {}"), "system:\n{system}");
 }
@@ -1076,10 +1091,10 @@ fn diff_untracked_new_file_is_a_target_without_a_block() {
     assert!(system.contains("- src/new.rs"), "target missing:\n{system}");
     // ...but no diff block, and with nothing else changed, no section at all.
     assert!(
-        !system.contains("### src/new.rs"),
+        !system.contains("diff --git a/src/new.rs"),
         "unexpected diff block:\n{system}"
     );
-    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(!system.contains("```diff"), "system:\n{system}");
 }
 
 #[test]
@@ -1099,7 +1114,7 @@ fn diff_clean_worktree_renders_no_section() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(!system.contains("```diff"), "system:\n{system}");
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
 }
 
@@ -1129,7 +1144,10 @@ fn diff_unborn_head_uses_cached_fallback() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(system.contains("+fn a() {}"), "system:\n{system}");
 }
 
@@ -1160,9 +1178,12 @@ fn diff_is_scoped_to_each_rules_files() {
         .assert()
         .success();
     let sys_a = fs::read_to_string(&dump_a).unwrap();
-    assert!(sys_a.contains("### src/a.rs"), "system:\n{sys_a}");
+    assert!(sys_a.contains("diff --git a/src/a.rs"), "system:\n{sys_a}");
     assert!(sys_a.contains("+fn a() { aaa(); }"), "system:\n{sys_a}");
-    assert!(!sys_a.contains("### src/b.rs"), "b leaked into a:\n{sys_a}");
+    assert!(
+        !sys_a.contains("diff --git a/src/b.rs"),
+        "b leaked into a:\n{sys_a}"
+    );
 
     // Isolate rule_b: the mirror image.
     let dump_b = p.path().join("b.txt");
@@ -1176,9 +1197,12 @@ fn diff_is_scoped_to_each_rules_files() {
         .assert()
         .success();
     let sys_b = fs::read_to_string(&dump_b).unwrap();
-    assert!(sys_b.contains("### src/b.rs"), "system:\n{sys_b}");
+    assert!(sys_b.contains("diff --git a/src/b.rs"), "system:\n{sys_b}");
     assert!(sys_b.contains("+fn b() { bbb(); }"), "system:\n{sys_b}");
-    assert!(!sys_b.contains("### src/a.rs"), "a leaked into b:\n{sys_b}");
+    assert!(
+        !sys_b.contains("diff --git a/src/a.rs"),
+        "a leaked into b:\n{sys_b}"
+    );
 }
 
 #[test]
@@ -1212,7 +1236,10 @@ fn diff_respects_cwd_as_the_git_root() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { in_cwd(); }"),
         "system:\n{system}"
@@ -1257,8 +1284,11 @@ fn diff_base_reviews_changes_against_a_branch() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("## Changed lines"), "system:\n{system}");
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(system.contains("```diff"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { feature(); }"),
         "system:\n{system}"
@@ -1286,7 +1316,7 @@ fn diff_base_default_head_shows_no_committed_branch_change() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(!system.contains("```diff"), "system:\n{system}");
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
 }
 
@@ -1343,7 +1373,10 @@ fn diff_base_with_explicit_git_backend() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { feature(); }"),
         "system:\n{system}"
@@ -1371,7 +1404,10 @@ fn diff_base_accepts_a_commit_sha() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { by_sha(); }"),
         "system:\n{system}"
@@ -1398,7 +1434,10 @@ fn diff_base_accepts_a_tag() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { by_tag(); }"),
         "system:\n{system}"
@@ -1508,11 +1547,14 @@ fn diff_base_three_dot_range_uses_merge_base() {
 
     let system = fs::read_to_string(&dump).unwrap();
     // feature's own change is present...
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(system.contains("+fn a() { feat(); }"), "system:\n{system}");
     // ...but main's independent b.rs change is not part of this branch's diff.
     assert!(
-        !system.contains("### src/b.rs"),
+        !system.contains("diff --git a/src/b.rs"),
         "main's change leaked into the three-dot diff:\n{system}"
     );
     assert!(!system.contains("main_moved"), "system:\n{system}");
@@ -1547,8 +1589,14 @@ fn diff_base_renders_additions_and_deletions_across_files() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
-    assert!(system.contains("### src/b.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("diff --git a/src/b.rs"),
+        "system:\n{system}"
+    );
     assert!(system.contains("+fn a() { added(); }"), "system:\n{system}");
     assert!(system.contains("-fn remove_me() {}"), "system:\n{system}");
 }
@@ -1583,9 +1631,12 @@ fn diff_base_is_scoped_to_each_rules_files() {
         .assert()
         .success();
     let sys_a = fs::read_to_string(&dump_a).unwrap();
-    assert!(sys_a.contains("### src/a.rs"), "system:\n{sys_a}");
+    assert!(sys_a.contains("diff --git a/src/a.rs"), "system:\n{sys_a}");
     assert!(sys_a.contains("+fn a() { aaa(); }"), "system:\n{sys_a}");
-    assert!(!sys_a.contains("### src/b.rs"), "b leaked into a:\n{sys_a}");
+    assert!(
+        !sys_a.contains("diff --git a/src/b.rs"),
+        "b leaked into a:\n{sys_a}"
+    );
 
     let dump_b = p.path().join("b.txt");
     p.lint()
@@ -1600,9 +1651,12 @@ fn diff_base_is_scoped_to_each_rules_files() {
         .assert()
         .success();
     let sys_b = fs::read_to_string(&dump_b).unwrap();
-    assert!(sys_b.contains("### src/b.rs"), "system:\n{sys_b}");
+    assert!(sys_b.contains("diff --git a/src/b.rs"), "system:\n{sys_b}");
     assert!(sys_b.contains("+fn b() { bbb(); }"), "system:\n{sys_b}");
-    assert!(!sys_b.contains("### src/a.rs"), "a leaked into b:\n{sys_b}");
+    assert!(
+        !sys_b.contains("diff --git a/src/a.rs"),
+        "a leaked into b:\n{sys_b}"
+    );
 }
 
 #[test]
@@ -1640,7 +1694,10 @@ fn diff_base_respects_cwd_as_the_git_root() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { in_cwd(); }"),
         "system:\n{system}"
@@ -1650,7 +1707,7 @@ fn diff_base_respects_cwd_as_the_git_root() {
 #[test]
 fn diff_base_equal_to_tip_renders_no_section() {
     // An explicit base that equals the current tip (here the branch you're on)
-    // means nothing differs: no `## Changed lines` section, but the files are
+    // means nothing differs: no ````diff` section, but the files are
     // still linted (whole-file review) and the run is clean.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
@@ -1667,7 +1724,7 @@ fn diff_base_equal_to_tip_renders_no_section() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(!system.contains("```diff"), "system:\n{system}");
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
 }
 
@@ -1709,8 +1766,11 @@ fn diff_base_from_config_sets_the_default_base() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("## Changed lines"), "system:\n{system}");
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(system.contains("```diff"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { from_config(); }"),
         "system:\n{system}"
@@ -1745,7 +1805,10 @@ fn diff_base_flag_overrides_config() {
 
     let system = fs::read_to_string(&dump).unwrap();
     // vs `other`: only the line that changed since `other` (not since `main`).
-    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
     assert!(
         system.contains("+fn a() { under_review(); }"),
         "system:\n{system}"
@@ -1775,7 +1838,7 @@ fn diff_base_from_config_is_inert_without_diff() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(!system.contains("```diff"), "system:\n{system}");
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
 }
 
@@ -4203,7 +4266,10 @@ fn ignore_directive_without_reason_is_rejected() {
 }
 
 #[test]
-fn default_prompt_documents_ignore_directives() {
+fn default_prompt_documents_line_and_block_ignore_directives() {
+    // llmlint now enforces ignores deterministically after the judge answers, so
+    // the prompt keeps only the line/block guidance (as a backstop) — the
+    // file-scoped form's guidance is dropped since it can't be missed.
     let p = ignore_project("// code\n");
     let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
     let dump = p.path().join("system.txt");
@@ -4215,11 +4281,11 @@ fn default_prompt_documents_ignore_directives() {
     let prompt = fs::read_to_string(&dump).unwrap();
     assert!(
         prompt.contains("llmlint: ignore["),
-        "prompt should document the ignore directive: {prompt}"
+        "prompt should document the line-scoped directive: {prompt}"
     );
     assert!(
-        prompt.contains("ignore-file"),
-        "prompt should document the file-scoped form: {prompt}"
+        prompt.contains("ignore-block"),
+        "prompt should document the block-scoped form: {prompt}"
     );
 }
 
@@ -5717,4 +5783,387 @@ fn an_unlocalized_violation_for_a_require_line_attribution_rule_is_an_error() {
         .code(2)
         .stdout(predicate::str::contains("\"errored\": 1"))
         .stdout(predicate::str::contains("requires a file and line"));
+}
+
+// ---- per-file applicability, scope validation + deterministic ignores ------
+
+#[test]
+fn agent_rules_with_distinct_files_merge_into_one_call_with_per_file_context() {
+    // Two default-agent rules scoped to different directories now share ONE
+    // oneharness call over the union of their files (fewer invocations), and the
+    // prompt tells the judge, per file, which rules apply — picking the shorter of
+    // an apply-list or a skip-list so the context stays token-cheap.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rule_src, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// code\n");
+    p.write("docs/b.md", "# doc\n");
+    let verdicts = p.write_verdicts(r#"{"rule_src": true, "rule_docs": true}"#);
+    let dump = p.path().join("system.txt");
+    let runlog = p.path().join("runlog");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success();
+
+    // One merged call carrying both rules.
+    let calls = runlog_calls(&runlog);
+    assert_eq!(
+        calls.len(),
+        1,
+        "rules over distinct files merge into one call: {calls:?}"
+    );
+    assert!(
+        calls[0].contains("rule_src") && calls[0].contains("rule_docs"),
+        "{calls:?}"
+    );
+
+    // Per-file context: src/a.rs lists the shorter apply-list (only rule_src);
+    // docs/b.md lists the shorter skip-list (all apply except rule_src).
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("src/a.rs — only these rules apply: rule_src"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("docs/b.md — all rules apply except: rule_src"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn wrong_file_violation_triggers_a_rework_then_passes() {
+    // A judge flags rule_src in docs/b.md — a file rule_src does not cover. llmlint
+    // rejects the verdict and re-asks (a second oneharness call) with the correct
+    // per-file rule scope; the corrected verdict holds, so the run exits clean.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rule_src, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// code\n");
+    p.write("docs/b.md", "# doc\n");
+    // First call: rule_src wrongly reports a violation in docs/b.md (out of its
+    // scope). Second call (the rework): it holds.
+    let verdicts = p.write_verdicts(
+        r#"{"rule_src": [{"holds": false, "violations": [
+                {"file": "docs/b.md", "line": 1, "message": "wrong file"}]}, true],
+            "rule_docs": true}"#,
+    );
+    let state = p.path().join("state");
+    let runlog = p.path().join("runlog");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("wrong file").not());
+
+    let calls = runlog_calls(&runlog);
+    assert_eq!(
+        calls.len(),
+        2,
+        "the wrong-file verdict is reworked once: {calls:?}"
+    );
+}
+
+#[test]
+fn unfixed_wrong_file_violation_is_dropped_after_the_rework() {
+    // If the judge keeps reporting the wrong-file violation even after the rework,
+    // llmlint drops it deterministically and — since that was the verdict's only
+    // basis — flips the fail to a pass, so a wrong-file finding never reddens the
+    // build. Exactly MAX_REWORKS (1) corrective call is made, then it stops.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rule_src, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// code\n");
+    p.write("docs/b.md", "# doc\n");
+    // Constant spec: every call reports the same out-of-scope violation.
+    let verdicts = p.write_verdicts(
+        r#"{"rule_src": {"holds": false, "violations": [
+                {"file": "docs/b.md", "line": 1, "message": "still wrong"}]},
+            "rule_docs": true}"#,
+    );
+    let runlog = p.path().join("runlog");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("still wrong").not())
+        .stdout(predicate::str::contains("2 rules: 2 passed"));
+
+    let calls = runlog_calls(&runlog);
+    assert_eq!(
+        calls.len(),
+        2,
+        "one original call + one bounded rework: {calls:?}"
+    );
+}
+
+#[test]
+fn file_scoped_ignore_suppresses_a_reported_violation() {
+    // A file-top `ignore-file` is enforced by llmlint itself: a violation the judge
+    // reports anyway is dropped, flipping the fail to a pass.
+    let p = ignore_project(
+        "/* llmlint: ignore-file[no_todo] vendored, reviewed upstream */\n// TODO: later\n",
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"no_todo": {"holds": false, "violations": [
+                {"file": "src/lib.rs", "line": 2, "message": "stray TODO"}]}}"#,
+    );
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stray TODO").not())
+        .stdout(predicate::str::contains("1 rules: 1 passed"));
+}
+
+#[test]
+fn line_scoped_ignore_suppresses_only_the_covered_line() {
+    // A line directive covers its own line and the one below it; a violation there
+    // is dropped, but a violation on an uncovered line still fails.
+    let p = ignore_project(
+        "// llmlint: ignore[no_todo] the line below is exempt\nbad two\nbad three\n",
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"no_todo": {"holds": false, "violations": [
+                {"file": "src/lib.rs", "line": 2, "message": "ignored todo"},
+                {"file": "src/lib.rs", "line": 3, "message": "live todo"}]}}"#,
+    );
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("src/lib.rs:3: live todo"))
+        .stdout(predicate::str::contains("ignored todo").not());
+}
+
+#[test]
+fn block_scoped_ignore_suppresses_violations_inside_the_block() {
+    // A block covers every line from open to close; a violation inside is dropped,
+    // one outside still fails.
+    let p = ignore_project(
+        "// llmlint: ignore-block[no_todo] legacy region, tracked in JIRA-9\n\
+         bad two\n\
+         // llmlint: ignore-end[no_todo]\n\
+         bad four\n",
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"no_todo": {"holds": false, "violations": [
+                {"file": "src/lib.rs", "line": 2, "message": "inside block"},
+                {"file": "src/lib.rs", "line": 4, "message": "outside block"}]}}"#,
+    );
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("src/lib.rs:4: outside block"))
+        .stdout(predicate::str::contains("inside block").not());
+}
+
+#[test]
+fn per_file_applicability_and_diff_compose_in_one_prompt() {
+    // The per-file applicability context and the `--diff` changed-lines block are
+    // independent sections that must coexist: a merged call over two distinct
+    // file scopes shows both the per-file rule lists and the diff of the changed
+    // file (and only the changed file).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rule_src, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// before\n");
+    p.write("docs/b.md", "# doc\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    // Change only src/a.rs, so the diff block carries it and docs/b.md does not.
+    p.write("src/a.rs", "// after the change\n");
+
+    let verdicts = p.write_verdicts(r#"{"rule_src": true, "rule_docs": true}"#);
+    let dump = p.path().join("system.txt");
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .arg("--diff")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // Per-file applicability is present for both files.
+    assert!(
+        system.contains("src/a.rs — only these rules apply: rule_src"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("docs/b.md — all rules apply except: rule_src"),
+        "system:\n{system}"
+    );
+    // The diff is inlined under src/a.rs (the only changed file).
+    assert!(system.contains("```diff"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
+    assert!(system.contains("+// after the change"), "system:\n{system}");
+    assert!(
+        !system.contains("diff --git a/docs/b.md"),
+        "unchanged file has no diff:\n{system}"
+    );
+}
+
+#[test]
+fn rework_prompt_lists_the_correct_rules_for_the_wrong_file() {
+    // The corrective re-ask must actually reach oneharness — naming the wrong-file
+    // violation and restating which rules apply to each file (the validation's
+    // whole point), not just happening to run a second time.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rule_src, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// code\n");
+    p.write("docs/b.md", "# doc\n");
+    // First call: rule_src wrongly flags docs/b.md (out of its scope). Rework: holds.
+    let verdicts = p.write_verdicts(
+        r#"{"rule_src": [{"holds": false, "violations": [
+                {"file": "docs/b.md", "line": 1, "message": "wrong file"}]}, true],
+            "rule_docs": true}"#,
+    );
+    let state = p.path().join("state");
+    let args = p.path().join("args.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args)
+        .assert()
+        .success();
+
+    // DUMP_ARGS keeps the LAST call's args — the rework — whose `--prompt` names
+    // the offending (rule, file) and the rules that apply to each file.
+    let dumped = fs::read_to_string(&args).unwrap();
+    assert!(
+        dumped.contains("`rule_src` reported a violation in `docs/b.md`"),
+        "rework prompt missing the wrong-file callout:\n{dumped}"
+    );
+    assert!(dumped.contains("does not apply to"), "args:\n{dumped}");
+    assert!(
+        dumped.contains("src/a.rs — only these rules apply: rule_src"),
+        "rework prompt missing the per-file rule scope:\n{dumped}"
+    );
+}
+
+#[test]
+fn cross_cutting_violation_without_a_file_survives_scope_filtering() {
+    // A violation with no `file` can't be mislocated, so the scope filter keeps it
+    // (we never over-drop a legitimate cross-cutting finding): the rule still fails,
+    // and no rework is triggered (there is no wrong file to correct).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rule_src, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// code\n");
+    p.write("docs/b.md", "# doc\n");
+    let verdicts = p.write_verdicts(
+        r#"{"rule_src": {"holds": false, "violations": [{"message": "cross-cutting drift"}]},
+            "rule_docs": true}"#,
+    );
+    let runlog = p.path().join("runlog");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL rule_src"))
+        .stdout(predicate::str::contains("cross-cutting drift"));
+
+    // No rework: a file-less violation is never a wrong-file problem.
+    assert_eq!(
+        runlog_calls(&runlog).len(),
+        1,
+        "a file-less violation must not trigger a rework"
+    );
+}
+
+#[test]
+fn per_file_context_says_all_rules_apply_when_every_rule_covers_a_file() {
+    // When every rule in the call covers a file, the skip-list is empty and the
+    // cheapest spelling is the bare "all rules apply" (the exclude-empty branch).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: rule_a, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_b, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"rule_a": true, "rule_b": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("src/lib.rs — all rules apply\n"),
+        "system:\n{system}"
+    );
 }

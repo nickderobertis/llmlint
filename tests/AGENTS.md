@@ -61,24 +61,43 @@ logic is also covered hermetically via `file://` plugins.
   aliased anchor reaches the rendered prompt and a merged field reaches oneharness.
 - A custom top-level `prompt_template` drives the prompt, and an agent's
   `prompt_template` is appended for its rules (both asserted via the dumped prompt).
-- Rules for one agent share a single oneharness call by default; a per-agent
-  `batch_size` splits them into one call per batch. When a split is needed the
-  batches are *balanced*, not packed: 4 rules at `batch_size` 3 run as 2+2 (the
-  fewest batches that respect the cap, sizes within one), never 3+1.
+- Rules for one agent share a single oneharness call by default — even across
+  *distinct file sets*, which merge into one call over the union of their files;
+  a per-agent `batch_size` splits them into one call per batch. When a split is
+  needed the batches are *balanced*, not packed: 4 rules at `batch_size` 3 run as
+  2+2 (the fewest batches that respect the cap, sizes within one), never 3+1.
+- Per-file applicability: when an agent's rules cover different files, one merged
+  call's prompt lists, per file, exactly which rules apply — the apply-set or, when
+  shorter, the skip-set ("only these rules apply: …" vs "all rules apply except:
+  …"), proving the token-cheaper spelling is chosen per file; when every rule
+  covers a file the skip-list is empty and it reads the bare "all rules apply".
+- Wrong-file validation + rework: a judge that reports a violation in a file
+  outside the rule's scope is re-asked once with the correct per-file rule lists
+  (a second oneharness call), and a corrected verdict exits clean. The rework's
+  `--prompt` is asserted (via the dumped arg vector) to name the offending
+  `(rule, file)` and restate which rules apply to each file — the re-ask is
+  correct, not just a retry. If the wrong-file violation survives the rework it is
+  dropped deterministically and the fail flips to a pass (no phantom red), with
+  exactly one bounded rework call. A cross-cutting violation with no `file` is
+  never mislocated, so the scope filter keeps it (the rule still fails) and no
+  rework fires. The per-file applicability and the `--diff` diff coexist in one
+  merged prompt — each changed file's diff is inlined under its own applicability
+  line.
 - `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
   a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule and per-agent `files` override the global globs.
 - `--diff` adds each changed target file's diff to the judge prompt so it reviews
   only the changed lines, exercised end to end against **real git repos**. Bare
-  `--diff` and the explicit `--diff git` both render a `## Changed lines` section
-  with a per-file `diff` block naming the changed file and carrying its `+`/`-`
-  lines (additions and deletions across multiple files); diffs use `git diff HEAD`
-  so **both staged and unstaged** edits show. Diffs are additive context, not a
-  file filter: an unchanged file, and a brand-new untracked file (no diff vs
-  HEAD), each get no block but stay listed as a target for whole-file review; a
-  clean work tree renders no section yet still lints; and without `--diff` no
-  section renders even in a git repo with pending changes. Diffs are **scoped to
+  `--diff` and the explicit `--diff git` both inline each changed file's unified
+  diff (a fenced `diff` block carrying its `+`/`-` lines) right under that file's
+  applicability line in the "Target files" section (additions and deletions across
+  multiple files); diffs use `git diff HEAD` so **both staged and unstaged** edits
+  show. Diffs are additive context, not a file filter: an unchanged file, and a
+  brand-new untracked file (no diff vs HEAD), each get no diff but stay listed as a
+  target for whole-file review; a clean work tree renders no diff yet still lints;
+  and without `--diff` no diff renders even in a git repo with pending changes.
+  Diffs are **scoped to
   each judge run's files** — a rule scoped to `src/a.rs` sees only `a.rs`'s diff,
   never a sibling rule's `b.rs`. `--cwd` is the git root (the work tree can live
   in a subdir the process cwd is not). The backend is selected behind a
@@ -259,11 +278,16 @@ logic is also covered hermetically via `file://` plugins.
   `llmlint: ignore-block[...] <reason>` / `llmlint: ignore-end[...]` (the close
   names the same rule(s) and needs no reason) directives in target files pass
   validation when well-formed (in any comment style; a prose mention of the
-  marker is not a directive), and the default prompt documents how a judge should
-  honor them. Their *structure* is enforced deterministically: a directive with
-  no brackets, an empty rule list, an unknown/invalid rule name, or (where one is
-  required) no reason is a clear exit-2 error located as `file:line:` — honoring
-  them is the judge's job, llmlint never suppresses anything itself. Block pairing
+  marker is not a directive), and the default prompt documents the line/block forms
+  (as a backstop) — the file-scoped guidance is dropped since llmlint enforces it.
+  **Honoring is now deterministic, done by llmlint after the judge answers:** a
+  `ignore-file` drops every reported violation of that rule in the file (flipping
+  the fail to a pass); a line `ignore` drops a violation on its own line or the one
+  below but not an uncovered line; an `ignore-block`…`ignore-end` drops violations
+  inside the span but not outside it. Their *structure* is still enforced
+  deterministically: a directive with no brackets, an empty rule list, an
+  unknown/invalid rule name, or (where one is required) no reason is a clear exit-2
+  error located as `file:line:`. Block pairing
   is checked deterministically too: an unclosed `ignore-block` (reported at its
   opening line), an `ignore-end` with no matching open block, and re-opening a
   rule already in an open block are all exit-2 errors. Scope and timing: only

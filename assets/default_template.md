@@ -9,15 +9,21 @@ organization objectives — that deterministic linters cannot express.
 - Treat each rule's `description` as a statement that should hold. Decide
   `holds = true` when the property holds (the code complies) and
   `holds = false` when it is violated. The two are mutually exclusive.
+- **Evaluate each rule only against the files it applies to.** The "Target files"
+  section lists, for every file, exactly which rules apply to it. A rule is
+  scoped to its files: never report a violation of a rule in a file that rule
+  does not apply to — a finding outside that scope is invalid and will be
+  discarded.
 - Gather evidence first. **Read the target files (and any related files they
   reference) with your tools** before deciding. Base every verdict on what the
   code actually does, not on assumptions. When uncertain after reading, prefer
   the reading that a careful reviewer would defend.
 - When `holds = false`, report the concrete violations. Each violation may
   include the `file` and `line` (and `end_line`) where it occurs and a short
-  `message`. Include a violation per distinct problem; there can be multiple per
-  file and across files. If a violation genuinely cannot be tied to an exact
-  source location, omit `file`/`line` and just give a `message`.
+  `message`. Report each violation only in a file the rule applies to. Include a
+  violation per distinct problem; there can be multiple per file and across
+  files. If a violation genuinely cannot be tied to an exact source location,
+  omit `file`/`line` and just give a `message`.
 - When `holds = true`, return an empty `violations` list.
 {% if relevance %}
 ## Relevance
@@ -56,52 +62,42 @@ genuinely cannot be tied to one source line.
 {% endif %}
 ## Inline ignore directives
 
-A target file may suppress a specific rule at a specific place with an inline
+A target file may suppress a specific rule over a span of lines with an inline
 comment directive (in whatever comment syntax the file's language uses):
 
     <comment> llmlint: ignore[rule_name, other_rule] <reason>
+    <comment> llmlint: ignore-block[rule_name] <reason>   ...   <comment> llmlint: ignore-end[rule_name]
 
-Honor these as you read the files. When you would otherwise report a violation of
-a rule whose **exact name** appears in an applicable directive, do not report it:
-treat that rule as holding at that location and omit the violation.
+When you would otherwise report a violation of a rule whose **exact name** appears
+in an applicable directive, do not report it: treat that rule as holding at that
+location and omit the violation.
 
 - `llmlint: ignore[...]` is **line-scoped** — it covers the line it sits on (a
   trailing comment) or the line immediately below it (a comment on its own line).
-- `llmlint: ignore-file[...]` is **file-scoped** — it covers the whole file it
-  appears in.
 - `llmlint: ignore-block[...] <reason>` and `llmlint: ignore-end[...]` are
-  **block-scoped** — `ignore-block` opens a suppressed region for the rule(s) it
-  names, and the matching `ignore-end` (which names the same rule(s) and needs no
-  reason) closes it. Every line *between* the opening directive and its close is
-  covered for those rules. Blocks track each rule independently: rules opened
-  together in one `ignore-block` may be closed by separate `ignore-end`
-  directives at different points, and blocks for different rules may overlap. A
-  rule is suppressed only on lines that fall inside an open block for that rule.
+  **block-scoped** — every line from the opening directive to its matching close
+  (which names the same rule(s) and needs no reason) is covered for those rules.
 
 A directive only ever silences the rules it explicitly lists; it never affects a
-rule it does not name, and an unrelated comment never silences anything. If
-suppressing a rule's only would-be violations leaves none, that rule
-`holds = true`. Never invent or honor a directive that isn't actually present in
-the code.
+rule it does not name. Never invent or honor a directive that isn't actually
+present in the code. (llmlint also enforces these directives after you answer, so
+a missed one is still suppressed — but honor them so your verdict reads true.)
 
 ## Target files
 
-{% for f in files %}- {{ f }}
-{% endfor %}
-{% if diffs %}## Changed lines
+Evaluate each rule against a file **only** when that file's line below says the
+rule applies. A rule never applies to a file not listed for it. When a file was
+modified in the change under review, its unified diff is shown right under it —
+**focus your review on those `+`/`-` lines**; unchanged code is context, not the
+subject of this review.
 
-These target files were modified in the change under review. Their unified diffs
-are below — the `+`/`-` lines are exactly what changed. **Focus your review on
-these changed lines**; unchanged code is context, not the subject of this review.
-A target file not listed here was not modified.
-
-{% for d in diffs %}### {{ d.file }}
-
+{% for fr in file_rules %}- {{ fr.file }} — {% if fr.mode == "include" %}{% if fr.rules %}only these rules apply: {{ fr.rules | join(", ") }}{% else %}no rules apply{% endif %}{% else %}{% if fr.rules %}all rules apply except: {{ fr.rules | join(", ") }}{% else %}all rules apply{% endif %}{% endif %}
+{% if fr.diff %}
 ```diff
-{{ d.diff }}
+{{ fr.diff }}
 ```
-
-{% endfor %}{% endif %}## Rules to evaluate
+{% endif %}{% endfor %}
+## Rules to evaluate
 
 {% for r in rules %}### {{ r.name }}
 
@@ -111,8 +107,7 @@ Relevant only when: {{ r.relevance }}
 {% endif %}{% if r.require_line_attribution %}
 Every violation must cite a `file` and `line`.
 {% endif %}
-{% endfor %}
-## Response
+{% endfor %}## Response
 
 Respond with **only** the JSON object required by the response schema: one key
 per rule name above. Fill each rule's object in the exact field order the schema
