@@ -2147,7 +2147,9 @@ fn nested_discovery_traces_sources_up_and_down_the_tree() {
     );
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     let s = &v["sources"];
-    let src = |val: &Value| val.as_str().unwrap_or_default().to_string();
+    // Provenance reports OS-native paths; normalize separators so the suffix
+    // assertions below hold on Windows too.
+    let src = |val: &Value| val.as_str().unwrap_or_default().replace('\\', "/");
 
     // Each rule traces to its own file across the whole tree — including a
     // descendant rule to the subtree config.
@@ -2195,7 +2197,10 @@ fn nested_discovery_traces_sources_up_and_down_the_tree() {
             .unwrap();
         (
             out.status.code().unwrap(),
-            String::from_utf8(out.stdout).unwrap().trim().to_string(),
+            String::from_utf8(out.stdout)
+                .unwrap()
+                .trim()
+                .replace('\\', "/"),
         )
     };
     let (code, front) = trimmed(&["where", "rules.front_rule"]);
@@ -2264,7 +2269,9 @@ fn cascade_override_across_the_tree_traces_each_field_to_its_file() {
     // Provenance splits the rule across files: definition at the ancestor, the
     // overridden `judges` at the cwd config.
     let sh = &v["sources"]["rules"]["shared"];
-    let src = |val: &Value| val.as_str().unwrap_or_default().to_string();
+    // Provenance reports OS-native paths; normalize separators so the suffix
+    // assertions below hold on Windows too.
+    let src = |val: &Value| val.as_str().unwrap_or_default().replace('\\', "/");
     assert!(
         src(&sh["source"]).ends_with("llmlint.yml") && !src(&sh["source"]).contains("proj"),
         "definition site is the ancestor: {}",
@@ -2286,7 +2293,10 @@ fn cascade_override_across_the_tree_traces_each_field_to_its_file() {
             .arg(&proj)
             .output()
             .unwrap();
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .trim()
+            .replace('\\', "/")
     };
     assert!(where1("rules.shared.judges").ends_with("proj/llmlint.yml"));
     let def = where1("rules.shared");
