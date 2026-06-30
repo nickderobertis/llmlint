@@ -16,7 +16,9 @@ pub fn run(args: CheckIgnoresArgs) -> Result<i32> {
         None => std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?,
     };
 
-    let loaded = configfs::load(&args.config, &cwd)?;
+    // Explicit CLI files relevance-gate the subtree cascade exactly as `lint`
+    // does, so the two never disagree about which files are in scope.
+    let loaded = configfs::load_with_targets(&args.config, &cwd, &args.files)?;
     let scopes = loaded.scopes;
     let config = loaded.config;
     validate(&config)?;

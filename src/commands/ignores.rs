@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use crate::domain::config::{Agent, Config, RelevanceMode, Rule};
 use crate::domain::ignore;
 use crate::errors::{Error, Result};
-use crate::io::configfs::RuleScope;
+use crate::io::configfs::{self, RuleScope};
 use crate::io::files;
 
 /// The configured rule names — the set a directive may legitimately reference.
@@ -86,9 +86,35 @@ pub fn resolve_files(
         return files::resolve_scoped(&scope.dir, cwd, f);
     }
     if !cli_files.is_empty() {
-        return Ok(cli_files.to_vec());
+        // Explicit CLI files override the rule's globs, but they are still bounded
+        // to the rule's directory scope: a subtree config's rule must not be judged
+        // against a passed file outside its directory. Keep only the files under
+        // `scope.dir` (reported cwd-relative, as given); a rule with no passed file
+        // under its scope resolves to nothing and is skipped — the same
+        // "consolidated up from each leaf" trimming a discovery run does.
+        return Ok(scope_cli_files(cwd, &scope.dir, cli_files));
     }
     files::resolve_scoped(&scope.dir, cwd, &scope.files)
+}
+
+/// Keep the explicit CLI files that fall under `dir` (a rule's directory scope),
+/// preserving their given (cwd-relative) spelling. A file is under `dir` when its
+/// absolutized, lexically-normalized path is prefixed by `dir`; an ancestor-scoped
+/// rule (e.g. the cwd config, whose `dir` is `cwd` or above) keeps every passed
+/// file under `cwd`, so a flat single-config run is unchanged.
+fn scope_cli_files(cwd: &Path, dir: &Path, cli_files: &[PathBuf]) -> Vec<PathBuf> {
+    cli_files
+        .iter()
+        .filter(|f| {
+            let abs = if f.is_absolute() {
+                (*f).clone()
+            } else {
+                cwd.join(f)
+            };
+            configfs::normalize(&abs).starts_with(dir)
+        })
+        .cloned()
+        .collect()
 }
 
 /// Scan each file (read once, relative to `cwd`) for inline `llmlint: ignore`
@@ -117,5 +143,38 @@ pub fn check(cwd: &Path, targets: &BTreeSet<PathBuf>, known: &BTreeSet<&str>) ->
         Ok(())
     } else {
         Err(Error::IgnoreDirective(problems.join("\n")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn scope_cli_files_bounds_to_the_scope_dir_relative_and_absolute() {
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        let dir = cwd.join("backend");
+        let abs_in = cwd.join("backend/x.rs"); // absolute, under dir → kept
+        let abs_out = cwd.join("other/y.rs"); // absolute, outside → dropped
+        let files = vec![
+            PathBuf::from("backend/svc.rs"), // relative, under dir → kept
+            PathBuf::from("app.rs"),         // relative, outside → dropped
+            abs_in.clone(),
+            abs_out,
+        ];
+        let kept = scope_cli_files(cwd, &dir, &files);
+        assert_eq!(kept, vec![PathBuf::from("backend/svc.rs"), abs_in]);
+    }
+
+    #[test]
+    fn scope_cli_files_ancestor_scope_keeps_all_files_under_cwd() {
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        // A cwd/ancestor scope (the root config) keeps every passed file, so a flat
+        // single-config run is unchanged by the per-rule scoping.
+        let files = vec![PathBuf::from("a.rs"), PathBuf::from("sub/b.rs")];
+        assert_eq!(scope_cli_files(cwd, cwd, &files), files);
     }
 }

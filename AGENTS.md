@@ -238,8 +238,17 @@ tools.
   same way: a subtree rule traces to its own file, and a descendant's settings
   never appear as a session setting's source (they don't take effect). Rule names
   share one namespace (override spans the chain; a real duplicate is an error).
-  `--config` replaces the whole walk with no cascade (`load_explicit`, globs
-  rooted at `cwd`).
+  The cascade is **relevance-gated by the linted files** (`load_with_targets`):
+  with explicit `FILES` on the command line, a subtree config is loaded only when a
+  passed file lives under its directory — so linting one area never loads (nor
+  fetches the plugins of, nor trips a name clash in) an unrelated subtree, and a
+  rule's CLI targets are bounded to its own directory (a passed file outside a
+  subtree rule's scope is not judged by it; with none under it the rule is
+  skipped). No explicit files keeps the full cascade (each subtree config decides
+  what its own area lints). The "is the project configured?" check still uses the
+  full discovered set, so a project whose only config sits in an unrelated subtree
+  is a clean zero-rule run, not a `ConfigNotFound`. `--config` replaces the whole
+  walk with no cascade (`load_explicit`, globs rooted at `cwd`).
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `init`, `config` (`--sources` adds per-item provenance), `where` (locate one
   config item's source), `doctor`. `commands/ignores.rs` holds the

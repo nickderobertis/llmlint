@@ -95,6 +95,14 @@ logic is also covered hermetically via `file://` plugins.
   ConfigNotFound); and two sibling subtrees that define the same rule name without
   `override` is a clear exit-2 "duplicate rule name" error (one namespace across
   the whole tree, never silent last-writer-wins).
+- The cascade is **relevance-gated by the linted files**: with explicit `FILES`,
+  (a) a subtree rule judges only the passed files under its own directory — a file
+  outside its scope is never in its prompt (the "consolidated up from each leaf"
+  scoping); (b) a subtree config is loaded only when a passed file lives under it,
+  so each subtree's rule joins the run only for its own area, and (c) an unrelated
+  subtree's config is not loaded at all — so two sibling subtrees that share a rule
+  name don't trip the duplicate-name error when you lint just one of them. A bare
+  run (no `FILES`) keeps the full cascade.
 - `--cwd` drives both config discovery and the directory forwarded to oneharness
   as its `--cwd`.
 - `--rule` and `--agent` filters limit which rules run: `--rule` is repeatable
@@ -228,7 +236,9 @@ logic is also covered hermetically via `file://` plugins.
   scan. Parity holds under **nested discovery** too: a subtree config's rule
   scopes the scan to its own directory (a malformed directive in the subtree is
   caught and located; a same-extension file above the subtree rule's scope is not
-  scanned), so the fast static loop and the full run resolve the same files.
+  scanned), so the fast static loop and the full run resolve the same files. The
+  same relevance-gating applies: an explicit file outside a subtree never pulls
+  that subtree's directives into scope, while passing a file under it does.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`

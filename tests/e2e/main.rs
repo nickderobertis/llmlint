@@ -2419,6 +2419,224 @@ fn lint_runs_when_the_only_config_is_in_a_subtree() {
     assert_eq!(names, ["area_rule"]);
 }
 
+/// Collect every rule name in a JSON report's `rules` array, in report order
+/// (the report sorts by name), failing loudly on a non-zero exit.
+fn lint_rule_names(out: &std::process::Output) -> Vec<String> {
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn explicit_file_outside_a_subtree_is_not_judged_by_that_subtrees_rule() {
+    // Regression: with explicit files on the command line, a subtree config's rule
+    // used to be evaluated against *every* passed file — even ones outside its own
+    // directory, because the CLI list short-circuited the rule's directory scope.
+    // Pass one file under the subtree and one above it; the subtree rule must judge
+    // only the file under its directory (the "consolidated up from each leaf"
+    // scoping), never the unrelated one.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"**/*.rs\"]\nrules:\n  \
+             - {{ name: root_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "backend/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"**/*.rs\"]\nrules:\n  \
+             - {{ name: backend_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("app.rs", "// top-level code\n");
+    p.write("backend/svc.rs", "// backend code\n");
+
+    // Select backend_rule alone so the single oneharness run's dumped system
+    // prompt is exactly that rule's resolved file set.
+    let dump = p.path().join("backend.txt");
+    let verdicts = p.write_verdicts(r#"{"backend_rule": true}"#);
+    p.lint()
+        .arg("app.rs")
+        .arg("backend/svc.rs")
+        .arg("--rule")
+        .arg("backend_rule")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("backend/svc.rs"),
+        "the file under the subtree should be judged:\n{system}"
+    );
+    assert!(
+        !system.contains("app.rs"),
+        "a subtree rule must not judge an explicit file outside its directory:\n{system}"
+    );
+}
+
+#[test]
+fn a_sibling_subtrees_name_clash_does_not_break_an_unrelated_explicit_file_run() {
+    // Regression: two independent areas each name a rule the same in their own
+    // subtree config. They never collide in practice — you lint one area at a time
+    // — but the cascade used to load *every* subtree config regardless of the files
+    // being linted, so the duplicate name aborted an unrelated run (exit 2) before
+    // any judge call. Relevance-gated discovery loads only the subtree a passed
+    // file lives under, so linting one area never trips the other's config.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "frontend/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"**/*.js\"]\nrules:\n  \
+             - {{ name: no_todos, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "backend/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"**/*.py\"]\nrules:\n  \
+             - {{ name: no_todos, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("frontend/app.js", "// code\n");
+    p.write("backend/svc.py", "# code\n");
+
+    // Lint only a frontend file: backend's clashing config must not be loaded.
+    let verdicts = p.write_verdicts(r#"{"root_rule": true, "no_todos": true}"#);
+    let out = p
+        .lint()
+        .arg("frontend/app.js")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    let names = lint_rule_names(&out);
+    assert_eq!(
+        names,
+        ["no_todos", "root_rule"],
+        "only frontend's rule (plus the root rule) should run; backend's clashing \
+         config must be gated out: {names:?}"
+    );
+}
+
+#[test]
+fn subtree_rules_are_loaded_only_when_an_explicit_file_falls_under_them() {
+    // New behavior: with explicit files, each subtree config is picked up only when
+    // a passed file lives under it — the rule set is the union of "walk up from each
+    // leaf". The root rule (rooted at cwd) spans every passed file; a subtree rule
+    // joins the run only for its own area.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "frontend/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"**/*.js\"]\nrules:\n  \
+             - {{ name: front_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "backend/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"**/*.py\"]\nrules:\n  \
+             - {{ name: back_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("frontend/app.js", "// code\n");
+    p.write("backend/svc.py", "# code\n");
+    let verdicts =
+        p.write_verdicts(r#"{"root_rule": true, "front_rule": true, "back_rule": true}"#);
+
+    // Only a frontend file: the backend subtree never joins the run.
+    let out = p
+        .lint()
+        .arg("frontend/app.js")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(
+        lint_rule_names(&out),
+        ["front_rule", "root_rule"],
+        "an irrelevant subtree must not be loaded for an explicit-file run"
+    );
+
+    // Files from both areas: each area's rule joins, and the root rule spans both.
+    let out = p
+        .lint()
+        .arg("frontend/app.js")
+        .arg("backend/svc.py")
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(
+        lint_rule_names(&out),
+        ["back_rule", "front_rule", "root_rule"],
+        "every subtree with a passed file under it should join the run"
+    );
+}
+
+#[test]
+fn check_ignores_scopes_explicit_files_to_subtrees_like_lint() {
+    // The fast, model-free `check-ignores` must resolve the same subtree-scoped
+    // files `lint` does: an explicit file outside a subtree never pulls that
+    // subtree's directives into scope, and a malformed directive in a subtree file
+    // is only checked once that file is in scope.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "backend/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"**/*.py\"]\nrules:\n  \
+             - {{ name: back_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("app.rs", "// code\n");
+    // A malformed directive (names a rule but gives no reason) in the backend file.
+    p.write("backend/svc.py", "# llmlint: ignore[back_rule]\n");
+
+    // Checking only the top-level file: the backend subtree is out of scope, so its
+    // malformed directive is never reached — clean exit.
+    p.check_ignores().arg("app.rs").assert().success();
+
+    // Passing the backend file pulls it into scope: the malformed directive fails.
+    p.check_ignores()
+        .arg("backend/svc.py")
+        .assert()
+        .code(2)
+        .stderr(
+            predicate::str::contains("backend/svc.py")
+                .and(predicate::str::contains("give a reason")),
+        );
+}
+
 // ---- --timeout (forwarded to oneharness) ----------------------------------
 
 #[test]
