@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.26](https://github.com/nickderobertis/llmlint/compare/v0.2.25...v0.2.26) - 2026-06-30
+
+### Documentation
+
+- don't require every rule to state both true and false ([#84](https://github.com/nickderobertis/llmlint/pull/84))
+
 ## [0.2.25](https://github.com/nickderobertis/llmlint/compare/v0.2.24...v0.2.25) - 2026-06-30
 
 ### Added
