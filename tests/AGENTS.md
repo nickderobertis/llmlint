@@ -125,6 +125,31 @@ logic is also covered hermetically via `file://` plugins.
   top-level scalars (template, files, oneharness, rationales) and a deeper plugin
   only fills what shallower configs left unset — asserted end to end via
   `llmlint config` on a root -> mid -> leaf chain.
+- `llmlint config --sources` adds a `sources` block tracing each item back to
+  where it is defined so it can be found and edited: every agent and every
+  top-level setting to their single (first-writer-wins) source, and every rule to
+  its definition site plus — because an `override` resolves field by field — a
+  per-field map of any field whose value came from a *different* file (the file
+  to edit for that field). It is opt-in: a bare `config` omits the block (the
+  default stays lean), asserted alongside `--sources` adding it. The full trace
+  is asserted end to end over one root + local-plugin + bundled-URL run: a root
+  rule -> its file, a bundled-plugin rule -> its URL, a plugin-only agent and
+  setting -> the local plugin file, `version`/`rationales` -> the root file, and
+  a rule defined in the plugin whose `judges` an `override` pulls to the root
+  file (`fields.judges` -> root, `source` -> plugin).
+- `llmlint where <path>` is the focused single-item lookup: it prints exactly one
+  source (path or plugin URL) and nothing else, for scripting. Asserted that a
+  dotted and a non-dotted setting, an `agents.<name>`, a `rules.<name>`, and a
+  `rules.<name>.<field>` (an overridden field -> the file that set it; an
+  un-overridden field and `name` -> the definition site) each resolve, that a
+  rule from a remote plugin resolves to the plugin URL verbatim, and that `where`
+  honors `--config`/`--cwd` like the other commands. Failure/recovery: every
+  error branch exits 2 with an actionable message — unknown rule and unknown
+  agent names list what's available, an unknown rule field lists the valid
+  fields, a real setting left at its default says the built-in default applies,
+  and an unrecognized path shows the accepted forms — plus the shared load
+  preflight (no config found, a structurally invalid config) surfaces through
+  `where`'s own entry point.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted

@@ -38,8 +38,14 @@ pub enum Command {
     CheckIgnores(CheckIgnoresArgs),
     /// Write a starter llmlint config file.
     Init(InitArgs),
-    /// Print the effective merged config and its sources as JSON.
+    /// Print the effective merged config as JSON (add `--sources` to trace where
+    /// each rule, agent, and setting is defined).
     Config(ConfigArgs),
+    /// Show which file (or plugin URL) a config item comes from — the place to
+    /// edit it. Pass a path like `oneharness.model`, `agents.<name>`,
+    /// `rules.<name>`, or `rules.<name>.<field>`; prints the source and nothing
+    /// else, for scripting. The broad view is `config --sources`.
+    Where(WhereArgs),
     /// Check that oneharness is installed and reachable.
     Doctor,
 }
@@ -238,6 +244,32 @@ pub struct CheckIgnoresArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct ConfigArgs {
+    /// llmlint config file(s); repeatable. Replaces upward discovery.
+    #[arg(long = "config", short = 'c', value_name = "PATH")]
+    pub config: Vec<PathBuf>,
+
+    /// Also emit a `sources` block mapping every rule, agent, and setting to the
+    /// file (or plugin URL) it comes from — the path to edit it (a rule also
+    /// names any field an `override` pulled from elsewhere). This is the way to
+    /// discover where to change something; for one item, `llmlint where <path>`
+    /// is more direct.
+    #[arg(long = "sources")]
+    pub sources: bool,
+
+    /// Directory to resolve config discovery from. Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct WhereArgs {
+    /// The config path to locate. A top-level setting (`version`,
+    /// `oneharness.model`, `files`, …), `agents.<name>`, `rules.<name>`, or a
+    /// single field of a rule, `rules.<name>.<field>` (e.g.
+    /// `rules.no_secrets.judges`) to find the file an `override` set it in.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
     /// llmlint config file(s); repeatable. Replaces upward discovery.
     #[arg(long = "config", short = 'c', value_name = "PATH")]
     pub config: Vec<PathBuf>,

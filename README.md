@@ -441,6 +441,56 @@ URL is fetched every run.
 The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 `LLMLINT_CACHE_DIR`). Set `LLMLINT_PLUGIN_REFRESH=1` to force a refetch.
 
+### Finding where something is defined
+
+Once configs merge across files and plugins, a rule, agent, or setting in the
+effective config can come from any of them. Two commands trace an item back to
+the file (or plugin URL) you'd edit to change it.
+
+`llmlint where <path>` answers one lookup and prints **just the source**, so it
+composes in scripts. The path mirrors the config structure:
+
+```console
+$ llmlint where oneharness.model            # a top-level setting
+./shared/team.yml
+$ llmlint where agents.security             # an agent
+./shared/team.yml
+$ llmlint where rules.no_inline_sql         # where a rule is defined
+https://example.com/org-rules.yml@1
+$ llmlint where rules.no_inline_sql.judges  # the file an override set a field in
+./llmlint.yml
+$ editor "$(llmlint where rules.no_inline_sql.judges)"
+```
+
+Because an `override` resolves **field by field**, a single rule can draw its
+`description` from the plugin that defined it and its `judges` from your config —
+`where rules.<name>.<field>` points at the file that actually set that field (or
+the definition site when no override did). An unknown name lists what's available,
+and a setting left at its built-in default says so, both exiting non-zero.
+
+For the whole picture at once, `llmlint config --sources` adds a `sources` block:
+
+```jsonc
+{
+  "config_files": ["./llmlint.yml", "./shared/team.yml", "https://example.com/org-rules.yml@1"],
+  "sources": {
+    "settings": { "version": "./llmlint.yml", "oneharness.model": "./shared/team.yml" },
+    "agents":   { "security": "./shared/team.yml" },
+    "rules": {
+      "no_inline_sql": {
+        "source": "https://example.com/org-rules.yml@1",  // where the rule is defined
+        "fields": { "judges": "./llmlint.yml" }            // a field an override moved
+      }
+    }
+  },
+  "config": { /* … the merged config … */ }
+}
+```
+
+A rule with no cross-file override has no `fields` entry; settings and agents are
+each kept whole from the nearest-root config that set them, so they have a single
+source.
+
 ## Commands & exit codes
 
 - `llmlint [FILES...]` — lint (the default). `--format human|json`, `--agent`,
@@ -461,9 +511,15 @@ The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 
   ![llmlint init writing a starter llmlint.yml](docs/screenshots/init.svg)
 - `llmlint config` — print the merged config and the ordered list of sources that
-  contributed, as JSON.
+  contributed, as JSON. Add `--sources` to also trace every rule, agent, and
+  setting back to the file (or plugin URL) it came from — see
+  [Finding where something is defined](#finding-where-something-is-defined).
 
   ![llmlint config printing the merged config and its sources as JSON](docs/screenshots/config.svg)
+- `llmlint where <path>` — print the single source of one config item: a setting
+  (`oneharness.model`, `version`), `agents.<name>`, `rules.<name>`, or a rule
+  field `rules.<name>.<field>`. See
+  [Finding where something is defined](#finding-where-something-is-defined).
 - `llmlint doctor` — check that oneharness is installed and reachable.
 
   ![llmlint doctor reporting the resolved oneharness version](docs/screenshots/doctor.svg)

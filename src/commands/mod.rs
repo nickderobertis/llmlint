@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod ignores;
 pub mod init;
 pub mod lint;
+pub mod where_;
 
 use crate::cli::{Cli, Command};
 use crate::errors::Result;
@@ -17,6 +18,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::CheckIgnores(args)) => check_ignores::run(args),
         Some(Command::Init(args)) => init::run(args),
         Some(Command::Config(args)) => config::run(args),
+        Some(Command::Where(args)) => where_::run(args),
         Some(Command::Doctor) => doctor::run(),
         None => lint::run(cli.lint),
     }

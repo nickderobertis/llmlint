@@ -943,6 +943,273 @@ fn config_command_prints_merged_config_and_sources() {
 }
 
 #[test]
+fn config_default_omits_sources_block() {
+    // Provenance is opt-in: a bare `config` stays lean (file list + config), and
+    // `--sources` is the documented way to add the per-item trace.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("rules:\n  - {{ name: my_rule, description: \"{RULE}\" }}\n"),
+    );
+    let plain: Value = serde_json::from_slice(&p.bare().arg("config").output().unwrap().stdout)
+        .expect("config is JSON");
+    assert!(plain.get("config_files").is_some());
+    assert!(plain.get("config").is_some());
+    assert!(plain.get("sources").is_none(), "default must omit sources");
+
+    let with: Value = serde_json::from_slice(
+        &p.bare()
+            .args(["config", "--sources"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .expect("config --sources is JSON");
+    assert!(with["sources"]["rules"]["my_rule"]["source"].is_string());
+}
+
+#[test]
+fn config_command_traces_every_item_to_its_source() {
+    // One `config --sources` run exercising the whole `sources` block through the
+    // real binary: a local plugin file, a remote plugin URL, the root file, an
+    // agent, the top-level settings (first-writer-wins), and an `override` rule
+    // whose field provenance points at the file that set the field.
+    let p = Project::new();
+    // Local plugin: contributes a base rule, an agent, and a setting the root
+    // leaves unset (so the plugin is that setting's source).
+    p.write(
+        "team.yml",
+        &format!(
+            "oneharness:\n  model: team-model\nagents:\n  team_agent:\n    harness: claude-code\n\
+             rules:\n  - {{ name: team_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // Root: sets version + rationales, plugins the local file and the bundled
+    // URL, adds its own rule, and overrides the plugin's `team_rule`.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: false\nplugins:\n  - ./team.yml\n  - {CONFIG_LINT}\n\
+             rules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: team_rule, override: true, judges: 3 }}\n"
+        ),
+    );
+
+    let out = p.bare().args(["config", "--sources"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let s = &v["sources"];
+    let ends = |val: &Value, suffix: &str| {
+        let got = val.as_str().unwrap().to_string();
+        assert!(got.ends_with(suffix), "expected {suffix:?}, got {got:?}");
+    };
+
+    // Settings: root set version + rationales; only the plugin set the model.
+    ends(&s["settings"]["version"], "llmlint.yml");
+    ends(&s["settings"]["rationales"], "llmlint.yml");
+    ends(&s["settings"]["oneharness.model"], "team.yml");
+
+    // Agent declared only by the local plugin.
+    ends(&s["agents"]["team_agent"], "team.yml");
+
+    // Rule from the root file, and one from the remote plugin URL. A rule with
+    // no override reports only its definition site (no per-field `fields` block).
+    ends(&s["rules"]["root_rule"]["source"], "llmlint.yml");
+    assert!(s["rules"]["root_rule"]["fields"].is_null());
+    assert_eq!(
+        s["rules"]["name_matches_description"]["source"]
+            .as_str()
+            .unwrap(),
+        CONFIG_LINT
+    );
+
+    // `team_rule` is defined in the local plugin, but the root `override` set
+    // `judges` — so the rule's definition site is the plugin while `judges`
+    // traces to the root file, the field that would actually need editing there.
+    ends(&s["rules"]["team_rule"]["source"], "team.yml");
+    ends(&s["rules"]["team_rule"]["fields"]["judges"], "llmlint.yml");
+    // And the override actually resolved into the merged rule.
+    let team_rule = v["config"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "team_rule")
+        .unwrap();
+    assert_eq!(team_rule["judges"], 3);
+    assert_eq!(team_rule["description"].as_str().unwrap(), RULE);
+}
+
+#[test]
+fn where_command_returns_one_source_path_for_scripting() {
+    // The focused lookup: `where <path>` prints exactly the source of an item —
+    // and an `override` field resolves to the file that set it, not the base.
+    let p = Project::new();
+    p.write(
+        "team.yml",
+        &format!(
+            "oneharness:\n  model: team-model\nagents:\n  team_agent:\n    harness: claude-code\n\
+             rules:\n  - {{ name: team_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nplugins:\n  - ./team.yml\n  - {CONFIG_LINT}\n\
+             rules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: team_rule, override: true, judges: 3 }}\n"
+        ),
+    );
+
+    // Output is exactly the source path plus a trailing newline — scriptable.
+    let trimmed = |args: &[&str]| -> (i32, String) {
+        let out = p.bare().args(args).output().unwrap();
+        (
+            out.status.code().unwrap(),
+            String::from_utf8(out.stdout).unwrap().trim().to_string(),
+        )
+    };
+
+    // A dotted setting and a non-dotted one (both kinds of setting key).
+    assert!(trimmed(&["where", "oneharness.model"])
+        .1
+        .ends_with("team.yml"));
+    assert!(trimmed(&["where", "version"]).1.ends_with("llmlint.yml"));
+    // An agent the local plugin supplies.
+    assert!(trimmed(&["where", "agents.team_agent"])
+        .1
+        .ends_with("team.yml"));
+    // A rule's definition site vs. an overridden field's file.
+    assert!(trimmed(&["where", "rules.team_rule"])
+        .1
+        .ends_with("team.yml"));
+    assert!(trimmed(&["where", "rules.team_rule.judges"])
+        .1
+        .ends_with("llmlint.yml"));
+    // Fields nobody overrode (a normal field and `name`) resolve to the
+    // definition site.
+    assert!(trimmed(&["where", "rules.team_rule.description"])
+        .1
+        .ends_with("team.yml"));
+    assert!(trimmed(&["where", "rules.team_rule.name"])
+        .1
+        .ends_with("team.yml"));
+    let (code, root) = trimmed(&["where", "rules.root_rule"]);
+    assert_eq!(code, 0);
+    assert!(root.ends_with("llmlint.yml"));
+    // A rule contributed by a remote plugin resolves to the plugin URL verbatim,
+    // not a local path — the source you'd pin/upgrade to change it.
+    assert_eq!(
+        trimmed(&["where", "rules.name_matches_description"]).1,
+        CONFIG_LINT
+    );
+}
+
+#[test]
+fn where_honors_explicit_config_and_cwd() {
+    // `where` resolves config the same way as `lint`/`config`: `--config` (a path
+    // relative to `--cwd`) replaces discovery. If `--cwd` were ignored the
+    // relative `--config` would resolve against the process cwd and fail to load.
+    let p = Project::new();
+    p.write(
+        "proj/custom.yml",
+        &format!("version: 1\nrules:\n  - {{ name: explicit_rule, description: \"{RULE}\" }}\n"),
+    );
+    let proj = p.path().join("proj");
+    let out = p
+        .bare()
+        .args(["where", "rules.explicit_rule", "--config", "custom.yml"])
+        .arg("--cwd")
+        .arg(&proj)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8(out.stdout)
+        .unwrap()
+        .trim()
+        .ends_with("custom.yml"));
+}
+
+#[test]
+fn where_command_errors_clearly_on_an_unknown_path() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "agents:\n  reviewer: {{}}\n\
+             rules:\n  - {{ name: my_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // An unknown rule name exits 2 and names what's available.
+    p.bare()
+        .args(["where", "rules.nope"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no rule named"))
+        .stderr(predicate::str::contains("my_rule"));
+    // An unknown agent name likewise lists the configured agents.
+    p.bare()
+        .args(["where", "agents.nope"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no agent named"))
+        .stderr(predicate::str::contains("reviewer"));
+    // An unknown field of a real rule lists the valid fields.
+    p.bare()
+        .args(["where", "rules.my_rule.bogus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown rule field"))
+        .stderr(predicate::str::contains("judges"));
+    // A real setting left at its default says so rather than pretending a source.
+    p.bare()
+        .args(["where", "oneharness.bin"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("built-in default"));
+    // An unrecognized path shows the accepted forms.
+    p.bare()
+        .args(["where", "bogus.path"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("expected a setting"));
+}
+
+#[test]
+fn where_fails_clearly_with_no_config_and_an_invalid_config() {
+    // `where` shares the load+validate preflight with the other commands, so its
+    // own entry point must surface a missing config and a structurally invalid
+    // one as exit-2 errors rather than a panic or a misleading "not found".
+    let missing = Project::new();
+    missing
+        .bare()
+        .args(["where", "version"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no llmlint config"));
+
+    let invalid = Project::new();
+    // Two rules share a name without `override` -> validation error, not a lookup.
+    invalid.write(
+        "llmlint.yml",
+        &format!(
+            "rules:\n  - {{ name: dup, description: \"{RULE}\" }}\n  \
+             - {{ name: dup, description: \"{RULE}\" }}\n"
+        ),
+    );
+    invalid
+        .bare()
+        .args(["where", "rules.dup"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("duplicate rule name"));
+}
+
+#[test]
 fn doctor_reports_the_harness_version() {
     let p = Project::new();
     p.bare()
