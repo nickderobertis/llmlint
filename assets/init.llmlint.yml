@@ -62,3 +62,13 @@ rules:
   #     TRUE when every returned error adds context about the operation that
   #     failed. FALSE when an error is propagated with no added context.
   #   relevance: the change adds or modifies error handling
+
+  # `require_line_attribution: true` makes every violation of a rule cite a
+  # concrete file + line (the schema requires it, so the judge localizes the
+  # whole batch in one turn; an unlocalized violation is then a hard error). Use
+  # it for rules whose findings should always point at an exact source location.
+  #
+  # - name: no_todo_comments
+  #   description: |
+  #     true when no TODO/FIXME comments remain. false when any is present.
+  #   require_line_attribution: true

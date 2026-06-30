@@ -5,6 +5,7 @@
 //! formatting. All I/O (config discovery, globbing, the oneharness subprocess)
 //! lives in [`crate::io`].
 
+pub mod attribution;
 pub mod config;
 pub mod config_schema;
 pub mod ignore;

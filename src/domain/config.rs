@@ -173,6 +173,19 @@ pub struct Rule {
     /// needing its own "or not applicable" escape hatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relevance: Option<Relevance>,
+    /// Whether every violation of this rule must cite a concrete `file` and
+    /// `line`. Off by default — some findings (e.g. a cross-cutting
+    /// architectural drift) genuinely can't be pinned to one source line, so a
+    /// violation may omit its location. Set `true` for a rule whose violations
+    /// must always be localizable: the generated schema then marks each
+    /// violation's `file`/`line` **required**, so oneharness re-prompts the judge
+    /// to localize *every* violation in one batched turn (no per-violation back
+    /// and forth), and the default template asks for it up front. A violation
+    /// that still arrives without a file+line is a hard error rather than a
+    /// silently-imprecise report. Inherited/overridable like the other per-rule
+    /// fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_line_attribution: Option<bool>,
 }
 
 impl Rule {
@@ -184,6 +197,12 @@ impl Rule {
     /// (from config `rationales` or the `--rationales`/`--no-rationales` flag).
     pub fn wants_rationale(&self, session_default: bool) -> bool {
         self.rationale.unwrap_or(session_default)
+    }
+
+    /// Whether every violation of this rule must carry a concrete file + line
+    /// (the `require_line_attribution` flag; default `false`).
+    pub fn requires_line_attribution(&self) -> bool {
+        self.require_line_attribution.unwrap_or(false)
     }
 
     /// How this rule's relevance resolves, applying the default (always evaluate
@@ -340,6 +359,7 @@ const RULE_FIELDS: &[&str] = &[
     "files",
     "rationale",
     "relevance",
+    "require_line_attribution",
 ];
 
 /// Where a resolved rule, and each of its fields, comes from. A rule with no
@@ -513,6 +533,11 @@ fn rule_provenance(occ: &[(String, Rule)]) -> RuleProvenance {
         base.1.relevance.is_some() || w.relevance.is_some(),
         w.relevance,
     );
+    note(
+        "require_line_attribution",
+        base.1.require_line_attribution.is_some() || w.require_line_attribution.is_some(),
+        w.require_line_attribution,
+    );
     RuleProvenance {
         source: base_src.to_string(),
         fields,
@@ -671,6 +696,7 @@ struct FieldWinners {
     files: Option<usize>,
     rationale: Option<usize>,
     relevance: Option<usize>,
+    require_line_attribution: Option<usize>,
 }
 
 fn field_winners(overrides: &[&Rule]) -> FieldWinners {
@@ -683,6 +709,9 @@ fn field_winners(overrides: &[&Rule]) -> FieldWinners {
         files: overrides.iter().position(|ov| ov.files.is_some()),
         rationale: overrides.iter().position(|ov| ov.rationale.is_some()),
         relevance: overrides.iter().position(|ov| ov.relevance.is_some()),
+        require_line_attribution: overrides
+            .iter()
+            .position(|ov| ov.require_line_attribution.is_some()),
     }
 }
 
@@ -710,6 +739,9 @@ fn merge_override(base: &Rule, overrides: &[&Rule]) -> Rule {
     }
     if let Some(i) = w.relevance {
         out.relevance = overrides[i].relevance.clone();
+    }
+    if let Some(i) = w.require_line_attribution {
+        out.require_line_attribution = overrides[i].require_line_attribution;
     }
     out
 }
@@ -803,6 +835,7 @@ mod tests {
             files: None,
             rationale: None,
             relevance: None,
+            require_line_attribution: None,
         }
     }
 
@@ -953,6 +986,65 @@ mod tests {
         };
         assert!(forced_on.wants_rationale(false));
         assert!(!forced_off.wants_rationale(true));
+    }
+
+    #[test]
+    fn require_line_attribution_defaults_off_and_reads_the_flag() {
+        assert!(!rule("r").requires_line_attribution());
+        let on = Rule {
+            require_line_attribution: Some(true),
+            ..rule("on")
+        };
+        let off = Rule {
+            require_line_attribution: Some(false),
+            ..rule("off")
+        };
+        assert!(on.requires_line_attribution());
+        assert!(!off.requires_line_attribution());
+    }
+
+    #[test]
+    fn override_resolves_require_line_attribution_like_the_other_fields() {
+        // The base (as if from a plugin) leaves it unset; the override (nearer the
+        // root, listed first) turns it on, and the resolved rule inherits that.
+        let base = rule("attr");
+        let over = Rule {
+            name: "attr".into(),
+            r#override: true,
+            require_line_attribution: Some(true),
+            ..rule("attr")
+        };
+        let mut c = Config {
+            rules: vec![over, base],
+            ..Default::default()
+        };
+        resolve_overrides(&mut c).unwrap();
+        assert_eq!(c.rules.len(), 1);
+        assert!(c.rules[0].requires_line_attribution());
+
+        // Field provenance traces the override's contribution to its file.
+        let mut b = ProvenanceBuilder::default();
+        let near = Config {
+            rules: vec![Rule {
+                name: "attr".into(),
+                r#override: true,
+                require_line_attribution: Some(true),
+                ..rule("attr")
+            }],
+            ..Default::default()
+        };
+        let far = Config {
+            rules: vec![rule("attr")],
+            ..Default::default()
+        };
+        b.record(&near, "near.yml");
+        b.record(&far, "far.yml");
+        let prov = b.finish();
+        assert_eq!(prov.rules["attr"].source, "far.yml");
+        assert_eq!(
+            prov.rules["attr"].fields["require_line_attribution"],
+            "near.yml"
+        );
     }
 
     #[test]

@@ -5011,3 +5011,151 @@ fn relevance_guidance_and_condition_reach_the_prompt_only_when_conditional() {
     let off = fs::read_to_string(&dump2).unwrap();
     assert!(!off.contains("## Relevance"), "system:\n{off}");
 }
+
+// ---- line attribution -----------------------------------------------------
+
+#[test]
+fn require_line_attribution_marks_file_and_line_required_in_the_schema() {
+    let p = Project::new();
+    // One rule opts into line attribution and one doesn't, sharing a file set so
+    // both land in one schema where they must differ per rule.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: located_rule, description: \"{RULE}\", require_line_attribution: true }}\n  \
+             - {{ name: free_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"located_rule": true, "free_rule": true}"#);
+    let schema_dump = p.path().join("schema.json");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .success();
+
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    // The opted-in rule requires both file and line on every violation item...
+    let located = &schema["properties"]["located_rule"]["properties"]["violations"]["items"];
+    assert_eq!(located["required"], serde_json::json!(["file", "line"]));
+    assert_eq!(located["properties"]["line"]["minimum"], 1);
+    // ...while the plain rule keeps every violation field optional.
+    let free = &schema["properties"]["free_rule"]["properties"]["violations"]["items"];
+    assert!(free.get("required").is_none());
+}
+
+#[test]
+fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: located_rule, description: \"{RULE}\", require_line_attribution: true }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"located_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("## Line attribution"), "system:\n{system}");
+    assert!(
+        system.contains("Every violation must cite a `file` and `line`."),
+        "system:\n{system}"
+    );
+
+    // A config with no opted-in rule renders no line-attribution guidance.
+    let p2 = Project::new();
+    p2.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: plain_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p2.write("src/lib.rs", "// code\n");
+    let v2 = p2.write_verdicts(r#"{"plain_rule": true}"#);
+    let dump2 = p2.path().join("system.txt");
+    p2.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &v2)
+        .env("LLMLINT_MOCK_DUMP", &dump2)
+        .assert()
+        .success();
+    let off = fs::read_to_string(&dump2).unwrap();
+    assert!(!off.contains("## Line attribution"), "system:\n{off}");
+}
+
+#[test]
+fn a_localized_violation_passes_through_for_a_require_line_attribution_rule() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: located_rule, description: \"{RULE}\", require_line_attribution: true }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // The judge localized the violation -> a normal failure (exit 1), no error.
+    let verdicts = p.write_verdicts(
+        r#"{"located_rule": {"holds": false,
+            "violations": [{"file": "src/lib.rs", "line": 1, "message": "bad here"}]}}"#,
+    );
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("FAIL located_rule"))
+        .stdout(predicate::str::contains("src/lib.rs:1: bad here"))
+        .stdout(predicate::str::contains("requires a file and line").not());
+}
+
+#[test]
+fn an_unlocalized_violation_for_a_require_line_attribution_rule_is_an_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: located_rule, description: \"{RULE}\", require_line_attribution: true }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // The judge failed the rule but reported a violation with no file/line. The
+    // schema would have oneharness re-prompt; the mock doesn't, so llmlint's
+    // backstop turns the unlocalized violation into a clear exit-2 error that
+    // batches the offending messages.
+    let verdicts = p.write_verdicts(
+        r#"{"located_rule": {"holds": false,
+            "violations": [{"message": "drifted"}, {"message": "also drifted"}]}}"#,
+    );
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(
+            "rule \"located_rule\" requires a file and line for every violation",
+        ))
+        .stdout(predicate::str::contains("2 violations"))
+        .stdout(predicate::str::contains("\"drifted\""))
+        .stdout(predicate::str::contains("\"also drifted\""));
+
+    // The machine contract carries the same error in its `errors` array (exit 2).
+    p.lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"errored\": 1"))
+        .stdout(predicate::str::contains("requires a file and line"));
+}
