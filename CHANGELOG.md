@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.24](https://github.com/nickderobertis/llmlint/compare/v0.2.23...v0.2.24) - 2026-06-30
+
+### Added
+
+- *(diff)* diff against a branch/ref/range via --diff-base and a config diff_base default ([#79](https://github.com/nickderobertis/llmlint/pull/79))
+
 ## [0.2.23](https://github.com/nickderobertis/llmlint/compare/v0.2.22...v0.2.23) - 2026-06-30
 
 ### Added
