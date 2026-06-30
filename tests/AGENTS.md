@@ -125,16 +125,26 @@ logic is also covered hermetically via `file://` plugins.
   top-level scalars (template, files, oneharness, rationales) and a deeper plugin
   only fills what shallower configs left unset — asserted end to end via
   `llmlint config` on a root -> mid -> leaf chain.
-- `llmlint config` also emits a `sources` block tracing each item back to where
-  it is defined so it can be found and edited: every agent and every top-level
-  setting to their single (first-writer-wins) source, and every rule to its
-  definition site plus — because an `override` resolves field by field — a
+- `llmlint config --sources` adds a `sources` block tracing each item back to
+  where it is defined so it can be found and edited: every agent and every
+  top-level setting to their single (first-writer-wins) source, and every rule to
+  its definition site plus — because an `override` resolves field by field — a
   per-field map of any field whose value came from a *different* file (the file
-  to edit for that field). Asserted end to end over one root + local-plugin +
-  bundled-URL run: a root rule -> its file, a bundled-plugin rule -> its URL, a
-  plugin-only agent and setting -> the local plugin file, `version`/`rationales`
-  -> the root file, and a rule defined in the plugin whose `judges` an `override`
-  pulls to the root file (`fields.judges` -> root, `source` -> plugin).
+  to edit for that field). It is opt-in: a bare `config` omits the block (the
+  default stays lean), asserted alongside `--sources` adding it. The full trace
+  is asserted end to end over one root + local-plugin + bundled-URL run: a root
+  rule -> its file, a bundled-plugin rule -> its URL, a plugin-only agent and
+  setting -> the local plugin file, `version`/`rationales` -> the root file, and
+  a rule defined in the plugin whose `judges` an `override` pulls to the root
+  file (`fields.judges` -> root, `source` -> plugin).
+- `llmlint where <path>` is the focused single-item lookup: it prints exactly one
+  source (path or plugin URL) and nothing else, for scripting. Asserted that a
+  setting, an `agents.<name>`, a `rules.<name>`, and a `rules.<name>.<field>` each
+  resolve (an overridden field -> the file that set it, an un-overridden field ->
+  the definition site), and that unknowns exit 2 with an actionable message — an
+  unknown rule name lists the available rules, a real setting left at its default
+  says the built-in default applies, and an unrecognized path shows the accepted
+  forms.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted

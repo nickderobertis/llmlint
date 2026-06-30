@@ -314,6 +314,34 @@ pub struct Provenance {
     pub rules: BTreeMap<String, RuleProvenance>,
 }
 
+/// Top-level setting keys that carry provenance, mirroring the config/JSON
+/// shape (the `oneharness.*` block is flattened). The single source of truth for
+/// which paths [`resolve_source`] treats as a setting, and kept in sync with the
+/// keys [`ProvenanceBuilder::record`] emits.
+pub const SETTING_KEYS: &[&str] = &[
+    "version",
+    "prompt_template",
+    "files",
+    "oneharness.config",
+    "oneharness.bin",
+    "oneharness.model",
+    "oneharness.timeout",
+    "oneharness.schema_max_retries",
+    "rationales",
+];
+
+/// The per-rule fields a `rules.<name>.<field>` query can name. `name` always
+/// resolves to the definition site; the rest may be set by an `override`.
+const RULE_FIELDS: &[&str] = &[
+    "name",
+    "description",
+    "agent",
+    "judges",
+    "files",
+    "rationale",
+    "relevance",
+];
+
 /// Where a resolved rule, and each of its fields, comes from. A rule with no
 /// `override` has every field at its single definition site, so `fields` is
 /// empty; an `override` that changes a field from another file surfaces that
@@ -475,6 +503,81 @@ fn rule_provenance(occ: &[(String, Rule)]) -> RuleProvenance {
     RuleProvenance {
         source: base_src.to_string(),
         fields,
+    }
+}
+
+/// Resolve a dotted config path to the source (file path or plugin URL) that
+/// contributes it — the place to edit it — for the `where` command. The path
+/// mirrors the config/JSON structure:
+/// - `agents.<name>` -> the agent's source;
+/// - `rules.<name>` -> the rule's definition site;
+/// - `rules.<name>.<field>` -> the file to edit that field: the `override` that
+///   set it, or the definition site when no override did;
+/// - anything else -> a top-level setting key ([`SETTING_KEYS`], e.g. `version`,
+///   `oneharness.model`).
+///
+/// `Ok` is the source string; `Err` is an actionable message (an unknown name
+/// lists what is available; a real setting left at its built-in default says so;
+/// an unrecognized path shows the accepted forms).
+pub fn resolve_source(prov: &Provenance, path: &str) -> std::result::Result<String, String> {
+    if let Some(name) = path.strip_prefix("agents.") {
+        return prov.agents.get(name).cloned().ok_or_else(|| {
+            format!(
+                "no agent named {name:?} in the merged config (agents: {})",
+                list_or_none(prov.agents.keys())
+            )
+        });
+    }
+    if let Some(rest) = path.strip_prefix("rules.") {
+        // Rule names are validated identifiers (no dots), so a single trailing
+        // dotted segment is unambiguously a field selector.
+        let mut parts = rest.splitn(2, '.');
+        let name = parts.next().unwrap_or("");
+        let field = parts.next();
+        let rule = prov.rules.get(name).ok_or_else(|| {
+            format!(
+                "no rule named {name:?} in the merged config (rules: {})",
+                list_or_none(prov.rules.keys())
+            )
+        })?;
+        return match field {
+            None => Ok(rule.source.clone()),
+            Some(f) if RULE_FIELDS.contains(&f) => {
+                // A field an override set lives elsewhere; otherwise it resolves
+                // from (and is edited at) the rule's definition site.
+                Ok(rule
+                    .fields
+                    .get(f)
+                    .cloned()
+                    .unwrap_or_else(|| rule.source.clone()))
+            }
+            Some(f) => Err(format!(
+                "unknown rule field {f:?}; valid fields: {}",
+                RULE_FIELDS.join(", ")
+            )),
+        };
+    }
+    if SETTING_KEYS.contains(&path) {
+        return prov.settings.get(path).cloned().ok_or_else(|| {
+            format!(
+                "`{path}` is not set by any config; the built-in default applies (nothing to edit)"
+            )
+        });
+    }
+    Err(format!(
+        "unknown config path {path:?}; expected a setting (e.g. `oneharness.model`, `version`), \
+         `agents.<name>`, `rules.<name>`, or `rules.<name>.<field>`"
+    ))
+}
+
+/// Join keys for an error message, or `none` when empty.
+fn list_or_none<'a>(keys: impl Iterator<Item = &'a String>) -> String {
+    let mut names: Vec<&str> = keys.map(String::as_str).collect();
+    names.sort_unstable();
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(", ")
     }
 }
 
@@ -1093,6 +1196,104 @@ mod tests {
         assert_eq!(shared.source, "far.yml");
         assert_eq!(shared.fields["judges"], "near.yml");
         assert!(!shared.fields.contains_key("description"));
+    }
+
+    #[test]
+    fn setting_keys_match_what_record_emits() {
+        // A config that sets every setting must produce exactly `SETTING_KEYS`,
+        // so the `where` resolver's notion of valid settings can't drift from
+        // what the builder records.
+        let mut b = ProvenanceBuilder::default();
+        let mut cfg = Config {
+            version: Some(Version::parse("1").unwrap()),
+            prompt_template: Some("t".into()),
+            rationales: Some(true),
+            files: FileFilter {
+                include: vec!["x".into()],
+                exclude: vec![],
+            },
+            ..Default::default()
+        };
+        cfg.oneharness = OneharnessCfg {
+            config: vec!["c".into()],
+            bin: Some("b".into()),
+            model: Some("m".into()),
+            timeout: Some(1),
+            schema_max_retries: Some(1),
+        };
+        b.record(&cfg, "f.yml");
+        let prov = b.finish();
+        let got: BTreeSet<&str> = prov.settings.keys().map(String::as_str).collect();
+        let want: BTreeSet<&str> = SETTING_KEYS.iter().copied().collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn resolve_source_walks_settings_agents_and_rule_fields() {
+        let mut prov = Provenance::default();
+        prov.settings
+            .insert("oneharness.model".into(), "team.yml".into());
+        prov.agents.insert("security".into(), "team.yml".into());
+        prov.rules.insert(
+            "secrets".into(),
+            RuleProvenance {
+                source: "team.yml".into(),
+                fields: BTreeMap::from([("judges".to_string(), "root.yml".to_string())]),
+            },
+        );
+
+        // Settings, agents, a rule's definition site.
+        assert_eq!(
+            resolve_source(&prov, "oneharness.model").unwrap(),
+            "team.yml"
+        );
+        assert_eq!(
+            resolve_source(&prov, "agents.security").unwrap(),
+            "team.yml"
+        );
+        assert_eq!(resolve_source(&prov, "rules.secrets").unwrap(), "team.yml");
+        // An overridden field resolves to the override's file; a field nobody
+        // overrode resolves to the definition site.
+        assert_eq!(
+            resolve_source(&prov, "rules.secrets.judges").unwrap(),
+            "root.yml"
+        );
+        assert_eq!(
+            resolve_source(&prov, "rules.secrets.description").unwrap(),
+            "team.yml"
+        );
+    }
+
+    #[test]
+    fn resolve_source_errors_are_actionable() {
+        let mut prov = Provenance::default();
+        prov.agents.insert("a".into(), "f.yml".into());
+        prov.rules.insert(
+            "r".into(),
+            RuleProvenance {
+                source: "f.yml".into(),
+                ..Default::default()
+            },
+        );
+
+        // A real setting nobody set -> distinct "default applies" message.
+        let unset = resolve_source(&prov, "oneharness.bin").unwrap_err();
+        assert!(unset.contains("built-in default applies"), "{unset}");
+        // Unknown names list what's available.
+        assert!(resolve_source(&prov, "agents.missing")
+            .unwrap_err()
+            .contains("agents: a"));
+        assert!(resolve_source(&prov, "rules.missing")
+            .unwrap_err()
+            .contains("rules: r"));
+        // Unknown rule field lists the valid ones.
+        assert!(resolve_source(&prov, "rules.r.bogus")
+            .unwrap_err()
+            .contains("valid fields"));
+        // An unrecognized path shows the accepted forms.
+        assert!(resolve_source(&prov, "nonsense")
+            .unwrap_err()
+            .contains("expected a setting"));
     }
 
     #[test]

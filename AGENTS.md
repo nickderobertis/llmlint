@@ -223,8 +223,9 @@ tools.
   and cached on disk — see `src/io/plugins.rs`), file globbing, the oneharness
   subprocess client, embedded assets. Never hide I/O in a helper that looks pure.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
-  `init`, `config`, `doctor`. `commands/ignores.rs` holds the ignore-directive
-  resolution + scan shared by `lint` and `check-ignores`.
+  `init`, `config` (`--sources` adds per-item provenance), `where` (locate one
+  config item's source), `doctor`. `commands/ignores.rs` holds the
+  ignore-directive resolution + scan shared by `lint` and `check-ignores`.
 
 ## Tests are context engineering
 

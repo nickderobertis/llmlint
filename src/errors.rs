@@ -86,6 +86,9 @@ pub enum Error {
          `// llmlint: ignore[rule_name] why it is safe here`"
     )]
     IgnoreDirective(String),
+
+    #[error("{0}")]
+    ConfigPathNotFound(String),
 }
 
 impl Error {
@@ -178,6 +181,11 @@ mod tests {
         assert!(Error::UnknownFilter("no rule named \"x\"".into())
             .to_string()
             .contains("no rule named"));
+        assert!(
+            Error::ConfigPathNotFound("unknown config path \"x\"".into())
+                .to_string()
+                .contains("unknown config path")
+        );
         assert!(Error::ConfigParse {
             path: "f".into(),
             message: "m".into()
