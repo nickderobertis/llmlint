@@ -480,7 +480,7 @@ fn config_lint_plugin_catches_a_bad_rule() {
     let verdicts = p.write_verdicts(
         r#"{"name_is_descriptive_not_placeholder":
               {"holds": false, "violations": [{"file": "llmlint.yml", "message": "rule named 'foo'"}]},
-            "description_states_clear_true_and_false": true,
+            "description_yields_clear_verdict": true,
             "name_matches_description": true}"#,
     );
 
@@ -1938,7 +1938,7 @@ fn init_then_self_lint_is_clean() {
     // The example rule targets src/** (empty here -> skipped); the config-lint
     // plugin targets the config file. Mock holds everything -> exit 0.
     let verdicts = p.write_verdicts(
-        r#"{"description_states_clear_true_and_false": true,
+        r#"{"description_yields_clear_verdict": true,
             "name_is_descriptive_not_placeholder": true,
             "name_matches_description": true,
             "public_items_are_documented": true}"#,

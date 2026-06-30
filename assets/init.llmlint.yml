@@ -47,8 +47,8 @@ rules:
   # judges and take the majority vote for higher-stakes checks.
   - name: public_items_are_documented
     description: |
-      true when every public function, struct, enum, and module has a doc
-      comment explaining its purpose. false when any public item is undocumented.
+      Every public function, struct, enum, and module has a doc comment
+      explaining its purpose.
     judges: 1
 
   # `relevance` scopes a rule to the changes it applies to, so you don't have to
@@ -69,6 +69,5 @@ rules:
   # it for rules whose findings should always point at an exact source location.
   #
   # - name: no_todo_comments
-  #   description: |
-  #     true when no TODO/FIXME comments remain. false when any is present.
+  #   description: No TODO or FIXME comments remain in the code.
   #   require_line_attribution: true

@@ -220,10 +220,15 @@ directory with no cascade.
 
 - **Phrase each rule as a positive invariant.** `holds = true` means the code
   complies; `holds = false` is a violation that llmlint reports and fails on.
-- **Make the true/false outcome unambiguous and mutually exclusive** — state when
-  it is true *and* when it is false. The bundled config-lint plugin (the
-  `config_lint.yml` URL above) lints your config for exactly this, plus
-  descriptive (non-placeholder) names that match what each rule checks.
+- **Make the verdict unambiguous.** Often a plain statement of the property is
+  enough — `every public item has a doc comment` already says what passes and,
+  by negation, what fails; there's no need to bolt on a "false when…" clause that
+  only restates the inverse. Spell out the violating case *only* when it carries
+  meaningful detail — concrete examples, easily-confused edge cases — that the
+  positive statement leaves unclear. When you do state both, keep them mutually
+  exclusive. The bundled config-lint plugin (the `config_lint.yml` URL above)
+  lints your config for exactly this, plus descriptive (non-placeholder) names
+  that match what each rule checks.
 - **Names** are unique, terse, and descriptive (`^[A-Za-z][A-Za-z0-9_]*$`); they
   become the JSON keys of the structured output.
 - **Scope a rule to the changes it applies to with `relevance`** (see below)
