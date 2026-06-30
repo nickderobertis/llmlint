@@ -104,6 +104,7 @@ fn bench_template_render(c: &mut Criterion) {
                 black_box(&[]),
                 black_box(true),
                 black_box(false),
+                black_box(false),
             )
         });
     });
@@ -117,7 +118,7 @@ fn bench_template_render_scaling(c: &mut Criterion) {
     for n in [10usize, 100, 1000] {
         let rules = support::synthetic_rule_specs(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &rules, |b, rules| {
-            b.iter(|| template::render(tmpl, rules, &files, &[], true, false));
+            b.iter(|| template::render(tmpl, rules, &files, &[], true, false, false));
         });
     }
     group.finish();

@@ -169,6 +169,19 @@ logic is also covered hermetically via `file://` plugins.
   held fraction is `held/relevant`, not `held/total`); the per-judge breakdown
   shows each judge's `not relevant`/`held`/`violated`. An empty relevance
   condition is a deterministic config error (exit 2).
+- Line attribution: a rule with `require_line_attribution: true` makes the
+  generated schema mark each violation's `file`/`line` **required** (so oneharness
+  re-prompts the judge to localize the whole batch in one turn), asserted via the
+  dumped schema (a plain rule's violation items stay optional); the default
+  template renders the line-attribution guidance + the per-rule "Every violation
+  must cite a `file` and `line`." marker (absent when no rule opts in). A failing
+  opted-in rule whose violation carries a file+line passes through as a normal
+  failure (exit 1); one whose violation lacks them is a clear exit-2 error that
+  batches the rule's unlocalized messages — surfaced in both the human report and
+  the `--format json` `errors` array — so an unlocalized violation is never a
+  silently-imprecise pass-through. The pure backstop (which failing/opted-in
+  violations are unlocalized, with the batched message) is unit-tested in
+  `domain::attribution`.
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their

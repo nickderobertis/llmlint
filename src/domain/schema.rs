@@ -23,6 +23,10 @@ pub struct SchemaRule<'a> {
     /// When true, the judge gates the verdict on a `relevant` boolean: it may
     /// report `relevant=false` (no `holds`), or `relevant=true` then the verdict.
     pub relevance: bool,
+    /// When true, every violation must carry a concrete `file` and `line`: the
+    /// violation item schema marks both **required**, so oneharness re-prompts
+    /// the judge (in one batched turn) until every violation is localized.
+    pub require_line_attribution: bool,
 }
 
 /// Build the structured-output schema for a batch of rules.
@@ -92,21 +96,28 @@ fn rule_schema(rule: &SchemaRule) -> Value {
     if !rule.relevance {
         required.push(json!("holds"));
     }
+    // The violation item. When the rule requires line attribution, `file` and
+    // `line` are marked required so oneharness re-prompts the judge until every
+    // violation is localized; otherwise they stay optional (some findings can't
+    // be pinned to one source line).
+    let mut item = Map::new();
+    item.insert("type".to_string(), json!("object"));
+    item.insert("additionalProperties".to_string(), json!(false));
+    item.insert(
+        "properties".to_string(),
+        json!({
+            "file": { "type": "string" },
+            "line": { "type": "integer", "minimum": 1 },
+            "end_line": { "type": "integer", "minimum": 1 },
+            "message": { "type": "string" }
+        }),
+    );
+    if rule.require_line_attribution {
+        item.insert("required".to_string(), json!(["file", "line"]));
+    }
     properties.insert(
         "violations".to_string(),
-        json!({
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "file": { "type": "string" },
-                    "line": { "type": "integer", "minimum": 1 },
-                    "end_line": { "type": "integer", "minimum": 1 },
-                    "message": { "type": "string" }
-                }
-            }
-        }),
+        json!({ "type": "array", "items": Value::Object(item) }),
     );
 
     let mut obj = Map::new();
@@ -135,6 +146,7 @@ mod tests {
             name,
             rationale,
             relevance: false,
+            require_line_attribution: false,
         }
     }
 
@@ -143,6 +155,16 @@ mod tests {
             name,
             rationale,
             relevance: true,
+            require_line_attribution: false,
+        }
+    }
+
+    fn with_attribution(name: &str) -> SchemaRule<'_> {
+        SchemaRule {
+            name,
+            rationale: false,
+            relevance: false,
+            require_line_attribution: true,
         }
     }
 
@@ -249,6 +271,19 @@ mod tests {
         assert!(rule.get("if").is_none());
         assert!(rule.get("then").is_none());
         assert!(rule["properties"].get("relevant").is_none());
+    }
+
+    #[test]
+    fn require_line_attribution_marks_file_and_line_required_in_violations() {
+        let s = build(&[with_attribution("located"), with("free", false)]);
+        // The attribution rule's violation items require both file and line...
+        let located = &s["properties"]["located"]["properties"]["violations"]["items"];
+        assert_eq!(located["required"], json!(["file", "line"]));
+        assert_eq!(located["properties"]["file"]["type"], "string");
+        assert_eq!(located["properties"]["line"]["minimum"], 1);
+        // ...while a rule without the flag keeps every field optional.
+        let free = &s["properties"]["free"]["properties"]["violations"]["items"];
+        assert!(free.get("required").is_none());
     }
 
     #[test]

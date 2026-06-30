@@ -277,6 +277,13 @@
               "type": "null"
             }
           ]
+        },
+        "require_line_attribution": {
+          "description": "Whether every violation of this rule must cite a concrete `file` and\n`line`. Off by default — some findings (e.g. a cross-cutting\narchitectural drift) genuinely can't be pinned to one source line, so a\nviolation may omit its location. Set `true` for a rule whose violations\nmust always be localizable: the generated schema then marks each\nviolation's `file`/`line` **required**, so oneharness re-prompts the judge\nto localize *every* violation in one batched turn (no per-violation back\nand forth), and the default template asks for it up front. A violation\nthat still arrives without a file+line is a hard error rather than a\nsilently-imprecise report. Inherited/overridable like the other per-rule\nfields.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,

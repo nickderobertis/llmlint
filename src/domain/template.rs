@@ -24,6 +24,10 @@ pub struct RuleSpec {
     /// show the condition and gate the verdict on a `relevant` decision.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relevance: Option<String>,
+    /// Whether every violation of this rule must cite a concrete file + line.
+    /// Exposed to the template so it can mark the rule and ask the judge to
+    /// localize each violation.
+    pub require_line_attribution: bool,
 }
 
 /// One target file's changed-line diff, shown to the judge under `--diff`. Kept
@@ -50,12 +54,17 @@ struct Context<'a> {
     /// True when at least one rule in this batch carries a relevance condition,
     /// so the template can show (or omit) the relevance guidance.
     relevance: bool,
+    /// True when at least one rule in this batch requires line attribution, so
+    /// the template can show (or omit) the line-attribution guidance.
+    line_attribution: bool,
 }
 
 /// Render `template` with the given rules, target file paths, and per-file
 /// `diffs` (empty unless `--diff` is set). `rationales` gates the rationale
-/// guidance (true when any rule in this batch wants one) and `relevance` gates
-/// the relevance guidance (true when any rule is conditional).
+/// guidance (true when any rule in this batch wants one), `relevance` gates the
+/// relevance guidance (true when any rule is conditional), and
+/// `line_attribution` gates the line-attribution guidance (true when any rule
+/// requires every violation to cite a file + line).
 pub fn render(
     template: &str,
     rules: &[RuleSpec],
@@ -63,6 +72,7 @@ pub fn render(
     diffs: &[FileDiff],
     rationales: bool,
     relevance: bool,
+    line_attribution: bool,
 ) -> Result<String> {
     let mut env = minijinja::Environment::new();
     env.set_keep_trailing_newline(true);
@@ -72,6 +82,7 @@ pub fn render(
         diffs,
         rationales,
         relevance,
+        line_attribution,
     };
     env.render_str(template, ctx)
         .map_err(|e| Error::Template(e.to_string()))
@@ -88,12 +99,14 @@ mod tests {
                 description: "true when no SQL is inline; false otherwise.".into(),
                 rationale: true,
                 relevance: None,
+                require_line_attribution: false,
             },
             RuleSpec {
                 name: "layered".into(),
                 description: "true when layered.".into(),
                 rationale: true,
                 relevance: None,
+                require_line_attribution: false,
             },
         ]
     }
@@ -109,6 +122,7 @@ mod tests {
             &[],
             true,
             false,
+            false,
         )
         .unwrap();
         assert!(out.contains("- src/a.rs"));
@@ -122,14 +136,32 @@ mod tests {
         let tmpl = "{% if diffs %}CHANGED\n{% for d in diffs %}{{ d.file }}:\n{{ d.diff }}\
                     {% endfor %}{% else %}WHOLE{% endif %}";
         // No diffs (the default): the gate is off.
-        let off = render(tmpl, &rules(), &["src/a.rs".into()], &[], true, false).unwrap();
+        let off = render(
+            tmpl,
+            &rules(),
+            &["src/a.rs".into()],
+            &[],
+            true,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(off.contains("WHOLE"), "got: {off}");
         // With a diff: the block renders the file path and its diff text.
         let diffs = vec![FileDiff {
             file: "src/a.rs".into(),
             diff: "@@ -1 +1 @@\n-old\n+new\n".into(),
         }];
-        let on = render(tmpl, &rules(), &["src/a.rs".into()], &diffs, true, false).unwrap();
+        let on = render(
+            tmpl,
+            &rules(),
+            &["src/a.rs".into()],
+            &diffs,
+            true,
+            false,
+            false,
+        )
+        .unwrap();
         assert!(on.contains("CHANGED"), "got: {on}");
         assert!(on.contains("src/a.rs:"), "got: {on}");
         assert!(on.contains("+new"), "got: {on}");
@@ -139,10 +171,10 @@ mod tests {
     fn rationales_flag_and_per_rule_rationale_are_in_scope() {
         let tmpl = "{% if rationales %}WANT{% else %}SKIP{% endif %}\n\
                     {% for r in rules %}{{ r.name }}={{ r.rationale }}\n{% endfor %}";
-        let on = render(tmpl, &rules(), &[], &[], true, false).unwrap();
+        let on = render(tmpl, &rules(), &[], &[], true, false, false).unwrap();
         assert!(on.contains("WANT"));
         assert!(on.contains("no_inline_sql=true"));
-        let off = render(tmpl, &rules(), &[], &[], false, false).unwrap();
+        let off = render(tmpl, &rules(), &[], &[], false, false, false).unwrap();
         assert!(off.contains("SKIP"));
     }
 
@@ -153,18 +185,34 @@ mod tests {
                     {% endif %}{% endfor %}";
         let mut rs = rules();
         rs[0].relevance = Some("the change touches SQL".into());
-        let on = render(tmpl, &rs, &[], &[], true, true).unwrap();
+        let on = render(tmpl, &rs, &[], &[], true, true, false).unwrap();
         assert!(on.contains("GATE"));
         assert!(on.contains("no_inline_sql: the change touches SQL"));
         // The always-evaluated rule renders no condition line.
         assert!(!on.contains("layered:"));
-        let off = render(tmpl, &rules(), &[], &[], true, false).unwrap();
+        let off = render(tmpl, &rules(), &[], &[], true, false, false).unwrap();
         assert!(off.contains("NOGATE"));
     }
 
     #[test]
+    fn line_attribution_flag_and_per_rule_marker_are_in_scope() {
+        let tmpl = "{% if line_attribution %}LOCALIZE{% else %}ANYWHERE{% endif %}\n\
+                    {% for r in rules %}{% if r.require_line_attribution %}{{ r.name }} pinned\n\
+                    {% endif %}{% endfor %}";
+        let mut rs = rules();
+        rs[0].require_line_attribution = true;
+        let on = render(tmpl, &rs, &[], &[], true, false, true).unwrap();
+        assert!(on.contains("LOCALIZE"));
+        assert!(on.contains("no_inline_sql pinned"));
+        // The rule that doesn't require attribution renders no marker line.
+        assert!(!on.contains("layered pinned"));
+        let off = render(tmpl, &rules(), &[], &[], true, false, false).unwrap();
+        assert!(off.contains("ANYWHERE"));
+    }
+
+    #[test]
     fn invalid_template_is_a_template_error() {
-        let err = render("{% for x in %}", &rules(), &[], &[], true, false).unwrap_err();
+        let err = render("{% for x in %}", &rules(), &[], &[], true, false, false).unwrap_err();
         assert!(matches!(err, Error::Template(_)));
     }
 }

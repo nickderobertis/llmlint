@@ -42,6 +42,7 @@ pub fn example_rule_specs() -> Vec<RuleSpec> {
             description: r.description,
             rationale: true,
             relevance: None,
+            require_line_attribution: false,
         })
         .collect()
 }
@@ -70,6 +71,7 @@ pub fn example_resolved() -> Vec<ResolvedRule> {
             files: vec![PathBuf::from("src/lib.rs")],
             rationale: true,
             relevance: None,
+            require_line_attribution: false,
         })
         .collect()
 }
@@ -88,6 +90,7 @@ pub fn synthetic_resolved(n: usize, judges: u32) -> Vec<ResolvedRule> {
             files: vec![PathBuf::from("src/lib.rs")],
             rationale: true,
             relevance: None,
+            require_line_attribution: false,
         })
         .collect()
 }
@@ -112,6 +115,7 @@ pub fn synthetic_rule_specs(n: usize) -> Vec<RuleSpec> {
             description: format!("true when rule {i} holds; false otherwise."),
             rationale: true,
             relevance: None,
+            require_line_attribution: false,
         })
         .collect()
 }
@@ -129,6 +133,7 @@ pub fn synthetic_schema_rules(names: &[String]) -> Vec<llmlint::domain::schema::
             name: n.as_str(),
             rationale: true,
             relevance: false,
+            require_line_attribution: false,
         })
         .collect()
 }

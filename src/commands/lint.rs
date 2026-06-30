@@ -13,7 +13,7 @@ use crate::domain::plan::{self, JudgeRun};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{RuleOutcome, RuleVerdict};
-use crate::domain::{schema, vote};
+use crate::domain::{attribution, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, diff, files, oneharness};
@@ -93,6 +93,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
             files: target,
             rationale: rule.wants_rationale(session_rationales),
             relevance,
+            require_line_attribution: rule.requires_line_attribution(),
         });
     }
 
@@ -126,6 +127,15 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let rationale_off: HashSet<String> = resolved
         .iter()
         .filter(|r| !r.rationale)
+        .map(|r| r.name.clone())
+        .collect();
+
+    // Rules that opted into line attribution: every violation they surface must
+    // cite a file+line. The schema makes oneharness re-prompt for it; this set
+    // backs the deterministic post-vote backstop below.
+    let require_attribution: BTreeSet<String> = resolved
+        .iter()
+        .filter(|r| r.require_line_attribution)
         .map(|r| r.name.clone())
         .collect();
 
@@ -224,6 +234,16 @@ pub fn run(args: LintArgs) -> Result<i32> {
     }
     for name in &not_relevant {
         outcomes.push(RuleOutcome::not_relevant(name));
+    }
+
+    // Backstop the `require_line_attribution` contract: any failing rule that
+    // opted in but still surfaced a violation without a file+line is a hard error
+    // (the schema already had oneharness re-prompt for it in one batched turn).
+    if !require_attribution.is_empty() {
+        run_errors.extend(attribution::unlocalized_errors(
+            &outcomes,
+            &require_attribution,
+        ));
     }
 
     let report = Report::new(outcomes, run_errors);
@@ -416,6 +436,7 @@ fn execute(
     // and the relevance guidance when any rule is conditional on relevance.
     let want_rationale = run.rules.iter().any(|r| r.rationale);
     let want_relevance = run.rules.iter().any(|r| r.relevance.is_some());
+    let want_line_attribution = run.rules.iter().any(|r| r.require_line_attribution);
     let system = match template::render(
         &run.template,
         &run.rules,
@@ -423,6 +444,7 @@ fn execute(
         &file_diffs,
         want_rationale,
         want_relevance,
+        want_line_attribution,
     ) {
         Ok(s) => s,
         // A render failure happens before any oneharness call, so there is no
@@ -436,6 +458,7 @@ fn execute(
             name: r.name.as_str(),
             rationale: r.rationale,
             relevance: r.relevance.is_some(),
+            require_line_attribution: r.require_line_attribution,
         })
         .collect();
     let schema = schema::build(&specs);
@@ -512,6 +535,7 @@ mod tests {
             files: None,
             rationale: None,
             relevance: None,
+            require_line_attribution: None,
         }
     }
 

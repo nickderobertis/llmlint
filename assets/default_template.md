@@ -41,6 +41,18 @@ Some rules require a `rationale`: one short justification for the verdict, given
 pithy — the fewest tokens that still cite the specific evidence (the file,
 symbol, or pattern) a reviewer needs to confirm the verdict at a glance. No
 restating the rule, no hedging, no preamble. One sentence is plenty.
+{% endif %}{% if line_attribution %}
+## Line attribution
+
+Some rules **require line attribution** (marked "Every violation must cite a
+`file` and `line`." under the rule). For such a rule, every violation you report
+must include both the `file` and the concrete `line` (use `end_line` for a span)
+where it occurs — a `message` alone is not enough. Read the files and pin each
+violation to its exact source location, and report every one of them in this same
+response (do not defer any to a later turn). If you cannot localize what would
+otherwise be a violation, re-read the file until you can. A rule without this
+marker is unaffected: its violations may omit `file`/`line` when a finding
+genuinely cannot be tied to one source line.
 {% endif %}
 ## Inline ignore directives
 
@@ -96,6 +108,8 @@ A target file not listed here was not modified.
 {{ r.description }}
 {% if r.relevance %}
 Relevant only when: {{ r.relevance }}
+{% endif %}{% if r.require_line_attribution %}
+Every violation must cite a `file` and `line`.
 {% endif %}
 {% endfor %}
 ## Response

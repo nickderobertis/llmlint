@@ -30,6 +30,8 @@ pub struct ResolvedRule {
     /// for an always-evaluated rule. (Statically never-relevant rules are filtered
     /// out before planning and never reach here.)
     pub relevance: Option<String>,
+    /// Whether every violation of this rule must cite a concrete file + line.
+    pub require_line_attribution: bool,
 }
 
 /// One judge invocation: a batch of rules to evaluate against a file set.
@@ -111,6 +113,7 @@ pub fn build(
                                 description: r.description.clone(),
                                 rationale: r.rationale,
                                 relevance: r.relevance.clone(),
+                                require_line_attribution: r.require_line_attribution,
                             })
                             .collect(),
                     });
@@ -163,6 +166,7 @@ mod tests {
             files: files.iter().map(PathBuf::from).collect(),
             rationale: true,
             relevance: None,
+            require_line_attribution: false,
         }
     }
 
@@ -313,6 +317,25 @@ mod tests {
             Some("the change touches SQL")
         );
         assert_eq!(find("always"), None);
+    }
+
+    #[test]
+    fn require_line_attribution_flows_into_the_rule_spec() {
+        let cfg = Config::default();
+        let mut strict = rr("strict", 1, "default", &["f.rs"]);
+        let lax = rr("lax", 1, "default", &["f.rs"]);
+        strict.require_line_attribution = true;
+        let plan = build(&cfg, "T", 20, vec![strict, lax]);
+        let specs = &plan.runs[0].rules;
+        let find = |n: &str| {
+            specs
+                .iter()
+                .find(|r| r.name == n)
+                .unwrap()
+                .require_line_attribution
+        };
+        assert!(find("strict"));
+        assert!(!find("lax"));
     }
 
     #[test]

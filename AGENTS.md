@@ -155,6 +155,19 @@ tools.
   when `relevant=true`), so a not-applicable rule is distinguishable from a true
   one instead of every `description` carrying its own "or not applicable" clause.
   A not-relevant outcome is neither pass nor fail — it never fails the build.
+- **Line attribution (convention):** a rule's `require_line_attribution: true`
+  declares that *every* violation it reports must cite a concrete `file` and
+  `line` (off by default, since some findings — e.g. cross-cutting architectural
+  drift — genuinely can't be pinned to one source line). Enforcement is layered,
+  not a per-violation back-and-forth: the generated schema marks each violation's
+  `file`/`line` **required** (so oneharness re-prompts the judge to localize the
+  *whole* verdict object in one batched turn), and the default template asks for
+  it up front. The deterministic backstop is post-vote in `commands/lint.rs`
+  (`domain::attribution::unlocalized_errors`): a *failing* opted-in rule that
+  still surfaces a violation without a file+line is one batched exit-2 error
+  (listing all of that rule's unlocalized messages), never a silently-imprecise
+  pass-through. Wired through `Rule` → `ResolvedRule` → `RuleSpec`/`SchemaRule`
+  like `rationale`/`relevance`; inherited/overridable the same way.
 - **Ignore directives (convention):** target files may carry inline
   `llmlint: ignore[rule, ...] <reason>` (line-scoped),
   `llmlint: ignore-file[...] <reason>` (file-scoped), or the block-scoped pair
