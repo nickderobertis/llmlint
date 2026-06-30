@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.19](https://github.com/nickderobertis/llmlint/compare/v0.2.18...v0.2.19) - 2026-06-30
+
+### Added
+
+- *(config)* trace where each config item is defined ([#68](https://github.com/nickderobertis/llmlint/pull/68))
+
 ## [0.2.18](https://github.com/nickderobertis/llmlint/compare/v0.2.17...v0.2.18) - 2026-06-30
 
 ### Added
