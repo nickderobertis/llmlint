@@ -164,6 +164,46 @@ rules:
       include: ["src/api/**"]
 ```
 
+### Nested & per-directory configs
+
+Configs **nest** — discovery walks both up from the working directory and down
+into its subtree, merging every `llmlint.yml` it finds. This lets you layer a
+user-level config, a project config, and per-area configs that live next to the
+code they govern, with no extra wiring.
+
+```
+~/.llmlint.yml                 # user-level defaults (model, rationales…)
+my-project/
+├── llmlint.yml                # project rules + settings  (run from here)
+├── backend/
+│   └── llmlint.yml            # rules for backend/**, globs rooted at backend/
+│       #   files: { include: ["**/*.py"] }
+│       #   rules: [{ name: no_print_debugging, … }]
+└── frontend/
+    └── llmlint.yml            # rules for frontend/**, globs rooted at frontend/
+        #   files: { include: ["**/*.ts"] }
+        #   rules: [{ name: no_inline_styles, … }]
+```
+
+Running `llmlint` from `my-project/` evaluates **all** of these together:
+
+- `no_print_debugging` runs only on `backend/**/*.py`, and `no_inline_styles`
+  only on `frontend/**/*.ts` — each subtree config's `files` globs are **rooted
+  at its own directory**, so `**/*.py` under `backend/llmlint.yml` means
+  `backend/**/*.py`, never a stray `.py` elsewhere.
+- The project's own rules and settings apply across the whole run; a more-local
+  config **wins** each setting and can `override` a rule from a config above it.
+- **Session settings** (model, timeout, prompt template, rationales) come from
+  the working directory and up — a subtree config scopes *rules*, it doesn't
+  retune the whole run. Run from `my-project/backend/` instead and that config
+  becomes the most-local one, layering under the project and user configs.
+
+Use `llmlint config` to see the merged result and `llmlint config --sources`
+(or `llmlint where rules.<name>`) to trace any rule, agent, or setting back to
+the exact file it came from. To bypass discovery entirely, pass explicit
+configs with `-c/--config` (repeatable) — that roots every glob at the working
+directory with no cascade.
+
 ### Writing good rules
 
 - **Phrase each rule as a positive invariant.** `holds = true` means the code

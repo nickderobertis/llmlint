@@ -3351,6 +3351,49 @@ fn check_ignores_honors_cwd_for_discovery_and_scanning() {
         .stderr(predicate::str::contains("src/lib.rs:1:"));
 }
 
+#[test]
+fn check_ignores_resolves_subtree_files_via_the_cascade_like_lint() {
+    // `check-ignores` resolves the same files a lint run would under nested
+    // discovery: a subtree config's rule scopes its directive scan to that
+    // subtree (globs rooted there). A malformed directive in the subtree is
+    // caught; a same-extension file *above* the subtree is out of that rule's
+    // scope and is not scanned — so the two never disagree about coverage.
+    let p = Project::new();
+    p.write(
+        "proj/llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"**/*.rs\"]\nrules:\n  \
+             - {{ name: root_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "proj/area/llmlint.yml",
+        &format!(
+            "rules:\n  - name: area_rule\n    description: \"{RULE}\"\n    \
+             files:\n      include: [\"*.md\"]\n"
+        ),
+    );
+    // Malformed (no reason) in the subtree — must be caught, located relative to
+    // cwd as `area/note.md`.
+    p.write("proj/area/note.md", "<!-- llmlint: ignore[area_rule] -->\n");
+    // A same-extension file ABOVE the subtree, with its own malformed directive:
+    // it is outside `area_rule`'s subtree-rooted `*.md`, so it is never scanned.
+    p.write("proj/top.md", "<!-- llmlint: ignore[area_rule] -->\n");
+    let proj = p.path().join("proj");
+
+    let out = p.check_ignores().arg("--cwd").arg(&proj).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("area/note.md:1:"),
+        "subtree file should be scanned: {stderr}"
+    );
+    assert!(
+        !stderr.contains("top.md"),
+        "a file above the subtree rule's scope must not be scanned: {stderr}"
+    );
+}
+
 // ---- oneharness passthrough actually forwarded ----------------------------
 
 #[test]

@@ -225,7 +225,10 @@ logic is also covered hermetically via `file://` plugins.
   (non-UTF-8) file in the target set is skipped not failed, the known-rule set
   is the full config, `-c/--config` replaces upward discovery, `--cwd` is the
   discovery + glob root, and an invalid config is a clear exit-2 error before any
-  scan.
+  scan. Parity holds under **nested discovery** too: a subtree config's rule
+  scopes the scan to its own directory (a malformed directive in the subtree is
+  caught and located; a same-extension file above the subtree rule's scope is not
+  scanned), so the fast static loop and the full run resolve the same files.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`
