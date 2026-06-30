@@ -254,6 +254,13 @@ pub struct Config {
     /// `--rationales`/`--no-rationales` CLI flags override the config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rationales: Option<bool>,
+    /// Default base the `--diff` git backend compares target files against when
+    /// `--diff-base` is not passed. Any git revision — a branch, tag, commit, or
+    /// `A..B`/`A...B` range — e.g. `main` to make a quality gate review whatever
+    /// the current branch changed versus the default branch. Unset keeps the
+    /// built-in `HEAD` (working-tree) base; the `--diff-base` flag overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_base: Option<String>,
     /// Plugins (shared rule sets) merged in, one entry each: a local file path
     /// or a URL (`http(s)://`, `file://`), the URL optionally pinned with an
     /// `@version` suffix. Named `plugins` (not `include`) to avoid confusion
@@ -288,6 +295,7 @@ impl Config {
         }
         self.oneharness.merge_under(other.oneharness);
         self.rationales = self.rationales.or(other.rationales);
+        self.diff_base = self.diff_base.take().or(other.diff_base);
         for (name, agent) in other.agents {
             self.agents.entry(name).or_insert(agent);
         }
@@ -347,6 +355,7 @@ pub const SETTING_KEYS: &[&str] = &[
     "oneharness.timeout",
     "oneharness.schema_max_retries",
     "rationales",
+    "diff_base",
 ];
 
 /// The per-rule fields a `rules.<name>.<field>` query can name. `name` always
@@ -438,6 +447,7 @@ impl ProvenanceBuilder {
                 cfg.oneharness.schema_max_retries.is_some(),
             ),
             ("rationales", cfg.rationales.is_some()),
+            ("diff_base", cfg.diff_base.is_some()),
         ];
         for (key, present) in settings {
             if *present {
@@ -932,6 +942,7 @@ mod tests {
         let mut root = Config {
             prompt_template: Some("root template".into()),
             rationales: Some(false),
+            diff_base: Some("main".into()),
             ..Default::default()
         };
         root.oneharness.model = Some("opus".into());
@@ -939,6 +950,7 @@ mod tests {
             // Clashes: root must win.
             prompt_template: Some("plugin template".into()),
             rationales: Some(true),
+            diff_base: Some("develop".into()),
             // Gaps the root left open: the plugin fills them.
             files: FileFilter {
                 include: vec!["src/**".into()],
@@ -955,10 +967,23 @@ mod tests {
         // Root wins every clash...
         assert_eq!(root.prompt_template.as_deref(), Some("root template"));
         assert_eq!(root.rationales, Some(false));
+        assert_eq!(root.diff_base.as_deref(), Some("main"));
         assert_eq!(root.oneharness.model.as_deref(), Some("opus"));
         // ...and the plugin fills only what the root left unset.
         assert_eq!(root.files.include, vec!["src/**".to_string()]);
         assert_eq!(root.oneharness.timeout, Some(99));
+    }
+
+    #[test]
+    fn diff_base_falls_back_to_plugin_when_root_unset() {
+        // The root leaves `diff_base` unset, so a plugin supplies the default.
+        let mut root = Config::default();
+        let plugin = Config {
+            diff_base: Some("main".into()),
+            ..Default::default()
+        };
+        root.merge_plugin(plugin);
+        assert_eq!(root.diff_base.as_deref(), Some("main"));
     }
 
     #[test]
@@ -1313,6 +1338,7 @@ mod tests {
             version: Some(Version::parse("1").unwrap()),
             prompt_template: Some("t".into()),
             rationales: Some(true),
+            diff_base: Some("main".into()),
             files: FileFilter {
                 include: vec!["x".into()],
                 exclude: vec![],

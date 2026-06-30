@@ -145,6 +145,14 @@ pub struct LintArgs {
         default_missing_value = "git",
     )]
     pub diff: Option<DiffBackend>,
+
+    /// Base the `--diff` git backend compares target files against, instead of
+    /// the default `HEAD`. Accepts any git revision — a branch, tag, commit, or
+    /// an `A..B`/`A...B` range — so `--diff-base main` reviews exactly what the
+    /// current branch changed versus `main`. Overrides the config `diff_base`.
+    /// Requires `--diff`.
+    #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
+    pub diff_base: Option<String>,
 }
 
 impl LintArgs {

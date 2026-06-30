@@ -111,12 +111,17 @@ pub fn run(args: LintArgs) -> Result<i32> {
 
     // Under `--diff`, compute each target file's changed-line diff once (at the
     // I/O boundary) so every judge prompt can show exactly what changed. The
-    // backend is selected behind the `DiffProvider` trait; an unchanged file
-    // simply has no entry. Absent the flag this is empty and nothing renders.
+    // backend is selected behind the `DiffProvider` trait, comparing against
+    // `--diff-base` (a branch/tag/commit/range) or the backend default; an
+    // unchanged file simply has no entry. Absent the flag this is empty and
+    // nothing renders.
     let diffs: BTreeMap<PathBuf, String> = match args.diff {
         Some(backend) => {
             let targets: Vec<PathBuf> = targets.iter().cloned().collect();
-            diff::provider(backend).diffs(&cwd, &targets)?
+            // The base is the effective config value: `--diff-base` already won
+            // over a config `diff_base` in `apply_cli_overrides`; `None` leaves
+            // the backend's built-in default (`HEAD` for git).
+            diff::provider(backend, config.diff_base.clone()).diffs(&cwd, &targets)?
         }
         None => BTreeMap::new(),
     };
@@ -351,6 +356,9 @@ fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
     }
     if let Some(b) = args.rationales() {
         config.rationales = Some(b);
+    }
+    if args.diff_base.is_some() {
+        config.diff_base = args.diff_base.clone();
     }
     Ok(())
 }

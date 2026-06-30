@@ -200,8 +200,19 @@ tools.
   just carries no diff. A custom `prompt_template` keeps `files` as a plain path
   list, so add a `{% if diffs %}…{% endfor %}` block to surface diffs there. A
   `--diff git` run outside a git work tree is a clear exit-2 `Error::Diff`, never
-  a silent empty diff. *Follow-up:* expose a base ref/range (`GitDiff.base` is a
-  field for exactly this) and a config-level `diff:` default.
+  a silent empty diff. **Base selection:** `--diff-base <REF>` (clap `requires`
+  `--diff`) sets `GitDiff.base` to any git revision or range — a branch, tag,
+  commit, or `A..B`/`A...B` — so `--diff --diff-base main` reviews what the
+  current branch changed versus `main`. The default (`base: None`) keeps the
+  `HEAD` working-tree diff with the unborn-HEAD `--cached` fallback; an explicit
+  base is trusted as-is (a bad ref is git's own exit-2 error, never a silent
+  fallback). `provider(backend, base)` threads it from `lint` to the impl. A
+  top-level config `diff_base:` sets the default base (a cwd-and-up **session
+  setting** — `fold_session_settings`, so a subtree never retunes it; in
+  `SETTING_KEYS` + provenance); `apply_cli_overrides` lets `--diff-base` win over
+  it, and the effective `config.diff_base` is what reaches `provider`. It only
+  tunes the base — `--diff` is still the on switch — so `diff_base` without
+  `--diff` is inert.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

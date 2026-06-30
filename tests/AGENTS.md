@@ -89,6 +89,26 @@ logic is also covered hermetically via `file://` plugins.
   of fataling. Backend internals (only-changed-files, the `--cached` fallback,
   the non-repo/bare-repo/missing-git errors, `provider` dispatch) are also
   unit-tested in `io::diff`.
+- `--diff-base <REF>` compares against a chosen git revision instead of `HEAD`:
+  with a baseline on `main` and a committed change on a feature branch (a clean
+  worktree vs HEAD), `--diff --diff-base main` renders the branch's change in the
+  `## Changed lines` section, while plain `--diff` (default HEAD) renders no
+  section — proving the change surfaces *because* of the base, not by accident.
+  `--diff-base` without `--diff` is a clap usage error (exit 2 naming `--diff`),
+  and an unknown ref is a clear exit-2 `diff (git): …` error (an explicit base is
+  trusted, never silently falling back). Backend internals (named ref, `A..B`
+  range, unknown-ref error) are also unit-tested in `io::diff`. The full base
+  matrix is exercised: explicit `--diff git --diff-base`, a commit SHA, a tag, a
+  plain ref (includes the uncommitted worktree), a two-dot range (commit-to-commit,
+  excludes the worktree), a three-dot range (merge-base, excludes the base
+  branch's own commits), additions+deletions across files, per-rule diff scoping,
+  `--cwd` as the git root, and a base equal to the tip (no section).
+- A config `diff_base:` sets the default base for `--diff` without the flag: bare
+  `--diff` reviews vs the configured branch, the `--diff-base` flag overrides the
+  config value, and `diff_base` is inert without `--diff` (it only tunes the
+  base, never enables diffing). It is a cwd-and-up session setting (a subtree
+  config never retunes it — unit-tested in `io::configfs`), and its merge
+  precedence + provenance are unit-tested in `domain::config`.
 - `--config` replaces nested upward discovery and is repeatable (first entry
   supplies the top-level scalars, the rest contribute rules/agents); `config
   --config` honors a relative path resolved against `--cwd`.
