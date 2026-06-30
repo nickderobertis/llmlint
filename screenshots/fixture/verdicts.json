@@ -6,8 +6,8 @@
       "rationale": "user creation logic lives in the handler",
       "violations": [
         {
-          "file": "src/api/users.rs",
-          "line": 48,
+          "file": "src/users.rs",
+          "line": 7,
           "message": "user creation logic lives in the handler, not a service"
         }
       ]
@@ -17,8 +17,8 @@
       "rationale": "business logic in the handler",
       "violations": [
         {
-          "file": "src/api/users.rs",
-          "line": 48,
+          "file": "src/users.rs",
+          "line": 7,
           "message": "user creation logic lives in the handler, not a service"
         }
       ]
