@@ -139,12 +139,17 @@ logic is also covered hermetically via `file://` plugins.
   file (`fields.judges` -> root, `source` -> plugin).
 - `llmlint where <path>` is the focused single-item lookup: it prints exactly one
   source (path or plugin URL) and nothing else, for scripting. Asserted that a
-  setting, an `agents.<name>`, a `rules.<name>`, and a `rules.<name>.<field>` each
-  resolve (an overridden field -> the file that set it, an un-overridden field ->
-  the definition site), and that unknowns exit 2 with an actionable message — an
-  unknown rule name lists the available rules, a real setting left at its default
-  says the built-in default applies, and an unrecognized path shows the accepted
-  forms.
+  dotted and a non-dotted setting, an `agents.<name>`, a `rules.<name>`, and a
+  `rules.<name>.<field>` (an overridden field -> the file that set it; an
+  un-overridden field and `name` -> the definition site) each resolve, that a
+  rule from a remote plugin resolves to the plugin URL verbatim, and that `where`
+  honors `--config`/`--cwd` like the other commands. Failure/recovery: every
+  error branch exits 2 with an actionable message — unknown rule and unknown
+  agent names list what's available, an unknown rule field lists the valid
+  fields, a real setting left at its default says the built-in default applies,
+  and an unrecognized path shows the accepted forms — plus the shared load
+  preflight (no config found, a structurally invalid config) surfaces through
+  `where`'s own entry point.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted

@@ -1054,7 +1054,7 @@ fn where_command_returns_one_source_path_for_scripting() {
     p.write(
         "llmlint.yml",
         &format!(
-            "version: 1\nplugins:\n  - ./team.yml\n\
+            "version: 1\nplugins:\n  - ./team.yml\n  - {CONFIG_LINT}\n\
              rules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n  \
              - {{ name: team_rule, override: true, judges: 3 }}\n"
         ),
@@ -1069,10 +1069,12 @@ fn where_command_returns_one_source_path_for_scripting() {
         )
     };
 
-    // A setting and an agent the local plugin supplies.
+    // A dotted setting and a non-dotted one (both kinds of setting key).
     assert!(trimmed(&["where", "oneharness.model"])
         .1
         .ends_with("team.yml"));
+    assert!(trimmed(&["where", "version"]).1.ends_with("llmlint.yml"));
+    // An agent the local plugin supplies.
     assert!(trimmed(&["where", "agents.team_agent"])
         .1
         .ends_with("team.yml"));
@@ -1083,13 +1085,53 @@ fn where_command_returns_one_source_path_for_scripting() {
     assert!(trimmed(&["where", "rules.team_rule.judges"])
         .1
         .ends_with("llmlint.yml"));
-    // A field nobody overrode resolves to the definition site.
+    // Fields nobody overrode (a normal field and `name`) resolve to the
+    // definition site.
     assert!(trimmed(&["where", "rules.team_rule.description"])
+        .1
+        .ends_with("team.yml"));
+    assert!(trimmed(&["where", "rules.team_rule.name"])
         .1
         .ends_with("team.yml"));
     let (code, root) = trimmed(&["where", "rules.root_rule"]);
     assert_eq!(code, 0);
     assert!(root.ends_with("llmlint.yml"));
+    // A rule contributed by a remote plugin resolves to the plugin URL verbatim,
+    // not a local path — the source you'd pin/upgrade to change it.
+    assert_eq!(
+        trimmed(&["where", "rules.name_matches_description"]).1,
+        CONFIG_LINT
+    );
+}
+
+#[test]
+fn where_honors_explicit_config_and_cwd() {
+    // `where` resolves config the same way as `lint`/`config`: `--config` (a path
+    // relative to `--cwd`) replaces discovery. If `--cwd` were ignored the
+    // relative `--config` would resolve against the process cwd and fail to load.
+    let p = Project::new();
+    p.write(
+        "proj/custom.yml",
+        &format!("version: 1\nrules:\n  - {{ name: explicit_rule, description: \"{RULE}\" }}\n"),
+    );
+    let proj = p.path().join("proj");
+    let out = p
+        .bare()
+        .args(["where", "rules.explicit_rule", "--config", "custom.yml"])
+        .arg("--cwd")
+        .arg(&proj)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8(out.stdout)
+        .unwrap()
+        .trim()
+        .ends_with("custom.yml"));
 }
 
 #[test]
@@ -1097,7 +1139,10 @@ fn where_command_errors_clearly_on_an_unknown_path() {
     let p = Project::new();
     p.write(
         "llmlint.yml",
-        &format!("rules:\n  - {{ name: my_rule, description: \"{RULE}\" }}\n"),
+        &format!(
+            "agents:\n  reviewer: {{}}\n\
+             rules:\n  - {{ name: my_rule, description: \"{RULE}\" }}\n"
+        ),
     );
     // An unknown rule name exits 2 and names what's available.
     p.bare()
@@ -1106,6 +1151,20 @@ fn where_command_errors_clearly_on_an_unknown_path() {
         .code(2)
         .stderr(predicate::str::contains("no rule named"))
         .stderr(predicate::str::contains("my_rule"));
+    // An unknown agent name likewise lists the configured agents.
+    p.bare()
+        .args(["where", "agents.nope"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no agent named"))
+        .stderr(predicate::str::contains("reviewer"));
+    // An unknown field of a real rule lists the valid fields.
+    p.bare()
+        .args(["where", "rules.my_rule.bogus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown rule field"))
+        .stderr(predicate::str::contains("judges"));
     // A real setting left at its default says so rather than pretending a source.
     p.bare()
         .args(["where", "oneharness.bin"])
@@ -1118,6 +1177,36 @@ fn where_command_errors_clearly_on_an_unknown_path() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("expected a setting"));
+}
+
+#[test]
+fn where_fails_clearly_with_no_config_and_an_invalid_config() {
+    // `where` shares the load+validate preflight with the other commands, so its
+    // own entry point must surface a missing config and a structurally invalid
+    // one as exit-2 errors rather than a panic or a misleading "not found".
+    let missing = Project::new();
+    missing
+        .bare()
+        .args(["where", "version"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no llmlint config"));
+
+    let invalid = Project::new();
+    // Two rules share a name without `override` -> validation error, not a lookup.
+    invalid.write(
+        "llmlint.yml",
+        &format!(
+            "rules:\n  - {{ name: dup, description: \"{RULE}\" }}\n  \
+             - {{ name: dup, description: \"{RULE}\" }}\n"
+        ),
+    );
+    invalid
+        .bare()
+        .args(["where", "rules.dup"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("duplicate rule name"));
 }
 
 #[test]
