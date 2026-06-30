@@ -69,9 +69,32 @@ logic is also covered hermetically via `file://` plugins.
   a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule and per-agent `files` override the global globs.
-- `--config` replaces upward discovery and is repeatable (first entry supplies
-  the top-level scalars, the rest contribute rules/agents); `config --config`
-  honors a relative path resolved against `--cwd`.
+- `--config` replaces nested upward discovery and is repeatable (first entry
+  supplies the top-level scalars, the rest contribute rules/agents); `config
+  --config` honors a relative path resolved against `--cwd`.
+- Config files *nest* in both directions. **Up:** discovery walks from `--cwd` to
+  the filesystem root and merges **every** config it finds (one per directory),
+  nearest first, so a local config beside the target files, a project config above
+  it, and a user-level config higher still layer together — the most-local config
+  is the include root and wins each top-level scalar, every config contributes its
+  rules, and a more distant config fills only the gaps (a project `oneharness.model`
+  fills through when the local config leaves it unset). **Down (cascade):**
+  discovery also walks into `--cwd`'s subtree, and a subdirectory's config governs
+  *its own* files — its `files` globs are rooted at that directory (a `frontend/`
+  config's `*.txt` reaches `frontend/`'s files, never a same-extension file outside
+  it), while resolved paths stay relative to `--cwd`. A subtree config scopes
+  *rules*, not session settings (model/timeout/template/rationales come from
+  `--cwd`-and-up only); its agents and rules are still contributed. Discovery
+  succeeds when only a subtree config exists (no config at `--cwd` or above).
+  Explicit `--config` replaces the whole walk with no cascade (globs rooted at
+  `--cwd`).
+- Nested-discovery edges: a subtree rule's *own* `files` glob roots at the subtree
+  directory (a per-rule `*.md` reaches that subtree's markdown, not a `.md` above
+  it), proving per-rule/agent `files` scope like the config-level default; running
+  from a directory whose only config is in a subtree lints that subtree (not a
+  ConfigNotFound); and two sibling subtrees that define the same rule name without
+  `override` is a clear exit-2 "duplicate rule name" error (one namespace across
+  the whole tree, never silent last-writer-wins).
 - `--cwd` drives both config discovery and the directory forwarded to oneharness
   as its `--cwd`.
 - `--rule` and `--agent` filters limit which rules run: `--rule` is repeatable
@@ -150,6 +173,17 @@ logic is also covered hermetically via `file://` plugins.
   and an unrecognized path shows the accepted forms — plus the shared load
   preflight (no config found, a structurally invalid config) surfaces through
   `where`'s own entry point.
+- Source tracking × nested discovery (the intersection): over a tree with an
+  ancestor, the run cwd, and a subtree config, `config --sources` and `where`
+  trace every rule to its own file (a subtree rule to the subtree config), settings
+  to the cwd-and-up writer, and a descendant-only setting (`oneharness.timeout` set
+  only in the subtree) neither takes effect in the merged config nor appears as a
+  setting's source — proving a leaf scopes rules without retuning the run or
+  polluting provenance. Field-level provenance also spans the directory tree: an
+  ancestor's base rule overridden at the cwd config resolves with the merged value
+  (`judges` 3), its definition tracing to the ancestor and the overridden field to
+  the cwd file (via both `config --sources` and `where rules.<name>.<field>`),
+  while a subtree agent traces to the subtree config.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
@@ -191,7 +225,10 @@ logic is also covered hermetically via `file://` plugins.
   (non-UTF-8) file in the target set is skipped not failed, the known-rule set
   is the full config, `-c/--config` replaces upward discovery, `--cwd` is the
   discovery + glob root, and an invalid config is a clear exit-2 error before any
-  scan.
+  scan. Parity holds under **nested discovery** too: a subtree config's rule
+  scopes the scan to its own directory (a malformed directive in the subtree is
+  caught and located; a same-extension file above the subtree rule's scope is not
+  scanned), so the fast static loop and the full run resolve the same files.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`

@@ -17,11 +17,12 @@ pub fn run(args: CheckIgnoresArgs) -> Result<i32> {
     };
 
     let loaded = configfs::load(&args.config, &cwd)?;
+    let scopes = loaded.scopes;
     let config = loaded.config;
     validate(&config)?;
 
     let cli_files = files::from_cli(&cwd, &args.files);
-    let targets = ignores::target_files(&cwd, &config, &cli_files)?;
+    let targets = ignores::target_files(&cwd, &config, &scopes, &cli_files)?;
     let known = ignores::known_rules(&config);
 
     // A malformed directive is a hard exit-2 error (`Error::IgnoreDirective`),

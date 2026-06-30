@@ -56,7 +56,7 @@ pub struct LintArgs {
     /// and per-agent `files` still take precedence).
     pub files: Vec<PathBuf>,
 
-    /// llmlint config file(s); repeatable. Replaces upward config discovery.
+    /// llmlint config file(s); repeatable. Replaces nested upward discovery.
     #[arg(long = "config", short = 'c', value_name = "PATH")]
     pub config: Vec<PathBuf>,
 
@@ -244,7 +244,7 @@ pub struct CheckIgnoresArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct ConfigArgs {
-    /// llmlint config file(s); repeatable. Replaces upward discovery.
+    /// llmlint config file(s); repeatable. Replaces nested upward discovery.
     #[arg(long = "config", short = 'c', value_name = "PATH")]
     pub config: Vec<PathBuf>,
 
