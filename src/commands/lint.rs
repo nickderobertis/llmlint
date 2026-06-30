@@ -16,7 +16,7 @@ use crate::domain::verdict::{RuleOutcome, RuleVerdict};
 use crate::domain::{schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
-use crate::io::{assets, configfs, files, oneharness};
+use crate::io::{assets, configfs, diff, files, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const DEFAULT_TIMEOUT: u64 = 120;
@@ -108,6 +108,18 @@ pub fn run(args: LintArgs) -> Result<i32> {
         .collect();
     ignores::check(&cwd, &targets, &ignores::known_rules(&config))?;
 
+    // Under `--diff`, compute each target file's changed-line diff once (at the
+    // I/O boundary) so every judge prompt can show exactly what changed. The
+    // backend is selected behind the `DiffProvider` trait; an unchanged file
+    // simply has no entry. Absent the flag this is empty and nothing renders.
+    let diffs: BTreeMap<PathBuf, String> = match args.diff {
+        Some(backend) => {
+            let targets: Vec<PathBuf> = targets.iter().cloned().collect();
+            diff::provider(backend).diffs(&cwd, &targets)?
+        }
+        None => BTreeMap::new(),
+    };
+
     // Rules whose rationale is disabled: llmlint is authoritative, so we drop any
     // rationale a harness returns anyway, keeping `--no-rationales` deterministic
     // regardless of harness behavior.
@@ -154,6 +166,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     // (which outlive the scope) rather than moving the owned `client`/`cwd`.
     let client_ref = &client;
     let cwd_ref = cwd.as_path();
+    let diffs_ref = &diffs;
     for wave in the_plan.runs.chunks(max_parallel) {
         thread::scope(|s| {
             let handles: Vec<_> = wave
@@ -168,6 +181,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
                             oh_config_ref,
                             global_model,
                             want_trace,
+                            diffs_ref,
                         )
                     })
                 })
@@ -379,11 +393,25 @@ fn execute(
     oh_config: Option<&Path>,
     global_model: Option<&str>,
     want_trace: bool,
+    diffs: &BTreeMap<PathBuf, String>,
 ) -> (
     Option<oneharness::RunTrace>,
     Result<BTreeMap<String, RuleVerdict>>,
 ) {
     let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
+    // Per-file diffs for this run's files, in the same order as `files_str`. Only
+    // files that actually changed appear in `diffs`, so unchanged ones are
+    // skipped here; the slice is empty when `--diff` wasn't passed.
+    let file_diffs: Vec<template::FileDiff> = run
+        .files
+        .iter()
+        .filter_map(|p| {
+            diffs.get(p).map(|d| template::FileDiff {
+                file: files::to_slash(p),
+                diff: d.clone(),
+            })
+        })
+        .collect();
     // Show the rationale guidance when any rule in this batch wants a rationale,
     // and the relevance guidance when any rule is conditional on relevance.
     let want_rationale = run.rules.iter().any(|r| r.rationale);
@@ -392,6 +420,7 @@ fn execute(
         &run.template,
         &run.rules,
         &files_str,
+        &file_diffs,
         want_rationale,
         want_relevance,
     ) {

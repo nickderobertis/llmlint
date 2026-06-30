@@ -805,6 +805,421 @@ fn explicit_cli_files_override_config_globs() {
     );
 }
 
+// ---- --diff (changed-line context in the prompt) --------------------------
+
+/// Run `git` in `dir`, asserting success. `std::process::Command` is spelled out
+/// because `assert_cmd::Command` is imported as `Command` in this file.
+fn git(dir: &Path, args: &[&str]) {
+    let ok = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    assert!(ok, "git {args:?} failed");
+}
+
+/// `git init` + identity + a `main` branch, so commits don't depend on the
+/// host's git defaults.
+fn init_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "user.email", "t@t.t"]);
+    git(dir, &["config", "user.name", "t"]);
+    git(dir, &["checkout", "-q", "-b", "main"]);
+}
+
+/// A project rooted at a git repo: write a config (with `files.include: src/**`
+/// and the given `rules` YAML block) plus the `initial` files, then commit them
+/// as the baseline so a test can edit afterward and diff against `HEAD`.
+fn committed_repo(rules: &str, initial: &[(&str, &str)]) -> Project {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n{rules}"),
+    );
+    for (path, body) in initial {
+        p.write(path, body);
+    }
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p
+}
+
+#[test]
+fn diff_flag_adds_changed_lines_to_the_prompt() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: changed_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // Two files committed as the baseline; only one is changed afterward.
+    p.write("src/a.rs", "fn a() {}\n");
+    p.write("src/b.rs", "fn b() {}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p.write("src/a.rs", "fn a() { let x = 1; }\n");
+
+    let verdicts = p.write_verdicts(r#"{"changed_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    // Bare `--diff` defaults to the git backend.
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // The changed-lines section renders, names the changed file, and carries the
+    // added line as a `+` diff line — exactly which lines to review.
+    assert!(system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { let x = 1; }"),
+        "system:\n{system}"
+    );
+    // The unchanged file gets no diff block (nothing changed in it).
+    assert!(!system.contains("### src/b.rs"), "system:\n{system}");
+    // Both files are still listed as targets (diffs are additive context, not a
+    // file filter).
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(system.contains("- src/b.rs"), "system:\n{system}");
+}
+
+#[test]
+fn without_diff_flag_no_changed_lines_section() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "fn a() {}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p.write("src/a.rs", "fn a() { let x = 1; }\n");
+
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+    let dump = p.path().join("system.txt");
+
+    // No `--diff`: the prompt is unchanged — no diff section even in a git repo
+    // with pending changes.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+}
+
+#[test]
+fn diff_outside_a_git_repo_is_a_clear_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "fn a() {}\n");
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+
+    // No `git init`: `--diff git` can't produce diffs, so it fails up front
+    // (exit 2) rather than silently reviewing nothing.
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("diff (git)"));
+}
+
+#[test]
+fn diff_explicit_git_backend_adds_changed_lines() {
+    // The explicit `--diff git` form behaves like bare `--diff` (git is default).
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.write("src/a.rs", "fn a() { explicit(); }\n");
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { explicit(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_renders_additions_and_deletions_across_files() {
+    // One file gains a line, another loses one: both get a block, with the `+`
+    // and `-` lines a reviewer needs.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[
+            ("src/a.rs", "fn a() {}\n"),
+            ("src/b.rs", "fn keep() {}\nfn remove_me() {}\n"),
+        ],
+    );
+    p.write("src/a.rs", "fn a() { added(); }\n"); // addition
+    p.write("src/b.rs", "fn keep() {}\n"); // remove_me deleted
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(system.contains("### src/b.rs"), "system:\n{system}");
+    assert!(system.contains("+fn a() { added(); }"), "system:\n{system}");
+    assert!(system.contains("-fn remove_me() {}"), "system:\n{system}");
+}
+
+#[test]
+fn diff_includes_both_staged_and_unstaged_changes() {
+    // `git diff HEAD` is the base, so staged *and* unstaged edits both show.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    p.write("src/a.rs", "fn a() { staged(); }\n");
+    git(p.path(), &["add", "src/a.rs"]); // a.rs: staged
+    p.write("src/b.rs", "fn b() { unstaged(); }\n"); // b.rs: left unstaged
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("+fn a() { staged(); }"),
+        "staged change missing:\n{system}"
+    );
+    assert!(
+        system.contains("+fn b() { unstaged(); }"),
+        "unstaged change missing:\n{system}"
+    );
+}
+
+#[test]
+fn diff_untracked_new_file_is_a_target_without_a_block() {
+    // A brand-new untracked file has no diff vs HEAD, so it carries no block —
+    // but it is still a target (reviewed whole, since diffs are additive context).
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.write("src/new.rs", "fn brand_new() {}\n"); // never committed
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // Listed as a target...
+    assert!(system.contains("- src/new.rs"), "target missing:\n{system}");
+    // ...but no diff block, and with nothing else changed, no section at all.
+    assert!(
+        !system.contains("### src/new.rs"),
+        "unexpected diff block:\n{system}"
+    );
+    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+}
+
+#[test]
+fn diff_clean_worktree_renders_no_section() {
+    // `--diff` on a pristine checkout: nothing changed, so no section — but the
+    // files are still linted (whole-file review), and the run is clean.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+}
+
+#[test]
+fn diff_unborn_head_uses_cached_fallback() {
+    // A repo with no commit has an unborn HEAD; the git backend falls back to a
+    // `--cached` diff so a staged new file still shows as added (no fatal).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "fn a() {}\n");
+    init_repo(p.path()); // init only — no commit
+    git(p.path(), &["add", "src/a.rs"]); // stage so --cached sees it
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(system.contains("+fn a() {}"), "system:\n{system}");
+}
+
+#[test]
+fn diff_is_scoped_to_each_rules_files() {
+    // Two rules, each scoped to its own file; both files change. Each rule's
+    // judge prompt must carry only its own file's diff — never the other's.
+    let rules = format!(
+        "  - {{ name: rule_a, description: \"{RULE}\", files: {{ include: [\"src/a.rs\"] }} }}\n  \
+         - {{ name: rule_b, description: \"{RULE}\", files: {{ include: [\"src/b.rs\"] }} }}\n"
+    );
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    p.write("src/a.rs", "fn a() { aaa(); }\n");
+    p.write("src/b.rs", "fn b() { bbb(); }\n");
+
+    // Isolate rule_a: its prompt has a.rs's diff and not b.rs's.
+    let dump_a = p.path().join("a.txt");
+    p.lint()
+        .arg("--diff")
+        .arg("--rule")
+        .arg("rule_a")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump_a)
+        .assert()
+        .success();
+    let sys_a = fs::read_to_string(&dump_a).unwrap();
+    assert!(sys_a.contains("### src/a.rs"), "system:\n{sys_a}");
+    assert!(sys_a.contains("+fn a() { aaa(); }"), "system:\n{sys_a}");
+    assert!(!sys_a.contains("### src/b.rs"), "b leaked into a:\n{sys_a}");
+
+    // Isolate rule_b: the mirror image.
+    let dump_b = p.path().join("b.txt");
+    p.lint()
+        .arg("--diff")
+        .arg("--rule")
+        .arg("rule_b")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump_b)
+        .assert()
+        .success();
+    let sys_b = fs::read_to_string(&dump_b).unwrap();
+    assert!(sys_b.contains("### src/b.rs"), "system:\n{sys_b}");
+    assert!(sys_b.contains("+fn b() { bbb(); }"), "system:\n{sys_b}");
+    assert!(!sys_b.contains("### src/a.rs"), "a leaked into b:\n{sys_b}");
+}
+
+#[test]
+fn diff_respects_cwd_as_the_git_root() {
+    // The git work tree lives under `repo/`, reached via `--cwd`; the outer dir
+    // is not a repo. Diffs must run in `--cwd`, not the process cwd.
+    let p = Project::new();
+    let repo = p.path().join("repo");
+    p.write(
+        "repo/llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("repo/src/a.rs", "fn a() {}\n");
+    init_repo(&repo);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "baseline"]);
+    p.write("repo/src/a.rs", "fn a() { in_cwd(); }\n");
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--cwd")
+        .arg(&repo)
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { in_cwd(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_invalid_backend_is_rejected() {
+    // An unknown backend is a clap usage error (exit 2) listing valid values —
+    // it never reaches a run.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.lint()
+        .arg("--diff")
+        .arg("svn")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("invalid value 'svn'"));
+}
+
 // ---- filters --------------------------------------------------------------
 
 #[test]
