@@ -75,8 +75,8 @@ the code.
 ## Target files
 
 {% for f in files %}- {{ f }}
-{% endfor %}{% if diffs %}
-## Changed lines
+{% endfor %}
+{% if diffs %}## Changed lines
 
 These target files were modified in the change under review. Their unified diffs
 are below — the `+`/`-` lines are exactly what changed. **Focus your review on
