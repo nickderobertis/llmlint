@@ -193,8 +193,13 @@ tools.
   current branch changed versus `main`. The default (`base: None`) keeps the
   `HEAD` working-tree diff with the unborn-HEAD `--cached` fallback; an explicit
   base is trusted as-is (a bad ref is git's own exit-2 error, never a silent
-  fallback). `provider(backend, base)` threads it from `lint` to the impl.
-  *Follow-up:* a config-level `diff:`/`diff_base:` default.
+  fallback). `provider(backend, base)` threads it from `lint` to the impl. A
+  top-level config `diff_base:` sets the default base (a cwd-and-up **session
+  setting** — `fold_session_settings`, so a subtree never retunes it; in
+  `SETTING_KEYS` + provenance); `apply_cli_overrides` lets `--diff-base` win over
+  it, and the effective `config.diff_base` is what reaches `provider`. It only
+  tunes the base — `--diff` is still the on switch — so `diff_base` without
+  `--diff` is inert.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

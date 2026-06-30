@@ -821,6 +821,19 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(ok, "git {args:?} failed");
 }
 
+/// Like `git`, but returns trimmed stdout — for capturing a commit SHA to use
+/// as an explicit `--diff-base`.
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?} failed");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
 /// `git init` + identity + a `main` branch, so commits don't depend on the
 /// host's git defaults.
 fn init_repo(dir: &Path) {
@@ -1305,6 +1318,465 @@ fn diff_base_unknown_ref_is_a_clear_error() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("diff (git)"));
+}
+
+#[test]
+fn diff_base_with_explicit_git_backend() {
+    // `--diff git --diff-base main` (explicit backend + base together) behaves
+    // like the bare `--diff --diff-base main` form.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { feature(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { feature(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_accepts_a_commit_sha() {
+    // A raw commit SHA is a valid base, not just a branch name: diff the
+    // worktree against the baseline commit's hash.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    let base = git_out(p.path(), &["rev-parse", "HEAD"]);
+    p.write("src/a.rs", "fn a() { by_sha(); }\n");
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg(&base)
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { by_sha(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_accepts_a_tag() {
+    // A tag resolves as a base just like a branch or SHA.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["tag", "v0"]);
+    p.write("src/a.rs", "fn a() { by_tag(); }\n");
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("v0")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { by_tag(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_plain_ref_includes_uncommitted_worktree() {
+    // `git diff <base>` (a plain ref) compares the *working tree* to the base,
+    // so a committed branch change AND an uncommitted edit on top both show —
+    // exactly what a reviewer wants when iterating before pushing.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn committed() {}\n");
+    git(p.path(), &["commit", "-q", "-am", "committed change"]);
+    p.write("src/a.rs", "fn committed() {}\nfn uncommitted() {}\n"); // left unstaged
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("+fn committed() {}"),
+        "committed change missing:\n{system}"
+    );
+    assert!(
+        system.contains("+fn uncommitted() {}"),
+        "uncommitted change missing:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_two_dot_range_is_commit_to_commit() {
+    // `git diff <base>..HEAD` (a two-dot range) compares two commits, so it
+    // ignores the working tree: the committed change shows, the uncommitted one
+    // does not. This is the contrast to the plain-ref case above.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn committed() {}\n");
+    git(p.path(), &["commit", "-q", "-am", "committed change"]);
+    p.write("src/a.rs", "fn committed() {}\nfn uncommitted() {}\n"); // not in any commit
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main..HEAD")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("+fn committed() {}"),
+        "committed change missing:\n{system}"
+    );
+    assert!(
+        !system.contains("uncommitted"),
+        "uncommitted change leaked into a commit-range diff:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_three_dot_range_uses_merge_base() {
+    // `git diff <base>...HEAD` (a three-dot range) diffs from the *merge base*,
+    // so it shows only what this branch changed — not commits the base branch
+    // made independently. Here `main` advances `b.rs` after `feature` forks; a
+    // three-dot diff must show `feature`'s `a.rs` change and never `main`'s
+    // `b.rs` change. This is the correct "what does this PR change" semantics.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    // feature forks off the baseline and changes a.rs.
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { feat(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature changes a"]);
+    // main independently advances b.rs.
+    git(p.path(), &["checkout", "-q", "main"]);
+    p.write("src/b.rs", "fn b() { main_moved(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "main changes b"]);
+    git(p.path(), &["checkout", "-q", "feature"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main...HEAD")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // feature's own change is present...
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(system.contains("+fn a() { feat(); }"), "system:\n{system}");
+    // ...but main's independent b.rs change is not part of this branch's diff.
+    assert!(
+        !system.contains("### src/b.rs"),
+        "main's change leaked into the three-dot diff:\n{system}"
+    );
+    assert!(!system.contains("main_moved"), "system:\n{system}");
+}
+
+#[test]
+fn diff_base_renders_additions_and_deletions_across_files() {
+    // Against a branch base, one file gains a line and another loses one across
+    // the branch's commits; both get a block with the `+`/`-` lines.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[
+            ("src/a.rs", "fn a() {}\n"),
+            ("src/b.rs", "fn keep() {}\nfn remove_me() {}\n"),
+        ],
+    );
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { added(); }\n"); // addition
+    p.write("src/b.rs", "fn keep() {}\n"); // remove_me deleted
+    git(p.path(), &["commit", "-q", "-am", "feature edits"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(system.contains("### src/b.rs"), "system:\n{system}");
+    assert!(system.contains("+fn a() { added(); }"), "system:\n{system}");
+    assert!(system.contains("-fn remove_me() {}"), "system:\n{system}");
+}
+
+#[test]
+fn diff_base_is_scoped_to_each_rules_files() {
+    // Diff scoping still holds with an explicit base: each rule's judge prompt
+    // carries only its own file's diff vs the base, never a sibling's.
+    let rules = format!(
+        "  - {{ name: rule_a, description: \"{RULE}\", files: {{ include: [\"src/a.rs\"] }} }}\n  \
+         - {{ name: rule_b, description: \"{RULE}\", files: {{ include: [\"src/b.rs\"] }} }}\n"
+    );
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { aaa(); }\n");
+    p.write("src/b.rs", "fn b() { bbb(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature edits"]);
+
+    let dump_a = p.path().join("a.txt");
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--rule")
+        .arg("rule_a")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump_a)
+        .assert()
+        .success();
+    let sys_a = fs::read_to_string(&dump_a).unwrap();
+    assert!(sys_a.contains("### src/a.rs"), "system:\n{sys_a}");
+    assert!(sys_a.contains("+fn a() { aaa(); }"), "system:\n{sys_a}");
+    assert!(!sys_a.contains("### src/b.rs"), "b leaked into a:\n{sys_a}");
+
+    let dump_b = p.path().join("b.txt");
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--rule")
+        .arg("rule_b")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump_b)
+        .assert()
+        .success();
+    let sys_b = fs::read_to_string(&dump_b).unwrap();
+    assert!(sys_b.contains("### src/b.rs"), "system:\n{sys_b}");
+    assert!(sys_b.contains("+fn b() { bbb(); }"), "system:\n{sys_b}");
+    assert!(!sys_b.contains("### src/a.rs"), "a leaked into b:\n{sys_b}");
+}
+
+#[test]
+fn diff_base_respects_cwd_as_the_git_root() {
+    // Base resolution runs in `--cwd`, not the process cwd: the work tree lives
+    // under `repo/`, and `--diff-base main` resolves there.
+    let p = Project::new();
+    let repo = p.path().join("repo");
+    p.write(
+        "repo/llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("repo/src/a.rs", "fn a() {}\n");
+    init_repo(&repo);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "baseline"]);
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    p.write("repo/src/a.rs", "fn a() { in_cwd(); }\n");
+    git(&repo, &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--cwd")
+        .arg(&repo)
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { in_cwd(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_equal_to_tip_renders_no_section() {
+    // An explicit base that equals the current tip (here the branch you're on)
+    // means nothing differs: no `## Changed lines` section, but the files are
+    // still linted (whole-file review) and the run is clean.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main") // we are on main, work tree clean -> no diff vs main
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+}
+
+/// Like `committed_repo`, but the config also sets a top-level `diff_base`, so a
+/// repo can make `--diff` compare against a chosen branch without the flag.
+fn committed_repo_with_diff_base(base: &str, rules: &str, initial: &[(&str, &str)]) -> Project {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\ndiff_base: {base}\nfiles:\n  include: [\"src/**\"]\nrules:\n{rules}"),
+    );
+    for (path, body) in initial {
+        p.write(path, body);
+    }
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p
+}
+
+#[test]
+fn diff_base_from_config_sets_the_default_base() {
+    // A repo bakes `diff_base: main` into its config, so bare `--diff` (no
+    // `--diff-base` flag) reviews what the current branch changed versus `main` —
+    // the quality-gate default — even though the worktree is clean vs HEAD.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo_with_diff_base("main", &rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { from_config(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { from_config(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_flag_overrides_config() {
+    // The `--diff-base` flag wins over the config's `diff_base`: config says
+    // `main`, but `--diff-base other` diffs against the `other` branch instead.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo_with_diff_base("main", &rules, &[("src/a.rs", "fn a() {}\n")]);
+    // `other` branch holds a different baseline for a.rs.
+    git(p.path(), &["checkout", "-q", "-b", "other"]);
+    p.write("src/a.rs", "fn a() { on_other(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "other baseline"]);
+    // Back on a feature branch off `other`, make the change under review.
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { under_review(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("other")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // vs `other`: only the line that changed since `other` (not since `main`).
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { under_review(); }"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("-fn a() { on_other(); }"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_base_from_config_is_inert_without_diff() {
+    // `diff_base` in config only tunes the base for `--diff`; without `--diff`
+    // it does nothing — no diff section, whole-file review as before.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo_with_diff_base("main", &rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { ignored(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
 }
 
 // ---- filters --------------------------------------------------------------

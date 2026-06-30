@@ -404,6 +404,7 @@ fn fold_session_settings(session: &mut Config, unit: &Config) {
     }
     session.oneharness.merge_under(unit.oneharness.clone());
     session.rationales = session.rationales.or(unit.rationales);
+    session.diff_base = session.diff_base.take().or_else(|| unit.diff_base.clone());
 }
 
 enum Node {
@@ -734,24 +735,26 @@ rules:
         fs::create_dir_all(dir.path().join("sub")).unwrap();
         fs::write(
             dir.path().join("llmlint.yml"),
-            "version: 1\noneharness:\n  model: root-model\nrules:\n  - name: root_rule\n    \
-             description: \"true when ok; false otherwise.\"\n",
+            "version: 1\ndiff_base: main\noneharness:\n  model: root-model\nrules:\n  \
+             - name: root_rule\n    description: \"true when ok; false otherwise.\"\n",
         )
         .unwrap();
         fs::write(
             dir.path().join("sub/llmlint.yml"),
-            "oneharness:\n  model: sub-model\nagents:\n  scoped:\n    model: x\n\
+            "diff_base: develop\noneharness:\n  model: sub-model\nagents:\n  scoped:\n    model: x\n\
              rules:\n  - name: sub_rule\n    agent: scoped\n    \
              description: \"true when ok; false otherwise.\"\n",
         )
         .unwrap();
 
         let loaded = load(&[], dir.path()).unwrap();
-        // Session model comes from cwd-and-up only -> the descendant is ignored.
+        // Session model + diff_base come from cwd-and-up only -> the descendant's
+        // values are ignored as session settings.
         assert_eq!(
             loaded.config.oneharness.model.as_deref(),
             Some("root-model")
         );
+        assert_eq!(loaded.config.diff_base.as_deref(), Some("main"));
         // The descendant's agent is still available (rules reference it)...
         assert!(loaded.config.agents.contains_key("scoped"));
         // ...and its rule is contributed, scoped to the subtree.

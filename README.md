@@ -132,6 +132,11 @@ files:
 # Require a short `rationale` for every verdict (default true). See Rationales below.
 rationales: true
 
+# Default base for `--diff` (when `--diff-base` isn't passed). Any git revision —
+# a branch, tag, commit, or `A..B`/`A...B` range. Set it to your default branch so
+# a CI quality gate reviews whatever the current branch changed; unset = `HEAD`.
+diff_base: main
+
 # Pull in shared rule sets / plugins with one line each. An entry is a local
 # path or a URL (`http(s)://`, `file://`); pin a URL to a version with `@`.
 plugins:
@@ -564,7 +569,8 @@ source.
   against `HEAD`). Add `--diff-base <REF>` to compare against a different git
   revision instead of `HEAD` — a branch, tag, commit, or `A..B`/`A...B` range —
   so `--diff --diff-base main` reviews exactly what the current branch changed
-  versus `main` (the PR-review case).
+  versus `main` (the PR-review case). The base can also be set once in config as
+  `diff_base:` (the flag overrides it).
 - `llmlint check-ignores [FILES...]` — validate the *structure* of inline
   `llmlint: ignore` directives in the target files, **deterministically and with
   no model call** (`-c/--config`, `--cwd`; pass `FILES` to scope it, e.g. the
