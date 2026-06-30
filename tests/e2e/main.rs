@@ -2212,6 +2212,203 @@ fn nested_discovery_traces_sources_up_and_down_the_tree() {
     );
 }
 
+#[test]
+fn cascade_override_across_the_tree_traces_each_field_to_its_file() {
+    // Nesting introduces a new way an `override` spans files: a base rule defined
+    // up the tree (a user/project-level config) refined by the local config at the
+    // run cwd. Field-level provenance must resolve across that directory split —
+    // the definition stays the ancestor, the overridden field points at the cwd
+    // file — and a subtree agent traces to the subtree.
+    let p = Project::new();
+    // Ancestor: the base rule (its definition site).
+    p.write(
+        "llmlint.yml",
+        &format!("rules:\n  - {{ name: shared, description: \"{RULE}\" }}\n"),
+    );
+    // Run cwd: overrides the ancestor's rule, changing only `judges`.
+    p.write(
+        "proj/llmlint.yml",
+        "version: 1\nrules:\n  - { name: shared, override: true, judges: 3 }\n",
+    );
+    // A subtree: an agent (referenced by its own rule) to trace through `where`.
+    p.write(
+        "proj/area/llmlint.yml",
+        &format!(
+            "agents:\n  area_agent:\n    harness: claude-code\nrules:\n  \
+             - {{ name: area_rule, agent: area_agent, description: \"{RULE}\" }}\n"
+        ),
+    );
+    let proj = p.path().join("proj");
+
+    let out = p
+        .bare()
+        .args(["config", "--sources", "--cwd"])
+        .arg(&proj)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    // The override took effect: the merged rule carries judges = 3.
+    let shared = v["config"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "shared")
+        .expect("shared rule present");
+    assert_eq!(shared["judges"], 3);
+    // Provenance splits the rule across files: definition at the ancestor, the
+    // overridden `judges` at the cwd config.
+    let sh = &v["sources"]["rules"]["shared"];
+    let src = |val: &Value| val.as_str().unwrap_or_default().to_string();
+    assert!(
+        src(&sh["source"]).ends_with("llmlint.yml") && !src(&sh["source"]).contains("proj"),
+        "definition site is the ancestor: {}",
+        src(&sh["source"])
+    );
+    assert!(
+        src(&sh["fields"]["judges"]).ends_with("proj/llmlint.yml"),
+        "overridden field points at the cwd file: {}",
+        src(&sh["fields"]["judges"])
+    );
+    // The subtree agent traces to the subtree config.
+    assert!(src(&v["sources"]["agents"]["area_agent"]).ends_with("proj/area/llmlint.yml"));
+
+    // `where` agrees, for scripting.
+    let where1 = |path: &str| -> String {
+        let out = p
+            .bare()
+            .args(["where", path, "--cwd"])
+            .arg(&proj)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    assert!(where1("rules.shared.judges").ends_with("proj/llmlint.yml"));
+    let def = where1("rules.shared");
+    assert!(
+        def.ends_with("llmlint.yml") && !def.contains("proj"),
+        "{def}"
+    );
+    assert!(where1("agents.area_agent").ends_with("proj/area/llmlint.yml"));
+}
+
+#[test]
+fn duplicate_rule_name_across_sibling_subtrees_is_rejected() {
+    // Rule names are one namespace across the whole discovered tree, so two sibling
+    // subtrees that both define the same rule (without `override`) is a clear
+    // exit-2 config error, not a silent last-writer-wins.
+    let p = Project::new();
+    p.write(
+        "proj/llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "proj/a/llmlint.yml",
+        &format!("rules:\n  - {{ name: dup, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "proj/b/llmlint.yml",
+        &format!("rules:\n  - {{ name: dup, description: \"{RULE}\" }}\n"),
+    );
+    let proj = p.path().join("proj");
+
+    let out = p
+        .bare()
+        .arg("config")
+        .arg("--cwd")
+        .arg(&proj)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("duplicate rule name"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn cascade_per_rule_files_root_at_the_subtree_directory() {
+    // A subtree rule's *own* `files` glob roots at the subtree directory, just like
+    // the config-level default — not at the run cwd. So a per-rule `*.md` in a
+    // subtree reaches that subtree's markdown and nothing above it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "area/llmlint.yml",
+        &format!(
+            "rules:\n  - name: md_rule\n    description: \"{RULE}\"\n    files:\n      include: [\"*.md\"]\n"
+        ),
+    );
+    p.write("area/note.md", "# area note\n");
+    p.write("top.md", "# top note\n"); // a .md ABOVE the subtree — must not match
+
+    let dump = p.path().join("system.txt");
+    let verdicts = p.write_verdicts(r#"{"md_rule": true}"#);
+    p.lint()
+        .arg("--rule")
+        .arg("md_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("area/note.md"), "system:\n{system}");
+    assert!(
+        !system.contains("top.md"),
+        "a subtree rule's per-rule glob must not escape its directory:\n{system}"
+    );
+}
+
+#[test]
+fn lint_runs_when_the_only_config_is_in_a_subtree() {
+    // Running from a directory with no config of its own — but with a configured
+    // subtree below it — is a valid run (the configured part of the project), not a
+    // ConfigNotFound. The subtree config lints its own files.
+    let p = Project::new();
+    p.write(
+        "area/llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"*.rs\"]\nrules:\n  \
+             - {{ name: area_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("area/code.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"area_rule": true}"#);
+
+    // Process cwd is the project root, which has no config; discovery finds the
+    // subtree config and lints `area/code.rs` (reported relative to cwd).
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["area_rule"]);
+}
+
 // ---- --timeout (forwarded to oneharness) ----------------------------------
 
 #[test]

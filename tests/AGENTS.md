@@ -88,6 +88,13 @@ logic is also covered hermetically via `file://` plugins.
   succeeds when only a subtree config exists (no config at `--cwd` or above).
   Explicit `--config` replaces the whole walk with no cascade (globs rooted at
   `--cwd`).
+- Nested-discovery edges: a subtree rule's *own* `files` glob roots at the subtree
+  directory (a per-rule `*.md` reaches that subtree's markdown, not a `.md` above
+  it), proving per-rule/agent `files` scope like the config-level default; running
+  from a directory whose only config is in a subtree lints that subtree (not a
+  ConfigNotFound); and two sibling subtrees that define the same rule name without
+  `override` is a clear exit-2 "duplicate rule name" error (one namespace across
+  the whole tree, never silent last-writer-wins).
 - `--cwd` drives both config discovery and the directory forwarded to oneharness
   as its `--cwd`.
 - `--rule` and `--agent` filters limit which rules run: `--rule` is repeatable
@@ -172,7 +179,11 @@ logic is also covered hermetically via `file://` plugins.
   to the cwd-and-up writer, and a descendant-only setting (`oneharness.timeout` set
   only in the subtree) neither takes effect in the merged config nor appears as a
   setting's source — proving a leaf scopes rules without retuning the run or
-  polluting provenance.
+  polluting provenance. Field-level provenance also spans the directory tree: an
+  ancestor's base rule overridden at the cwd config resolves with the merged value
+  (`judges` 3), its definition tracing to the ancestor and the overridden field to
+  the cwd file (via both `config --sources` and `where rules.<name>.<field>`),
+  while a subtree agent traces to the subtree config.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
