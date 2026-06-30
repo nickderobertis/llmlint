@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.21](https://github.com/nickderobertis/llmlint/compare/v0.2.20...v0.2.21) - 2026-06-30
+
+### Fixed
+
+- *(config)* relevance-gate the subtree cascade by the linted files ([#72](https://github.com/nickderobertis/llmlint/pull/72))
+
 ## [0.2.20](https://github.com/nickderobertis/llmlint/compare/v0.2.19...v0.2.20) - 2026-06-30
 
 ### Added
