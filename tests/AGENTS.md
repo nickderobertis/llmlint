@@ -166,6 +166,13 @@ logic is also covered hermetically via `file://` plugins.
   and an unrecognized path shows the accepted forms — plus the shared load
   preflight (no config found, a structurally invalid config) surfaces through
   `where`'s own entry point.
+- Source tracking × nested discovery (the intersection): over a tree with an
+  ancestor, the run cwd, and a subtree config, `config --sources` and `where`
+  trace every rule to its own file (a subtree rule to the subtree config), settings
+  to the cwd-and-up writer, and a descendant-only setting (`oneharness.timeout` set
+  only in the subtree) neither takes effect in the merged config nor appears as a
+  setting's source — proving a leaf scopes rules without retuning the run or
+  polluting provenance.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted

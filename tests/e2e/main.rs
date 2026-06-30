@@ -2103,6 +2103,115 @@ fn cascade_scopes_a_subtree_configs_globs_to_its_own_directory() {
     assert!(!root.contains("note.txt"), "system:\n{root}");
 }
 
+#[test]
+fn nested_discovery_traces_sources_up_and_down_the_tree() {
+    // The intersection of nested discovery (walk up + cascade down) with source
+    // tracking: `config --sources` and `where` must trace every item to the exact
+    // file it came from across the whole tree, and a descendant config's settings
+    // must neither take effect nor appear as a setting's source.
+    let p = Project::new();
+    // Ancestor of the run cwd: sets `rationales` and a rule.
+    p.write(
+        "llmlint.yml",
+        &format!("rationales: false\nrules:\n  - {{ name: user_rule, description: \"{RULE}\" }}\n"),
+    );
+    // The run cwd: sets the model + a rule.
+    p.write(
+        "proj/llmlint.yml",
+        &format!(
+            "version: 1\noneharness:\n  model: proj-model\nrules:\n  \
+             - {{ name: proj_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // A subtree under cwd: a scoped rule, plus a session setting (`timeout`) that
+    // nothing above sets — a descendant must NOT be able to retune the run.
+    p.write(
+        "proj/frontend/llmlint.yml",
+        &format!(
+            "oneharness:\n  timeout: 5\nrules:\n  - {{ name: front_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    let proj = p.path().join("proj");
+
+    let out = p
+        .bare()
+        .args(["config", "--sources", "--cwd"])
+        .arg(&proj)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let s = &v["sources"];
+    let src = |val: &Value| val.as_str().unwrap_or_default().to_string();
+
+    // Each rule traces to its own file across the whole tree — including a
+    // descendant rule to the subtree config.
+    let user_src = src(&s["rules"]["user_rule"]["source"]);
+    assert!(
+        user_src.ends_with("llmlint.yml") && !user_src.contains("proj"),
+        "ancestor rule should trace to the root config: {user_src}"
+    );
+    assert!(
+        src(&s["rules"]["proj_rule"]["source"]).ends_with("proj/llmlint.yml"),
+        "cwd rule: {}",
+        src(&s["rules"]["proj_rule"]["source"])
+    );
+    assert!(
+        src(&s["rules"]["front_rule"]["source"]).ends_with("proj/frontend/llmlint.yml"),
+        "subtree rule: {}",
+        src(&s["rules"]["front_rule"]["source"])
+    );
+    // Settings trace to cwd-and-up only.
+    assert!(src(&s["settings"]["oneharness.model"]).ends_with("proj/llmlint.yml"));
+    let rat_src = src(&s["settings"]["rationales"]);
+    assert!(
+        rat_src.ends_with("llmlint.yml") && !rat_src.contains("proj"),
+        "rationales is set by the ancestor: {rat_src}"
+    );
+    // The descendant-only setting neither takes effect nor appears as a source.
+    assert!(
+        v["config"]["oneharness"]["timeout"].is_null(),
+        "a descendant must not retune the session: {}",
+        v["config"]["oneharness"]
+    );
+    assert!(
+        s["settings"].get("oneharness.timeout").is_none(),
+        "a descendant setting must not be a provenance source: {s}"
+    );
+
+    // `where` resolves the same way for a single item.
+    let trimmed = |args: &[&str]| -> (i32, String) {
+        let out = p
+            .bare()
+            .args(args)
+            .arg("--cwd")
+            .arg(&proj)
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap(),
+            String::from_utf8(out.stdout).unwrap().trim().to_string(),
+        )
+    };
+    let (code, front) = trimmed(&["where", "rules.front_rule"]);
+    assert_eq!(code, 0, "where rules.front_rule should resolve");
+    assert!(front.ends_with("proj/frontend/llmlint.yml"), "got {front}");
+    // The model resolves to cwd, never the descendant that also names a setting.
+    assert!(trimmed(&["where", "oneharness.model"])
+        .1
+        .ends_with("proj/llmlint.yml"));
+    let user = trimmed(&["where", "rules.user_rule"]).1;
+    assert!(
+        user.ends_with("llmlint.yml") && !user.contains("proj"),
+        "got {user}"
+    );
+}
+
 // ---- --timeout (forwarded to oneharness) ----------------------------------
 
 #[test]
