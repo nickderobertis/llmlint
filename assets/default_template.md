@@ -75,8 +75,21 @@ the code.
 ## Target files
 
 {% for f in files %}- {{ f }}
-{% endfor %}
-## Rules to evaluate
+{% endfor %}{% if diffs %}
+## Changed lines
+
+These target files were modified in the change under review. Their unified diffs
+are below — the `+`/`-` lines are exactly what changed. **Focus your review on
+these changed lines**; unchanged code is context, not the subject of this review.
+A target file not listed here was not modified.
+
+{% for d in diffs %}### {{ d.file }}
+
+```diff
+{{ d.diff }}
+```
+
+{% endfor %}{% endif %}## Rules to evaluate
 
 {% for r in rules %}### {{ r.name }}
 

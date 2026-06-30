@@ -74,6 +74,9 @@ pub enum Error {
     #[error("oneharness run failed: {0}")]
     Oneharness(String),
 
+    #[error("diff ({backend}): {message}")]
+    Diff { backend: String, message: String },
+
     #[error("{0}")]
     Io(String),
 
@@ -192,5 +195,11 @@ mod tests {
         }
         .to_string()
         .contains("f: m"));
+        assert!(Error::Diff {
+            backend: "git".into(),
+            message: "not a git repository".into()
+        }
+        .to_string()
+        .contains("diff (git): not a git repository"));
     }
 }

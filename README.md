@@ -551,7 +551,10 @@ source.
   rule/agent name is an exit-2 error that lists the available names. Every
   top-level setting also has a flag that wins over the config:
   `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
-  `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`.
+  `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`. Pass
+  `--diff [<backend>]` to add each changed file's diff to the judge prompt so it
+  reviews only the changed lines; bare `--diff` uses the `git` backend (compared
+  against `HEAD`).
 - `llmlint check-ignores [FILES...]` — validate the *structure* of inline
   `llmlint: ignore` directives in the target files, **deterministically and with
   no model call** (`-c/--config`, `--cwd`; pass `FILES` to scope it, e.g. the

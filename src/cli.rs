@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use crate::io::diff::DiffBackend;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "llmlint",
@@ -131,6 +133,18 @@ pub struct LintArgs {
     /// Directory to lint from (config discovery + the harness cwd). Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+
+    /// Add each target file's diff to the judge prompt so it reviews only the
+    /// changed lines. Bare `--diff` uses the `git` backend (compared against
+    /// `HEAD`); pass a backend (`--diff git`) to choose one explicitly. Omitted:
+    /// the whole file is reviewed as before.
+    #[arg(
+        long = "diff",
+        value_name = "BACKEND",
+        num_args = 0..=1,
+        default_missing_value = "git",
+    )]
+    pub diff: Option<DiffBackend>,
 }
 
 impl LintArgs {

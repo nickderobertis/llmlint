@@ -173,6 +173,22 @@ tools.
   **Honoring** them is the judge's job, specified in the default template; there
   is no separate suppression pass in llmlint, so a custom `prompt_template` must
   carry the same guidance to keep the behavior.
+- **Diff context (convention):** `--diff [<backend>]` adds each changed target
+  file's diff to the judge prompt so it reviews only the changed lines (bare
+  `--diff` defaults to `git`, compared against `HEAD`). The capability is
+  **backend-agnostic**: `src/io/diff.rs` defines a `DiffProvider` trait and a
+  `DiffBackend` value enum; `GitDiff` is the first impl (`git diff`, with an
+  unborn-HEAD `--cached` fallback) and `provider()` is the only place that maps a
+  backend to an impl, so a new VCS/range source is a variant + impl with no
+  call-site changes — `lint` only talks to the trait. Diffs are computed once at
+  the I/O boundary (per target file, before planning) and reach the prompt as an
+  additive `diffs` context block (the `## Changed lines` section); they are
+  **not** a file filter — every target file is still reviewed, an unchanged one
+  just carries no diff. A custom `prompt_template` keeps `files` as a plain path
+  list, so add a `{% if diffs %}…{% endfor %}` block to surface diffs there. A
+  `--diff git` run outside a git work tree is a clear exit-2 `Error::Diff`, never
+  a silent empty diff. *Follow-up:* expose a base ref/range (`GitDiff.base` is a
+  field for exactly this) and a config-level `diff:` default.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

@@ -4,6 +4,7 @@
 
 pub mod assets;
 pub mod configfs;
+pub mod diff;
 pub mod files;
 pub mod oneharness;
 pub mod plugins;

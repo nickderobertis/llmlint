@@ -805,6 +805,135 @@ fn explicit_cli_files_override_config_globs() {
     );
 }
 
+// ---- --diff (changed-line context in the prompt) --------------------------
+
+/// Run `git` in `dir`, asserting success. `std::process::Command` is spelled out
+/// because `assert_cmd::Command` is imported as `Command` in this file.
+fn git(dir: &Path, args: &[&str]) {
+    let ok = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    assert!(ok, "git {args:?} failed");
+}
+
+/// `git init` + identity + a `main` branch, so commits don't depend on the
+/// host's git defaults.
+fn init_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "user.email", "t@t.t"]);
+    git(dir, &["config", "user.name", "t"]);
+    git(dir, &["checkout", "-q", "-b", "main"]);
+}
+
+#[test]
+fn diff_flag_adds_changed_lines_to_the_prompt() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: changed_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // Two files committed as the baseline; only one is changed afterward.
+    p.write("src/a.rs", "fn a() {}\n");
+    p.write("src/b.rs", "fn b() {}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p.write("src/a.rs", "fn a() { let x = 1; }\n");
+
+    let verdicts = p.write_verdicts(r#"{"changed_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    // Bare `--diff` defaults to the git backend.
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // The changed-lines section renders, names the changed file, and carries the
+    // added line as a `+` diff line — exactly which lines to review.
+    assert!(system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("### src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("+fn a() { let x = 1; }"),
+        "system:\n{system}"
+    );
+    // The unchanged file gets no diff block (nothing changed in it).
+    assert!(!system.contains("### src/b.rs"), "system:\n{system}");
+    // Both files are still listed as targets (diffs are additive context, not a
+    // file filter).
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(system.contains("- src/b.rs"), "system:\n{system}");
+}
+
+#[test]
+fn without_diff_flag_no_changed_lines_section() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "fn a() {}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p.write("src/a.rs", "fn a() { let x = 1; }\n");
+
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+    let dump = p.path().join("system.txt");
+
+    // No `--diff`: the prompt is unchanged — no diff section even in a git repo
+    // with pending changes.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(!system.contains("## Changed lines"), "system:\n{system}");
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+}
+
+#[test]
+fn diff_outside_a_git_repo_is_a_clear_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "fn a() {}\n");
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+
+    // No `git init`: `--diff git` can't produce diffs, so it fails up front
+    // (exit 2) rather than silently reviewing nothing.
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("diff (git)"));
+}
+
 // ---- filters --------------------------------------------------------------
 
 #[test]

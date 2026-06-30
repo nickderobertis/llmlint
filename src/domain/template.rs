@@ -2,10 +2,11 @@
 //!
 //! Templates are [minijinja] (Jinja2-style). The context exposes `rules` (each
 //! with `name`, `description`, and `rationale` — whether that rule wants a
-//! justification), `files` (the target paths), and `rationales` (whether any
-//! rule in this batch wants one, to gate the rationale guidance block). The
-//! built-in default template lives in `assets/default_template.md` and is
-//! embedded via [`crate::io::assets`].
+//! justification), `files` (the target paths), `diffs` (per-file changed-line
+//! diffs, present only under `--diff`), and `rationales` (whether any rule in
+//! this batch wants one, to gate the rationale guidance block). The built-in
+//! default template lives in `assets/default_template.md` and is embedded via
+//! [`crate::io::assets`].
 
 use serde::Serialize;
 
@@ -25,10 +26,24 @@ pub struct RuleSpec {
     pub relevance: Option<String>,
 }
 
+/// One target file's changed-line diff, shown to the judge under `--diff`. Kept
+/// separate from `files` (a plain path list) so a custom template using
+/// `{{ f }}` keeps working; the diffs are an additive `diffs` block.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileDiff {
+    /// The file path (forward-slash form), matching its entry in `files`.
+    pub file: String,
+    /// The unified diff text for that file.
+    pub diff: String,
+}
+
 #[derive(Serialize)]
 struct Context<'a> {
     rules: &'a [RuleSpec],
     files: &'a [String],
+    /// Per-file diffs (only files with changes), present under `--diff` and
+    /// empty otherwise, so the template can gate the changed-lines block.
+    diffs: &'a [FileDiff],
     /// True when at least one rule in this batch wants a rationale, so the
     /// template can show (or omit) the rationale guidance.
     rationales: bool,
@@ -37,13 +52,15 @@ struct Context<'a> {
     relevance: bool,
 }
 
-/// Render `template` with the given rules and target file paths. `rationales`
-/// gates the rationale guidance (true when any rule in this batch wants one) and
-/// `relevance` gates the relevance guidance (true when any rule is conditional).
+/// Render `template` with the given rules, target file paths, and per-file
+/// `diffs` (empty unless `--diff` is set). `rationales` gates the rationale
+/// guidance (true when any rule in this batch wants one) and `relevance` gates
+/// the relevance guidance (true when any rule is conditional).
 pub fn render(
     template: &str,
     rules: &[RuleSpec],
     files: &[String],
+    diffs: &[FileDiff],
     rationales: bool,
     relevance: bool,
 ) -> Result<String> {
@@ -52,6 +69,7 @@ pub fn render(
     let ctx = Context {
         rules,
         files,
+        diffs,
         rationales,
         relevance,
     };
@@ -88,6 +106,7 @@ mod tests {
             tmpl,
             &rules(),
             &["src/a.rs".into(), "src/b.rs".into()],
+            &[],
             true,
             false,
         )
@@ -99,13 +118,31 @@ mod tests {
     }
 
     #[test]
+    fn diffs_block_is_gated_and_renders_per_file() {
+        let tmpl = "{% if diffs %}CHANGED\n{% for d in diffs %}{{ d.file }}:\n{{ d.diff }}\
+                    {% endfor %}{% else %}WHOLE{% endif %}";
+        // No diffs (the default): the gate is off.
+        let off = render(tmpl, &rules(), &["src/a.rs".into()], &[], true, false).unwrap();
+        assert!(off.contains("WHOLE"), "got: {off}");
+        // With a diff: the block renders the file path and its diff text.
+        let diffs = vec![FileDiff {
+            file: "src/a.rs".into(),
+            diff: "@@ -1 +1 @@\n-old\n+new\n".into(),
+        }];
+        let on = render(tmpl, &rules(), &["src/a.rs".into()], &diffs, true, false).unwrap();
+        assert!(on.contains("CHANGED"), "got: {on}");
+        assert!(on.contains("src/a.rs:"), "got: {on}");
+        assert!(on.contains("+new"), "got: {on}");
+    }
+
+    #[test]
     fn rationales_flag_and_per_rule_rationale_are_in_scope() {
         let tmpl = "{% if rationales %}WANT{% else %}SKIP{% endif %}\n\
                     {% for r in rules %}{{ r.name }}={{ r.rationale }}\n{% endfor %}";
-        let on = render(tmpl, &rules(), &[], true, false).unwrap();
+        let on = render(tmpl, &rules(), &[], &[], true, false).unwrap();
         assert!(on.contains("WANT"));
         assert!(on.contains("no_inline_sql=true"));
-        let off = render(tmpl, &rules(), &[], false, false).unwrap();
+        let off = render(tmpl, &rules(), &[], &[], false, false).unwrap();
         assert!(off.contains("SKIP"));
     }
 
@@ -116,18 +153,18 @@ mod tests {
                     {% endif %}{% endfor %}";
         let mut rs = rules();
         rs[0].relevance = Some("the change touches SQL".into());
-        let on = render(tmpl, &rs, &[], true, true).unwrap();
+        let on = render(tmpl, &rs, &[], &[], true, true).unwrap();
         assert!(on.contains("GATE"));
         assert!(on.contains("no_inline_sql: the change touches SQL"));
         // The always-evaluated rule renders no condition line.
         assert!(!on.contains("layered:"));
-        let off = render(tmpl, &rules(), &[], true, false).unwrap();
+        let off = render(tmpl, &rules(), &[], &[], true, false).unwrap();
         assert!(off.contains("NOGATE"));
     }
 
     #[test]
     fn invalid_template_is_a_template_error() {
-        let err = render("{% for x in %}", &rules(), &[], true, false).unwrap_err();
+        let err = render("{% for x in %}", &rules(), &[], &[], true, false).unwrap_err();
         assert!(matches!(err, Error::Template(_)));
     }
 }

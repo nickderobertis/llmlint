@@ -69,6 +69,18 @@ logic is also covered hermetically via `file://` plugins.
   a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule and per-agent `files` override the global globs.
+- `--diff` adds each changed target file's diff to the judge prompt so it reviews
+  only the changed lines. Bare `--diff` defaults to the `git` backend (compared
+  against `HEAD`): a `## Changed lines` section renders with a per-file `diff`
+  block naming the changed file and carrying its `+`/`-` lines; an unchanged
+  target file gets no block but is still listed as a target (diffs are additive
+  context, not a file filter). Without `--diff` no section renders even in a git
+  repo with pending changes. The backend is selected behind a `DiffProvider`
+  trait (git is the first impl), so `--diff <backend>` validates against the
+  known backends and the rest of llmlint is VCS-agnostic. Running `--diff git`
+  outside a git work tree is a clear exit-2 error (`diff (git): …`) rather than a
+  silent "nothing changed". Backend internals (only-changed-files, the unborn-HEAD
+  `--cached` fallback, the non-repo error) are unit-tested in `io::diff`.
 - `--config` replaces nested upward discovery and is repeatable (first entry
   supplies the top-level scalars, the rest contribute rules/agents); `config
   --config` honors a relative path resolved against `--cwd`.
