@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.22](https://github.com/nickderobertis/llmlint/compare/v0.2.21...v0.2.22) - 2026-06-30
+
+### Added
+
+- add --diff to surface changed-line diffs in the judge prompt ([#74](https://github.com/nickderobertis/llmlint/pull/74))
+
 ## [0.2.21](https://github.com/nickderobertis/llmlint/compare/v0.2.20...v0.2.21) - 2026-06-30
 
 ### Fixed
