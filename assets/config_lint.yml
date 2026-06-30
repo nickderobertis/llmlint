@@ -2,10 +2,10 @@
 # .../assets/config_lint.yml, and resolved offline from the embedded copy).
 #
 # Lints llmlint configuration files themselves: that rules are well-named and
-# their descriptions yield a clear, mutually-exclusive true/false outcome. These
-# are judgment checks; structural checks (unique names, valid identifiers,
-# resolvable agents) are enforced deterministically by llmlint at load time and
-# are intentionally not duplicated here.
+# their descriptions yield a clear, unambiguous verdict. These are judgment
+# checks; structural checks (unique names, valid identifiers, resolvable agents)
+# are enforced deterministically by llmlint at load time and are intentionally
+# not duplicated here.
 #
 # `version` is the published plugin version consumers pin with `@` (e.g. `@1`).
 version: 1
@@ -28,14 +28,16 @@ agents:
       rules defined in the target config files against the checks below.
 
 rules:
-  - name: description_states_clear_true_and_false
+  - name: description_yields_clear_verdict
     agent: config_lint
     description: |
-      true when every lint rule's `description` unambiguously states the
-      condition under which the verdict is true AND the condition under which it
-      is false, and the two conditions are mutually exclusive. false when any
-      description is ambiguous, omits one side, or its true and false conditions
-      overlap.
+      Every lint rule's `description` states a single, unambiguous property
+      whose truth determines the verdict — written either as a plain invariant
+      (just the condition for the property to hold) or, when the violating case
+      carries meaningful detail such as concrete examples, by stating both the
+      holding and the violating conditions so they are mutually exclusive.
+      Flag a description that is ambiguous, conflates several unrelated
+      properties, or whose stated holding and violating conditions overlap.
 
   - name: name_is_descriptive_not_placeholder
     agent: config_lint
