@@ -160,11 +160,36 @@ pub fn parse(text: &str, origin: &str) -> Result<Config> {
 /// are de-duplicated by absolute path / plugin key, and the transitive depth is
 /// bounded by `MAX_PLUGIN_DEPTH`.
 pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
+    load_with_targets(entries, cwd, &[])
+}
+
+/// Like [`load`], but the cascade is **relevance-gated** by `explicit_files` (the
+/// files named on the command line, relative to `cwd` or absolute). When that list
+/// is non-empty, a subtree config is loaded only when at least one passed file
+/// lives under its directory — so linting one area never loads (or fetches the
+/// plugins of, or trips a name clash in) an unrelated subtree's config. An empty
+/// list keeps the full cascade (a discovery run lints everything its configs
+/// match). The walk-up half and explicit `--config` are never gated.
+pub fn load_with_targets(
+    entries: &[PathBuf],
+    cwd: &Path,
+    explicit_files: &[PathBuf],
+) -> Result<Loaded> {
     if entries.is_empty() {
-        load_discovered(cwd)
+        load_discovered(cwd, explicit_files)
     } else {
         load_explicit(entries, cwd)
     }
+}
+
+/// Whether `file` (CLI-given, relative to `cwd` or absolute) lives under `dir`.
+fn file_under(cwd: &Path, dir: &Path, file: &Path) -> bool {
+    let abs = if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        cwd.join(file)
+    };
+    normalize(&abs).starts_with(dir)
 }
 
 /// Explicit `--config`: load + merge the given files into one config (no cascade,
@@ -231,15 +256,33 @@ struct Unit {
 /// means `<that dir>/*.txt`) — while resolved paths stay relative to `cwd`. Rule
 /// names share one namespace, so `override` extends across the chain and a genuine
 /// duplicate name is still an error.
-fn load_discovered(cwd: &Path) -> Result<Loaded> {
+fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
     let ancestors = discover_all(cwd);
-    let descendants = discover_subtree(cwd);
-    if ancestors.is_empty() && descendants.is_empty() {
+    let all_descendants = discover_subtree(cwd);
+    // "Is the project configured at all?" is decided on the *full* discovered set,
+    // so a project whose only config sits in an unrelated subtree is still a valid
+    // (zero-rule) run rather than a ConfigNotFound when that subtree is gated out.
+    if ancestors.is_empty() && all_descendants.is_empty() {
         return Err(Error::ConfigNotFound {
             names: CONFIG_NAMES.join(", "),
             dir: cwd.display().to_string(),
         });
     }
+    // Relevance-gate the cascade: with explicit CLI files, keep only the subtree
+    // configs that actually govern a passed file (its directory contains one). With
+    // no explicit files every subtree config stays — each one decides what its own
+    // area lints, so none can be ruled out up front.
+    let descendants: Vec<PathBuf> = if explicit_files.is_empty() {
+        all_descendants
+    } else {
+        all_descendants
+            .into_iter()
+            .filter(|path| {
+                let dir = path.parent().unwrap_or(cwd);
+                explicit_files.iter().any(|f| file_under(cwd, dir, f))
+            })
+            .collect()
+    };
 
     // Order all units nearest-`cwd` first; on a tie, ancestors (the broader,
     // project-level configs) before descendants, then by path for determinism.
@@ -506,7 +549,7 @@ fn absolutize(p: &Path, cwd: &Path) -> PathBuf {
 
 /// Lexically normalize a path (collapse `.`/`..`) without touching the
 /// filesystem, so the dedup key is stable even for not-yet-read files.
-fn normalize(p: &Path) -> PathBuf {
+pub(crate) fn normalize(p: &Path) -> PathBuf {
     use std::path::Component;
     let mut out = PathBuf::new();
     for c in p.components() {
@@ -735,6 +778,76 @@ rules:
             .collect();
         assert_eq!(names, ["only_sub"]);
         assert_eq!(loaded.scopes["only_sub"].dir, dir.path().join("sub"));
+    }
+
+    #[test]
+    fn explicit_files_relevance_gate_the_subtree_cascade() {
+        // With explicit CLI files, a subtree config joins only when a passed file
+        // lives under it; the walk-up (root) config is never gated. No explicit
+        // files keeps the whole cascade.
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("frontend")).unwrap();
+        fs::create_dir_all(dir.path().join("backend")).unwrap();
+        fs::write(
+            dir.path().join("llmlint.yml"),
+            "version: 1\nrules:\n  - name: root_rule\n    description: \"d\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("frontend/llmlint.yml"),
+            "rules:\n  - name: front_rule\n    description: \"d\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("backend/llmlint.yml"),
+            "rules:\n  - name: back_rule\n    description: \"d\"\n",
+        )
+        .unwrap();
+        let names = |l: &Loaded| -> BTreeSet<String> {
+            l.config.rules.iter().map(|r| r.name.clone()).collect()
+        };
+
+        // A relative file under frontend → only frontend's subtree loads.
+        let loaded =
+            load_with_targets(&[], dir.path(), &[PathBuf::from("frontend/app.js")]).unwrap();
+        assert_eq!(
+            names(&loaded),
+            ["front_rule", "root_rule"].map(String::from).into()
+        );
+
+        // An absolute file under backend → only backend's subtree loads (this
+        // exercises the absolute-path branch of the gate).
+        let loaded =
+            load_with_targets(&[], dir.path(), &[dir.path().join("backend/svc.py")]).unwrap();
+        assert_eq!(
+            names(&loaded),
+            ["back_rule", "root_rule"].map(String::from).into()
+        );
+
+        // No explicit files → the full cascade (both subtrees).
+        let loaded = load(&[], dir.path()).unwrap();
+        assert_eq!(
+            names(&loaded),
+            ["back_rule", "front_rule", "root_rule"]
+                .map(String::from)
+                .into()
+        );
+    }
+
+    #[test]
+    fn explicit_file_with_only_an_unrelated_subtree_is_a_zero_rule_run() {
+        // The only config sits in a subtree that no passed file lives under: the
+        // project *is* configured (no ConfigNotFound), but the run contributes no
+        // rules rather than wrongly applying the subtree's rules to the file.
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("backend")).unwrap();
+        fs::write(
+            dir.path().join("backend/llmlint.yml"),
+            "rules:\n  - name: back_rule\n    description: \"d\"\n",
+        )
+        .unwrap();
+        let loaded = load_with_targets(&[], dir.path(), &[PathBuf::from("app.rs")]).unwrap();
+        assert!(loaded.config.rules.is_empty());
     }
 
     #[test]

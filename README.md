@@ -198,6 +198,13 @@ Running `llmlint` from `my-project/` evaluates **all** of these together:
   retune the whole run. Run from `my-project/backend/` instead and that config
   becomes the most-local one, layering under the project and user configs.
 
+Passing **explicit files** (`llmlint backend/svc.py`) narrows this to just the
+configs that govern those files: a subtree config is consulted only when a passed
+file lives under it, and each rule judges only the passed files inside its own
+directory. So `llmlint backend/svc.py` never loads `frontend/llmlint.yml` (nor
+fetches its plugins, nor collides with a rule it happens to share a name with) —
+you get exactly the rules that apply to what you asked to lint.
+
 Use `llmlint config` to see the merged result and `llmlint config --sources`
 (or `llmlint where rules.<name>`) to trace any rule, agent, or setting back to
 the exact file it came from. To bypass discovery entirely, pass explicit
