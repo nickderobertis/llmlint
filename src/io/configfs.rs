@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::domain::config::{Config, Provenance};
+use crate::domain::config::{Config, Provenance, ProvenanceBuilder};
 use crate::domain::version::VersionReq;
 use crate::errors::{io_err, Error, Result};
 use crate::io::plugins::{self, ResolveOpts};
@@ -107,7 +107,7 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     let opts = ResolveOpts::from_env();
     let mut visited: BTreeSet<String> = BTreeSet::new();
     let mut sources: Vec<String> = Vec::new();
-    let mut provenance = Provenance::default();
+    let mut prov = ProvenanceBuilder::default();
     let mut acc: Option<Config> = None;
 
     for path in &entry_paths {
@@ -117,7 +117,7 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
             &opts,
             &mut visited,
             &mut sources,
-            &mut provenance,
+            &mut prov,
             &mut acc,
         )?;
     }
@@ -125,12 +125,13 @@ pub fn load(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
     let mut config = acc.unwrap_or_default();
     // After every plugin is folded in, layer `override` rules onto the base rule
     // they extend (and surface a duplicate name that didn't opt into `override`).
+    // Resolve first so `prov.finish()` sees validated rules (one base per name).
     crate::domain::config::resolve_overrides(&mut config)?;
 
     Ok(Loaded {
         config,
         sources,
-        provenance,
+        provenance: prov.finish(),
     })
 }
 
@@ -209,7 +210,7 @@ fn load_node(
     opts: &ResolveOpts,
     visited: &mut BTreeSet<String>,
     sources: &mut Vec<String>,
-    provenance: &mut Provenance,
+    prov: &mut ProvenanceBuilder,
     acc: &mut Option<Config>,
 ) -> Result<()> {
     // Entry files are depth 0; their `plugins` are depth 1, and so on. Bound the
@@ -233,7 +234,7 @@ fn load_node(
 
     // Record provenance in merge order (before folding in), so first-writer-wins
     // entries match the value that survives the merge.
-    provenance.record(&cfg, &origin);
+    prov.record(&cfg, &origin);
 
     match acc {
         None => *acc = Some(cfg),
@@ -242,7 +243,7 @@ fn load_node(
 
     for spec in child_specs {
         let child = Node::resolve(&spec, base_dir.as_deref())?;
-        load_node(child, depth + 1, opts, visited, sources, provenance, acc)?;
+        load_node(child, depth + 1, opts, visited, sources, prov, acc)?;
     }
     Ok(())
 }
@@ -490,11 +491,20 @@ rules:
         // Agent declared by both mid and leaf -> nearest-root (mid) wins.
         assert_eq!(prov.agents["shared"], key(&mid));
 
-        // Each rule names its source; the base + override rule lists both, root first.
-        assert_eq!(prov.rules["root_rule"], vec![key(&root)]);
-        assert_eq!(prov.rules["mid_rule"], vec![key(&mid)]);
-        assert_eq!(prov.rules["leaf_rule"], vec![key(&leaf)]);
-        assert_eq!(prov.rules["shared_rule"], vec![key(&root), key(&leaf)]);
+        // Each rule names its definition site; a rule with no override has no
+        // per-field entries.
+        assert_eq!(prov.rules["root_rule"].source, key(&root));
+        assert!(prov.rules["root_rule"].fields.is_empty());
+        assert_eq!(prov.rules["mid_rule"].source, key(&mid));
+        assert_eq!(prov.rules["leaf_rule"].source, key(&leaf));
+
+        // `shared_rule` is defined in the leaf, but the root override changed
+        // `judges` -> provenance points `judges` at the root file while the
+        // definition (and the inherited description) stays the leaf.
+        let shared = &prov.rules["shared_rule"];
+        assert_eq!(shared.source, key(&leaf));
+        assert_eq!(shared.fields["judges"], key(&root));
+        assert!(!shared.fields.contains_key("description"));
     }
 
     #[test]

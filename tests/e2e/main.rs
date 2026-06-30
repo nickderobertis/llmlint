@@ -986,19 +986,22 @@ fn config_command_traces_every_item_to_its_source() {
     // Agent declared only by the local plugin.
     ends(&s["agents"]["team_agent"], "team.yml");
 
-    // Rule from the root file, and one from the remote plugin URL.
-    ends(&s["rules"]["root_rule"][0], "llmlint.yml");
+    // Rule from the root file, and one from the remote plugin URL. A rule with
+    // no override reports only its definition site (no per-field `fields` block).
+    ends(&s["rules"]["root_rule"]["source"], "llmlint.yml");
+    assert!(s["rules"]["root_rule"]["fields"].is_null());
     assert_eq!(
-        s["rules"]["name_matches_description"][0].as_str().unwrap(),
+        s["rules"]["name_matches_description"]["source"]
+            .as_str()
+            .unwrap(),
         CONFIG_LINT
     );
 
-    // The override rule lists both sources, nearest-root (the override) first,
-    // then the base it extends — so a resolved rule traces to every file.
-    let team_sources = s["rules"]["team_rule"].as_array().unwrap();
-    assert_eq!(team_sources.len(), 2, "got: {team_sources:?}");
-    ends(&team_sources[0], "llmlint.yml");
-    ends(&team_sources[1], "team.yml");
+    // `team_rule` is defined in the local plugin, but the root `override` set
+    // `judges` — so the rule's definition site is the plugin while `judges`
+    // traces to the root file, the field that would actually need editing there.
+    ends(&s["rules"]["team_rule"]["source"], "team.yml");
+    ends(&s["rules"]["team_rule"]["fields"]["judges"], "llmlint.yml");
     // And the override actually resolved into the merged rule.
     let team_rule = v["config"]["rules"]
         .as_array()

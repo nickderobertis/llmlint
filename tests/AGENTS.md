@@ -126,13 +126,15 @@ logic is also covered hermetically via `file://` plugins.
   only fills what shallower configs left unset — asserted end to end via
   `llmlint config` on a root -> mid -> leaf chain.
 - `llmlint config` also emits a `sources` block tracing each item back to where
-  it is defined: the source of every rule (a base rule plus any `override`
-  layers, nearest-root first), every agent, and every top-level setting
-  (first-writer-wins, matching the merge) — so a rule can be traced to the file
-  to edit. Asserted end to end over one root + local-plugin + bundled-URL run:
-  a root rule -> its file, a bundled-plugin rule -> its URL, a plugin-only agent
-  and setting -> the local plugin file, `version`/`rationales` -> the root file,
-  and an `override` rule -> both its override and base sources.
+  it is defined so it can be found and edited: every agent and every top-level
+  setting to their single (first-writer-wins) source, and every rule to its
+  definition site plus — because an `override` resolves field by field — a
+  per-field map of any field whose value came from a *different* file (the file
+  to edit for that field). Asserted end to end over one root + local-plugin +
+  bundled-URL run: a root rule -> its file, a bundled-plugin rule -> its URL, a
+  plugin-only agent and setting -> the local plugin file, `version`/`rationales`
+  -> the root file, and a rule defined in the plugin whose `judges` an `override`
+  pulls to the root file (`fields.judges` -> root, `source` -> plugin).
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted

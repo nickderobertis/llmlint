@@ -291,34 +291,64 @@ impl Config {
 /// together during load (see [`crate::io::configfs::load`]), so a rule, agent,
 /// or setting in the merged result can be traced back to the file (or plugin
 /// URL) that contributed it. The source strings are exactly the keys in
-/// [`crate::io::configfs::Loaded::sources`].
+/// [`crate::io::configfs::Loaded::sources`]. Build it with a
+/// [`ProvenanceBuilder`].
 ///
-/// Provenance mirrors the merge precedence ([`Config::merge_plugin`]): a scalar
-/// setting or an agent records the **first** (nearest-root) source that set it —
-/// the one that wins the merge — while a rule records **every** source that
-/// declared its name, in load order (nearest-root first), so a base rule and its
-/// `override` layers are all visible.
+/// Provenance mirrors the merge precedence ([`Config::merge_plugin`]): each
+/// top-level setting and each agent records the **first** (nearest-root) source
+/// that set it — the one that wins the merge. A rule is reported at field
+/// granularity ([`RuleProvenance`]) because an `override` resolves field by
+/// field, so a single resolved rule can draw different fields from different
+/// files.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct Provenance {
     /// Source of each top-level setting that was set, by field name (`version`,
     /// `prompt_template`, `files`, `rationales`, and the `oneharness.*`
     /// sub-fields). Only fields actually set by some config appear.
     pub settings: BTreeMap<String, String>,
-    /// Source of each agent, by name.
+    /// Source of each agent, by name. An agent is kept whole from its first
+    /// (nearest-root) writer on a name clash, so one source is exact.
     pub agents: BTreeMap<String, String>,
-    /// Sources that declared each rule name, in load order (nearest-root first):
-    /// a base rule plus any `override` layers extending it.
-    pub rules: BTreeMap<String, Vec<String>>,
+    /// Per-rule provenance, by name: where the rule is defined and which fields,
+    /// if any, an `override` pulled from a different file.
+    pub rules: BTreeMap<String, RuleProvenance>,
 }
 
-impl Provenance {
-    /// Record `cfg`'s contributions as coming from `origin`, applying the same
-    /// precedence as the merge: settings and agents keep the first (nearest-root)
-    /// writer, while rules accumulate every occurrence in load order.
-    ///
-    /// Call once per config as it is folded in, in merge order, so the
-    /// first-writer-wins entries line up with which value actually survives the
-    /// merge (see [`Config::merge_plugin`]).
+/// Where a resolved rule, and each of its fields, comes from. A rule with no
+/// `override` has every field at its single definition site, so `fields` is
+/// empty; an `override` that changes a field from another file surfaces that
+/// field here, pointing at the file to edit for it.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct RuleProvenance {
+    /// The rule's definition site: the source of its base (non-`override`)
+    /// declaration, the default place to edit it.
+    pub source: String,
+    /// Fields whose resolved value came from a **different** source than
+    /// `source` because an `override` layer set them — field name -> the source
+    /// to edit for that field. Empty when the rule resolves entirely from its
+    /// definition site (the common case), so it is omitted from the output then.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
+}
+
+/// Accumulates provenance as configs are folded in during load, then resolves it
+/// to a [`Provenance`]. Kept separate from `Provenance` because rule field
+/// provenance can only be computed once every `override` occurrence has been
+/// collected, the same two-phase shape as merge-then-[`resolve_overrides`].
+#[derive(Debug, Default)]
+pub struct ProvenanceBuilder {
+    settings: BTreeMap<String, String>,
+    agents: BTreeMap<String, String>,
+    /// Every occurrence of each rule name, in load order (nearest-root first):
+    /// its source paired with the raw (pre-resolution) rule.
+    rule_occurrences: BTreeMap<String, Vec<(String, Rule)>>,
+}
+
+impl ProvenanceBuilder {
+    /// Record `cfg`'s contributions as coming from `origin`. Call once per config
+    /// as it is folded in, in merge order, so first-writer-wins settings/agents
+    /// line up with the value that survives the merge, and rule occurrences are
+    /// collected nearest-root first (see [`Config::merge_plugin`]).
     pub fn record(&mut self, cfg: &Config, origin: &str) {
         // Each top-level setting, paired with whether this config sets it. The
         // predicates match the merge's "is unset" tests, so the recorded source
@@ -350,11 +380,101 @@ impl Provenance {
                 .or_insert_with(|| origin.to_string());
         }
         for rule in &cfg.rules {
-            self.rules
+            self.rule_occurrences
                 .entry(rule.name.clone())
                 .or_default()
-                .push(origin.to_string());
+                .push((origin.to_string(), rule.clone()));
         }
+    }
+
+    /// Resolve the collected occurrences into per-rule provenance. Call after
+    /// [`resolve_overrides`] has validated the rules (so every name has exactly
+    /// one base); a malformed group still yields a safe entry rather than
+    /// panicking, since the caller surfaces the real error and discards this.
+    pub fn finish(self) -> Provenance {
+        let mut rules: BTreeMap<String, RuleProvenance> = BTreeMap::new();
+        for (name, occ) in self.rule_occurrences {
+            rules.insert(name, rule_provenance(&occ));
+        }
+        Provenance {
+            settings: self.settings,
+            agents: self.agents,
+            rules,
+        }
+    }
+}
+
+/// Compute one rule's field provenance from its occurrences (source + raw rule),
+/// in load order. Uses the shared [`field_winners`] precedence so it can't drift
+/// from how [`resolve_overrides`] actually resolves the rule.
+fn rule_provenance(occ: &[(String, Rule)]) -> RuleProvenance {
+    let bases: Vec<&(String, Rule)> = occ.iter().filter(|(_, r)| !r.r#override).collect();
+    // Exactly one base is the validated case; on anything else fall back to the
+    // first occurrence's source (the caller will have already errored out).
+    let base = match bases.as_slice() {
+        [b] => *b,
+        _ => {
+            return RuleProvenance {
+                source: occ.first().map(|(s, _)| s.clone()).unwrap_or_default(),
+                fields: BTreeMap::new(),
+            }
+        }
+    };
+    let base_src = base.0.as_str();
+    let overrides: Vec<&Rule> = occ
+        .iter()
+        .filter(|(_, r)| r.r#override)
+        .map(|(_, r)| r)
+        .collect();
+    let override_srcs: Vec<&str> = occ
+        .iter()
+        .filter(|(_, r)| r.r#override)
+        .map(|(s, _)| s.as_str())
+        .collect();
+
+    let w = field_winners(&overrides);
+    let mut fields: BTreeMap<String, String> = BTreeMap::new();
+    // For each resolved field, the source is the winning override's (when one set
+    // it) or the base's. Record only the fields whose source differs from the
+    // definition site — those are the ones an override pulled from elsewhere.
+    let mut note = |field: &str, present: bool, winner: Option<usize>| {
+        if !present {
+            return;
+        }
+        let src = winner.map(|i| override_srcs[i]).unwrap_or(base_src);
+        if src != base_src {
+            fields.insert(field.to_string(), src.to_string());
+        }
+    };
+    note("description", true, w.description);
+    note(
+        "agent",
+        base.1.agent.is_some() || w.agent.is_some(),
+        w.agent,
+    );
+    note(
+        "judges",
+        base.1.judges.is_some() || w.judges.is_some(),
+        w.judges,
+    );
+    note(
+        "files",
+        base.1.files.is_some() || w.files.is_some(),
+        w.files,
+    );
+    note(
+        "rationale",
+        base.1.rationale.is_some() || w.rationale.is_some(),
+        w.rationale,
+    );
+    note(
+        "relevance",
+        base.1.relevance.is_some() || w.relevance.is_some(),
+        w.relevance,
+    );
+    RuleProvenance {
+        source: base_src.to_string(),
+        fields,
     }
 }
 
@@ -421,31 +541,59 @@ pub fn resolve_overrides(config: &mut Config) -> Result<()> {
     }
 }
 
-/// Fold `overrides` (ordered nearest-root first) onto a clone of `base`. Applied
-/// farthest-root first so the nearest-root override wins each field it sets; an
-/// unset field (`None`, or an empty `description`) leaves the base's value.
+/// Which layer supplies each overridable field of a resolved rule: `Some(i)` =
+/// `overrides[i]`, `None` = the base. `overrides` are ordered nearest-root
+/// first, and the nearest-root layer that sets a field wins (`description`
+/// ignores blank overrides; the optionals win on `Some`). This is the single
+/// definition of override precedence, shared by [`merge_override`] (which builds
+/// the resolved rule) and [`rule_provenance`] (which traces each field's source)
+/// so the two can't drift.
+struct FieldWinners {
+    description: Option<usize>,
+    agent: Option<usize>,
+    judges: Option<usize>,
+    files: Option<usize>,
+    rationale: Option<usize>,
+    relevance: Option<usize>,
+}
+
+fn field_winners(overrides: &[&Rule]) -> FieldWinners {
+    FieldWinners {
+        description: overrides
+            .iter()
+            .position(|ov| !ov.description.trim().is_empty()),
+        agent: overrides.iter().position(|ov| ov.agent.is_some()),
+        judges: overrides.iter().position(|ov| ov.judges.is_some()),
+        files: overrides.iter().position(|ov| ov.files.is_some()),
+        rationale: overrides.iter().position(|ov| ov.rationale.is_some()),
+        relevance: overrides.iter().position(|ov| ov.relevance.is_some()),
+    }
+}
+
+/// Fold `overrides` (ordered nearest-root first) onto a clone of `base`: the
+/// nearest-root override wins each field it sets ([`field_winners`]); an unset
+/// field (`None`, or an empty `description`) leaves the base's value.
 fn merge_override(base: &Rule, overrides: &[&Rule]) -> Rule {
+    let w = field_winners(overrides);
     let mut out = base.clone();
     out.r#override = false;
-    for ov in overrides.iter().rev() {
-        if !ov.description.trim().is_empty() {
-            out.description = ov.description.clone();
-        }
-        if ov.agent.is_some() {
-            out.agent = ov.agent.clone();
-        }
-        if ov.judges.is_some() {
-            out.judges = ov.judges;
-        }
-        if ov.files.is_some() {
-            out.files = ov.files.clone();
-        }
-        if ov.rationale.is_some() {
-            out.rationale = ov.rationale;
-        }
-        if ov.relevance.is_some() {
-            out.relevance = ov.relevance.clone();
-        }
+    if let Some(i) = w.description {
+        out.description = overrides[i].description.clone();
+    }
+    if let Some(i) = w.agent {
+        out.agent = overrides[i].agent.clone();
+    }
+    if let Some(i) = w.judges {
+        out.judges = overrides[i].judges;
+    }
+    if let Some(i) = w.files {
+        out.files = overrides[i].files.clone();
+    }
+    if let Some(i) = w.rationale {
+        out.rationale = overrides[i].rationale;
+    }
+    if let Some(i) = w.relevance {
+        out.relevance = overrides[i].relevance.clone();
     }
     out
 }
@@ -874,9 +1022,11 @@ mod tests {
     }
 
     #[test]
-    fn provenance_records_first_writer_for_settings_and_agents_all_for_rules() {
-        let mut prov = Provenance::default();
+    fn provenance_traces_settings_agents_and_each_rule_field() {
+        let mut b = ProvenanceBuilder::default();
 
+        // Nearest-root file: top-level settings, a plain rule `a`, and an
+        // `override` of `shared` that bumps only `judges`.
         let mut near = Config {
             version: Some(Version::parse("1").unwrap()),
             rationales: Some(false),
@@ -884,27 +1034,38 @@ mod tests {
                 include: vec!["src/**".into()],
                 exclude: vec![],
             },
-            rules: vec![rule("a"), rule("shared")],
+            rules: vec![
+                rule("a"),
+                Rule {
+                    name: "shared".into(),
+                    description: String::new(), // omitted -> inherit the base's
+                    r#override: true,
+                    judges: Some(3),
+                    ..rule("shared")
+                },
+            ],
             ..Default::default()
         };
         near.oneharness.model = Some("opus".into());
         near.oneharness.config = vec!["oh.yml".into()];
         near.agents.insert("g".into(), Agent::default());
 
+        // Farther file: a rule `b`, the *base* `shared`, and settings that either
+        // clash with `near` (near wins) or fill gaps it left open.
         let mut far = Config {
-            // Clashes with `near` on version/model/agent -> near (recorded first) wins.
-            version: Some(Version::parse("2").unwrap()),
-            prompt_template: Some("t".into()), // gap near left open -> far is the source
+            version: Some(Version::parse("2").unwrap()), // clash -> near wins
+            prompt_template: Some("t".into()),           // gap -> far is the source
             rules: vec![rule("b"), rule("shared")],
             ..Default::default()
         };
-        far.oneharness.model = Some("haiku".into());
+        far.oneharness.model = Some("haiku".into()); // clash -> near
         far.oneharness.timeout = Some(9); // only far set it
         far.oneharness.schema_max_retries = Some(2);
         far.agents.insert("g".into(), Agent::default());
 
-        prov.record(&near, "near.yml");
-        prov.record(&far, "far.yml");
+        b.record(&near, "near.yml");
+        b.record(&far, "far.yml");
+        let prov = b.finish();
 
         // Settings + agents: first (nearest-root) writer wins.
         assert_eq!(prov.settings["version"], "near.yml");
@@ -919,10 +1080,19 @@ mod tests {
         // A setting nobody set is absent (no `oneharness.bin` was given).
         assert!(!prov.settings.contains_key("oneharness.bin"));
 
-        // Rules: every source that declared the name, in record order.
-        assert_eq!(prov.rules["a"], vec!["near.yml"]);
-        assert_eq!(prov.rules["b"], vec!["far.yml"]);
-        assert_eq!(prov.rules["shared"], vec!["near.yml", "far.yml"]);
+        // Plain rules: a single definition site, no per-field divergence.
+        assert_eq!(prov.rules["a"].source, "near.yml");
+        assert!(prov.rules["a"].fields.is_empty());
+        assert_eq!(prov.rules["b"].source, "far.yml");
+        assert!(prov.rules["b"].fields.is_empty());
+
+        // `shared` is defined in `far`, but its `judges` came from the `near`
+        // override -> the field is traced to `near` while the rule (and its
+        // inherited description) stays `far`.
+        let shared = &prov.rules["shared"];
+        assert_eq!(shared.source, "far.yml");
+        assert_eq!(shared.fields["judges"], "near.yml");
+        assert!(!shared.fields.contains_key("description"));
     }
 
     #[test]
