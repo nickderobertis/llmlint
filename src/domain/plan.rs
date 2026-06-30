@@ -82,42 +82,49 @@ pub fn build(
             None => master_template.to_string(),
         };
 
-        // Within an agent, group by the resolved file set so each run carries a
-        // coherent file list.
-        let mut by_files: BTreeMap<Vec<PathBuf>, Vec<ResolvedRule>> = BTreeMap::new();
-        for r in rules {
-            by_files.entry(r.files.clone()).or_default().push(r);
+        // A rule with no matching files is nothing to lint — reported as skipped.
+        // The rest are batched together (per judge index) regardless of their
+        // individual file scopes: one judge call covers the *union* of its rules'
+        // files, and the rendered prompt tells the judge, per file, which rules
+        // apply (see `domain::applicability`). Merging this way means fewer
+        // oneharness invocations than one call per distinct file set, while the
+        // per-file context keeps each rule scoped to its own files.
+        let (eligible, empty): (Vec<ResolvedRule>, Vec<ResolvedRule>) =
+            rules.into_iter().partition(|r| !r.files.is_empty());
+        plan.skipped.extend(empty.into_iter().map(|r| r.name));
+        if eligible.is_empty() {
+            continue;
         }
 
-        for (files, group) in by_files {
-            if files.is_empty() {
-                plan.skipped.extend(group.into_iter().map(|r| r.name));
-                continue;
-            }
-            let max_judges = group.iter().map(|r| r.judges).max().unwrap_or(1);
-            for j in 1..=max_judges {
-                let subset: Vec<&ResolvedRule> = group.iter().filter(|r| r.judges >= j).collect();
-                for chunk in balanced_chunks(&subset, batch_size) {
-                    plan.runs.push(JudgeRun {
-                        agent: agent_name.clone(),
-                        harness: harness.clone(),
-                        model: agent.model.clone(),
-                        schema_max_retries: config.oneharness.schema_max_retries,
-                        judge_index: j,
-                        template: template.clone(),
-                        files: files.clone(),
-                        rules: chunk
-                            .iter()
-                            .map(|r| RuleSpec {
-                                name: r.name.clone(),
-                                description: r.description.clone(),
-                                rationale: r.rationale,
-                                relevance: r.relevance.clone(),
-                                require_line_attribution: r.require_line_attribution,
-                            })
-                            .collect(),
-                    });
-                }
+        let max_judges = eligible.iter().map(|r| r.judges).max().unwrap_or(1);
+        for j in 1..=max_judges {
+            let subset: Vec<&ResolvedRule> = eligible.iter().filter(|r| r.judges >= j).collect();
+            for chunk in balanced_chunks(&subset, batch_size) {
+                // The call's file list is the union of its rules' files.
+                let mut files: Vec<PathBuf> =
+                    chunk.iter().flat_map(|r| r.files.iter().cloned()).collect();
+                files.sort();
+                files.dedup();
+                plan.runs.push(JudgeRun {
+                    agent: agent_name.clone(),
+                    harness: harness.clone(),
+                    model: agent.model.clone(),
+                    schema_max_retries: config.oneharness.schema_max_retries,
+                    judge_index: j,
+                    template: template.clone(),
+                    files,
+                    rules: chunk
+                        .iter()
+                        .map(|r| RuleSpec {
+                            name: r.name.clone(),
+                            description: r.description.clone(),
+                            rationale: r.rationale,
+                            relevance: r.relevance.clone(),
+                            require_line_attribution: r.require_line_attribution,
+                            files: r.files.iter().map(|p| crate::domain::to_slash(p)).collect(),
+                        })
+                        .collect(),
+                });
             }
         }
     }
@@ -339,7 +346,10 @@ mod tests {
     }
 
     #[test]
-    fn distinct_file_sets_are_separate_runs() {
+    fn distinct_file_sets_merge_into_one_call_over_the_union() {
+        // Two rules on different files now share one judge call (fewer oneharness
+        // invocations); the call carries the union of files, and each rule keeps
+        // its own scoped file list for the per-file applicability context.
         let cfg = Config::default();
         let plan = build(
             &cfg,
@@ -350,7 +360,39 @@ mod tests {
                 rr("b", 1, "default", &["y.rs"]),
             ],
         );
-        assert_eq!(plan.runs.len(), 2);
+        assert_eq!(plan.runs.len(), 1);
+        let run = &plan.runs[0];
+        assert_eq!(
+            run.files,
+            vec![PathBuf::from("x.rs"), PathBuf::from("y.rs")]
+        );
+        let a = run.rules.iter().find(|r| r.name == "a").unwrap();
+        let b = run.rules.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(a.files, vec!["x.rs"]);
+        assert_eq!(b.files, vec!["y.rs"]);
+    }
+
+    #[test]
+    fn batch_size_splits_the_union_merge_too() {
+        // Even across distinct file sets, batch_size caps rules per call.
+        let mut cfg = Config::default();
+        cfg.agents.insert(
+            "small".into(),
+            Agent {
+                batch_size: Some(1),
+                ..Default::default()
+            },
+        );
+        let plan = build(
+            &cfg,
+            "T",
+            20,
+            vec![
+                rr("a", 1, "small", &["x.rs"]),
+                rr("b", 1, "small", &["y.rs"]),
+            ],
+        );
+        assert_eq!(plan.runs.len(), 2, "batch_size 1 -> one rule per call");
     }
 
     #[test]

@@ -9,11 +9,12 @@ use std::thread;
 use crate::cli::{ColorChoice, LintArgs, OutputFormat};
 use crate::commands::ignores;
 use crate::domain::config::{validate, Config, RelevanceMode, Rule};
+use crate::domain::ignore::Suppressions;
 use crate::domain::plan::{self, JudgeRun};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{RuleOutcome, RuleVerdict};
-use crate::domain::{attribution, schema, vote};
+use crate::domain::{applicability, attribution, ignore, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, diff, files, oneharness};
@@ -23,6 +24,11 @@ const DEFAULT_TIMEOUT: u64 = 120;
 const DEFAULT_MAX_PARALLEL: usize = 8;
 const PROMPT_TRIGGER: &str =
     "Evaluate each rule against the target files and respond with the structured verdict object.";
+/// How many times a judge whose verdict strays outside a rule's file scope is
+/// asked to rework its answer before llmlint drops the wrong-file violations
+/// deterministically. One corrective round catches an honest slip without
+/// looping on a judge that won't comply.
+const MAX_REWORKS: usize = 1;
 
 pub fn run(args: LintArgs) -> Result<i32> {
     let cwd = match &args.cwd {
@@ -107,7 +113,23 @@ pub fn run(args: LintArgs) -> Result<i32> {
         .iter()
         .flat_map(|r| r.files.iter().cloned())
         .collect();
-    ignores::check(&cwd, &targets, &ignores::known_rules(&config))?;
+    let known = ignores::known_rules(&config);
+    ignores::check(&cwd, &targets, &known)?;
+
+    // Parse each target file's well-formed inline ignores into line-span
+    // suppressions, keyed by the file's slash path. After a judge answers, any
+    // violation an ignore covers is dropped deterministically — llmlint honors
+    // the directives itself rather than trusting the judge to (the default
+    // template still documents line/block ignores as a backstop).
+    let mut suppressions: BTreeMap<String, Suppressions> = BTreeMap::new();
+    for rel in &targets {
+        if let Some(text) = files::read_text(&cwd, rel)? {
+            let s = ignore::suppressions(&text, &known);
+            if !s.is_empty() {
+                suppressions.insert(files::to_slash(rel), s);
+            }
+        }
+    }
 
     // Under `--diff`, compute each target file's changed-line diff once (at the
     // I/O boundary) so every judge prompt can show exactly what changed. The
@@ -182,6 +204,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let client_ref = &client;
     let cwd_ref = cwd.as_path();
     let diffs_ref = &diffs;
+    let suppressions_ref = &suppressions;
     for wave in the_plan.runs.chunks(max_parallel) {
         thread::scope(|s| {
             let handles: Vec<_> = wave
@@ -197,6 +220,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
                             global_model,
                             want_trace,
                             diffs_ref,
+                            suppressions_ref,
                         )
                     })
                 })
@@ -422,6 +446,7 @@ fn execute(
     global_model: Option<&str>,
     want_trace: bool,
     diffs: &BTreeMap<PathBuf, String>,
+    suppressions: &BTreeMap<String, Suppressions>,
 ) -> (
     Option<oneharness::RunTrace>,
     Result<BTreeMap<String, RuleVerdict>>,
@@ -470,24 +495,68 @@ fn execute(
         })
         .collect();
     let schema = schema::build(&specs);
-    let req = oneharness::RunRequest {
-        harness: run.harness.as_deref(),
-        model: run.model.as_deref().or(global_model),
-        system: &system,
-        prompt: PROMPT_TRIGGER,
-        schema: &schema,
-        schema_max_retries: run.schema_max_retries,
-        cwd,
-        timeout_secs: timeout,
-        oneharness_config: oh_config,
-        no_config: false,
-    };
-    if want_trace {
-        let (trace, result) = client.run_with_trace(&req);
-        (Some(trace), result)
-    } else {
-        (None, client.run(&req))
+
+    // Per-rule scope (which files each rule covers) + the per-file applicability
+    // shown to the judge — reused to validate the verdict and to phrase a rework.
+    let pairs: Vec<(String, Vec<String>)> = run
+        .rules
+        .iter()
+        .map(|r| (r.name.clone(), r.files.clone()))
+        .collect();
+    let scope = applicability::scope_map(&pairs);
+    let file_rules = applicability::per_file(&pairs, &files_str);
+
+    // One judge call, plus up to MAX_REWORKS corrective rounds: if the verdict
+    // pins a violation to a file outside that rule's scope (a "wrong rule in
+    // wrong file"), re-ask with the exact per-file rule lists before falling back
+    // to deterministic cleanup.
+    let mut prompt = PROMPT_TRIGGER.to_string();
+    let mut last_trace;
+    let mut verdicts;
+    let mut attempt = 0;
+    loop {
+        let req = oneharness::RunRequest {
+            harness: run.harness.as_deref(),
+            model: run.model.as_deref().or(global_model),
+            system: &system,
+            prompt: &prompt,
+            schema: &schema,
+            schema_max_retries: run.schema_max_retries,
+            cwd,
+            timeout_secs: timeout,
+            oneharness_config: oh_config,
+            no_config: false,
+        };
+        let (trace, result) = if want_trace {
+            let (t, r) = client.run_with_trace(&req);
+            (Some(t), r)
+        } else {
+            (None, client.run(&req))
+        };
+        last_trace = trace;
+        verdicts = match result {
+            Ok(v) => v,
+            Err(e) => return (last_trace, Err(e)),
+        };
+        let problems = applicability::scope_problems(&scope, &verdicts);
+        if problems.is_empty() || attempt >= MAX_REWORKS {
+            break;
+        }
+        prompt = applicability::rework_prompt(&problems, &file_rules);
+        attempt += 1;
     }
+
+    // Deterministic cleanup, applied whether or not a rework ran: drop any
+    // remaining wrong-file violation and any an inline ignore covers, flipping a
+    // fail to a pass when that removes its entire basis.
+    let empty_scope = BTreeSet::new();
+    for (name, verdict) in verdicts.iter_mut() {
+        let rule_scope = scope.get(name.as_str()).unwrap_or(&empty_scope);
+        applicability::clean_verdict(verdict, rule_scope, |file, line| {
+            suppressions.get(file).is_some_and(|s| s.covers(name, line))
+        });
+    }
+    (last_trace, Ok(verdicts))
 }
 
 fn emit(report: &Report, format: OutputFormat, verbosity: u8, color: ColorChoice) {

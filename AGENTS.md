@@ -127,13 +127,13 @@ Use the `just` recipes; do not hand-roll equivalents.
 
 ## How llmlint drives oneharness
 
-llmlint shells out to `oneharness run` once per `(agent, judge, batch)`, passing
-the rendered template via `--system`, a generated JSON Schema via `--schema`
-(oneharness validates it and re-prompts on failure), and reading the per-result
-`structured` value. **oneharness is a runtime prerequisite** — found on PATH,
-overridable via `--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config;
-`llmlint doctor` checks it. The harness reads target files on-demand with its own
-tools.
+llmlint shells out to `oneharness run` once per `(agent, judge, batch)` (plus a
+bounded corrective re-ask — see the scope bullet below), passing the rendered
+template via `--system`, a generated JSON Schema via `--schema` (oneharness
+validates it and re-prompts on failure), and reading the per-result `structured`
+value. **oneharness is a runtime prerequisite** — found on PATH, overridable via
+`--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config; `llmlint doctor` checks
+it. The harness reads target files on-demand with its own tools.
 
 - **Read-only mode + minimum version:** llmlint is a judge, never an editor, so
   every `run` passes `--mode read-only` — the harness may read target files but
@@ -168,6 +168,19 @@ tools.
   (listing all of that rule's unlocalized messages), never a silently-imprecise
   pass-through. Wired through `Rule` → `ResolvedRule` → `RuleSpec`/`SchemaRule`
   like `rationale`/`relevance`; inherited/overridable the same way.
+- **Per-file scope + wrong-file validation (convention):** a judge call batches
+  an agent's rules over the **union** of their files (fewer invocations than one
+  call per distinct file set), so different rules apply to different files in the
+  same prompt. The rendered template tells the judge, per file, exactly which
+  rules apply — listing the apply-set or, when shorter, the skip-set (the
+  token-cheaper spelling; see `domain::applicability::per_file`). After the judge
+  answers, any violation pinned to a file **outside** that rule's scope (a "wrong
+  rule in wrong file") is rejected: llmlint re-asks once (`MAX_REWORKS`) with the
+  exact per-file rule lists (`applicability::rework_prompt`). If a wrong-file
+  violation survives the rework it is dropped deterministically, and a fail whose
+  *entire* basis was out-of-scope flips to a pass — a mislocated finding can never
+  redden the build. The cleanup is pure (`applicability::clean_verdict`); the
+  matching normalizes paths (`norm`) so a judge's `./src/a.rs` matches `src/a.rs`.
 - **Ignore directives (convention):** target files may carry inline
   `llmlint: ignore[rule, ...] <reason>` (line-scoped),
   `llmlint: ignore-file[...] <reason>` (file-scoped), or the block-scoped pair
@@ -183,9 +196,15 @@ tools.
   and the standalone, model-free `check-ignores` command (`commands/check_ignores.rs`),
   so the fast static check and the full run can never disagree about what's valid.
   Keep that one shared path — don't reimplement the scan in a command.
-  **Honoring** them is the judge's job, specified in the default template; there
-  is no separate suppression pass in llmlint, so a custom `prompt_template` must
-  carry the same guidance to keep the behavior.
+  **Honoring** them is now llmlint's own job, done deterministically *after* the
+  judge answers: `ignore::suppressions` parses each well-formed directive into
+  per-rule line spans (`ignore-file` → whole file; `ignore` → its line and the one
+  below; `ignore-block`…`ignore-end` → the spanned lines), and `clean_verdict`
+  drops any violation a directive covers (flipping a fail to a pass when that
+  removes its only basis). The default template still documents the line/block
+  forms as a backstop (so the judge's verdict reads true) but no longer needs to
+  carry the file-scoped guidance — and a custom `prompt_template` can drop the
+  ignore guidance entirely without changing behavior, since llmlint enforces it.
 - **Diff context (convention):** `--diff [<backend>]` adds each changed target
   file's diff to the judge prompt so it reviews only the changed lines (bare
   `--diff` defaults to `git`, compared against `HEAD`). The capability is
@@ -194,11 +213,14 @@ tools.
   unborn-HEAD `--cached` fallback) and `provider()` is the only place that maps a
   backend to an impl, so a new VCS/range source is a variant + impl with no
   call-site changes — `lint` only talks to the trait. Diffs are computed once at
-  the I/O boundary (per target file, before planning) and reach the prompt as an
-  additive `diffs` context block (the `## Changed lines` section); they are
-  **not** a file filter — every target file is still reviewed, an unchanged one
-  just carries no diff. A custom `prompt_template` keeps `files` as a plain path
-  list, so add a `{% if diffs %}…{% endfor %}` block to surface diffs there. A
+  the I/O boundary (per target file, before planning) and **inlined per file in
+  the prompt's "Target files" section**: each changed file's unified diff is shown
+  right under its applicability line (rules + diff together), so the judge sees a
+  changed file's scope and change in one place. They are **not** a file filter —
+  every target file is still reviewed, an unchanged one just carries no diff. The
+  same diffs stay available to a custom `prompt_template` as the `diffs` context
+  block (and per-file as `file_rules[i].diff`), so a `{% if diffs %}…{% endfor %}`
+  block still works. A
   `--diff git` run outside a git work tree is a clear exit-2 `Error::Diff`, never
   a silent empty diff. **Base selection:** `--diff-base <REF>` (clap `requires`
   `--diff`) sets `GitDiff.base` to any git revision or range — a branch, tag,
@@ -256,8 +278,9 @@ tools.
 ## Architecture
 
 - **`src/domain/` is pure** — config model + validation, template render, schema
-  generation, judge/batch planning, vote aggregation, violation model, output
-  formatting, exit-code mapping. No process/filesystem/env I/O.
+  generation, judge/batch planning, per-file applicability + wrong-file/ignore
+  cleanup (`applicability`), vote aggregation, violation model, output formatting,
+  exit-code mapping. No process/filesystem/env I/O.
 - **`src/io/`** owns all I/O: config discovery + merge + `plugins` resolution
   (local files and remote/versioned URLs, fetched over HTTPS with `ureq`/rustls
   and cached on disk — see `src/io/plugins.rs`), file globbing, the oneharness

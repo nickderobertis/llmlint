@@ -154,6 +154,110 @@ pub fn validate(text: &str, known_rules: &BTreeSet<&str>) -> Vec<Problem> {
     problems
 }
 
+/// The inline ignores active in one file, as line spans per rule, so a verdict's
+/// violations can be suppressed deterministically (rather than relying on the
+/// judge to honor the comments). Built by [`suppressions`] from text that has
+/// already passed [`validate`], so only well-formed, configured directives count.
+#[derive(Debug, Clone, Default)]
+pub struct Suppressions {
+    /// Rules suppressed for the whole file (`ignore-file`).
+    file_scoped: BTreeSet<String>,
+    /// Per-rule inclusive 1-based line ranges covered by line/block directives.
+    ranges: BTreeMap<String, Vec<(usize, usize)>>,
+}
+
+impl Suppressions {
+    /// Whether an inline ignore covers a violation of `rule` at `line` (1-based).
+    /// A file-scoped ignore covers every line — including an unlocated (`None`)
+    /// violation; a line/block ignore covers only the lines it spans, so it never
+    /// matches an unlocated violation.
+    pub fn covers(&self, rule: &str, line: Option<u64>) -> bool {
+        if self.file_scoped.contains(rule) {
+            return true;
+        }
+        let Some(line) = line else {
+            return false;
+        };
+        let line = line as usize;
+        self.ranges
+            .get(rule)
+            .is_some_and(|rs| rs.iter().any(|(s, e)| *s <= line && line <= *e))
+    }
+
+    /// True when the file carries no honor-able ignore directives.
+    pub fn is_empty(&self) -> bool {
+        self.file_scoped.is_empty() && self.ranges.is_empty()
+    }
+}
+
+/// Parse `text` into the inline-ignore [`Suppressions`] it declares. Mirrors
+/// [`validate`]'s scan but keeps the line spans rather than the structural
+/// problems: a line-scoped `ignore` covers its own line and the one below it (a
+/// trailing comment vs. a comment on its own line), `ignore-file` covers the
+/// whole file, and an `ignore-block` … `ignore-end` pair covers every line from
+/// the open to the close. Only configured rules (`known`) and well-formed
+/// directives count — the caller validates structure first, so a malformed
+/// directive has already failed the run before this is reached.
+pub fn suppressions(text: &str, known: &BTreeSet<&str>) -> Suppressions {
+    let mut out = Suppressions::default();
+    let mut open: BTreeMap<String, usize> = BTreeMap::new();
+    let mut last_line = 0usize;
+
+    for (idx, raw) in text.lines().enumerate() {
+        let line = idx + 1;
+        last_line = line;
+        let Some(pos) = raw.find(MARKER) else {
+            continue;
+        };
+        let after = raw[pos + MARKER.len()..].trim_start();
+        let Some((kind, body)) = classify(after) else {
+            continue;
+        };
+        let (_problems, rules) = check_body(body, known, kind);
+
+        match kind {
+            Kind::Line => {
+                for r in rules {
+                    // Own line and the line immediately below it.
+                    out.ranges
+                        .entry(r.to_string())
+                        .or_default()
+                        .push((line, line + 1));
+                }
+            }
+            Kind::File => {
+                for r in rules {
+                    out.file_scoped.insert(r.to_string());
+                }
+            }
+            Kind::BlockStart => {
+                for r in rules {
+                    open.entry(r.to_string()).or_insert(line);
+                }
+            }
+            Kind::BlockEnd => {
+                for r in rules {
+                    if let Some(start) = open.remove(r) {
+                        out.ranges
+                            .entry(r.to_string())
+                            .or_default()
+                            .push((start, line));
+                    }
+                }
+            }
+        }
+    }
+    // An unclosed block (validate would have rejected it) defensively covers to
+    // end of file so its region is never under-suppressed.
+    for (r, start) in open {
+        out.ranges
+            .entry(r)
+            .or_default()
+            .push((start, last_line.max(start)));
+    }
+    out
+}
+
 /// Classify the text after the `llmlint:` marker into a directive kind plus the
 /// `[rules] …` body. The `-file` / `-block` / `-end` variants are tried before
 /// bare `ignore` so their suffix isn't swallowed by the `ignore` branch.
@@ -499,5 +603,50 @@ mod tests {
         assert_eq!(msgs.len(), 2, "got: {msgs:?}");
         assert!(msgs[0].starts_with("1:"), "got: {msgs:?}");
         assert!(msgs[1].starts_with("2:"), "got: {msgs:?}");
+    }
+
+    #[test]
+    fn suppressions_line_covers_own_line_and_the_one_below() {
+        let s = suppressions("// llmlint: ignore[r] reason\ncode\nmore\n", &known(&["r"]));
+        assert!(s.covers("r", Some(1)));
+        assert!(s.covers("r", Some(2)));
+        assert!(!s.covers("r", Some(3)));
+        // An unlocated violation isn't matched by a line-scoped ignore.
+        assert!(!s.covers("r", None));
+        // A rule the directive doesn't name is never covered.
+        assert!(!s.covers("other", Some(1)));
+    }
+
+    #[test]
+    fn suppressions_file_scope_covers_every_line_including_unlocated() {
+        let s = suppressions("/* llmlint: ignore-file[r] generated */\n", &known(&["r"]));
+        assert!(s.covers("r", Some(999)));
+        assert!(s.covers("r", None));
+        assert!(!s.covers("nope", Some(1)));
+    }
+
+    #[test]
+    fn suppressions_block_covers_open_through_close_inclusive() {
+        let text = "// llmlint: ignore-block[r] reason\ncode\ncode\n// llmlint: ignore-end[r]\n";
+        let s = suppressions(text, &known(&["r"]));
+        for l in 1..=4 {
+            assert!(s.covers("r", Some(l)), "line {l} should be covered");
+        }
+        assert!(!s.covers("r", Some(5)));
+    }
+
+    #[test]
+    fn suppressions_independent_per_rule_blocks() {
+        let text = "// llmlint: ignore-block[a, b] both\ncode\n// llmlint: ignore-end[a]\n\
+                    code\n// llmlint: ignore-end[b]\n";
+        let s = suppressions(text, &known(&["a", "b"]));
+        assert!(s.covers("a", Some(2)));
+        assert!(!s.covers("a", Some(4)));
+        assert!(s.covers("b", Some(4)));
+    }
+
+    #[test]
+    fn suppressions_empty_when_no_directives() {
+        assert!(suppressions("just code\n", &known(&["r"])).is_empty());
     }
 }
