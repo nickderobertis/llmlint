@@ -72,12 +72,26 @@ lane and baseline cover everyone — the SVG only changes when the report's
 - `shots/baseline/<arch>.json` — the committed digest baseline (no images).
 - `docs/screenshots/*.svg` — the committed copies embedded in the README.
 
+## The animated demo GIF (`docs/screenshots/demo.gif`)
+
+The SVGs are static; the README **hero** is an animated GIF of the live-progress
+view (rules resolving as their judges return, then clearing to the report — see
+`docs/design/interactive-progress.md`). `scripts/demo-gif.py` drives the **real
+release binary** against the same `fixture/` for its data (genuine rules/verdicts/
+report), then reconstructs the frames the view draws and renders them with the same
+**vendored JetBrains Mono font** — Pillow only, no `ttyd`/`ffmpeg`. Unlike the SVGs
+it is **not** hash-gated (a GIF isn't byte-reproducible across Pillow versions), so
+it is regenerated on demand (`just screenshots-gif`) and committed. Regenerate it
+when the live view's format changes (`src/commands/progress.rs`).
+
 ## Commands
 
 - `just screenshots-tools` — install the pinned `freeze` (needs Go). screencomp
   is installed separately (see its README); CI installs both itself.
 - `just screenshots` — capture (builds the release binaries, writes the shots +
   the README copies). Quiet on success.
+- `just screenshots-gif` — regenerate the animated demo GIF (needs Python 3 +
+  Pillow). Builds the release binaries, then writes `docs/screenshots/demo.gif`.
 - `just screenshots-bless` — after an **intended** output change, recapture and
   refresh `shots/baseline/<arch>.json`. Commit it alongside `docs/screenshots/`.
 

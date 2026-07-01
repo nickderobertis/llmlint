@@ -209,14 +209,21 @@ Windows console — the only genuinely new Windows surface the feature adds.
 
 The static screenshot tooling (`scripts/screenshots.sh`, deterministic SVGs) can't
 capture an *animation*. A separate, informational GIF (like the screenshots, never
-gated) is recorded with [`vhs`](https://github.com/charmbracelet/vhs) — charm's GIF
-counterpart to the `freeze` we already use — driving the real binary against the
-mock-oneharness fixture with an injected per-judge delay
-(`LLMLINT_MOCK_DELAY_MS`) so the live view actually animates. `vhs` runs the binary
-in a real PTY, so the interactive path activates naturally. The GIF is the hero
-image at the top of the README. It is **not** hash-gated (a GIF isn't
-byte-reproducible across machines); regenerate it on demand with
-`just screenshots-gif`.
+gated) is the README hero. `scripts/demo-gif.py` drives the **real release binary**
+against the mock-oneharness fixture (same as the screenshots) for its data — the
+rules, verdicts, and final report are genuine CLI output — then reconstructs the
+exact frames the view draws (the same glyphs, words, and status colors as
+`commands/progress.rs`) and renders them with the **vendored, pinned JetBrains Mono
+font** the SVG screenshots already use. This avoids a heavyweight screen-recording
+stack (no `ttyd`/`ffmpeg`): the only dependency is Pillow, so it is self-contained
+and reproducible. The GIF is **not** hash-gated (a GIF isn't byte-reproducible
+across Pillow versions); regenerate it on demand with `just screenshots-gif` and
+commit `docs/screenshots/demo.gif`.
+
+One rendering gotcha worth recording: JetBrains Mono has no distinct braille or
+quadrant-circle glyphs (they collapse to a single fallback), so a braille spinner
+would freeze in the GIF. The demo uses the quadrant-*block* spinner (`▖▘▝▗`), whose
+four glyphs render distinctly.
 
 ## Non-goals / deferred
 

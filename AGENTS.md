@@ -123,7 +123,11 @@ Use the `just` recipes; do not hand-roll equivalents.
   on drift. `freeze` is *not* installed by `just setup` — `just screenshots-tools`
   installs the pinned version; screencomp is installed separately (CI installs
   both). Keep the three `freeze` version pins in sync (justfile, `visual-docs.yml`,
-  `screenshots-tools`).
+  `screenshots-tools`). The README **hero** is a separate animated GIF of the
+  live-progress view (`docs/screenshots/demo.gif`, `just screenshots-gif`,
+  `scripts/demo-gif.py`) — same real-binary-against-the-fixture approach, rendered
+  to frames with the vendored font (Pillow, no `ttyd`/`ffmpeg`); it is *not*
+  hash-gated (a GIF isn't byte-reproducible), so it is regenerated on demand.
 
 ## How llmlint drives oneharness
 

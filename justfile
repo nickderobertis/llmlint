@@ -208,6 +208,18 @@ screenshots-tools:
 screenshots:
     @bash scripts/screenshots.sh
 
+# Regenerate the animated demo GIF (docs/screenshots/demo.gif — the README hero
+# showing the live-progress view). Like the screenshots it drives the REAL release
+# binary against the mock fixture, then renders faithful frames of the live view
+# with the vendored JetBrains Mono font (Pillow only — no ttyd/ffmpeg). It is
+# informational, NOT hash-gated (a GIF isn't byte-reproducible), so regenerate on
+# demand and commit the result. Needs Python 3 + Pillow (`pip install Pillow`).
+screenshots-gif:
+    @command -v python3 >/dev/null || { echo "python3 not found: needed to render the demo GIF" >&2; exit 1; }
+    @python3 -c "import PIL" 2>/dev/null || { echo "Pillow not installed: pip install Pillow" >&2; exit 1; }
+    cargo build --release --locked --features mock-oneharness --bin llmlint --bin llmlint-mock-oneharness
+    python3 scripts/demo-gif.py
+
 # Refresh the committed baseline manifest from a fresh capture (after an intended
 # output change). Commit shots/baseline/*.json + docs/screenshots/ alongside.
 screenshots-bless: screenshots
