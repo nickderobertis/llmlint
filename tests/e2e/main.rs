@@ -77,6 +77,14 @@ impl Project {
         c.arg("check-ignores");
         c
     }
+    /// `lint-config`: the `lint` engine with the bundled config-lint plugin forced
+    /// on (no project config needed), wired to the mock harness.
+    fn lint_config(&self) -> Command {
+        let mut c = self.bare();
+        c.arg("lint-config");
+        c.arg("--oneharness-bin").arg(mock_path());
+        c
+    }
 }
 
 const RULE: &str = "true when ok; false otherwise.";
@@ -606,11 +614,13 @@ fn config_lint_plugin_catches_a_bad_rule() {
         "llmlint.yml",
         &format!("version: 1\nplugins:\n  - {CONFIG_LINT}\n"),
     );
+    // The config-lint rules require line attribution, so a violation cites the
+    // config file + the line of the offending rule.
     let verdicts = p.write_verdicts(
-        r#"{"name_is_descriptive_not_placeholder":
-              {"holds": false, "violations": [{"file": "llmlint.yml", "message": "rule named 'foo'"}]},
+        r#"{"name_describes_what_the_rule_checks":
+              {"holds": false, "violations": [{"file": "llmlint.yml", "line": 3, "message": "rule named 'foo'"}]},
             "description_yields_clear_verdict": true,
-            "name_matches_description": true}"#,
+            "relevance_scopes_conditional_rules": true}"#,
     );
 
     p.lint()
@@ -618,9 +628,83 @@ fn config_lint_plugin_catches_a_bad_rule() {
         .assert()
         .code(1)
         .stdout(predicate::str::contains(
-            "FAIL name_is_descriptive_not_placeholder",
+            "FAIL name_describes_what_the_rule_checks",
         ))
         .stdout(predicate::str::contains("rule named 'foo'"));
+}
+
+#[test]
+fn lint_config_lints_a_config_without_the_plugin_declared() {
+    // `lint-config` includes the bundled config-lint rules by default, so it
+    // catches a bad rule in a config that never declared the plugin itself.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: foo, description: \"{RULE}\" }}\n"),
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"name_describes_what_the_rule_checks":
+              {"holds": false, "violations": [{"file": "llmlint.yml", "line": 2, "message": "rule named 'foo' is a placeholder"}]}}"#,
+    );
+
+    p.lint_config()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL name_describes_what_the_rule_checks",
+        ))
+        .stdout(predicate::str::contains(
+            "rule named 'foo' is a placeholder",
+        ));
+}
+
+#[test]
+fn lint_config_passes_a_clean_config() {
+    // Well-named, clearly-described rules: every config-lint check holds -> exit 0.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: public_items_are_documented, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // No verdicts file: the mock defaults every config-lint rule to holds=true.
+    p.lint_config()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed"));
+}
+
+#[test]
+fn lint_config_runs_the_comment_check_before_judging() {
+    // Phase 1 is the deterministic ignore-directive (comment) check: a malformed
+    // directive in a config file is a hard exit-2 error before any judge call, even
+    // though the mock harness is wired in.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: a_rule, description: \"{RULE}\" }}\n  \
+             # llmlint: ignore[name_describes_what_the_rule_checks]\n"
+        ),
+    );
+    // Even with verdicts available, the run never reaches the model: the comment
+    // check fails first (the directive names a rule but gives no reason).
+    p.lint_config().assert().code(2).stderr(
+        predicate::str::contains("llmlint.yml").and(predicate::str::contains("give a reason")),
+    );
+}
+
+#[test]
+fn lint_config_with_no_config_files_is_a_clean_skip() {
+    // Nothing matches the config-lint globs -> every rule is skipped, not failed.
+    let p = Project::new();
+    p.write("src/lib.rs", "// not a config\n");
+    p.lint_config()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skipped"));
 }
 
 #[test]
@@ -2068,8 +2152,8 @@ fn init_then_self_lint_is_clean() {
     // plugin targets the config file. Mock holds everything -> exit 0.
     let verdicts = p.write_verdicts(
         r#"{"description_yields_clear_verdict": true,
-            "name_is_descriptive_not_placeholder": true,
-            "name_matches_description": true,
+            "name_describes_what_the_rule_checks": true,
+            "relevance_scopes_conditional_rules": true,
             "public_items_are_documented": true}"#,
     );
     p.lint()
@@ -2105,7 +2189,7 @@ fn config_command_prints_merged_config_and_sources() {
         .map(|r| r["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"my_rule"));
-    assert!(names.contains(&"name_matches_description"));
+    assert!(names.contains(&"name_describes_what_the_rule_checks"));
 }
 
 #[test]
@@ -2183,7 +2267,7 @@ fn config_command_traces_every_item_to_its_source() {
     ends(&s["rules"]["root_rule"]["source"], "llmlint.yml");
     assert!(s["rules"]["root_rule"]["fields"].is_null());
     assert_eq!(
-        s["rules"]["name_matches_description"]["source"]
+        s["rules"]["name_describes_what_the_rule_checks"]["source"]
             .as_str()
             .unwrap(),
         CONFIG_LINT
@@ -2265,7 +2349,7 @@ fn where_command_returns_one_source_path_for_scripting() {
     // A rule contributed by a remote plugin resolves to the plugin URL verbatim,
     // not a local path — the source you'd pin/upgrade to change it.
     assert_eq!(
-        trimmed(&["where", "rules.name_matches_description"]).1,
+        trimmed(&["where", "rules.name_describes_what_the_rule_checks"]).1,
         CONFIG_LINT
     );
 }

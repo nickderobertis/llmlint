@@ -64,7 +64,15 @@ logic is also covered hermetically via `file://` plugins.
   while `LLMLINT_PLUGIN_REFRESH` forces a refetch of the same pin;
   a version mismatch, the removed `llmlint:` scheme, and the renamed top-level
   `include` key are each clear exit-2 errors; the bundled config-lint plugin (a
-  URL resolved offline from the embedded copy) catches a bad rule in a config.
+  URL resolved offline from the embedded copy) catches a bad rule in a config
+  (its findings cite a file+line, since every config-lint rule requires
+  attribution).
+- `lint-config` is the `lint` engine with the bundled config-lint plugin forced on
+  (no plugin entry needed in the project config): it catches a bad rule in a
+  config, passes a clean one, skips cleanly when nothing matches the config globs,
+  and runs the deterministic comment (ignore-directive) check **first** — a
+  malformed directive in a config is exit-2 before any judge call, even with the
+  mock harness wired in.
 - A rule with `override: true` extends a same-named plugin rule, inheriting every
   field it leaves unset (including `description`) and replacing only those it
   sets — asserted via the merged `config` dump, and proven to reach the planner

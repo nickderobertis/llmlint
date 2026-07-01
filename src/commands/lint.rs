@@ -34,14 +34,28 @@ const PROMPT_TRIGGER: &str =
 const MAX_REWORKS: usize = 1;
 
 pub fn run(args: LintArgs) -> Result<i32> {
-    let cwd = match &args.cwd {
-        Some(d) => d.clone(),
-        None => std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?,
-    };
+    let cwd = resolve_cwd(&args.cwd)?;
 
     // Explicit CLI files relevance-gate the subtree cascade: linting specific
     // files never loads an unrelated subtree's config (see `load_with_targets`).
     let loaded = configfs::load_with_targets(&args.config, &cwd, &args.files)?;
+    run_loaded(loaded, cwd, args)
+}
+
+/// Resolve the working directory for a run: the `--cwd` override, else the
+/// process cwd. Shared by `lint` and the `lint-config` subcommand.
+pub(crate) fn resolve_cwd(arg: &Option<PathBuf>) -> Result<PathBuf> {
+    match arg {
+        Some(d) => Ok(d.clone()),
+        None => std::env::current_dir().map_err(|e| Error::Io(e.to_string())),
+    }
+}
+
+/// Drive a lint from an already-loaded config. Split out from [`run`] so the
+/// `lint-config` subcommand can hand in the bundled config-lint config (loaded
+/// without discovery) and reuse the entire engine — validation, planning,
+/// judging, voting, and reporting — unchanged.
+pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs) -> Result<i32> {
     let scopes = loaded.scopes;
     let mut config = loaded.config;
     validate(&config)?;

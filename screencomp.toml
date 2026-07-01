@@ -12,12 +12,13 @@ title = "Terminal screenshots"
 marker = "screencomp"        # [A-Za-z0-9_-]; one sticky comment per marker
 embed_limit = 10             # embed images inline when <= N shots differ (0 disables)
 
-# One card per command (`lint`, `init`, `config`, `doctor`), all scripted in
-# scripts/screenshots.sh. The `lint` card carries a `view` toggle the gallery
-# flips between three levels of detail: the default report, the `-v` verbose
-# report (which itemizes PASS/SKIP too), and the `-v` debug view (the oneharness
-# command + raw result per judge, normally on stderr). The other cards have no
-# toggles.
+# One card per command (`lint`, `multi-judge`, `init`, `config`, `doctor`), all
+# scripted in scripts/screenshots.sh. The `lint` card carries a `view` toggle the
+# gallery flips between three levels of detail: the default report, the `-v`
+# verbose report (which itemizes PASS/SKIP/N-A too), and the `-v` debug view (the
+# oneharness command + raw result per judge, normally on stderr). The
+# `multi-judge` card shows the per-judge breakdown a `judges: N` rule prints. The
+# other cards have no toggles.
 [[toggle]]
 key = "view"
 label = "View"

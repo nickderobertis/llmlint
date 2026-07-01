@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn embedded_assets_are_non_empty() {
         assert!(DEFAULT_TEMPLATE.contains("{% for r in rules %}"));
-        assert!(CONFIG_LINT_PLUGIN.contains("name_matches_description"));
+        assert!(CONFIG_LINT_PLUGIN.contains("name_describes_what_the_rule_checks"));
         // The starter config references the bundled plugin by URL.
         assert!(INIT_CONFIG.contains("config_lint.yml"));
         assert!(INIT_CONFIG.contains("plugins:"));

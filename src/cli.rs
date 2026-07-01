@@ -33,6 +33,14 @@ pub struct Cli {
 pub enum Command {
     /// Run the LLM-as-judge lint (this is the default).
     Lint(LintArgs),
+    /// Lint llmlint config files with the bundled config-lint rules. This is the
+    /// `lint` command with the bundled config-lint plugin included by default, so
+    /// you don't have to add it to your own config: it first runs the
+    /// deterministic ignore-directive (comment) check, then judges each config's
+    /// rules for clear, unambiguous names and descriptions. Targets the discovered
+    /// llmlint config files unless FILES are given.
+    #[command(name = "lint-config")]
+    LintConfig(LintConfigArgs),
     /// Validate inline `llmlint: ignore` directives (deterministic, no model
     /// call). Runs as part of `lint`; split out so it can sit in the fast
     /// static-check loop next to fmt/clippy.
@@ -333,6 +341,106 @@ pub struct CheckIgnoresArgs {
     /// Directory to scan from (config discovery + glob root). Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct LintConfigArgs {
+    /// Config files to lint. When given, overrides the bundled config-lint globs
+    /// (which otherwise discover every llmlint config in the tree).
+    pub files: Vec<PathBuf>,
+
+    /// oneharness config file to forward via `--config` (single-file; extras warn).
+    #[arg(long = "oneharness-config", value_name = "PATH")]
+    pub oneharness_config: Vec<PathBuf>,
+
+    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN` or PATH).
+    #[arg(long = "oneharness-bin", value_name = "PATH")]
+    pub oneharness_bin: Option<String>,
+
+    /// Default judge model, forwarded to oneharness.
+    #[arg(long = "model", value_name = "NAME")]
+    pub model: Option<String>,
+
+    /// Schema-validation re-prompt budget (oneharness `--schema-max-retries`).
+    #[arg(long = "schema-max-retries", value_name = "N")]
+    pub schema_max_retries: Option<u32>,
+
+    /// Require a `rationale` for every rule's verdict (the default). Use
+    /// `--no-rationales` to turn rationales off.
+    #[arg(long = "rationales", overrides_with = "no_rationales", action = clap::ArgAction::SetTrue)]
+    pub rationales: bool,
+
+    /// Disable rationales for this run. The inverse of `--rationales`.
+    #[arg(long = "no-rationales", overrides_with = "rationales", action = clap::ArgAction::SetTrue)]
+    pub no_rationales: bool,
+
+    /// Output format.
+    #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
+    pub format: OutputFormat,
+
+    /// When to colorize the human report (`auto`/`always`/`never`).
+    #[arg(long = "color", value_enum, default_value_t = ColorChoice::Auto)]
+    pub color: ColorChoice,
+
+    /// Increase output detail (repeatable). `-v` itemizes passed/skipped rules and
+    /// prints the oneharness debug view to stderr.
+    #[arg(long = "verbose", short = 'v', action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Maximum judges to run in parallel.
+    #[arg(long = "max-parallel", value_name = "N")]
+    pub max_parallel: Option<usize>,
+
+    /// Per-judge timeout in seconds (default 120).
+    #[arg(long = "timeout", value_name = "SECS")]
+    pub timeout: Option<u64>,
+
+    /// Directory to lint from (config discovery + the harness cwd). Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+
+    /// Add each target config's diff to the judge prompt so it reviews only the
+    /// changed lines. Bare `--diff` uses the `git` backend (compared against
+    /// `HEAD`); pass a backend (`--diff git`) to choose one explicitly.
+    #[arg(
+        long = "diff",
+        value_name = "BACKEND",
+        num_args = 0..=1,
+        default_missing_value = "git",
+    )]
+    pub diff: Option<DiffBackend>,
+
+    /// Base the `--diff` git backend compares against, instead of `HEAD`. Any git
+    /// revision — a branch, tag, commit, or `A..B`/`A...B` range. Requires `--diff`.
+    #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
+    pub diff_base: Option<String>,
+}
+
+impl LintConfigArgs {
+    /// Project onto the shared [`LintArgs`] so the `lint-config` subcommand can
+    /// reuse the full lint engine. The config source is fixed (the bundled
+    /// config-lint plugin, loaded separately), so `--config`, `--prompt-template`,
+    /// and the `--agent`/`--rule` selectors are intentionally not exposed here.
+    pub fn into_lint_args(self) -> LintArgs {
+        LintArgs {
+            files: self.files,
+            oneharness_config: self.oneharness_config,
+            oneharness_bin: self.oneharness_bin,
+            model: self.model,
+            schema_max_retries: self.schema_max_retries,
+            rationales: self.rationales,
+            no_rationales: self.no_rationales,
+            format: self.format,
+            color: self.color,
+            verbose: self.verbose,
+            max_parallel: self.max_parallel,
+            timeout: self.timeout,
+            cwd: self.cwd,
+            diff: self.diff,
+            diff_base: self.diff_base,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Args, Debug, Default)]

@@ -17,14 +17,21 @@ One shot per command, so the gallery documents the whole CLI surface:
 
 - `lint` — the report, with a `view` toggle the gallery flips between three
   levels of detail:
-  - `default` — the report a user sees: failing rule + locations + summary.
-  - `verbose` — `-v`, itemizing every rule so PASS (green) and SKIP (yellow) show
-    too. (`default`/`verbose` are colorized via `--color always`; real ANSI.)
+  - `default` — the report a user sees: failing rule + locations + summary. The
+    fixture also carries a not-relevant rule, so the summary's `… not relevant`
+    segment shows here.
+  - `verbose` — `-v`, itemizing every rule so PASS (green), SKIP (yellow), and
+    N/A (dim, not relevant) show too. (`default`/`verbose` are colorized via
+    `--color always`; real ANSI.)
   - `debug` — the oneharness debug view `-v` prints to **stderr**: the exact
     `oneharness run …` command and the raw result for each judge. This is the
     only thing the verbose level adds beyond the itemized report (a literal `-vv`
     is byte-identical to `-v`), so it is its own scene. Plain text, captured from
     stderr; tall (it embeds the full system prompt per judge).
+- `multi-judge` — the per-judge breakdown a `judges: N` rule prints (each judge's
+  held/violated + rationale). Kept out of the headline `lint` scene so that stays
+  single-judge; driven by its own nested fixture (`fixture/multijudge/`), pinned
+  with `-c` so config discovery never merges it with the main scene. Colorized.
 - `init` — writing a starter config (`wrote llmlint.yml`).
 - `config` — the effective merged config + its sources, as JSON.
 - `doctor` — the oneharness preflight check.
