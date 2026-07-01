@@ -479,7 +479,7 @@ mod tests {
             &opts,
         )
         .unwrap();
-        assert!(text.contains("name_matches_description"));
+        assert!(text.contains("name_describes_what_the_rule_checks"));
         // A pin the embedded version can't satisfy still errors.
         let err = load_remote(
             assets::CONFIG_LINT_URL,

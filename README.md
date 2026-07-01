@@ -505,6 +505,37 @@ URL is fetched every run.
 The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 `LLMLINT_CACHE_DIR`). Set `LLMLINT_PLUGIN_REFRESH=1` to force a refetch.
 
+### Linting your llmlint configs
+
+llmlint ships with a **config-lint** rule set that lints llmlint config files
+themselves — that every rule's `description` yields a clear, unambiguous verdict,
+its `name` is descriptive (non-placeholder) and matches what the description
+checks, and a conditional rule uses `relevance` instead of bolting "…or not
+applicable" onto the description. It's the [Writing good rules](#writing-good-rules)
+guidance, enforced (and each rule is phrased to pass its own checks). Each finding
+cites the config file + the offending rule's line (`require_line_attribution`).
+There are two ways to use it:
+
+- **As a plugin** — add the bundled URL to your `plugins` (it's on by default in
+  `llmlint init`), and its rules run against your config files on every normal
+  `llmlint` run, alongside your own rules:
+
+  ```yaml
+  plugins:
+    - "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1"
+  ```
+
+  The URL ships **inside the binary** and resolves offline (no network, no
+  cache), so it works disconnected and needs no pin bump to stay current.
+
+- **As a subcommand** — `llmlint lint-config` is the `lint` command with that
+  plugin included by default, so you don't have to add it to your config. It
+  first runs the deterministic ignore-directive (comment) check over the config
+  files, then judges each config's rules. Point it at specific files
+  (`llmlint lint-config path/to/llmlint.yml`) or let it discover every llmlint
+  config in the tree. Handy in CI as a standalone "is my config well-authored?"
+  gate.
+
 ### Finding where something is defined
 
 Once configs merge across files and plugins, a rule, agent, or setting in the
@@ -578,6 +609,13 @@ source.
   split out for the fast static-check loop: exit `0` when every directive is
   well-formed, exit `2` (located `file:line:`) on a typo'd / reason-less /
   unbalanced one.
+- `llmlint lint-config [FILES...]` — lint llmlint config files with the bundled
+  [config-lint](#linting-your-llmlint-configs) rules, without adding the plugin to
+  your own config. It's the `lint` engine with that plugin forced on: it first
+  runs the deterministic comment (ignore-directive) check, then judges each
+  config's rules. Shares `lint`'s flags (`--format`, `--model`, `--timeout`,
+  `--cwd`, `--diff`, …); the config source is fixed, so `--config`/`--agent`/
+  `--rule` aren't taken. Same exit codes as `lint`.
 - `llmlint init` — write a starter config (`--with-template`, `--global`, `--force`).
 
   ![llmlint init writing a starter llmlint.yml](docs/screenshots/init.svg)

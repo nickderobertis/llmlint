@@ -10,6 +10,7 @@ use ignore::WalkBuilder;
 use crate::domain::config::{Config, FileFilter, Provenance, ProvenanceBuilder, Rule};
 use crate::domain::version::VersionReq;
 use crate::errors::{io_err, Error, Result};
+use crate::io::assets;
 use crate::io::plugins::{self, ResolveOpts};
 
 /// Maximum depth of transitive `plugins:` resolution. A config's `plugins`
@@ -180,6 +181,37 @@ pub fn load_with_targets(
     } else {
         load_explicit(entries, cwd)
     }
+}
+
+/// Build a [`Loaded`] from the **bundled config-lint plugin alone** — no config
+/// discovery, no network — with every rule rooted at `cwd`. This backs the
+/// `llmlint lint-config` subcommand: it lints llmlint config files with the
+/// bundled rules without requiring the user to have added the plugin to their own
+/// config (that additive path stays available; see [`crate::io::assets`]). The
+/// config-lint agent scopes its own rules to config-file globs, so the run always
+/// targets configuration rather than source.
+pub fn load_config_lint(cwd: &Path) -> Result<Loaded> {
+    let mut config = parse(assets::CONFIG_LINT_PLUGIN, assets::CONFIG_LINT_URL)?;
+    // The bundled plugin declares no `override` rules, but resolve for parity with
+    // the discovery paths so validation downstream sees the same shape.
+    crate::domain::config::resolve_overrides(&mut config)?;
+    let scope = RuleScope {
+        dir: cwd.to_path_buf(),
+        files: config.files.clone(),
+    };
+    let scopes = config
+        .rules
+        .iter()
+        .map(|r| (r.name.clone(), scope.clone()))
+        .collect();
+    let mut prov = ProvenanceBuilder::default();
+    prov.record(&config, assets::CONFIG_LINT_URL);
+    Ok(Loaded {
+        config,
+        sources: vec![assets::CONFIG_LINT_URL.to_string()],
+        provenance: prov.finish(),
+        scopes,
+    })
 }
 
 /// Whether `file` (CLI-given, relative to `cwd` or absolute) lives under `dir`.
@@ -599,6 +631,24 @@ rules:
     }
 
     #[test]
+    fn load_config_lint_yields_the_bundled_rules_rooted_at_cwd() {
+        let dir = tempdir().unwrap();
+        let loaded = load_config_lint(dir.path()).unwrap();
+        // The bundled plugin is the sole source and contributes its config-lint
+        // rules, each scoped to `cwd`.
+        assert_eq!(loaded.sources, vec![assets::CONFIG_LINT_URL.to_string()]);
+        assert!(loaded
+            .config
+            .rules
+            .iter()
+            .any(|r| r.name == "name_describes_what_the_rule_checks"));
+        let scope = &loaded.scopes["name_describes_what_the_rule_checks"];
+        assert_eq!(scope.dir, dir.path());
+        // The config is valid (the same check `lint` runs before planning).
+        crate::domain::config::validate(&loaded.config).unwrap();
+    }
+
+    #[test]
     fn discover_walks_up() {
         let dir = tempdir().unwrap();
         let nested = dir.path().join("a/b/c");
@@ -887,7 +937,7 @@ rules:
             .collect();
         assert!(names.contains(&"root_rule"));
         assert!(names.contains(&"team_rule"));
-        assert!(names.contains(&"name_matches_description")); // from the bundled plugin
+        assert!(names.contains(&"name_describes_what_the_rule_checks")); // from the bundled plugin
         assert!(loaded.sources.iter().any(|s| s == &plugin));
     }
 

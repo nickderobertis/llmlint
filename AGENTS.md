@@ -313,9 +313,30 @@ it. The harness reads target files on-demand with its own tools.
   is a clean zero-rule run, not a `ConfigNotFound`. `--config` replaces the whole
   walk with no cascade (`load_explicit`, globs rooted at `cwd`).
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
-  `init`, `config` (`--sources` adds per-item provenance), `where` (locate one
-  config item's source), `doctor`. `commands/ignores.rs` holds the
-  ignore-directive resolution + scan shared by `lint` and `check-ignores`.
+  `lint-config`, `init`, `config` (`--sources` adds per-item provenance), `where`
+  (locate one config item's source), `doctor`. `commands/ignores.rs` holds the
+  ignore-directive resolution + scan shared by `lint`, `check-ignores`, and
+  `lint-config`.
+- **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled
+  plugin whose rules lint llmlint config files themselves (a clear/unambiguous
+  description, a descriptive name that matches what the rule checks, `relevance`
+  over inline "not applicable"; each rule is phrased to pass its own checks): the
+  README's "Writing good rules" guidance, enforced. It is
+  **structural checks' complement** — unique names, valid identifiers, resolvable
+  agents stay deterministic in `validate` and are deliberately not re-checked
+  here. Every rule sets `require_line_attribution: true`, so a finding always cites
+  the offending rule's file+line (and, dogfooding the plugin, demonstrates that
+  best practice). Two entry points, one rule set: consumers **include it as a
+  plugin** (the `CONFIG_LINT_URL`, on by default in `llmlint init`; resolves
+  offline from the embedded copy via `assets::bundled_url`, so no network/cache and
+  no pin bump to stay current), **or** run **`llmlint lint-config`**
+  (`commands/lint_config.rs`) — the `lint` engine with that config force-loaded by
+  `configfs::load_config_lint` (no discovery, so it works with no project config),
+  which first runs the deterministic comment (ignore-directive) check, then the
+  judge pass via `lint::run_loaded` (the post-load half of `lint::run`, factored
+  out so both share the whole engine). Bump the plugin's `version` and the `@1`
+  pins (`init.llmlint.yml`, README, `CONFIG_LINT` in the e2e suite) together when
+  its checks change incompatibly.
 
 ## Tests are context engineering
 
