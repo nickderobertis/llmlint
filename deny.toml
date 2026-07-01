@@ -9,7 +9,13 @@ all-features = true
 
 [advisories]
 yanked = "deny"
-ignore = []
+ignore = [
+    # `number_prefix` is unmaintained (informational advisory, not a
+    # vulnerability). It is a tiny, transitive dependency of `indicatif` (the
+    # live-progress view) with no safe upgrade — indicatif still depends on it —
+    # so there is nothing to bump. Revisit when indicatif drops it.
+    "RUSTSEC-2025-0119",
+]
 
 [licenses]
 # Permissive licenses compatible with this MIT-licensed binary. Adding a
