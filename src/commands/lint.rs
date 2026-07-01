@@ -6,14 +6,17 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 
+use indicatif::ProgressDrawTarget;
+
 use crate::cli::{ColorChoice, LintArgs, OutputFormat};
 use crate::commands::ignores;
+use crate::commands::progress::{LiveStatus, ProgressView};
 use crate::domain::config::{validate, Config, RelevanceMode, Rule};
 use crate::domain::ignore::Suppressions;
 use crate::domain::plan::{self, JudgeRun};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
-use crate::domain::verdict::{RuleOutcome, RuleVerdict};
+use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
 use crate::domain::{applicability, attribution, ignore, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
@@ -199,6 +202,44 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let want_trace = args.verbose >= 1;
     let mut traces: Vec<(String, oneharness::RunTrace)> = Vec::new();
 
+    // The live-progress view (rules resolving as their judges return), drawn to
+    // stderr for an interactive human. Decide whether to animate from the audience
+    // (`--progress` + TTY/CI/agent), then build the view with a real or hidden
+    // draw target. It is *always* constructed — hidden when not interactive — so
+    // the driving glue below runs on every path (a piped/CI/agent run just draws
+    // to nothing, emitting no escape codes). The report on stdout is unaffected.
+    let ctx = crate::io::terminal::detect();
+    let show_progress = args.format == OutputFormat::Human
+        && args
+            .progress
+            .resolve(ctx.stderr_tty, ctx.is_ci, ctx.is_agent, ctx.color_ok());
+    // Rules shown in the view, in a stable (sorted) order: every judged rule plus
+    // the ones already resolved without a judge (skipped / statically not
+    // relevant), which we finish immediately below.
+    let mut view_rules: BTreeSet<String> = BTreeSet::new();
+    let mut expected: BTreeMap<String, usize> = BTreeMap::new();
+    for run in &the_plan.runs {
+        for rs in &run.rules {
+            view_rules.insert(rs.name.clone());
+            *expected.entry(rs.name.clone()).or_default() += 1;
+        }
+    }
+    view_rules.extend(the_plan.skipped.iter().cloned());
+    view_rules.extend(not_relevant.iter().cloned());
+    let view_rules: Vec<String> = view_rules.into_iter().collect();
+    let target = if show_progress {
+        ProgressDrawTarget::stderr()
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+    let view = ProgressView::new(target, &view_rules, the_plan.runs.len(), show_progress);
+    for name in &the_plan.skipped {
+        view.finish_rule(name, LiveStatus::Skipped);
+    }
+    for name in &not_relevant {
+        view.finish_rule(name, LiveStatus::NotRelevant);
+    }
+
     // Bind Copy references so the per-judge `move` closures capture borrows
     // (which outlive the scope) rather than moving the owned `client`/`cwd`.
     let client_ref = &client;
@@ -206,6 +247,12 @@ pub fn run(args: LintArgs) -> Result<i32> {
     let diffs_ref = &diffs;
     let suppressions_ref = &suppressions;
     for wave in the_plan.runs.chunks(max_parallel) {
+        // The wave's rules are now in flight — spin their lines.
+        for run in wave {
+            for rs in &run.rules {
+                view.set_running(&rs.name);
+            }
+        }
         thread::scope(|s| {
             let handles: Vec<_> = wave
                 .iter()
@@ -230,6 +277,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
                 if let Some(trace) = trace {
                     traces.push((judge_label(run), trace));
                 }
+                view.tick_run();
                 match result {
                     Ok(map) => {
                         for (name, verdict) in map {
@@ -238,9 +286,31 @@ pub fn run(args: LintArgs) -> Result<i32> {
                     }
                     Err(e) => run_errors.push(format!("{}: {}", judge_label(run), e)),
                 }
+                // Resolve each of this run's rules whose judges are now all in:
+                // tally with the same `vote::tally` the report uses, so the live
+                // ✓/✗ can never disagree with the final verdict. A rule with no
+                // usable verdict (all its runs errored) shows an error glyph.
+                for rs in &run.rules {
+                    let remaining = expected.get_mut(rs.name.as_str());
+                    if let Some(remaining) = remaining {
+                        *remaining = remaining.saturating_sub(1);
+                        if *remaining == 0 {
+                            let status = match verdicts.get(rs.name.as_str()) {
+                                Some(vs) if !vs.is_empty() => {
+                                    live_status(&vote::tally(&rs.name, vs))
+                                }
+                                _ => LiveStatus::Error,
+                            };
+                            view.finish_rule(&rs.name, status);
+                        }
+                    }
+                }
             }
         });
     }
+    // Clear the whole view from stderr before any report/trace output, so nothing
+    // is interleaved with progress fragments.
+    view.finish();
 
     if want_trace {
         print_traces(&traces);
@@ -399,6 +469,16 @@ fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Option<PathBuf
         );
     }
     all.into_iter().next()
+}
+
+/// Map a tallied rule outcome to the live view's status glyph.
+fn live_status(o: &RuleOutcome) -> LiveStatus {
+    match o.outcome {
+        Outcome::Pass => LiveStatus::Pass,
+        Outcome::Fail => LiveStatus::Fail,
+        Outcome::Skipped => LiveStatus::Skipped,
+        Outcome::NotRelevant => LiveStatus::NotRelevant,
+    }
 }
 
 /// A stable per-judge label used for both error messages and the `-v` debug
@@ -563,10 +643,11 @@ fn emit(report: &Report, format: OutputFormat, verbosity: u8, color: ColorChoice
     match format {
         OutputFormat::Human => {
             // Resolve `--color` against the live stdout: `auto` colors only an
-            // interactive terminal with `NO_COLOR` unset. The decision is made
+            // interactive terminal with `NO_COLOR`/`TERM=dumb` unset that is not an
+            // AI agent (captured ANSI is unreliable there). The decision is made
             // here (the I/O boundary) and handed to the pure formatter as a bool.
-            let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
-            let on = color.resolve(std::io::stdout().is_terminal(), no_color);
+            let ctx = crate::io::terminal::detect();
+            let on = color.resolve(std::io::stdout().is_terminal(), ctx.no_color, ctx.is_agent);
             // Write through anstream's `AutoStream` so the ANSI we emit renders
             // everywhere, not just on Unix. On a *legacy* Windows console (no
             // virtual-terminal processing) raw ANSI prints as `←[31m` garbage;

@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod ignores;
 pub mod init;
 pub mod lint;
+pub mod progress;
 pub mod where_;
 
 use crate::cli::{Cli, Command};

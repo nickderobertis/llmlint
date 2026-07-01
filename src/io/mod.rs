@@ -8,3 +8,4 @@ pub mod diff;
 pub mod files;
 pub mod oneharness;
 pub mod plugins;
+pub mod terminal;
