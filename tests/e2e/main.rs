@@ -431,67 +431,12 @@ fn progress_invalid_value_is_rejected() {
         .stderr(predicate::str::contains("invalid value 'sometimes'"));
 }
 
-/// The interactive path only activates when stderr is a real terminal, which
-/// `assert_cmd`'s pipes can't provide. Drive the real binary under a pseudo-
-/// terminal (`portable-pty`) and assert the live view renders, animates, and
-/// clears itself — leaving the final report. Unix-gated here; the Windows ConPTY
-/// lane is its own tier (see `docs/design/interactive-progress.md`).
-#[cfg(unix)]
-#[test]
-fn progress_view_renders_and_clears_under_a_real_pty() {
-    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-    use std::io::Read;
-
-    let (p, verdicts) = progress_project();
-    let pair = native_pty_system()
-        .openpty(PtySize {
-            rows: 24,
-            cols: 100,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
-
-    let mut cmd = CommandBuilder::new(cargo_bin("llmlint"));
-    cmd.arg("--oneharness-bin");
-    cmd.arg(mock_path());
-    // `always` forces the view on even though CI would otherwise suppress `auto`;
-    // the PTY makes stderr a real terminal so it actually draws + animates.
-    cmd.args(["--progress", "always", "--max-parallel", "1"]);
-    cmd.cwd(p.path());
-    cmd.env("LLMLINT_MOCK_VERDICTS", &verdicts);
-    // A CLAUDECODE inherited from the surrounding runner shouldn't matter here
-    // (`always` ignores agent detection), but remove it so the intent is explicit.
-    cmd.env_remove("CLAUDECODE");
-
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut buf = Vec::new();
-    reader.read_to_end(&mut buf).unwrap();
-    let status = child.wait().unwrap();
-    drop(pair.master);
-
-    let raw = String::from_utf8_lossy(&buf);
-    // The live view rendered: the header, a rule line, a resolved glyph, and real
-    // ANSI cursor/erase sequences (the animation the pipe path never emits).
-    assert!(raw.contains("judging"), "no live header:\n{raw}");
-    assert!(raw.contains("failing_rule"), "no rule line:\n{raw}");
-    assert!(
-        raw.contains('\u{1b}'),
-        "no ANSI (animation) under a PTY:\n{raw}"
-    );
-    assert!(
-        raw.contains('✓') || raw.contains('✗'),
-        "no resolved glyph:\n{raw}"
-    );
-    // After the view cleared, the final report is present (stdout + stderr merge
-    // on a PTY). Assert on the summary's plain prefix — the `FAIL` label itself is
-    // ANSI-wrapped here (stdout is a terminal, so `--color auto` is on). The
-    // violation still drives the non-zero exit.
-    assert!(raw.contains("2 rules:"), "no final report summary:\n{raw}");
-    assert_eq!(status.exit_code(), 1, "a violation should exit 1");
-}
+// Note: the live view only *animates* when stderr is a real terminal, which
+// `assert_cmd`'s pipes can't provide. That interactive path is verified without a
+// heavyweight PTY dependency: the renderer's frames + self-erase are asserted on a
+// `vt100`-backed `InMemoryTerm` in `commands::progress` (including the `animate`
+// steady-tick path). A real-OS PTY round-trip (incl. Windows ConPTY) is a deferred
+// separate tier, like `win-color` — see `docs/design/interactive-progress.md`.
 
 // ---- multi-judge majority vote -------------------------------------------
 

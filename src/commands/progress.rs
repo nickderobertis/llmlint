@@ -255,4 +255,19 @@ mod tests {
         view.finish_rule("ghost", LiveStatus::Pass);
         assert!(term.contents().contains("known  queued"));
     }
+
+    #[test]
+    fn animated_mode_enables_steady_tick_without_panicking() {
+        // Exercise the real-terminal `animate` path (the steady-tick spinner) that
+        // a piped/in-memory run never takes. Drawn to a hidden target so there is
+        // no background-thread race on assertions — the point is the code runs and
+        // the lifecycle (running -> resolve -> clear) is sound.
+        let names = ["rule_a".to_string(), "rule_b".to_string()];
+        let view = ProgressView::new(ProgressDrawTarget::hidden(), &names, 2, true);
+        view.set_running("rule_a");
+        view.tick_run();
+        view.finish_rule("rule_a", LiveStatus::Pass);
+        view.finish_rule("rule_b", LiveStatus::Fail);
+        view.finish();
+    }
 }

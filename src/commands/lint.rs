@@ -227,12 +227,12 @@ pub fn run(args: LintArgs) -> Result<i32> {
     view_rules.extend(the_plan.skipped.iter().cloned());
     view_rules.extend(not_relevant.iter().cloned());
     let view_rules: Vec<String> = view_rules.into_iter().collect();
-    let target = if show_progress {
-        ProgressDrawTarget::stderr()
-    } else {
-        ProgressDrawTarget::hidden()
-    };
-    let view = ProgressView::new(target, &view_rules, the_plan.runs.len(), show_progress);
+    let view = ProgressView::new(
+        progress_target(show_progress),
+        &view_rules,
+        the_plan.runs.len(),
+        show_progress,
+    );
     for name in &the_plan.skipped {
         view.finish_rule(name, LiveStatus::Skipped);
     }
@@ -469,6 +469,17 @@ fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Option<PathBuf
         );
     }
     all.into_iter().next()
+}
+
+/// The draw target for the live view: real stderr when it should show (indicatif
+/// still self-hides if stderr isn't a terminal), else a hidden target that draws
+/// nothing. Split out so the selection is unit-testable off a real TTY.
+fn progress_target(show: bool) -> ProgressDrawTarget {
+    if show {
+        ProgressDrawTarget::stderr()
+    } else {
+        ProgressDrawTarget::hidden()
+    }
 }
 
 /// Map a tallied rule outcome to the live view's status glyph.
@@ -720,6 +731,45 @@ mod tests {
     fn no_filters_is_ok() {
         let cfg = config_with(vec![rule("a_rule", None)], &[]);
         assert!(validate_filters(&cfg, &args(&[], None)).is_ok());
+    }
+
+    #[test]
+    fn progress_target_hidden_when_not_showing() {
+        // The suppressed path is always a hidden target (draws nothing).
+        assert!(progress_target(false).is_hidden());
+        // The showing path builds a real stderr target; under the test runner
+        // stderr isn't a TTY, so indicatif still resolves it to hidden — the point
+        // is the construction line runs. (A real terminal makes it visible.)
+        let _ = progress_target(true);
+    }
+
+    #[test]
+    fn live_status_maps_every_outcome() {
+        let outcome = |o: Outcome| RuleOutcome {
+            name: "r".into(),
+            rationale: None,
+            outcome: o,
+            votes_total: 1,
+            votes_hold: 0,
+            judges: vec![],
+            violations: vec![],
+        };
+        assert!(matches!(
+            live_status(&outcome(Outcome::Pass)),
+            LiveStatus::Pass
+        ));
+        assert!(matches!(
+            live_status(&outcome(Outcome::Fail)),
+            LiveStatus::Fail
+        ));
+        assert!(matches!(
+            live_status(&outcome(Outcome::Skipped)),
+            LiveStatus::Skipped
+        ));
+        assert!(matches!(
+            live_status(&outcome(Outcome::NotRelevant)),
+            LiveStatus::NotRelevant
+        ));
     }
 
     #[test]

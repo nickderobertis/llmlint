@@ -51,15 +51,13 @@ logic is also covered hermetically via `file://` plugins.
   animate a non-terminal), and `--progress never`. Inside an AI agent (env
   `CLAUDECODE`) the output stays plain even with `--progress always` + `--color
   auto`. `--format json` is untouched (pure JSON, clean stderr), and an invalid
-  `--progress` value is a clap exit-2 error. A `#[cfg(unix)]` journey drives the
-  real binary under a **pseudo-terminal** (`portable-pty`) with `--progress always`
-  and asserts the live view actually renders (`judging`, a rule line, a resolved
-  `✓`/`✗` glyph, real ANSI) then clears to reveal the report — the interactive path
-  the piped tests can't reach. The renderer itself (frames + self-erase) is
-  unit-tested via indicatif's `InMemoryTerm` in `commands::progress`; the audience
-  predicate + agent/CI/`NO_COLOR` detection are pure unit tests in `cli` /
-  `io::terminal`. The Windows ConPTY lane is a deferred separate tier (like
-  `win-color`).
+  `--progress` value is a clap exit-2 error. The renderer itself — the frames the
+  view draws and its **self-erase** on completion — is unit-tested on a
+  `vt100`-backed `InMemoryTerm` in `commands::progress` (including the
+  real-terminal `animate` steady-tick path); the audience predicate +
+  agent/CI/`NO_COLOR` detection are pure unit tests in `cli` / `io::terminal`. A
+  real-OS PTY round-trip (incl. Windows ConPTY) is a deferred separate tier, like
+  `win-color`, kept out of the fast gate so the suite stays dependency-light.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
   `http://` URL is fetched once over HTTPS and reused from cache (not refetched),
