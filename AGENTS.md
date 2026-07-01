@@ -298,7 +298,11 @@ it. The harness reads target files on-demand with its own tools.
   walks into `cwd`'s subtree, and each rule is scoped to **its own config's
   directory** (`Loaded::scopes` → `files::resolve_scoped`), so a subtree config's
   `files` globs root at that directory (`frontend/`'s `*.txt` → `frontend`'s
-  files) while resolved paths stay relative to `cwd`. Session settings
+  files) while resolved paths stay relative to `cwd`. An **empty `files.include`**
+  (no `files` block, at any config in the chain) means **every file under that
+  config's resolving root** — the repo-wide default in `files::resolve_scoped`, so
+  a config with rules but no `files` lints the whole tree from `cwd` rather than
+  nothing; `exclude` and the gitignore-aware walk still narrow it. Session settings
   (model/timeout/template/rationales/default `files`) come from `cwd`-and-up only —
   a leaf scopes *rules*, never the whole run; its agents/rules are still
   contributed. Provenance (`Loaded::provenance`) tracks each item's source the

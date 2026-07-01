@@ -137,7 +137,9 @@ config to opt in.
 ```yaml
 version: 1                     # this config's published version (used when it is consumed as a plugin)
 
-# Files linted when none are passed on the CLI.
+# Files linted when none are passed on the CLI. Omit the whole block (or leave
+# `include` empty) to lint every file in the tree from the current directory;
+# `exclude` and `.gitignore` still apply.
 files:
   include: ["src/**/*.rs"]
   exclude: ["**/generated/**"]

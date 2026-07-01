@@ -10,7 +10,9 @@
 # `@` suffix on the URL (see `plugins` below).
 version: 1
 
-# Files linted when none are passed explicitly on the CLI.
+# Files linted when none are passed explicitly on the CLI. Omit this block (or
+# leave `include` empty) to lint every file in the tree from the current
+# directory; `exclude` and `.gitignore` still narrow the set.
 files:
   include:
     - "src/**"
