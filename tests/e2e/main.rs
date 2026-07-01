@@ -77,6 +77,14 @@ impl Project {
         c.arg("check-ignores");
         c
     }
+    /// `lint-config`: the `lint` engine with the bundled config-lint plugin forced
+    /// on (no project config needed), wired to the mock harness.
+    fn lint_config(&self) -> Command {
+        let mut c = self.bare();
+        c.arg("lint-config");
+        c.arg("--oneharness-bin").arg(mock_path());
+        c
+    }
 }
 
 const RULE: &str = "true when ok; false otherwise.";
@@ -477,11 +485,14 @@ fn config_lint_plugin_catches_a_bad_rule() {
         "llmlint.yml",
         &format!("version: 1\nplugins:\n  - {CONFIG_LINT}\n"),
     );
+    // The config-lint rules require line attribution, so a violation cites the
+    // config file + the line of the offending rule.
     let verdicts = p.write_verdicts(
         r#"{"name_is_descriptive_not_placeholder":
-              {"holds": false, "violations": [{"file": "llmlint.yml", "message": "rule named 'foo'"}]},
+              {"holds": false, "violations": [{"file": "llmlint.yml", "line": 3, "message": "rule named 'foo'"}]},
             "description_yields_clear_verdict": true,
-            "name_matches_description": true}"#,
+            "name_matches_description": true,
+            "relevance_scopes_conditional_rules": true}"#,
     );
 
     p.lint()
@@ -492,6 +503,80 @@ fn config_lint_plugin_catches_a_bad_rule() {
             "FAIL name_is_descriptive_not_placeholder",
         ))
         .stdout(predicate::str::contains("rule named 'foo'"));
+}
+
+#[test]
+fn lint_config_lints_a_config_without_the_plugin_declared() {
+    // `lint-config` includes the bundled config-lint rules by default, so it
+    // catches a bad rule in a config that never declared the plugin itself.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: foo, description: \"{RULE}\" }}\n"),
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"name_is_descriptive_not_placeholder":
+              {"holds": false, "violations": [{"file": "llmlint.yml", "line": 2, "message": "rule named 'foo' is a placeholder"}]}}"#,
+    );
+
+    p.lint_config()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL name_is_descriptive_not_placeholder",
+        ))
+        .stdout(predicate::str::contains(
+            "rule named 'foo' is a placeholder",
+        ));
+}
+
+#[test]
+fn lint_config_passes_a_clean_config() {
+    // Well-named, clearly-described rules: every config-lint check holds -> exit 0.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: public_items_are_documented, description: \"{RULE}\" }}\n"
+        ),
+    );
+    // No verdicts file: the mock defaults every config-lint rule to holds=true.
+    p.lint_config()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed"));
+}
+
+#[test]
+fn lint_config_runs_the_comment_check_before_judging() {
+    // Phase 1 is the deterministic ignore-directive (comment) check: a malformed
+    // directive in a config file is a hard exit-2 error before any judge call, even
+    // though the mock harness is wired in.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: a_rule, description: \"{RULE}\" }}\n  \
+             # llmlint: ignore[name_matches_description]\n"
+        ),
+    );
+    // Even with verdicts available, the run never reaches the model: the comment
+    // check fails first (the directive names a rule but gives no reason).
+    p.lint_config().assert().code(2).stderr(
+        predicate::str::contains("llmlint.yml").and(predicate::str::contains("give a reason")),
+    );
+}
+
+#[test]
+fn lint_config_with_no_config_files_is_a_clean_skip() {
+    // Nothing matches the config-lint globs -> every rule is skipped, not failed.
+    let p = Project::new();
+    p.write("src/lib.rs", "// not a config\n");
+    p.lint_config()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skipped"));
 }
 
 #[test]
