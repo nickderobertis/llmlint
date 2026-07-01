@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.28](https://github.com/nickderobertis/llmlint/compare/v0.2.27...v0.2.28) - 2026-07-01
+
+### Added
+
+- add lint-config subcommand for linting llmlint configs ([#89](https://github.com/nickderobertis/llmlint/pull/89))
+
 ## [0.2.27](https://github.com/nickderobertis/llmlint/compare/v0.2.26...v0.2.27) - 2026-07-01
 
 ### Documentation
