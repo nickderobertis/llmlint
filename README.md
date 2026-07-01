@@ -508,12 +508,13 @@ The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 ### Linting your llmlint configs
 
 llmlint ships with a **config-lint** rule set that lints llmlint config files
-themselves — that every rule has a descriptive (non-placeholder) name, a clear
-and unambiguous description, a name that matches what the description checks, and
-uses `relevance` instead of bolting "…or not applicable" onto the description.
-It's the [Writing good rules](#writing-good-rules) guidance, enforced. Each
-finding cites the config file + the offending rule's line
-(`require_line_attribution`). There are two ways to use it:
+themselves — that every rule's `description` yields a clear, unambiguous verdict,
+its `name` is descriptive (non-placeholder) and matches what the description
+checks, and a conditional rule uses `relevance` instead of bolting "…or not
+applicable" onto the description. It's the [Writing good rules](#writing-good-rules)
+guidance, enforced (and each rule is phrased to pass its own checks). Each finding
+cites the config file + the offending rule's line (`require_line_attribution`).
+There are two ways to use it:
 
 - **As a plugin** — add the bundled URL to your `plugins` (it's on by default in
   `llmlint init`), and its rules run against your config files on every normal

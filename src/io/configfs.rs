@@ -641,8 +641,8 @@ rules:
             .config
             .rules
             .iter()
-            .any(|r| r.name == "name_matches_description"));
-        let scope = &loaded.scopes["name_matches_description"];
+            .any(|r| r.name == "name_describes_what_the_rule_checks"));
+        let scope = &loaded.scopes["name_describes_what_the_rule_checks"];
         assert_eq!(scope.dir, dir.path());
         // The config is valid (the same check `lint` runs before planning).
         crate::domain::config::validate(&loaded.config).unwrap();
@@ -937,7 +937,7 @@ rules:
             .collect();
         assert!(names.contains(&"root_rule"));
         assert!(names.contains(&"team_rule"));
-        assert!(names.contains(&"name_matches_description")); // from the bundled plugin
+        assert!(names.contains(&"name_describes_what_the_rule_checks")); // from the bundled plugin
         assert!(loaded.sources.iter().any(|s| s == &plugin));
     }
 

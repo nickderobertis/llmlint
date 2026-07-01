@@ -318,9 +318,10 @@ it. The harness reads target files on-demand with its own tools.
   ignore-directive resolution + scan shared by `lint`, `check-ignores`, and
   `lint-config`.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled
-  plugin whose rules lint llmlint config files themselves (descriptive names, a
-  clear/unambiguous description, name-matches-description, `relevance` over inline
-  "not applicable"): the README's "Writing good rules" guidance, enforced. It is
+  plugin whose rules lint llmlint config files themselves (a clear/unambiguous
+  description, a descriptive name that matches what the rule checks, `relevance`
+  over inline "not applicable"; each rule is phrased to pass its own checks): the
+  README's "Writing good rules" guidance, enforced. It is
   **structural checks' complement** — unique names, valid identifiers, resolvable
   agents stay deterministic in `validate` and are deliberately not re-checked
   here. Every rule sets `require_line_attribution: true`, so a finding always cites
