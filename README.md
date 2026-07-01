@@ -16,15 +16,16 @@ they can be pinned down. Because the gate is "just a config file," llmlint drops
 into CI next to your other linters.
 
 By default llmlint reports the failing rules (with the locations it could pin
-down) and a one-line summary — passing and skipped rules are just counted:
+down) and a one-line summary — passing, skipped, and not-relevant rules are just
+counted:
 
-![llmlint's default report: a red FAIL with its pinned violation and a colorized summary line](docs/screenshots/lint-default.svg)
+![llmlint's default report: a red FAIL with its pinned violation and a colorized summary line counting passed, failed, skipped, and not-relevant rules](docs/screenshots/lint-default.svg)
 
-Add `-v` to itemize *every* rule (passed and skipped too) and to print the
-oneharness debug view — the exact `oneharness run …` command and the raw result
-for each judge — to **stderr**, so the report on stdout stays clean:
+Add `-v` to itemize *every* rule (passed, skipped, and not relevant too) and to
+print the oneharness debug view — the exact `oneharness run …` command and the
+raw result for each judge — to **stderr**, so the report on stdout stays clean:
 
-![llmlint's verbose report: green PASS, red FAIL, and yellow SKIP lines above the summary](docs/screenshots/lint-verbose.svg)
+![llmlint's verbose report: green PASS, red FAIL, yellow SKIP, and dim N/A not-relevant lines above the summary](docs/screenshots/lint-verbose.svg)
 
 <details>
 <summary>The <code>-v</code> debug view (oneharness command + raw result per judge, on stderr)</summary>
@@ -322,13 +323,7 @@ For a **multi-judge** rule (`judges: N`), the report and `--format json` show
 **each judge's** result and rationale, not just one representative — so you can
 see exactly where the judges agreed or split:
 
-```text
-FAIL no_inline_sql (1/3 judges held)
-     judge 1 violated: raw SQL concatenated at db.rs:3
-     judge 2 held: all access goes through the query builder
-     judge 3 violated: f-string SQL in the helper
-     src/db.rs:3: inline SQL
-```
+![llmlint's multi-judge report: a FAIL headed "1/3 judges held" with each judge's held/violated line and rationale, then the pinned violation](docs/screenshots/multi-judge.svg)
 
 ### Relevance
 
