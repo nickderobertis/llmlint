@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.29](https://github.com/nickderobertis/llmlint/compare/v0.2.28...v0.2.29) - 2026-07-01
+
+### Added
+
+- *(lint)* interactive live-progress view with agent-safe suppression ([#90](https://github.com/nickderobertis/llmlint/pull/90))
+
 ## [0.2.28](https://github.com/nickderobertis/llmlint/compare/v0.2.27...v0.2.28) - 2026-07-01
 
 ### Added
