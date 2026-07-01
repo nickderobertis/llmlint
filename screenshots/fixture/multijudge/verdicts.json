@@ -1,0 +1,22 @@
+{
+  "no_inline_sql": [
+    {
+      "holds": false,
+      "rationale": "raw SQL concatenated at db.rs:3",
+      "violations": [
+        { "file": "src/db.rs", "line": 3, "message": "inline SQL" }
+      ]
+    },
+    {
+      "holds": true,
+      "rationale": "all access goes through the query builder"
+    },
+    {
+      "holds": false,
+      "rationale": "f-string SQL in the helper",
+      "violations": [
+        { "file": "src/db.rs", "line": 3, "message": "inline SQL" }
+      ]
+    }
+  ]
+}

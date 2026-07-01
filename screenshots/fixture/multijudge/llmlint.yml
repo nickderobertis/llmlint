@@ -1,0 +1,13 @@
+# Fixture for the multi-judge screenshot scene (see scripts/screenshots.sh).
+# Kept separate from the main fixture so the headline report stays single-judge:
+# this one rule runs `judges: 3` so the capture shows the per-judge breakdown the
+# report prints for a multi-judge rule (each judge's held/violated + rationale).
+# It is nested under the main fixture; the capture pins it with `-c`, so upward
+# config discovery never merges it into (or gets merged by) the main scene.
+version: 1
+files:
+  include: ["src/**"]
+rules:
+  - name: no_inline_sql
+    description: "All database access goes through the query builder, never inline SQL."
+    judges: 3

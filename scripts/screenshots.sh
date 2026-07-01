@@ -14,13 +14,17 @@
 # otherwise it does not.
 #
 # Scenes — one per command, so the gallery documents the whole CLI surface:
-#   lint    the report, with a `view` toggle the gallery flips between three
-#           levels of detail: `default` (failing rule + locations + summary),
-#           `verbose` (`-v`, itemizing PASS/SKIP too), and `debug` (the `-v`
-#           oneharness debug view from stderr: the exact command + result/judge).
-#   init    writing a starter config.
-#   config  the effective merged config + its sources, as JSON.
-#   doctor  the oneharness preflight check.
+#   lint        the report, with a `view` toggle the gallery flips between three
+#               levels of detail: `default` (failing rule + locations + summary,
+#               plus a not-relevant rule in the summary), `verbose` (`-v`,
+#               itemizing PASS/SKIP/N-A too), and `debug` (the `-v` oneharness
+#               debug view from stderr: the exact command + result/judge).
+#   multi-judge the per-judge breakdown a `judges: N` rule prints, from its own
+#               nested fixture (screenshots/fixture/multijudge/) so the headline
+#               lint scene stays single-judge.
+#   init        writing a starter config.
+#   config      the effective merged config + its sources, as JSON.
+#   doctor      the oneharness preflight check.
 # The `default`/`verbose` lint views are colorized (real ANSI through
 # `--color always`); `debug`, `init`, `config`, and `doctor` are plain text —
 # freeze renders both the same way (`--language ansi`).
@@ -182,6 +186,20 @@ sed -i \
   -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
   "$out"
 render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
+
+# --- multi-judge: the per-judge breakdown, its own fixture + scene ------------
+# The headline `lint` report is single-judge; a `judges: N` rule prints each
+# judge's held/violated + rationale under the header. That is a distinct shape,
+# so it gets its own scene driven by a separate, nested fixture (pinned with `-c`
+# so it never merges with the main scene). Colorized like the default report.
+mj_fixture="$fixture/multijudge"
+out="$tmp_state/multi-judge.ansi"
+( cd "$mj_fixture" \
+    && LLMLINT_MOCK_VERDICTS="$mj_fixture/verdicts.json" \
+       LLMLINT_MOCK_STATE="$tmp_state/state-multijudge" \
+       "$llmlint_bin" -c "$mj_fixture/llmlint.yml" --oneharness-bin "$mock_bin" \
+         --color always --max-parallel 1 ) >"$out" 2>/dev/null || true
+render_scene "multi-judge" "{}" "multi-judge.svg" "$out" 1
 
 # --- init: write a starter config (in a clean dir so the message is stable) ---
 init_dir="$tmp_state/init"

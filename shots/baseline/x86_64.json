@@ -4,7 +4,7 @@
     {
       "name": "config",
       "toggles": {},
-      "hash": "79bfa10bb54f3d8ce67c55696a463edd5071cbdd32f640eff1a234618a5211cc"
+      "hash": "b196606de56adb978762ce17e5140d0720e60a9590eab2996996371179267a3d"
     },
     {
       "name": "doctor",
@@ -21,21 +21,26 @@
       "toggles": {
         "view": "debug"
       },
-      "hash": "e7ae71e3eea81e95e93cf89a26d226342adcffb21e8c323cde0023af6f763ebe"
+      "hash": "09a5cc979fbd627e27fb4768ee9299ef2da3717ec71d0faaab9d7513a53b648c"
     },
     {
       "name": "lint",
       "toggles": {
         "view": "default"
       },
-      "hash": "e35d4bc38de62f9a6c93588cfa3d7b03f8a42539d26cccd2fa3828732d76e5b3"
+      "hash": "57e6d13556392e934b9adfdbaf2fe9e5fb3640de2eb41c4b5e0db82e5bb083b1"
     },
     {
       "name": "lint",
       "toggles": {
         "view": "verbose"
       },
-      "hash": "4718295d327cd76680a48252591d710aefe35b3815882049632b063f3419c3f7"
+      "hash": "8f810fc5cb4abbc580e1efd28de602ab920ae9eed54356f8a79616f7b6d7719e"
+    },
+    {
+      "name": "multi-judge",
+      "toggles": {},
+      "hash": "2da0ed2b8eecbd1fec5ad924f6ac476e88dadc2d6302f03d297012550f7fd074"
     }
   ]
 }
