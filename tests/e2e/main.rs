@@ -1021,6 +1021,48 @@ fn no_files_block_lints_every_file_in_the_tree() {
 }
 
 #[test]
+fn no_files_block_still_respects_gitignore_and_exclude() {
+    // The whole-tree default is narrowed by both `exclude` and the gitignore-aware
+    // walk, so it never reintroduces vendored/build/ignored files. Run in a real
+    // git repo, since gitignore only applies inside one.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  exclude: [\"vendor/**\"]\nrules:\n  \
+             - {{ name: whole_tree, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/keep.rs", "// keep\n");
+    p.write("vendor/skip.rs", "// excluded by config\n");
+    p.write("build/ignored.rs", "// gitignored\n");
+    p.write(".gitignore", "build/\n");
+    init_repo(p.path());
+
+    let verdicts = p.write_verdicts(r#"{"whole_tree": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("src/keep.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("vendor/skip.rs"),
+        "config `exclude` must still narrow the whole-tree default:\n{system}"
+    );
+    assert!(
+        !system.contains("build/ignored.rs"),
+        "gitignored file must not leak into the whole-tree default:\n{system}"
+    );
+}
+
+#[test]
 fn explicit_cli_files_override_config_globs() {
     let p = Project::new();
     p.write(
@@ -3385,6 +3427,46 @@ fn cascade_scopes_a_subtree_configs_globs_to_its_own_directory() {
     let root = fs::read_to_string(&root_dump).unwrap();
     assert!(root.contains("top.rs"), "system:\n{root}");
     assert!(!root.contains("note.txt"), "system:\n{root}");
+}
+
+#[test]
+fn cascade_subtree_config_with_no_files_block_lints_its_whole_subtree() {
+    // The whole-tree default applied at a cascade scope: a subtree config with
+    // rules but no `files` block lints EVERY file under its own directory (any
+    // extension, nested included), still bounded to that subtree — it never
+    // reaches sibling/root files.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nfiles:\n  include: [\"*.rs\"]\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "frontend/llmlint.yml",
+        &format!("rules:\n  - {{ name: front_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write("top.rs", "// root code\n");
+    p.write("frontend/note.txt", "text\n");
+    p.write("frontend/deep/app.ts", "// ts\n");
+
+    // Select only front_rule -> its dumped prompt is exactly that rule's file set.
+    let front_dump = p.path().join("front.txt");
+    let verdicts = p.write_verdicts(r#"{"front_rule": true}"#);
+    p.lint()
+        .arg("--rule")
+        .arg("front_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &front_dump)
+        .assert()
+        .success();
+    let front = fs::read_to_string(&front_dump).unwrap();
+    // Every file under frontend/ (reported relative to cwd), regardless of
+    // extension and depth; nothing from the root.
+    assert!(front.contains("frontend/note.txt"), "system:\n{front}");
+    assert!(front.contains("frontend/deep/app.ts"), "system:\n{front}");
+    assert!(
+        !front.contains("top.rs"),
+        "a subtree config's whole-tree default must not reach root files:\n{front}"
+    );
 }
 
 #[test]
