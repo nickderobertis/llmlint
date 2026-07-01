@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.30](https://github.com/nickderobertis/llmlint/compare/v0.2.29...v0.2.30) - 2026-07-01
+
+### Documentation
+
+- complete the prompt-template variables table in the README ([#93](https://github.com/nickderobertis/llmlint/pull/93))
+
 ## [0.2.29](https://github.com/nickderobertis/llmlint/compare/v0.2.28...v0.2.29) - 2026-07-01
 
 ### Added
