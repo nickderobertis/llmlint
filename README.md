@@ -1,5 +1,7 @@
 # llmlint
 
+![llmlint's live progress view: rules resolving one by one as their judges return, then clearing to reveal the report](docs/screenshots/demo.gif)
+
 **The next generation of linting: an LLM as a judge.** `llmlint` enforces the
 code-quality checks a human reviewer normally makes — adherence to architectural
 patterns, coding-style intent, alignment to organization objectives — that
@@ -47,6 +49,16 @@ stdout is a terminal. Coloring follows the [`NO_COLOR`](https://no-color.org)
 convention and a `--color <auto|always|never>` flag: `auto` (the default) colors
 only an interactive terminal, `always` forces it (e.g. through a pager or to
 capture a screenshot), `never` disables it. `--format json` is never colorized.
+
+While the judges run, llmlint draws a **live progress view** on stderr — rules
+resolving one by one as their judges return (the GIF above) — then clears it and
+prints the report. Like the color, it is audience-aware: `--progress
+<auto|always|never>` (default `auto`) shows it only for an interactive human — a
+terminal, not CI, and **not an AI coding agent** (Claude Code, Codex, Cursor,
+detected via their environment variables). Piped, redirected, in CI, or captured
+by an agent, the view is fully suppressed so it never spams a log or an agent's
+context — the report on stdout, and `--format json`, are byte-for-byte the same
+either way.
 
 ## How it works
 

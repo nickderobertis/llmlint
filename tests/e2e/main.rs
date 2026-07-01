@@ -317,6 +317,135 @@ fn color_is_off_when_piped_but_forced_by_color_always() {
         .stdout(predicate::str::contains('\u{1b}'));
 }
 
+// ---- live progress view (audience detection) ------------------------------
+
+/// A project with one passing and one failing rule, for the progress journeys.
+fn progress_project() -> (Project, PathBuf) {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: passing_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: failing_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"passing_rule": true,
+            "failing_rule": {"holds": false, "violations": [
+                {"file": "src/lib.rs", "line": 1, "message": "nope"}]}}"#,
+    );
+    (p, verdicts)
+}
+
+/// The captured stream carries no terminal control codes: no ESC (`\x1b`, the
+/// lead byte of every cursor-move/erase/color sequence) and no bare carriage
+/// return (`\r`, the in-place-rewrite mechanism). This is the "don't corrupt
+/// captured output / don't blow up an agent's context" guarantee.
+fn assert_no_control_bytes(stream: &[u8], label: &str) {
+    assert!(
+        !stream.contains(&0x1b),
+        "{label} leaked an ESC control byte: {:?}",
+        String::from_utf8_lossy(stream)
+    );
+    assert!(
+        !stream.contains(&b'\r'),
+        "{label} leaked a carriage return: {:?}",
+        String::from_utf8_lossy(stream)
+    );
+}
+
+#[test]
+fn progress_view_never_leaks_into_captured_output() {
+    // `assert_cmd` captures through pipes (not a TTY), so the live view must be
+    // fully suppressed: the report lands on stdout and stderr carries no progress
+    // control codes — under the default `auto`, an explicit `--progress always`
+    // (which still refuses to animate a non-terminal), and `--progress never`.
+    let (p, verdicts) = progress_project();
+    for extra in [&[][..], &["--progress", "always"], &["--progress", "never"]] {
+        let out = p
+            .lint()
+            .args(extra)
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "args {extra:?}");
+        // The report is on stdout, unchanged by the progress plumbing.
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("FAIL failing_rule"), "args {extra:?}");
+        assert!(
+            stdout.contains("2 rules: 1 passed, 1 failed, 0 skipped"),
+            "args {extra:?}"
+        );
+        // Neither stream carries the animation's control bytes.
+        assert_no_control_bytes(&out.stdout, &format!("stdout {extra:?}"));
+        assert_no_control_bytes(&out.stderr, &format!("stderr {extra:?}"));
+    }
+}
+
+#[test]
+fn agent_env_forces_plain_output_with_no_progress_leak() {
+    // Inside an AI coding agent (detected via `CLAUDECODE`), even `--progress
+    // always` + `--color auto` must stay plain: no animation escapes, and the
+    // report carries no ANSI — captured ANSI is unreliable in an agent, so the
+    // safe plain path is taken regardless of the (piped) TTY state.
+    let (p, verdicts) = progress_project();
+    let out = p
+        .lint()
+        .arg("--progress")
+        .arg("always")
+        .env("CLAUDECODE", "1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("FAIL failing_rule"));
+    assert_no_control_bytes(&out.stdout, "stdout (agent)");
+    assert_no_control_bytes(&out.stderr, "stderr (agent)");
+}
+
+#[test]
+fn progress_json_format_is_untouched() {
+    // `--format json` is the machine channel: the live view is never drawn for it,
+    // and stdout stays pure JSON regardless of `--progress`.
+    let (p, verdicts) = progress_project();
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .arg("--progress")
+        .arg("always")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // Parses as JSON (no progress prefix/suffix corrupts it) and stderr is clean.
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["summary"]["failed"], 1);
+    assert_no_control_bytes(&out.stderr, "stderr (json)");
+}
+
+#[test]
+fn progress_invalid_value_is_rejected() {
+    let (p, verdicts) = progress_project();
+    p.lint()
+        .arg("--progress")
+        .arg("sometimes")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("invalid value 'sometimes'"));
+}
+
+// Note: the live view only *animates* when stderr is a real terminal, which
+// `assert_cmd`'s pipes can't provide. That interactive path is verified without a
+// heavyweight PTY dependency: the renderer's frames + self-erase are asserted on a
+// `vt100`-backed `InMemoryTerm` in `commands::progress` (including the `animate`
+// steady-tick path). A real-OS PTY round-trip (incl. Windows ConPTY) is a deferred
+// separate tier, like `win-color` — see `docs/design/interactive-progress.md`.
+
 // ---- multi-judge majority vote -------------------------------------------
 
 #[test]

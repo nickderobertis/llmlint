@@ -123,6 +123,14 @@ pub struct LintArgs {
     #[arg(long = "color", value_enum, default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
 
+    /// When to draw the live progress view (rules resolving as judges return) on
+    /// stderr: `auto` (default) shows it only for an interactive human — a
+    /// terminal, not CI, not an AI agent; `always` forces the decision on (a pipe
+    /// is still never animated); `never` disables it. The report on stdout is
+    /// unaffected, as is `--format json`.
+    #[arg(long = "progress", value_enum, default_value_t = ProgressChoice::Auto)]
+    pub progress: ProgressChoice,
+
     /// Increase output detail. By default, failing rules (with their locations)
     /// and the summary line are shown. `-v` additionally itemizes every passed
     /// and skipped rule, and prints the oneharness debug view (exact command +
@@ -199,15 +207,47 @@ pub enum ColorChoice {
 }
 
 impl ColorChoice {
-    /// Resolve to a concrete on/off decision. `Auto` honors the `NO_COLOR`
-    /// convention (any non-empty value disables color) and otherwise colors
-    /// only when `stdout` is a terminal. `is_tty` is injected so the pure
-    /// resolution stays testable without a real terminal.
-    pub fn resolve(self, is_tty: bool, no_color: bool) -> bool {
+    /// Resolve to a concrete on/off decision. `Auto` colors only an interactive
+    /// terminal with `NO_COLOR` unset that is **not** an AI coding agent — a
+    /// PTY-allocating agent has `is_tty == true` but captured ANSI is unreliable
+    /// (Claude Code strips/mangles it and ignores `NO_COLOR`), so plain text is the
+    /// safe path. `Always` still forces color (an explicit override wins over
+    /// detection). The signals are injected so the resolution stays pure/testable.
+    pub fn resolve(self, is_tty: bool, no_color: bool, is_agent: bool) -> bool {
         match self {
             ColorChoice::Always => true,
             ColorChoice::Never => false,
-            ColorChoice::Auto => is_tty && !no_color,
+            ColorChoice::Auto => is_tty && !no_color && !is_agent,
+        }
+    }
+}
+
+/// When to draw the ephemeral live-progress view (rules resolving as judges
+/// return). It renders to **stderr**, so stdout stays the clean report/JSON
+/// channel; see `docs/design/interactive-progress.md`.
+#[derive(ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProgressChoice {
+    /// Show it only for an interactive human: stderr is a terminal, not CI, not an
+    /// AI agent, and color is not suppressed.
+    #[default]
+    Auto,
+    /// Force the decision on. indicatif still refuses to animate a non-terminal, so
+    /// this never spams a pipe — it only overrides the CI/agent auto-suppression.
+    Always,
+    /// Never draw the live view.
+    Never,
+}
+
+impl ProgressChoice {
+    /// Resolve to a concrete show/hide decision. `Auto` requires an interactive,
+    /// non-CI, non-agent terminal with color not suppressed. `Always` only needs a
+    /// terminal (indicatif hides on a non-terminal regardless). Signals are
+    /// injected so this stays pure and table-testable.
+    pub fn resolve(self, stderr_tty: bool, is_ci: bool, is_agent: bool, color_ok: bool) -> bool {
+        match self {
+            ProgressChoice::Never => false,
+            ProgressChoice::Always => stderr_tty,
+            ProgressChoice::Auto => stderr_tty && !is_ci && !is_agent && color_ok,
         }
     }
 }
@@ -217,23 +257,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn color_always_and_never_ignore_tty_and_no_color() {
+    fn color_always_and_never_ignore_tty_no_color_and_agent() {
         for &tty in &[true, false] {
             for &no_color in &[true, false] {
-                assert!(ColorChoice::Always.resolve(tty, no_color));
-                assert!(!ColorChoice::Never.resolve(tty, no_color));
+                for &agent in &[true, false] {
+                    assert!(ColorChoice::Always.resolve(tty, no_color, agent));
+                    assert!(!ColorChoice::Never.resolve(tty, no_color, agent));
+                }
             }
         }
     }
 
     #[test]
-    fn color_auto_needs_a_tty_and_an_unset_no_color() {
-        assert!(ColorChoice::Auto.resolve(true, false));
+    fn color_auto_needs_a_tty_unset_no_color_and_no_agent() {
+        assert!(ColorChoice::Auto.resolve(true, false, false));
         // A terminal but NO_COLOR set: off (the convention wins).
-        assert!(!ColorChoice::Auto.resolve(true, true));
-        // Not a terminal (piped/redirected): off regardless of NO_COLOR.
-        assert!(!ColorChoice::Auto.resolve(false, false));
-        assert!(!ColorChoice::Auto.resolve(false, true));
+        assert!(!ColorChoice::Auto.resolve(true, true, false));
+        // A terminal (e.g. a PTY-allocating agent) but agent-detected: off, since
+        // captured ANSI is unreliable.
+        assert!(!ColorChoice::Auto.resolve(true, false, true));
+        // Not a terminal (piped/redirected): off regardless of the other signals.
+        assert!(!ColorChoice::Auto.resolve(false, false, false));
+        assert!(!ColorChoice::Auto.resolve(false, true, false));
+    }
+
+    #[test]
+    fn progress_never_is_always_off_always_needs_only_a_tty() {
+        for &ci in &[true, false] {
+            for &agent in &[true, false] {
+                for &ok in &[true, false] {
+                    assert!(!ProgressChoice::Never.resolve(true, ci, agent, ok));
+                    // Always ignores CI/agent/color but still needs a terminal
+                    // (indicatif won't animate a non-terminal anyway).
+                    assert!(ProgressChoice::Always.resolve(true, ci, agent, ok));
+                    assert!(!ProgressChoice::Always.resolve(false, ci, agent, ok));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn progress_auto_requires_an_interactive_human() {
+        // Interactive terminal, not CI, not an agent, color available: on.
+        assert!(ProgressChoice::Auto.resolve(true, false, false, true));
+        // Any one disqualifier turns it off.
+        assert!(!ProgressChoice::Auto.resolve(false, false, false, true)); // not a tty
+        assert!(!ProgressChoice::Auto.resolve(true, true, false, true)); // CI
+        assert!(!ProgressChoice::Auto.resolve(true, false, true, true)); // agent
+        assert!(!ProgressChoice::Auto.resolve(true, false, false, false)); // NO_COLOR/dumb
     }
 }
 

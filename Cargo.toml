@@ -61,6 +61,13 @@ anstyle = "1"
 # layer still owns the `--color`/`NO_COLOR`/TTY decision and hands this a concrete
 # on/off choice.
 anstream = "1"
+# The ephemeral live-progress view (rules resolving as judges return), drawn to
+# stderr for an interactive human. indicatif self-hides on a non-terminal — piping
+# to a file or CI produces no escape-code spam — which is exactly the "don't
+# corrupt captured output" property this view needs; the command layer owns the
+# `--progress`/agent/CI decision and hands it a concrete draw target. Default
+# features only (its `console` backend handles Windows VT/legacy consoles too).
+indicatif = "0.17"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps JSON object keys in insertion order, so the structured-
 # output schema can present each rule's fields in the exact order the judge
@@ -87,6 +94,12 @@ schemars = "1"
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+# Enable indicatif's `in_memory` feature in test builds only: it provides
+# `InMemoryTerm` (a `vt100`-backed terminal emulator) so the progress renderer is
+# asserted on the *rendered screen grid* — deterministically, cross-platform, with
+# no real TTY. Feature-unified into the normal `indicatif` dep for test/bench
+# builds; `cargo build`/`cargo install` never pulls it.
+indicatif = { version = "0.17", features = ["in_memory"] }
 # Statistical micro-benchmarks of the pure engine (see `benches/`). Default
 # features (plotters HTML reports, rayon) are dropped to keep the dependency
 # tree — and the `cargo deny` surface — small; `cargo_bench_support` is the only

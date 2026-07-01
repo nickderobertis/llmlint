@@ -8,6 +8,7 @@ pub mod ignores;
 pub mod init;
 pub mod lint;
 pub mod lint_config;
+pub mod progress;
 pub mod where_;
 
 use crate::cli::{Cli, Command};

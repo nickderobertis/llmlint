@@ -44,6 +44,20 @@ logic is also covered hermetically via `file://` plugins.
   errors, so a bad run can be debugged. Verbosity never changes the exit code,
   surfaces operational (exit-2) errors at every level, and leaves `--format
   json` untouched (the debug view stays on stderr; stdout stays pure JSON).
+- The live-progress view is audience-aware and never corrupts captured output:
+  under a pipe (what `assert_cmd` provides) the report lands on stdout and **no
+  progress control bytes** (ESC `\x1b`, bare `\r`) appear on stdout *or* stderr —
+  under the default `auto`, an explicit `--progress always` (which still refuses to
+  animate a non-terminal), and `--progress never`. Inside an AI agent (env
+  `CLAUDECODE`) the output stays plain even with `--progress always` + `--color
+  auto`. `--format json` is untouched (pure JSON, clean stderr), and an invalid
+  `--progress` value is a clap exit-2 error. The renderer itself — the frames the
+  view draws and its **self-erase** on completion — is unit-tested on a
+  `vt100`-backed `InMemoryTerm` in `commands::progress` (including the
+  real-terminal `animate` steady-tick path); the audience predicate +
+  agent/CI/`NO_COLOR` detection are pure unit tests in `cli` / `io::terminal`. A
+  real-OS PTY round-trip (incl. Windows ConPTY) is a deferred separate tier, like
+  `win-color`, kept out of the fast gate so the suite stays dependency-light.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
   `http://` URL is fetched once over HTTPS and reused from cache (not refetched),
