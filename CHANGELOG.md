@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.27](https://github.com/nickderobertis/llmlint/compare/v0.2.26...v0.2.27) - 2026-07-01
+
+### Documentation
+
+- surface not-relevant in headline report, split multi-judge screenshot ([#87](https://github.com/nickderobertis/llmlint/pull/87))
+
 ## [0.2.26](https://github.com/nickderobertis/llmlint/compare/v0.2.25...v0.2.26) - 2026-06-30
 
 ### Documentation
