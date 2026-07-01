@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.31](https://github.com/nickderobertis/llmlint/compare/v0.2.30...v0.2.31) - 2026-07-01
+
+### Added
+
+- *(files)* default to linting the whole tree when no files block is set ([#95](https://github.com/nickderobertis/llmlint/pull/95))
+
 ## [0.2.30](https://github.com/nickderobertis/llmlint/compare/v0.2.29...v0.2.30) - 2026-07-01
 
 ### Documentation
