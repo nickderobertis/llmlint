@@ -258,14 +258,17 @@ yourself. The top-level `prompt_template` *replaces* the master template; an
 agent's `prompt_template` is **appended** to it before rendering, so reviewer
 context you add per-agent sees the same variables.
 
-Three variables are in scope when a template renders:
+These variables are in scope when a template renders:
 
 | Variable | Type | Description |
 | --- | --- | --- |
 | `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
-| `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), `.rationale` (whether this rule wants a justification), and `.relevance` (the relevance condition string, or unset for an always-evaluated rule). |
+| `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), `.rationale` (whether this rule wants a justification), `.relevance` (the relevance condition string, or unset for an always-evaluated rule), `.require_line_attribution` (whether every violation must cite a `file` + `line`), and `.files` (the subset of `files` this rule applies to). |
+| `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), and `.diff` (that file's unified diff, present only under `--diff` when the file changed). The default template's "Target files" section is built from this. |
+| `diffs` | list of objects | Per-file changed-line diffs — one entry per *changed* file, present only under `--diff` (empty otherwise). Each has `.file` (matching its entry in `files`) and `.diff` (the unified diff text). The default template inlines these per file via `file_rules`; kept separately for custom templates. |
 | `rationales` | bool | True when any rule in this batch wants a rationale — gate the rationale guidance on it. |
 | `relevance` | bool | True when any rule in this batch carries a relevance condition — gate the relevance guidance on it. |
+| `line_attribution` | bool | True when any rule in this batch requires line attribution — gate the line-attribution guidance on it. |
 
 ```jinja
 ## Target files
