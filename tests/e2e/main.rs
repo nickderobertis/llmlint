@@ -987,6 +987,40 @@ fn include_exclude_globs_select_the_right_files() {
 }
 
 #[test]
+fn no_files_block_lints_every_file_in_the_tree() {
+    // A config with no `files` block is the repo-wide "lint everything under cwd"
+    // default: every file in the tree is a target, not zero. Files sit at the root
+    // and in nested directories to prove the whole subtree is walked.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: whole_tree, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("README.md", "# readme\n");
+    p.write("src/a.rs", "// a\n");
+    p.write("docs/guide.md", "# guide\n");
+    let verdicts = p.write_verdicts(r#"{"whole_tree": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // Every file across the tree is a target (paths render with forward slashes).
+    for target in ["README.md", "src/a.rs", "docs/guide.md"] {
+        assert!(system.contains(target), "missing {target}:\n{system}");
+    }
+}
+
+#[test]
 fn explicit_cli_files_override_config_globs() {
     let p = Project::new();
     p.write(

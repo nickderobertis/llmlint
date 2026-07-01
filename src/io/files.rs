@@ -26,7 +26,9 @@ fn build_set(globs: &[String]) -> Result<Option<GlobSet>> {
 }
 
 /// Resolve `filter` to a sorted, de-duplicated list of files **relative to
-/// `root`**. An empty `include` set yields no files (nothing to lint).
+/// `root`**. An empty `include` set means **every file under `root`** (the
+/// repo-wide default, so a config with no `files` block lints the whole tree
+/// from `cwd` rather than nothing); `exclude` and `.gitignore` still apply.
 pub fn resolve(root: &Path, filter: &FileFilter) -> Result<Vec<PathBuf>> {
     resolve_scoped(root, root, filter)
 }
@@ -44,10 +46,13 @@ pub fn resolve_scoped(
     out_root: &Path,
     filter: &FileFilter,
 ) -> Result<Vec<PathBuf>> {
-    let include = match build_set(&filter.include)? {
-        Some(s) => s,
-        None => return Ok(Vec::new()),
-    };
+    // An empty `include` set means "every file under the walk root": `build_set`
+    // returns `None` for it, which the loop below reads as match-all (see the
+    // `is_none_or`). This is the repo-wide default — a config with no `files`
+    // block lints the whole tree from `cwd` instead of nothing. A present set
+    // filters as usual; `exclude` (and the gitignore-aware walk) still subtract
+    // from whatever `include` picks.
+    let include = build_set(&filter.include)?;
     let exclude = build_set(&filter.exclude)?;
 
     // Walk the more specific (deeper) root so every visited file is under both;
@@ -77,7 +82,8 @@ pub fn resolve_scoped(
             continue;
         };
         let excluded = exclude.as_ref().is_some_and(|e| e.is_match(rel_glob));
-        if include.is_match(rel_glob) && !excluded {
+        let included = include.as_ref().is_none_or(|set| set.is_match(rel_glob));
+        if included && !excluded {
             out.push(rel_out.to_path_buf());
         }
     }
@@ -219,11 +225,33 @@ mod tests {
     }
 
     #[test]
-    fn empty_include_yields_nothing() {
+    fn empty_include_matches_every_file_under_root() {
+        // No `files` block (the default filter) is the repo-wide "lint everything
+        // under cwd" default — every file in the tree, not nothing.
         let dir = tempdir().unwrap();
         touch(dir.path(), "src/a.rs");
+        touch(dir.path(), "README.md");
         let files = resolve(dir.path(), &FileFilter::default()).unwrap();
-        assert!(files.is_empty());
+        assert_eq!(
+            files,
+            vec![PathBuf::from("README.md"), PathBuf::from("src/a.rs")]
+        );
+    }
+
+    #[test]
+    fn empty_include_still_honors_exclude() {
+        // The match-all default is still narrowed by `exclude`, so it never
+        // reintroduces files the config deliberately subtracts. (The
+        // gitignore-aware walk narrows it too — exercised in the git-backed e2e.)
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "src/a.rs");
+        touch(dir.path(), "src/gen.rs");
+        let filter = FileFilter {
+            include: vec![],
+            exclude: vec!["**/gen.rs".into()],
+        };
+        let files = resolve(dir.path(), &filter).unwrap();
+        assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
     }
 
     #[test]

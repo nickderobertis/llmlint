@@ -108,7 +108,9 @@ logic is also covered hermetically via `file://` plugins.
 - `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
   a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
-  the config globs; per-rule and per-agent `files` override the global globs.
+  the config globs; per-rule and per-agent `files` override the global globs. A
+  config with rules but **no `files` block** lints every file in the tree from
+  `cwd` (the repo-wide default), not zero.
 - `--diff` adds each changed target file's diff to the judge prompt so it reviews
   only the changed lines, exercised end to end against **real git repos**. Bare
   `--diff` and the explicit `--diff git` both inline each changed file's unified
