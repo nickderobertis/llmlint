@@ -15,6 +15,7 @@
 # Local environment overrides (never commit secrets or machine-specific config)
 .env
 .env.local
+.gh-secrets-state.json
 # Personal Claude Code settings (per-machine hooks/permissions; not shared)
 /.claude/settings.local.json
 # Machine-local setup state (stamp/log from scripts/setup.sh; per-machine)
