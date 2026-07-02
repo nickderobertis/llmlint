@@ -10,10 +10,9 @@ not a replacement: keep using deterministic tools for everything they can alread
 check, and reach for llmlint only for the judgment calls.
 
 Each check is a **rule**: a statement about your code that is judged `true`
-(holds) or `false` (a violation). llmlint is a single, fast Rust binary that
-**batches** your rules into as few harness calls as it can — the model
-round-trips are the slow, paid part, so packing them together keeps runs quick
-and cheap. It drives a real coding harness (Claude Code, Codex, Cursor, …) through
+(holds) or `false` (a violation). A single fast Rust binary, llmlint **batches**
+your rules into as few harness calls as it can, then drives a real coding harness
+(Claude Code, Codex, Cursor, …) through
 [`oneharness`](https://github.com/nickderobertis/oneharness) to read the relevant
 files and decide, and reports the violations — with file and line numbers where
 they can be pinned down. Because the gate is "just a config file," llmlint drops
