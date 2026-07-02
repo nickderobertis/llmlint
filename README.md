@@ -10,12 +10,14 @@ not a replacement: keep using deterministic tools for everything they can alread
 check, and reach for llmlint only for the judgment calls.
 
 Each check is a **rule**: a statement about your code that is judged `true`
-(holds) or `false` (a violation). llmlint batches your rules, drives a real coding
-harness (Claude Code, Codex, Cursor, …) through
-[`oneharness`](https://github.com/nickderobertis/oneharness) to read the relevant
-files and decide, and reports the violations — with file and line numbers where
-they can be pinned down. Because the gate is "just a config file," llmlint drops
-into CI next to your other linters.
+(holds) or `false` (a violation). llmlint is a single, fast Rust binary that
+**batches** your rules into as few harness calls as it can — the model
+round-trips are the slow, paid part of a run, so packing rules together is what
+keeps it quick and cheap. It drives a real coding harness (Claude Code, Codex,
+Cursor, …) through [`oneharness`](https://github.com/nickderobertis/oneharness) to
+read the relevant files and decide, and reports the violations — with file and
+line numbers where they can be pinned down. Because the gate is "just a config
+file," llmlint drops into CI next to your other linters.
 
 By default llmlint reports the failing rules (with the locations it could pin
 down) and a one-line summary — passing, skipped, and not-relevant rules are just
@@ -336,6 +338,11 @@ default, and for **every evaluated rule** at `-v`. The default prompt template
 asks for rationales that are terse and pithy — the fewest tokens that still cite
 the evidence — so the token cost stays small.
 
+**Keep agents few.** Because rules batch per agent (see [Batching](#batching)),
+splitting them across many agents multiplies the harness calls — and their
+tokens — even over the same files. Reach for a second agent only when a rule
+needs different reviewer context, harness, or model, not to organize the config.
+
 For a **multi-judge** rule (`judges: N`), the report and `--format json` show
 **each judge's** result and rationale, not just one representative — so you can
 see exactly where the judges agreed or split:
@@ -449,6 +456,16 @@ pre-commit hook, or as a quick CI step), where it catches a typo'd or
 reason-less directive in milliseconds. The full `llmlint` run performs the same
 check as a pre-flight, so the two never disagree — `check-ignores` just gives you
 the fast feedback without waiting on (or paying for) a judge.
+
+### Batching
+
+Model calls are the slow, paid part of a run, so llmlint packs rules into as few
+as it can. Rules are grouped **by agent**, then split into batches of at most
+`batch_size` (default 20) — one `oneharness run` per batch over the union of the
+batch's files, each rule scoped to its own files in the prompt. Multi-judge rules
+fan out per judge index (judge `j` evaluates the rules with `judges >= j`), so
+only opted-in rules pay for extra votes. Fewer, fuller batches mean fewer
+round-trips.
 
 ### Judges and voting
 
