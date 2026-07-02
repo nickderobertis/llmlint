@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/nickderobertis/llmlint/compare/v0.3.0...v0.3.1) - 2026-07-02
+
+### Documentation
+
+- document batching and cost vs performance in README ([#102](https://github.com/nickderobertis/llmlint/pull/102))
+
 ## [0.3.0](https://github.com/nickderobertis/llmlint/compare/v0.2.32...v0.3.0) - 2026-07-02
 
 ### Fixed
