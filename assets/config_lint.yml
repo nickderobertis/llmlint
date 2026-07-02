@@ -2,10 +2,10 @@
 # .../assets/config_lint.yml, and resolved offline from the embedded copy).
 #
 # Lints llmlint configuration files themselves: that rules are well-named and
-# their descriptions yield a clear, unambiguous verdict. These are judgment
-# checks; structural checks (unique names, valid identifiers, resolvable agents)
-# are enforced deterministically by llmlint at load time and are intentionally
-# not duplicated here.
+# their descriptions yield a clear, unambiguous verdict in as few tokens as that
+# takes. These are judgment checks; structural checks (unique names, valid
+# identifiers, resolvable agents) are enforced deterministically by llmlint at
+# load time and are intentionally not duplicated here.
 #
 # `version` is the published plugin version consumers pin with `@` (e.g. `@1`).
 version: 1
@@ -61,3 +61,14 @@ rules:
       `relevance:` condition rather than an inline applicability clause in its
       `description` (for example "or not applicable", "if present", "when
       relevant"), keeping the verdict a clean pass/fail.
+
+  - name: description_and_relevance_are_concise
+    agent: config_lint
+    require_line_attribution: true
+    description: |
+      Every rule's `description` and any `relevance` condition state their point in
+      the fewest words that keep the verdict unambiguous — no filler, no restating
+      the inverse, no narrative beyond the check. A judge call batches an agent's
+      rules into one prompt, so tokens one rule wastes degrade the judge on the
+      others; extra length is warranted only when it adds clarity the shorter form
+      lacks, such as concrete examples or easily-confused edge cases.
