@@ -106,14 +106,29 @@ jobs:
           include: README.md,LICENSE,CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
       # Sign a Sigstore build-provenance attestation for the archive. The upload
-      # action leaves the archive at the workspace root; attesting it here lets
-      # `gh attestation verify` (used by scripts/install.sh) prove the artifact
-      # was built by this workflow — a trust root independent of any mirror the
-      # archive might later be downloaded from. Keyless: no secret required.
+      # action leaves the archive at the workspace root; attesting it here proves
+      # the artifact was built by this workflow — a trust root independent of any
+      # mirror the archive might later be downloaded from. Keyless: no secret.
       - name: Attest build provenance
+        id: attest
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: llmlint-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.ext }}
+      # Publish the Sigstore bundle as a release asset (next to the archive and
+      # its .sha256). Shipping the bundle — rather than relying on GitHub's
+      # attestation API — is what lets scripts/install.sh verify OFFLINE with
+      # `cosign` (or `gh --bundle`) after downloading everything from a mirror,
+      # which is the whole point for networks that can't reach github.com. The
+      # signature is bound to this workflow's OIDC identity, so a mirror serving
+      # the bundle cannot forge it.
+      - name: Publish attestation bundle to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bundle="llmlint-${GITHUB_REF_NAME}-${{ matrix.target }}.sigstore.json"
+          cp "${{ steps.attest.outputs.bundle-path }}" "$bundle"
+          gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
 
   # crates.io publishing: runs whenever the CARGO_REGISTRY_TOKEN secret is set
   # (see the `guard` job). Gated on the same `test` job as the binary upload (so

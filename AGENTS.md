@@ -271,15 +271,23 @@ it. The harness reads target files on-demand with its own tools.
 - **Release signing + mirror-configurable install**: the `upload` job attaches a
   keyless [Sigstore](https://www.sigstore.dev/) build-provenance attestation to
   each archive (`actions/attest-build-provenance`, bound to the GitHub Actions
-  OIDC identity — `id-token: write` + `attestations: write`, no secret/key). This
-  lets `scripts/install.sh` be pointed at a release-proxy mirror
-  (`LLMLINT_RELEASE_BASE_URL` / `--base-url`) for the archive while still verifying
-  integrity against a root the mirror does not control: `gh attestation verify`
-  when `gh` is present (preferred), else the `.sha256` fetched from **canonical
-  GitHub** (`LLMLINT_CHECKSUM_BASE_URL` overrides the root) — never the mirror, so
-  a tampered mirror cannot serve a matching tampered checksum. The install aborts
-  if neither root can vouch for the archive. The attestation `subject-path` names
-  the archive the `taiki-e/upload-rust-binary-action` step leaves in the workspace
+  OIDC identity — `id-token: write` + `attestations: write`, no secret/key) **and
+  publishes the bundle as a release asset** (`llmlint-<tag>-<target>.sigstore.json`,
+  from the step's `bundle-path` output). Shipping the bundle — not relying on
+  GitHub's attestation API — is what lets `scripts/install.sh`, pointed at a
+  release-proxy mirror (`LLMLINT_RELEASE_BASE_URL` / `--base-url`) for the archive,
+  verify integrity **offline** against a root the mirror does not control:
+  `cosign verify-blob-attestation --new-bundle-format --bundle …` (preferred,
+  vendor-neutral, no GitHub API), else `gh attestation verify … --bundle …`, else
+  the `.sha256` fetched from **canonical GitHub** (`LLMLINT_CHECKSUM_BASE_URL`
+  overrides that root) — never the mirror, so a tampered mirror cannot serve a
+  matching tampered checksum. Verification fails safe: any verifier/tooling error
+  falls through to the next root, and the install aborts only when none can vouch
+  for the archive (a real tamper is still rejected). The cosign identity is pinned
+  to the release workflow (`PROVENANCE_IDENTITY_RE` + `OIDC_ISSUER` in
+  `install.sh`); the exact cosign invocation should be confirmed against the first
+  real signed release. The attestation `subject-path` names the archive the
+  `taiki-e/upload-rust-binary-action` step leaves in the workspace
   (`llmlint-<tag>-<target>.<ext>`), so keep the matrix `ext` in sync with the
   targets when the build matrix changes.
 

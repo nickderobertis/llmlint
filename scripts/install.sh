@@ -29,13 +29,17 @@
 # aborts rather than install a binary it cannot vouch for, and — crucially — it
 # never trusts a mirror to attest its own download. Two independent roots, tried
 # in order:
-#   1. Sigstore build-provenance attestation (preferred). When `gh` is present,
-#      `gh attestation verify` proves the archive was produced by this repo's
-#      release workflow, checked against GitHub/Sigstore's keyless trust root — a
-#      mirror cannot forge it. No key or secret required.
-#   2. SHA-256 checksum from canonical GitHub (fallback). The `.sha256` is fetched
-#      from the release on github.com, NOT from the mirror, so a tampered mirror
-#      cannot also serve a matching tampered checksum.
+#   1. Sigstore build-provenance attestation (preferred). Each release ships a
+#      `.sigstore.json` bundle beside the archive; when `cosign` (or `gh`) is
+#      present the bundle is verified OFFLINE against the keyless signature bound
+#      to this repo's release workflow — proof the archive was built by us, which
+#      a mirror cannot forge. Because the bundle is served alongside the archive
+#      (from the mirror), this needs no GitHub API and works behind a mirror that
+#      can't reach github.com. No key or secret required.
+#   2. SHA-256 checksum from canonical GitHub (fallback, when no verifier is
+#      installed). The `.sha256` is fetched from the release on github.com, NOT
+#      from the mirror, so a tampered mirror cannot also serve a matching tampered
+#      checksum.
 # If neither root can vouch for the archive, the install aborts.
 
 set -eu
@@ -49,6 +53,13 @@ BIN_FILE="$BIN"
 # LLMLINT_RELEASE_BASE_URL), but checksums default to this host so the integrity
 # root stays independent of the (possibly untrusted) mirror.
 CANONICAL_BASE_URL="https://github.com/$REPO/releases/download"
+
+# Expected keyless identity of the release workflow that signs the archives.
+# A valid Sigstore bundle must carry this OIDC issuer and a signing-certificate
+# identity for this repo's release workflow, so a mirror cannot substitute its
+# own signed artifact.
+OIDC_ISSUER="https://token.actions.githubusercontent.com"
+PROVENANCE_IDENTITY_RE="^https://github.com/${REPO}/\\.github/workflows/release\\.yml@"
 
 say() { printf '%s\n' "$*" >&2; }
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -160,24 +171,66 @@ sha256_of() {
     fi
 }
 
-# Verify the downloaded archive against a trust root that is INDEPENDENT of the
-# (possibly mirrored) source it was downloaded from. Preferred: a Sigstore
-# build-provenance attestation, checked with `gh` against GitHub/Sigstore's
-# keyless trust root — proof the archive was built by this repo's release
-# workflow, which a mirror cannot forge. Fallback: a SHA-256 checksum fetched
-# from canonical GitHub (never the mirror). Aborts if neither root vouches for
-# the archive, so a tampered mirror can never yield an installed binary.
-verify_archive() {
-    _archive="$1"   # local path to the downloaded archive
-    _sum_url="$2"   # checksum URL on the independent trust root
+# Try to verify the archive from its Sigstore build-provenance bundle, using
+# whichever standalone verifier is installed — `cosign` preferred (vendor-neutral,
+# no GitHub API), then `gh` with `--bundle` (also offline). The bundle is served
+# alongside the archive, so this works behind a mirror that can't reach github.com;
+# the signature is bound to this repo's release workflow, so the mirror can't forge
+# it. Returns 0 on a good verification; 1 to fall through to the checksum root (no
+# verifier installed, no bundle published, or a tooling/soft failure). A real
+# tamper still fails closed — the checksum root then rejects the archive.
+verify_sigstore() {
+    _archive="$1"       # local path to the downloaded archive
+    _bundle_url="$2"    # bundle URL (served with the archive)
+    _bundle="${_archive}.sigstore.json"
 
-    if have gh; then
-        say "verifying build-provenance attestation (gh, Sigstore)..."
-        if gh attestation verify "$_archive" --repo "$REPO" >/dev/null 2>&1; then
-            say "verified: attested by ${REPO}'s release workflow."
+    have cosign || have gh || return 1
+
+    download "$_bundle_url" "$_bundle" 2>/dev/null || {
+        say "no attestation bundle at ${_bundle_url}; using the checksum root."
+        return 1
+    }
+
+    if have cosign; then
+        say "verifying build provenance with cosign (Sigstore, offline)..."
+        if cosign verify-blob-attestation \
+            --new-bundle-format \
+            --bundle "$_bundle" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            --certificate-identity-regexp "$PROVENANCE_IDENTITY_RE" \
+            "$_archive" >/dev/null 2>&1; then
+            say "verified: attested by ${REPO}'s release workflow (cosign)."
             return 0
         fi
-        say "attestation not verifiable here; falling back to checksum."
+        say "cosign could not verify the attestation; trying the next root."
+    fi
+
+    if have gh; then
+        say "verifying build provenance with gh (Sigstore, offline)..."
+        if gh attestation verify "$_archive" --bundle "$_bundle" --repo "$REPO" \
+            >/dev/null 2>&1; then
+            say "verified: attested by ${REPO}'s release workflow (gh)."
+            return 0
+        fi
+        say "gh could not verify the attestation; trying the next root."
+    fi
+
+    return 1
+}
+
+# Verify the downloaded archive against a trust root that is INDEPENDENT of the
+# (possibly mirrored) source it was downloaded from. Preferred: the Sigstore
+# build-provenance bundle (see verify_sigstore). Fallback: a SHA-256 checksum
+# fetched from canonical GitHub (never the mirror). Aborts if neither root
+# vouches for the archive, so a tampered mirror can never yield an installed
+# binary.
+verify_archive() {
+    _archive="$1"       # local path to the downloaded archive
+    _bundle_url="$2"    # Sigstore bundle URL (served with the archive)
+    _sum_url="$3"       # checksum URL on the canonical trust root
+
+    if verify_sigstore "$_archive" "$_bundle_url"; then
+        return 0
     fi
 
     say "verifying SHA-256 checksum from ${_sum_url}..."
@@ -251,16 +304,22 @@ main() {
     # The release action names the checksum asset by replacing the archive
     # extension with `.sha256` (not appending), e.g. llmlint-v0.1.0-<t>.sha256.
     sumfile="${BIN}-${version}-${TARGET}.sha256"
+    # The release workflow publishes the Sigstore bundle beside the archive.
+    bundlefile="${BIN}-${version}-${TARGET}.sigstore.json"
     archive_url="${archive_base}/${version}/${archive}"
+    bundle_url="${archive_base}/${version}/${bundlefile}"
     sum_url="${checksum_base}/${version}/${sumfile}"
 
     if [ -n "$release_base" ]; then
         say "archive source: ${archive_base} (mirror)"
-        if [ "$checksum_base" = "$archive_base" ] && ! have gh; then
-            say "WARNING: the checksum shares the mirror's origin and 'gh' is not"
-            say "         installed, so verification is not independent of the"
-            say "         mirror. Install 'gh' or leave LLMLINT_CHECKSUM_BASE_URL"
-            say "         at its canonical GitHub default for an independent root."
+        # The checksum root is only independent of the mirror when it lives
+        # elsewhere; the Sigstore bundle is independent regardless (its signature
+        # is bound to the release workflow), so a verifier lifts this concern.
+        if [ "$checksum_base" = "$archive_base" ] && ! have cosign && ! have gh; then
+            say "WARNING: the checksum shares the mirror's origin and no Sigstore"
+            say "         verifier (cosign or gh) is installed, so verification is"
+            say "         not independent of the mirror. Install 'cosign', or leave"
+            say "         LLMLINT_CHECKSUM_BASE_URL at its canonical GitHub default."
         fi
     fi
 
@@ -272,7 +331,7 @@ main() {
     download "${archive_url}" "${tmp}/${archive}" \
         || err "download failed: ${archive_url}"
 
-    verify_archive "${tmp}/${archive}" "${sum_url}"
+    verify_archive "${tmp}/${archive}" "${bundle_url}" "${sum_url}"
 
     mkdir -p "${tmp}/unpack"
     extract "${tmp}/${archive}" "${tmp}/unpack"
