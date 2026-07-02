@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nickderobertis/llmlint/compare/v0.2.32...v0.3.0) - 2026-07-02
+
+### Fixed
+
+- [**breaking**] scope agents to their subtree and remove agent.files ([#99](https://github.com/nickderobertis/llmlint/pull/99))
+
 ## [0.2.32](https://github.com/nickderobertis/llmlint/compare/v0.2.31...v0.2.32) - 2026-07-02
 
 ### Added
