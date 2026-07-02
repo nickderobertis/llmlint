@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.2.32](https://github.com/nickderobertis/llmlint/compare/v0.2.31...v0.2.32) - 2026-07-02
+
+### Added
+
+- *(config-lint)* flag verbose rule descriptions and relevance conditions ([#97](https://github.com/nickderobertis/llmlint/pull/97))
+
 ## [0.2.31](https://github.com/nickderobertis/llmlint/compare/v0.2.30...v0.2.31) - 2026-07-01
 
 ### Added
