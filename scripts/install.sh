@@ -32,15 +32,19 @@
 #   1. Sigstore build-provenance attestation (preferred). Each release ships a
 #      `.sigstore.json` bundle beside the archive; when `cosign` (or `gh`) is
 #      present the bundle is verified OFFLINE against the keyless signature bound
-#      to this repo's release workflow — proof the archive was built by us, which
-#      a mirror cannot forge. Because the bundle is served alongside the archive
-#      (from the mirror), this needs no GitHub API and works behind a mirror that
-#      can't reach github.com. No key or secret required.
-#   2. SHA-256 checksum from canonical GitHub (fallback, when no verifier is
+#      to this repo's release workflow. The trusted digest comes from the SIGNED
+#      attestation itself — no checksum file is consulted — so a mirror cannot
+#      forge it. Served alongside the archive (from the mirror), it needs no
+#      GitHub API and works behind a mirror that can't reach github.com. No key
+#      or secret required.
+#   2. SHA-256 checksum from canonical GitHub (fallback, only when no verifier is
 #      installed). The `.sha256` is fetched from the release on github.com, NOT
-#      from the mirror, so a tampered mirror cannot also serve a matching tampered
-#      checksum.
-# If neither root can vouch for the archive, the install aborts.
+#      from the mirror. A checksum that shares the mirror's origin is no trust
+#      root at all — the mirror would serve a matching tampered checksum — so the
+#      installer REFUSES it (install `cosign` instead) rather than trust the
+#      mirror to vouch for its own download.
+# If nothing independent of the mirror can vouch for the archive, the install
+# aborts.
 
 set -eu
 
@@ -220,17 +224,28 @@ verify_sigstore() {
 
 # Verify the downloaded archive against a trust root that is INDEPENDENT of the
 # (possibly mirrored) source it was downloaded from. Preferred: the Sigstore
-# build-provenance bundle (see verify_sigstore). Fallback: a SHA-256 checksum
-# fetched from canonical GitHub (never the mirror). Aborts if neither root
-# vouches for the archive, so a tampered mirror can never yield an installed
-# binary.
+# build-provenance bundle (see verify_sigstore) — there the trusted digest comes
+# from the signed attestation itself, so no checksum file is trusted at all.
+# Fallback (only when no verifier is installed): a SHA-256 checksum from a root
+# that is NOT the mirror. A checksum that shares the mirror's origin is no trust
+# root at all — a tampered mirror would serve a matching tampered checksum — so
+# we refuse it rather than fetch it. Aborts if nothing independent vouches for
+# the archive, so a tampered mirror can never yield an installed binary.
 verify_archive() {
     _archive="$1"       # local path to the downloaded archive
     _bundle_url="$2"    # Sigstore bundle URL (served with the archive)
-    _sum_url="$3"       # checksum URL on the canonical trust root
+    _sum_url="$3"       # checksum URL on the independent trust root
+    _sum_trusted="$4"   # "yes" iff _sum_url is independent of the mirror
 
     if verify_sigstore "$_archive" "$_bundle_url"; then
         return 0
+    fi
+
+    if [ "$_sum_trusted" != "yes" ]; then
+        err "cannot verify $(basename "$_archive") independently of the mirror:\
+ no Sigstore verifier vouched for it (install 'cosign'), and the only checksum\
+ shares the mirror's origin so it is not an independent trust root. Install\
+ cosign, or set LLMLINT_CHECKSUM_BASE_URL to a root the mirror does not control."
     fi
 
     say "verifying SHA-256 checksum from ${_sum_url}..."
@@ -310,18 +325,17 @@ main() {
     bundle_url="${archive_base}/${version}/${bundlefile}"
     sum_url="${checksum_base}/${version}/${sumfile}"
 
-    if [ -n "$release_base" ]; then
-        say "archive source: ${archive_base} (mirror)"
-        # The checksum root is only independent of the mirror when it lives
-        # elsewhere; the Sigstore bundle is independent regardless (its signature
-        # is bound to the release workflow), so a verifier lifts this concern.
-        if [ "$checksum_base" = "$archive_base" ] && ! have cosign && ! have gh; then
-            say "WARNING: the checksum shares the mirror's origin and no Sigstore"
-            say "         verifier (cosign or gh) is installed, so verification is"
-            say "         not independent of the mirror. Install 'cosign', or leave"
-            say "         LLMLINT_CHECKSUM_BASE_URL at its canonical GitHub default."
-        fi
+    # The checksum root is an independent trust root only when the archive did
+    # not come from a mirror, or the checksum lives somewhere other than that
+    # mirror. When it isn't, the Sigstore bundle (whose signed digest a mirror
+    # can't forge) is the only trustworthy root; verify_archive refuses a
+    # mirror-origin checksum rather than trust the mirror to vouch for itself.
+    if [ -z "$release_base" ] || [ "$checksum_base" != "$archive_base" ]; then
+        sum_trusted="yes"
+    else
+        sum_trusted="no"
     fi
+    [ -z "$release_base" ] || say "archive source: ${archive_base} (mirror)"
 
     tmp="$(mktemp -d 2>/dev/null || mktemp -d -t llmlint)" \
         || err "could not create a temporary directory"
@@ -331,7 +345,7 @@ main() {
     download "${archive_url}" "${tmp}/${archive}" \
         || err "download failed: ${archive_url}"
 
-    verify_archive "${tmp}/${archive}" "${bundle_url}" "${sum_url}"
+    verify_archive "${tmp}/${archive}" "${bundle_url}" "${sum_url}" "${sum_trusted}"
 
     mkdir -p "${tmp}/unpack"
     extract "${tmp}/${archive}" "${tmp}/unpack"

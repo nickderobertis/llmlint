@@ -278,12 +278,17 @@ it. The harness reads target files on-demand with its own tools.
   release-proxy mirror (`LLMLINT_RELEASE_BASE_URL` / `--base-url`) for the archive,
   verify integrity **offline** against a root the mirror does not control:
   `cosign verify-blob-attestation --new-bundle-format --bundle …` (preferred,
-  vendor-neutral, no GitHub API), else `gh attestation verify … --bundle …`, else
-  the `.sha256` fetched from **canonical GitHub** (`LLMLINT_CHECKSUM_BASE_URL`
-  overrides that root) — never the mirror, so a tampered mirror cannot serve a
-  matching tampered checksum. Verification fails safe: any verifier/tooling error
-  falls through to the next root, and the install aborts only when none can vouch
-  for the archive (a real tamper is still rejected). The cosign identity is pinned
+  vendor-neutral, no GitHub API — the trusted digest is the *signed* attestation
+  subject, so no checksum file is consulted on this path), else
+  `gh attestation verify … --bundle …`, else the `.sha256` fetched from an
+  independent root (default **canonical GitHub**; `LLMLINT_CHECKSUM_BASE_URL`
+  overrides it). The checksum fallback **refuses a mirror-origin checksum**
+  (`sum_trusted`): a checksum sharing the archive's mirror origin is no trust root
+  — the mirror would serve a matching tampered checksum — so with no verifier and
+  no independent checksum root the install aborts rather than trust the mirror to
+  vouch for itself. Verification otherwise fails safe: any verifier/tooling error
+  falls through to the next root, and it aborts only when nothing independent can
+  vouch for the archive (a real tamper is still rejected). The cosign identity is pinned
   to the release workflow (`PROVENANCE_IDENTITY_RE` + `OIDC_ISSUER` in
   `install.sh`); the exact cosign invocation should be confirmed against the first
   real signed release. The attestation `subject-path` names the archive the

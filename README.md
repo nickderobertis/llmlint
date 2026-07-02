@@ -113,11 +113,13 @@ The archive comes from the mirror, but its integrity is checked against a trust
 root the mirror does not control. If [`cosign`](https://github.com/sigstore/cosign)
 (or [`gh`](https://cli.github.com/)) is installed, the installer downloads the
 `.sigstore.json` bundle from the mirror and verifies it **offline** — no GitHub
-API — against the keyless signature bound to this repo's release workflow, so a
-mirror cannot forge it. Otherwise it falls back to fetching the `.sha256` from
-canonical GitHub (never the mirror, so a tampered mirror cannot serve a matching
-tampered checksum; `LLMLINT_CHECKSUM_BASE_URL` overrides that root). If neither
-root can vouch for the archive, the install aborts.
+API — against the keyless signature bound to this repo's release workflow; the
+trusted digest comes from the *signed* attestation, so a mirror cannot forge it.
+With no verifier installed it falls back to a `.sha256` fetched from canonical
+GitHub (`LLMLINT_CHECKSUM_BASE_URL` overrides that root) — but it **refuses** a
+checksum that shares the mirror's origin, since a tampered mirror would just serve
+a matching tampered checksum. If nothing independent of the mirror can vouch for
+the archive, the install aborts (install `cosign`).
 
 You also need a coding harness installed and authenticated (e.g. Claude Code).
 See `oneharness list` / `oneharness detect --all`.
