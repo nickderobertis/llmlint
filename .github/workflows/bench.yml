@@ -8,10 +8,28 @@ name: Performance
 # reports rather than blocks — keep it out of branch-protection's required
 # checks. (The hard, deterministic gate is ci.yml / `just check`.)
 
+# Only the inputs that can actually move the numbers trigger a run: the Rust
+# source and engine benches, the build inputs (deps/toolchain change codegen),
+# the two bench harness scripts + the justfile recipes they call, and the
+# mock-oneharness whose child-spawn cost is inside every `lint` timing. A docs-,
+# config-, or workflow-only change can't shift performance, so it skips the suite
+# — including edits to this file itself; verify a workflow change with
+# workflow_dispatch instead. Safe to scope because this job is informational — it
+# is NOT a required check, so a paths-filtered skip never blocks a merge.
 on:
   push:
     branches: [main]
+    paths: &perf-paths
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'scripts/bench*.sh'
+      - 'tests/support/mock_oneharness.rs'
+      - 'justfile'
   pull_request:
+    paths: *perf-paths
   workflow_dispatch:
 
 # Read the code; write PR comments. The comment step is additionally guarded to
