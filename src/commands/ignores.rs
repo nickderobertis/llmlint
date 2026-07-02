@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::domain::config::{Agent, Config, RelevanceMode, Rule};
+use crate::domain::config::{Config, RelevanceMode, Rule};
 use crate::domain::ignore;
 use crate::errors::{Error, Result};
 use crate::io::configfs::{self, RuleScope};
@@ -47,8 +47,6 @@ pub fn target_files(
         if matches!(rule.relevance_mode(), RelevanceMode::Never) {
             continue;
         }
-        let agent_name = rule.agent.clone().unwrap_or_else(|| "default".to_string());
-        let agent = config.agent_or_default(&agent_name);
         let fallback;
         let scope = match scopes.get(&rule.name) {
             Some(s) => s,
@@ -60,7 +58,7 @@ pub fn target_files(
                 &fallback
             }
         };
-        for f in resolve_files(cwd, rule, &agent, cli_files, scope)? {
+        for f in resolve_files(cwd, rule, cli_files, scope)? {
             out.insert(f);
         }
     }
@@ -68,21 +66,17 @@ pub fn target_files(
 }
 
 /// The target files for a single rule, applying the same precedence a lint run
-/// uses: a per-rule `files` filter wins, then the agent's, then explicit CLI
-/// files, then the rule's [`RuleScope`] fallback filter. Glob filters root at the
-/// rule's config directory (`scope.dir`) so a nested config's globs mean "relative
-/// to me", while resolved paths stay relative to `cwd`.
+/// uses: a per-rule `files` filter wins, then explicit CLI files, then the rule's
+/// [`RuleScope`] fallback filter. Glob filters root at the rule's config directory
+/// (`scope.dir`) so a nested config's globs mean "relative to me", while resolved
+/// paths stay relative to `cwd`.
 pub fn resolve_files(
     cwd: &Path,
     rule: &Rule,
-    agent: &Agent,
     cli_files: &[PathBuf],
     scope: &RuleScope,
 ) -> Result<Vec<PathBuf>> {
     if let Some(f) = &rule.files {
-        return files::resolve_scoped(&scope.dir, cwd, f);
-    }
-    if let Some(f) = &agent.files {
         return files::resolve_scoped(&scope.dir, cwd, f);
     }
     if !cli_files.is_empty() {

@@ -309,6 +309,15 @@ it. The harness reads target files on-demand with its own tools.
   same way: a subtree rule traces to its own file, and a descendant's settings
   never appear as a session setting's source (they don't take effect). Rule names
   share one namespace (override spans the chain; a real duplicate is an error).
+  Agents share one namespace too, but a **subtree agent may only be used by rules
+  under its own directory**: a rule whose config sits *outside* the agent's
+  directory picking up that agent (its harness/model/prompt) would let a nested
+  folder silently retune how an outside rule is judged, so `load_discovered`
+  rejects it with an exit-2 error (`agent_origin` tracks each winning agent's
+  defining dir + descendant flag). This closes the same descendant-vs-session leak
+  for agents that the settings gate closes for scalars. (There is **no
+  `agent.files`** — an agent scopes reviewer context/harness/model, not files;
+  per-rule `files` is the one file-scoping knob.)
   The cascade is **relevance-gated by the linted files** (`load_with_targets`):
   with explicit `FILES` on the command line, a subtree config is loaded only when a
   passed file lives under its directory — so linting one area never loads (nor
@@ -334,7 +343,13 @@ it. The harness reads target files on-demand with its own tools.
   agents stay deterministic in `validate` and are deliberately not re-checked
   here. Every rule sets `require_line_attribution: true`, so a finding always cites
   the offending rule's file+line (and, dogfooding the plugin, demonstrates that
-  best practice). Two entry points, one rule set: consumers **include it as a
+  best practice). The rules run on the **default agent** (no dedicated agent): a
+  dedicated agent would force a separate judge invocation (batching is per-agent),
+  doubling model usage for a small consumer — on the default agent they batch with
+  the consumer's own rules into one call. Each rule scopes itself to config files
+  with its own `files` filter (shared via a `&config_files` YAML anchor, since
+  `agent.files` no longer exists), so the plugin always lints configuration, not
+  source. Two entry points, one rule set: consumers **include it as a
   plugin** (the `CONFIG_LINT_URL`, on by default in `llmlint init`; resolves
   offline from the embedded copy via `assets::bundled_url`, so no network/cache and
   no pin bump to stay current), **or** run **`llmlint lint-config`**

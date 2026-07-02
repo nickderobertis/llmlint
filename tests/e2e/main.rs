@@ -3470,6 +3470,62 @@ fn cascade_subtree_config_with_no_files_block_lints_its_whole_subtree() {
 }
 
 #[test]
+fn subtree_agent_used_by_an_outside_rule_is_a_footgun_error() {
+    // A subtree config's agent must not silently retune how a rule OUTSIDE that
+    // subtree is judged. Here a root rule references an agent defined only in the
+    // subtree — a hard exit-2 error, naming the rule, the agent, and the subtree
+    // config, rather than letting the nested folder change linting for the root.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: root_rule, description: \"{RULE}\", agent: shared }}\n"
+        ),
+    );
+    p.write(
+        "frontend/llmlint.yml",
+        "agents:\n  shared:\n    model: cheap\n",
+    );
+    p.write("top.rs", "// code\n");
+
+    p.lint()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("root_rule"))
+        .stderr(predicate::str::contains("shared"))
+        .stderr(predicate::str::contains("subtree config"));
+}
+
+#[test]
+fn subtree_agent_used_by_its_own_subtree_rule_is_allowed() {
+    // The legitimate case the footgun guard must NOT break: a subtree rule using an
+    // agent defined in the same subtree resolves cleanly (the agent lives at/above
+    // the rule).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nrules:\n  - {{ name: root_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "frontend/llmlint.yml",
+        &format!(
+            "agents:\n  area:\n    harness: claude-code\nrules:\n  \
+             - {{ name: area_rule, description: \"{RULE}\", agent: area }}\n"
+        ),
+    );
+    p.write("top.rs", "// code\n");
+    p.write("frontend/app.rs", "// area code\n");
+    let verdicts = p.write_verdicts(r#"{"root_rule": true, "area_rule": true}"#);
+
+    p.lint()
+        .arg("--rule")
+        .arg("area_rule")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+}
+
+#[test]
 fn nested_discovery_traces_sources_up_and_down_the_tree() {
     // The intersection of nested discovery (walk up + cascade down) with source
     // tracking: `config --sources` and `where` must trace every item to the exact
@@ -4024,7 +4080,7 @@ fn timeout_flag_is_forwarded_to_oneharness() {
     assert_eq!(timeout_val, "7");
 }
 
-// ---- per-rule / per-agent files precedence over global globs --------------
+// ---- per-rule files precedence over global globs --------------------------
 
 #[test]
 fn per_rule_files_override_global_globs() {
@@ -4058,7 +4114,10 @@ fn per_rule_files_override_global_globs() {
 }
 
 #[test]
-fn per_agent_files_override_global_globs() {
+fn agent_files_is_a_removed_field() {
+    // `agent.files` was removed (it duplicated per-rule `files` and let a subtree
+    // agent silently retarget outside rules). A config that still sets it is a
+    // clear exit-2 error, not a silent accept.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -4069,24 +4128,11 @@ fn per_agent_files_override_global_globs() {
         ),
     );
     p.write("src/app.rs", "// app\n");
-    p.write("docs/guide.md", "# guide\n");
-    let verdicts = p.write_verdicts(r#"{"doc_rule": true}"#);
-    let dump = p.path().join("system.txt");
 
     p.lint()
-        .arg("--max-parallel")
-        .arg("1")
-        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
-        .env("LLMLINT_MOCK_DUMP", &dump)
         .assert()
-        .success();
-
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("docs/guide.md"), "system:\n{system}");
-    assert!(
-        !system.contains("src/app.rs"),
-        "per-agent files should override the global glob:\n{system}"
-    );
+        .code(2)
+        .stderr(predicate::str::contains("files"));
 }
 
 // ---- model passthrough (global default + per-agent override) --------------

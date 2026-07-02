@@ -201,18 +201,6 @@
             "null"
           ],
           "default": null
-        },
-        "files": {
-          "description": "Override the target files for this agent's rules.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FileFilter"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       },
       "additionalProperties": false

@@ -94,7 +94,6 @@ pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs)
             RelevanceMode::Conditional(cond) => Some(cond),
         };
         let agent_name = rule.agent.clone().unwrap_or_else(|| "default".to_string());
-        let agent = config.agent_or_default(&agent_name);
         let fallback;
         let scope = match scopes.get(&rule.name) {
             Some(s) => s,
@@ -107,7 +106,7 @@ pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs)
                 &fallback
             }
         };
-        let target = ignores::resolve_files(&cwd, rule, &agent, &cli_files, scope)?;
+        let target = ignores::resolve_files(&cwd, rule, &cli_files, scope)?;
         resolved.push(plan::ResolvedRule {
             name: rule.name.clone(),
             description: rule.description.clone(),

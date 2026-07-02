@@ -108,12 +108,17 @@ logic is also covered hermetically via `file://` plugins.
 - `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
   a serial wave fails to rendezvous, the negative control.
 - include/exclude globbing selects the right files; explicit CLI files override
-  the config globs; per-rule and per-agent `files` override the global globs. A
-  config with rules but **no `files` block** lints every file in the tree from
-  `cwd` (the repo-wide default), not zero — and that default is still narrowed by
-  `exclude` and the gitignore-aware walk (proven in a real git repo). At a cascade
-  scope, a subtree config with no `files` block lints its whole subtree, still
-  bounded to its own directory.
+  the config globs; per-rule `files` override the global globs. A config with
+  rules but **no `files` block** lints every file in the tree from `cwd` (the
+  repo-wide default), not zero — and that default is still narrowed by `exclude`
+  and the gitignore-aware walk (proven in a real git repo). At a cascade scope, a
+  subtree config with no `files` block lints its whole subtree, still bounded to
+  its own directory. `agent.files` was **removed** — a config that still sets it
+  is a clear exit-2 error (it duplicated per-rule `files`).
+- Agent-namespace footgun guard: a subtree config's agent used by a rule **outside**
+  that subtree is a hard exit-2 error (naming the rule, agent, and subtree config),
+  so a nested folder can't silently retune how an outside rule is judged; the
+  legitimate case — a subtree rule using an agent from its own subtree — still runs.
 - `--diff` adds each changed target file's diff to the judge prompt so it reviews
   only the changed lines, exercised end to end against **real git repos**. Bare
   `--diff` and the explicit `--diff git` both inline each changed file's unified
@@ -176,7 +181,7 @@ logic is also covered hermetically via `file://` plugins.
   `--cwd`).
 - Nested-discovery edges: a subtree rule's *own* `files` glob roots at the subtree
   directory (a per-rule `*.md` reaches that subtree's markdown, not a `.md` above
-  it), proving per-rule/agent `files` scope like the config-level default; running
+  it), proving per-rule `files` scope like the config-level default; running
   from a directory whose only config is in a subtree lints that subtree (not a
   ConfigNotFound); and two sibling subtrees that define the same rule name without
   `override` is a clear exit-2 "duplicate rule name" error (one namespace across
