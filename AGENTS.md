@@ -268,6 +268,20 @@ it. The harness reads target files on-demand with its own tools.
   crates.io sparse index for the new version and `cargo install`s + smoke-tests
   it from the registry — a post-publish sanity check (a failure means a broken
   release, not a blocked publish).
+- **Release signing + mirror-configurable install**: the `upload` job attaches a
+  keyless [Sigstore](https://www.sigstore.dev/) build-provenance attestation to
+  each archive (`actions/attest-build-provenance`, bound to the GitHub Actions
+  OIDC identity — `id-token: write` + `attestations: write`, no secret/key). This
+  lets `scripts/install.sh` be pointed at a release-proxy mirror
+  (`LLMLINT_RELEASE_BASE_URL` / `--base-url`) for the archive while still verifying
+  integrity against a root the mirror does not control: `gh attestation verify`
+  when `gh` is present (preferred), else the `.sha256` fetched from **canonical
+  GitHub** (`LLMLINT_CHECKSUM_BASE_URL` overrides the root) — never the mirror, so
+  a tampered mirror cannot serve a matching tampered checksum. The install aborts
+  if neither root can vouch for the archive. The attestation `subject-path` names
+  the archive the `taiki-e/upload-rust-binary-action` step leaves in the workspace
+  (`llmlint-<tag>-<target>.<ext>`), so keep the matrix `ext` in sync with the
+  targets when the build matrix changes.
 
 ## Invariants (non-negotiable)
 

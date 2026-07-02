@@ -95,9 +95,27 @@ llmlint doctor      # confirms oneharness is reachable
 
 The installer honors `LLMLINT_VERSION` / `LLMLINT_INSTALL_DIR` (or the `--version`
 / `--to` flags), works on Linux, macOS, and Windows under a POSIX shell
-(Git Bash / MSYS / WSL), and refuses an archive whose checksum does not match.
-Each tagged release publishes prebuilt, checksummed binaries for those
-platforms; on native Windows PowerShell, use `cargo install llmlint --locked`.
+(Git Bash / MSYS / WSL), and refuses a binary it cannot verify. Each tagged
+release publishes prebuilt binaries for those platforms, each with a SHA-256
+checksum and a keyless [Sigstore](https://www.sigstore.dev/) build-provenance
+attestation; on native Windows PowerShell, use `cargo install llmlint --locked`.
+
+**Behind a mirror.** In a network that can reach a release-proxy mirror but not
+`github.com`, point the archive download at it:
+
+```console
+LLMLINT_RELEASE_BASE_URL=https://mirror.example/llmlint \
+  curl -fsSL https://raw.githubusercontent.com/nickderobertis/llmlint/main/scripts/install.sh | sh
+```
+
+The archive comes from the mirror, but its integrity is checked against a trust
+root the mirror does not control — so a tampered mirror cannot serve a matching
+tampered checksum. If [`gh`](https://cli.github.com/) is installed, the installer
+verifies the Sigstore build-provenance attestation
+(`gh attestation verify --repo nickderobertis/llmlint`), proving the archive was
+built by this repo's release workflow. Otherwise it falls back to fetching the
+`.sha256` from canonical GitHub (`LLMLINT_CHECKSUM_BASE_URL` overrides that root).
+If neither root can vouch for the archive, the install aborts.
 
 You also need a coding harness installed and authenticated (e.g. Claude Code).
 See `oneharness list` / `oneharness detect --all`.

@@ -66,21 +66,33 @@ jobs:
     needs: test
     permissions:
       contents: write
+      # Keyless Sigstore signing: `id-token` mints the GitHub Actions OIDC
+      # identity the provenance is bound to; `attestations` records it. No repo
+      # secret or long-lived key is involved.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
         include:
           # Native runners per target so nothing needs cross-compilation.
+          # `ext` names the archive the upload action leaves in the workspace,
+          # which the attestation step then signs.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            ext: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
+            ext: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
+            ext: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
+            ext: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            ext: zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +105,15 @@ jobs:
           checksum: sha256
           include: README.md,LICENSE,CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
+      # Sign a Sigstore build-provenance attestation for the archive. The upload
+      # action leaves the archive at the workspace root; attesting it here lets
+      # `gh attestation verify` (used by scripts/install.sh) prove the artifact
+      # was built by this workflow — a trust root independent of any mirror the
+      # archive might later be downloaded from. Keyless: no secret required.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: llmlint-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.ext }}
 
   # crates.io publishing: runs whenever the CARGO_REGISTRY_TOKEN secret is set
   # (see the `guard` job). Gated on the same `test` job as the binary upload (so
