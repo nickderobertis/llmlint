@@ -10,8 +10,9 @@ not a replacement: keep using deterministic tools for everything they can alread
 check, and reach for llmlint only for the judgment calls.
 
 Each check is a **rule**: a statement about your code that is judged `true`
-(holds) or `false` (a violation). llmlint batches your rules, drives a real coding
-harness (Claude Code, Codex, Cursor, …) through
+(holds) or `false` (a violation). A single fast Rust binary, llmlint **batches**
+your rules into as few harness calls as it can, then drives a real coding harness
+(Claude Code, Codex, Cursor, …) through
 [`oneharness`](https://github.com/nickderobertis/oneharness) to read the relevant
 files and decide, and reports the violations — with file and line numbers where
 they can be pinned down. Because the gate is "just a config file," llmlint drops
@@ -339,7 +340,8 @@ Precedence, lowest to highest: the session default `rationales` (default `true`)
 In the human report, a rule's rationale is shown for every **failure** by
 default, and for **every evaluated rule** at `-v`. The default prompt template
 asks for rationales that are terse and pithy — the fewest tokens that still cite
-the evidence — so the token cost stays small.
+the evidence — so the token cost stays small. See
+[Cost vs performance](#cost-vs-performance-token-usage) to trade it for a cheaper run.
 
 For a **multi-judge** rule (`judges: N`), the report and `--format json` show
 **each judge's** result and rationale, not just one representative — so you can
@@ -455,12 +457,43 @@ reason-less directive in milliseconds. The full `llmlint` run performs the same
 check as a pre-flight, so the two never disagree — `check-ignores` just gives you
 the fast feedback without waiting on (or paying for) a judge.
 
+### Batching
+
+Model calls are the slow, paid part, so llmlint packs rules into as few as it can.
+Rules group **by agent**, then split into batches of at most `batch_size`
+(default 20) — one `oneharness run` per batch, over the union of its files, each
+rule scoped to its own files in the prompt. Multi-judge rules fan out per judge
+(judge `j` runs the rules with `judges >= j`). Fewer, fuller batches, fewer
+round-trips.
+
 ### Judges and voting
 
 `judges: N` runs a rule through `N` independent judges and takes the **majority**
 verdict. `N` must be **odd** (1, 3, 5, …) so the vote can't tie — an even count is
 a config error. Only rules that opt in pay the extra cost: judge 1 runs all rules,
 judge 2 only the rules with `judges >= 2`, and so on.
+
+### Cost vs performance (token usage)
+
+Defaults favor **judgment quality** over cost: rationales on, a thorough prompt,
+every file read in full. Trade some back for fewer tokens, roughly by impact:
+
+- **`judges`** — each extra judge is a full extra pass ([Judges](#judges-and-voting)).
+  Keep it at 1 except for high-stakes rules.
+- **`rationales: false`** — drops the per-verdict justification, output tokens on
+  *every* rule ([Rationales](#rationales)). Re-enable `rationale: true` per rule;
+  `--no-rationales` for one run.
+- **Fewer agents, bigger `batch_size`** — every batch re-sends the prompt and
+  re-reads its files ([Batching](#batching)). Merge rules onto one agent; split
+  only for a different harness, model, or reviewer context.
+- **Read less** — narrow `files.include`/`exclude`; `--diff` reviews only changed
+  lines; `FILES`/`--rule`/`--agent` lint a subset.
+- **`require_line_attribution`** off unless you need pinned locations — on can
+  trigger localize re-prompts.
+- **`oneharness.schema_max_retries`** — caps re-asks on a schema-invalid answer.
+- **`model`** — dollars, not tokens: a cheaper model per agent or run.
+
+`llmlint check-ignores` spends no tokens at all.
 
 ### oneharness passthrough
 
