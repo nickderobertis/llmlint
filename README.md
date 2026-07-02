@@ -488,17 +488,10 @@ Roughly in impact order:
   its files. Merge rules onto one agent and raise `batch_size` (default 20) to
   pack them into fewer calls; split agents only for genuinely different reviewer
   context, harness, or model.
-- **`relevance`.** `relevance: false` disables a rule with **no judge call at
-  all**; a natural-language condition lets the judge stop *before* the verdict
-  when the change doesn't apply ([Relevance](#relevance)).
 - **Scope what's read.** Narrow `files.include` / `files.exclude` (top-level or
   per-agent/per-rule) so the harness reads less code; `--diff [--diff-base <ref>]`
   focuses each verdict on the changed lines; explicit `FILES`, `--rule`, or
   `--agent` lint only a subset.
-- **A leaner `prompt_template`** is fewer input tokens per call — the default is
-  deliberately thorough. Its relevance / rationale / line-attribution guidance
-  already renders **only** when some rule uses that feature, so unused features
-  cost nothing.
 - **Leave `require_line_attribution` off** unless you need pinned locations —
   turning it on tightens the schema and can trigger re-prompts to localize.
 - **`oneharness.schema_max_retries`** bounds how many times a schema-invalid
@@ -508,8 +501,7 @@ Roughly in impact order:
   whole run) at a cheaper model for rules that don't need the strongest one.
 
 Deterministic checks never spend a token: `llmlint check-ignores` validates
-ignore directives with no model call, and a `relevance: false` rule never reaches
-one.
+ignore directives with no model call.
 
 ### oneharness passthrough
 
