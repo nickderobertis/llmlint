@@ -336,12 +336,8 @@ Precedence, lowest to highest: the session default `rationales` (default `true`)
 In the human report, a rule's rationale is shown for every **failure** by
 default, and for **every evaluated rule** at `-v`. The default prompt template
 asks for rationales that are terse and pithy — the fewest tokens that still cite
-the evidence — so the token cost stays small.
-
-**Keep agents few.** Because rules batch per agent (see [Batching](#batching)),
-splitting them across many agents multiplies the harness calls — and their
-tokens — even over the same files. Reach for a second agent only when a rule
-needs different reviewer context, harness, or model, not to organize the config.
+the evidence — so the token cost stays small. To trade rationales (and the other
+defaults) for a cheaper run, see [Cost vs performance](#cost-vs-performance-token-usage).
 
 For a **multi-judge** rule (`judges: N`), the report and `--format json` show
 **each judge's** result and rationale, not just one representative — so you can
@@ -473,6 +469,47 @@ round-trips.
 verdict. `N` must be **odd** (1, 3, 5, …) so the vote can't tie — an even count is
 a config error. Only rules that opt in pay the extra cost: judge 1 runs all rules,
 judge 2 only the rules with `judges >= 2`, and so on.
+
+### Cost vs performance (token usage)
+
+llmlint's defaults favor **judgment quality**, not the cheapest run: rationales
+on, a thorough prompt, every file reviewed in full. Each knob below trades some of
+that back for fewer tokens — reach for them when a run is too slow or costly.
+Roughly in impact order:
+
+- **Keep `judges` at 1.** Every extra judge is a full extra pass of that rule
+  ([Judges and voting](#judges-and-voting)). Raise it only for the few
+  high-stakes rules that need a vote; leave the rest at the default.
+- **`rationales: false`** drops the per-verdict justification — output tokens on
+  *every* rule ([Rationales](#rationales)). Set it session-wide and re-enable
+  `rationale: true` on just the rules you audit (`--no-rationales` for one run).
+- **Fewer agents, bigger `batch_size`.** Rules batch **per agent**
+  ([Batching](#batching)), and each batch re-sends the system prompt and re-reads
+  its files. Merge rules onto one agent and raise `batch_size` (default 20) to
+  pack them into fewer calls; split agents only for genuinely different reviewer
+  context, harness, or model.
+- **`relevance`.** `relevance: false` disables a rule with **no judge call at
+  all**; a natural-language condition lets the judge stop *before* the verdict
+  when the change doesn't apply ([Relevance](#relevance)).
+- **Scope what's read.** Narrow `files.include` / `files.exclude` (top-level or
+  per-agent/per-rule) so the harness reads less code; `--diff [--diff-base <ref>]`
+  focuses each verdict on the changed lines; explicit `FILES`, `--rule`, or
+  `--agent` lint only a subset.
+- **A leaner `prompt_template`** is fewer input tokens per call — the default is
+  deliberately thorough. Its relevance / rationale / line-attribution guidance
+  already renders **only** when some rule uses that feature, so unused features
+  cost nothing.
+- **Leave `require_line_attribution` off** unless you need pinned locations —
+  turning it on tightens the schema and can trigger re-prompts to localize.
+- **`oneharness.schema_max_retries`** bounds how many times a schema-invalid
+  answer is re-asked (each retry re-sends the prompt); lower it to cap the worst
+  case.
+- **`model` / `oneharness.model`** is dollars, not tokens: point an agent (or the
+  whole run) at a cheaper model for rules that don't need the strongest one.
+
+Deterministic checks never spend a token: `llmlint check-ignores` validates
+ignore directives with no model call, and a `relevance: false` rule never reaches
+one.
 
 ### oneharness passthrough
 
