@@ -7,27 +7,17 @@
 # identifiers, resolvable agents) are enforced deterministically by llmlint at
 # load time and are intentionally not duplicated here.
 #
+# These rules use the **default agent** on purpose: a dedicated agent would force
+# a separate judge invocation (batching is per-agent), doubling model usage for a
+# small project that just wants these checks. Running on the default agent lets
+# them batch with the consumer's own rules into one call — the per-file
+# applicability keeps each rule scoped to its own files. Each rule scopes itself
+# to config files with its own `files` filter (shared via the `&config_files`
+# YAML anchor), so the plugin always lints configuration, not source, regardless
+# of the CLI's target files.
+#
 # `version` is the published plugin version consumers pin with `@` (e.g. `@1`).
 version: 1
-
-agents:
-  config_lint:
-    # Scope these rules to llmlint config files regardless of the CLI's target
-    # files, so the plugin always lints configuration, not source.
-    files:
-      include:
-        - "**/llmlint.yml"
-        - "**/llmlint.yaml"
-        - "**/.llmlint.yml"
-        - "**/.llmlint.yaml"
-        - "**/*.llmlint.yml"
-        - "**/*.llmlint.yaml"
-    prompt_template: |
-      You are reviewing llmlint configuration files. Each file declares lint
-      `rules`, where every rule has a `name` and a `description`. Evaluate the
-      rules defined in the target config files against the checks below. When a
-      check fails, cite the config file and the line of the offending rule's
-      `name` so the author can jump straight to it.
 
 # Every check localizes its findings to the offending rule (require_line_attribution:
 # true) — a config-lint violation always points at a concrete file + line, which is
@@ -35,7 +25,16 @@ agents:
 # below is phrased to pass its own checks (llmlint dogfoods this plugin).
 rules:
   - name: description_yields_clear_verdict
-    agent: config_lint
+    # The first rule anchors the config-file globs; the others alias it (`*config_files`)
+    # so the scope stays in one place.
+    files: &config_files
+      include:
+        - "**/llmlint.yml"
+        - "**/llmlint.yaml"
+        - "**/.llmlint.yml"
+        - "**/.llmlint.yaml"
+        - "**/*.llmlint.yml"
+        - "**/*.llmlint.yaml"
     require_line_attribution: true
     description: |
       Every lint rule's `description` states one unambiguous property whose truth
@@ -45,7 +44,7 @@ rules:
       exclusive holding and violating conditions.
 
   - name: name_describes_what_the_rule_checks
-    agent: config_lint
+    files: *config_files
     require_line_attribution: true
     description: |
       Every lint rule `name` is a descriptive identifier that conveys the property
@@ -54,7 +53,7 @@ rules:
       that names the same thing the description evaluates.
 
   - name: relevance_scopes_conditional_rules
-    agent: config_lint
+    files: *config_files
     require_line_attribution: true
     description: |
       A lint rule that only applies in some situations expresses that with a
@@ -63,7 +62,7 @@ rules:
       relevant"), keeping the verdict a clean pass/fail.
 
   - name: description_and_relevance_are_concise
-    agent: config_lint
+    files: *config_files
     require_line_attribution: true
     description: |
       Every rule's `description` and any `relevance` condition state their point in

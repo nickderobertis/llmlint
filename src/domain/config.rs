@@ -88,9 +88,6 @@ pub struct Agent {
     /// Extra prompt text appended to the master template before rendering.
     #[serde(default)]
     pub prompt_template: Option<String>,
-    /// Override the target files for this agent's rules.
-    #[serde(default)]
-    pub files: Option<FileFilter>,
 }
 
 /// When a rule should be evaluated. Mirrors the `description`/verdict split: a

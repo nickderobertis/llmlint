@@ -360,6 +360,11 @@ fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
     let mut session = Config::default();
     // Rules paired with their origin scope, in nearest-`cwd`-first order.
     let mut scoped: Vec<(Rule, RuleScope)> = Vec::new();
+    // Where each agent's *winning* definition came from (its directory, whether
+    // that config is a subtree descendant, and its path for diagnostics). Used to
+    // reject a descendant agent leaking into a rule outside its directory — see
+    // the footgun check after the merge.
+    let mut agent_origin: BTreeMap<String, (PathBuf, bool, PathBuf)> = BTreeMap::new();
 
     for unit in &units {
         let mut acc: Option<Config> = None;
@@ -378,12 +383,21 @@ fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
             dir: unit.dir.clone(),
             files: unit_cfg.files.clone(),
         };
-        // Agents from every config; nearest-`cwd` wins on a name clash.
+        // Agents from every config; nearest-`cwd` wins on a name clash. Record the
+        // winner's origin the same way (first write wins) so the footgun check
+        // below sees where each effective agent was actually defined.
         for (name, agent) in &unit_cfg.agents {
+            let inserted = !session.agents.contains_key(name);
             session
                 .agents
                 .entry(name.clone())
                 .or_insert_with(|| agent.clone());
+            if inserted {
+                agent_origin.insert(
+                    name.clone(),
+                    (unit.dir.clone(), unit.is_descendant, unit.path.clone()),
+                );
+            }
         }
         // Session-level settings only from `cwd`-and-up, nearest wins.
         if !unit.is_descendant {
@@ -412,6 +426,46 @@ fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
     session.rules = scoped.into_iter().map(|(rule, _)| rule).collect();
     crate::domain::config::resolve_overrides(&mut session)?;
     scopes.retain(|name, _| session.rules.iter().any(|r| &r.name == name));
+
+    // Footgun guard: a subtree (descendant) config's agent must not silently change
+    // how a rule *outside* that subtree is judged. Agents share one namespace across
+    // the whole cascade (a descendant rule may use a descendant agent), but a rule
+    // whose own config sits outside the agent's directory picking up that agent's
+    // harness/model/prompt would let a nested folder retune linting for files it
+    // doesn't own. Reject it: the agent must live at or above the rule (move it up,
+    // or define one where the rule lives). Session settings are already gated to
+    // `cwd`-and-up; this closes the same leak for the agent namespace.
+    let mut leaks: Vec<String> = Vec::new();
+    for rule in &session.rules {
+        let agent_name = rule.agent.as_deref().unwrap_or("default");
+        let Some((dir, is_descendant, path)) = agent_origin.get(agent_name) else {
+            continue; // implicit/undefined agent — synthesized default, no origin
+        };
+        if !is_descendant {
+            continue; // defined at `cwd`-or-above: legitimately shared downward
+        }
+        let rule_dir = scopes.get(&rule.name).map_or(cwd, |s| s.dir.as_path());
+        if !rule_dir.starts_with(dir) {
+            leaks.push(format!(
+                "  rule {:?} uses agent {:?} defined in the subtree config {} — a \
+                 subtree config's agent may only be used by rules under its own \
+                 directory ({}); move the agent to a config at or above the rule, or \
+                 define the agent where the rule lives",
+                rule.name,
+                agent_name,
+                path.display(),
+                dir.display(),
+            ));
+        }
+    }
+    if !leaks.is_empty() {
+        leaks.sort();
+        leaks.dedup();
+        return Err(Error::InvalidConfig(format!(
+            "a subtree config's agent leaks into rules outside its directory:\n{}",
+            leaks.join("\n")
+        )));
+    }
 
     Ok(Loaded {
         config: session,
