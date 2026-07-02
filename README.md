@@ -249,6 +249,11 @@ directory with no cascade.
 - **Scope a rule to the changes it applies to with `relevance`** (see below)
   instead of bolting "…or not applicable" onto the description — that keeps the
   true/false outcome clean and lets llmlint tell "didn't apply" apart from "true".
+- **Keep each `description` and `relevance` concise.** A judge call batches an
+  agent's rules into one prompt, so tokens one bloated rule spends dilute every
+  other rule in that batch. State the invariant in the fewest words that keep it
+  unambiguous; add length only when it buys clarity (concrete examples, tricky
+  edge cases). config-lint checks this too.
 
 ### The prompt template
 
