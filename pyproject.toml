@@ -34,6 +34,12 @@ classifiers = [
 # Version comes from Cargo.toml (maturin resolves it), so release-plz stays the
 # single source of truth.
 dynamic = ["version"]
+# oneharness is llmlint's runtime prerequisite (llmlint shells out to it), and
+# its prebuilt binary ships the same way as ours (the oneharness-cli wheel), so
+# depending on it makes `pip install llmlint-cli` a complete, working install.
+# The floor mirrors oneharness::MIN_VERSION in src/io/oneharness.rs — bump them
+# together when the runtime floor moves.
+dependencies = ["oneharness-cli>=0.3.0"]
 
 [project.urls]
 Repository = "https://github.com/nickderobertis/llmlint"
