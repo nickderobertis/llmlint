@@ -142,8 +142,15 @@ bounded corrective re-ask — see the scope bullet below), passing the rendered
 template via `--system`, a generated JSON Schema via `--schema` (oneharness
 validates it and re-prompts on failure), and reading the per-result `structured`
 value. **oneharness is a runtime prerequisite** — found on PATH, overridable via
-`--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config; `llmlint doctor` checks
-it. The harness reads target files on-demand with its own tools.
+`--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config, with a **sibling
+fallback**: when nothing is overridden and PATH has no `oneharness`, llmlint
+probes for one beside its own executable (`Client::new` in `src/io/oneharness.rs`).
+That is how tool-isolating installers (`uv tool install`, `pipx`) lay out the
+llmlint-cli wheel and its oneharness-cli dependency — one private venv `bin/`
+with only llmlint linked onto PATH — so those installs work with zero flags;
+PATH always wins over the sibling so an environment's chosen oneharness is never
+shadowed. `llmlint doctor` checks resolution and names the resolved path. The
+harness reads target files on-demand with its own tools.
 
 - **Read-only mode + minimum version:** llmlint is a judge, never an editor, so
   every `run` passes `--mode read-only` — the harness may read target files but

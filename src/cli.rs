@@ -74,7 +74,8 @@ pub struct LintArgs {
     #[arg(long = "oneharness-config", value_name = "PATH")]
     pub oneharness_config: Vec<PathBuf>,
 
-    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN` or PATH).
+    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN`, PATH, or
+    /// a `oneharness` beside the llmlint executable).
     #[arg(long = "oneharness-bin", value_name = "PATH")]
     pub oneharness_bin: Option<String>,
 
@@ -353,7 +354,8 @@ pub struct LintConfigArgs {
     #[arg(long = "oneharness-config", value_name = "PATH")]
     pub oneharness_config: Vec<PathBuf>,
 
-    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN` or PATH).
+    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN`, PATH, or
+    /// a `oneharness` beside the llmlint executable).
     #[arg(long = "oneharness-bin", value_name = "PATH")]
     pub oneharness_bin: Option<String>,
 

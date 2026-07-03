@@ -67,6 +67,42 @@ pub struct Client {
     pub bin: PathBuf,
 }
 
+/// True when `name` resolves in one of `paths`' directories, mirroring the
+/// lookup `Command::new` does for a bare program name. On Windows, also probe
+/// `name.exe` — the one extension our release archives and wheels ship.
+fn found_in_paths(paths: &std::ffi::OsStr, name: &str) -> bool {
+    std::env::split_paths(paths).any(|dir| {
+        !dir.as_os_str().is_empty()
+            && (dir.join(name).is_file()
+                || (cfg!(windows) && dir.join(format!("{name}.exe")).is_file()))
+    })
+}
+
+/// The oneharness binary sitting in `dir`, if any.
+fn sibling_in(dir: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "oneharness.exe"
+    } else {
+        "oneharness"
+    };
+    let candidate = dir.join(name);
+    candidate.is_file().then_some(candidate)
+}
+
+/// Resolve a `oneharness` living NEXT TO the running llmlint executable.
+/// Tool-isolating installers (`uv tool install`, `pipx`) install the
+/// llmlint-cli wheel and its oneharness-cli dependency into one private venv
+/// but link only llmlint's own executable onto PATH — oneharness ends up
+/// beside the real llmlint binary, invisible to a PATH lookup. Probing that
+/// sibling makes those installs work with zero flags. `current_exe` is
+/// canonicalized so the probe happens in the real venv `bin/`, not next to the
+/// launcher symlink.
+fn sibling_oneharness() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
+    sibling_in(exe.parent()?)
+}
+
 /// A record of one oneharness invocation, for the `-v` debug view: the exact
 /// command line and the raw subprocess result. Empty/`None` fields mean that
 /// stage wasn't reached (e.g. the binary was not found, so there is no output).
@@ -121,11 +157,27 @@ struct RunResult {
 }
 
 impl Client {
-    /// Build a client for the given binary override, or the default on `PATH`.
+    /// Build a client for the given binary override, or the default on `PATH`,
+    /// or — when neither resolves — a `oneharness` sitting beside the llmlint
+    /// executable (how `uv tool install` / `pipx` lay out the wheels). An
+    /// explicit override is always taken as-is; with no override, `PATH` wins
+    /// over the sibling so an environment's chosen oneharness is never shadowed
+    /// by a bundled one. When nothing resolves, keep the bare default so the
+    /// "oneharness not found" error reads the same as before.
     pub fn new(bin_override: Option<&str>) -> Client {
-        Client {
-            bin: PathBuf::from(bin_override.unwrap_or(DEFAULT_BIN)),
-        }
+        let bin = match bin_override {
+            Some(b) => PathBuf::from(b),
+            None => {
+                let on_path = std::env::var_os("PATH")
+                    .is_some_and(|paths| found_in_paths(&paths, DEFAULT_BIN));
+                if on_path {
+                    PathBuf::from(DEFAULT_BIN)
+                } else {
+                    sibling_oneharness().unwrap_or_else(|| PathBuf::from(DEFAULT_BIN))
+                }
+            }
+        };
+        Client { bin }
     }
 
     /// Run `oneharness --version`, mapping a missing binary to a clear error.
@@ -538,5 +590,43 @@ mod tests {
             .unwrap();
         let result = wait_capture(child, Duration::from_millis(200)).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn found_in_paths_sees_the_binary_and_skips_empty_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = if cfg!(windows) {
+            "oneharness.exe"
+        } else {
+            "oneharness"
+        };
+        std::fs::write(dir.path().join(name), b"").unwrap();
+        // An empty entry (a leading `:` in PATH) must not match, and the real
+        // directory must.
+        let paths =
+            std::env::join_paths([Path::new(""), dir.path(), Path::new("/nonexistent-xyz")])
+                .unwrap();
+        assert!(found_in_paths(&paths, DEFAULT_BIN));
+
+        let empty = tempfile::tempdir().unwrap();
+        let paths = std::env::join_paths([empty.path()]).unwrap();
+        assert!(!found_in_paths(&paths, DEFAULT_BIN));
+    }
+
+    #[test]
+    fn sibling_in_finds_only_a_real_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(sibling_in(dir.path()).is_none());
+        let name = if cfg!(windows) {
+            "oneharness.exe"
+        } else {
+            "oneharness"
+        };
+        std::fs::write(dir.path().join(name), b"").unwrap();
+        assert_eq!(sibling_in(dir.path()), Some(dir.path().join(name)));
+        // A directory named oneharness is not a binary.
+        let dir2 = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir2.path().join(name)).unwrap();
+        assert!(sibling_in(dir2.path()).is_none());
     }
 }

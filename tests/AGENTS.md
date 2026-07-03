@@ -356,6 +356,11 @@ logic is also covered hermetically via `file://` plugins.
 - `config` prints the merged config + sources and rejects an invalid config;
   `doctor` reports the oneharness version and fails clearly when it is missing or
   older than the minimum required for read-only mode.
+- Sibling oneharness resolution (the uv-tool/pipx layout: both binaries copied
+  into one venv-style `bin/`, only llmlint reachable): with no override and no
+  oneharness on PATH, `doctor` resolves and names the binary beside the llmlint
+  executable and `lint` runs through it end to end; with oneharness on PATH,
+  PATH wins over the sibling (doctor prints the bare `(oneharness)`).
 - `--format json` is a stable machine contract: a passing run lists rule names; a
   failing run carries `summary` counts and located `violations` (exit 1); a
   run-error carries the `errors` array (exit 2).

@@ -112,7 +112,10 @@ binary install with no Rust toolchain — handy in restricted-egress environment
 where package registries are reachable but `github.com` is not. It depends on
 [`oneharness-cli`](https://pypi.org/project/oneharness-cli/), so the `oneharness`
 runtime prerequisite comes along automatically — one pip install is a complete,
-working setup. (The PyPI package is `llmlint-cli` — PyPI reserves names too
+working setup. That includes tool-isolating installers: `uv tool install` and
+`pipx` link only llmlint itself onto your `PATH`, but llmlint also looks for
+`oneharness` beside its own executable — where those tools place dependency
+binaries — so no extra flags are needed. (The PyPI package is `llmlint-cli` — PyPI reserves names too
 similar to existing projects — but the installed binary is `llmlint`.) Wheels are published
 with PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) and
 carry [PEP 740](https://peps.python.org/pep-0740/) attestations — the same
