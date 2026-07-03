@@ -288,10 +288,15 @@ it. The harness reads target files on-demand with its own tools.
   no independent checksum root the install aborts rather than trust the mirror to
   vouch for itself. Verification otherwise fails safe: any verifier/tooling error
   falls through to the next root, and it aborts only when nothing independent can
-  vouch for the archive (a real tamper is still rejected). The cosign identity is pinned
-  to the release workflow (`PROVENANCE_IDENTITY_RE` + `OIDC_ISSUER` in
-  `install.sh`); the exact cosign invocation should be confirmed against the first
-  real signed release. The attestation `subject-path` names the archive the
+  vouch for the archive (a real tamper is still rejected). The cosign identity is
+  pinned to the release workflow (`PROVENANCE_IDENTITY_RE` + `OIDC_ISSUER` +
+  `PROVENANCE_TYPE` = SLSA provenance v1, in `install.sh`). The `verify-attestation`
+  job in `release.yml` keeps that invocation honest: on every real release it
+  installs cosign (`sigstore/cosign-installer`, pinned `>= 2.4.0` for
+  `--new-bundle-format`) and runs the **exact** `install.sh` command against a
+  just-published archive + bundle, so a flag/predicate mismatch reddens the
+  release instead of silently degrading users to the checksum fallback. The
+  attestation `subject-path` names the archive the
   `taiki-e/upload-rust-binary-action` step leaves in the workspace
   (`llmlint-<tag>-<target>.<ext>`), so keep the matrix `ext` in sync with the
   targets when the build matrix changes.

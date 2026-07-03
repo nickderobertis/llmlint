@@ -64,6 +64,9 @@ CANONICAL_BASE_URL="https://github.com/$REPO/releases/download"
 # own signed artifact.
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
 PROVENANCE_IDENTITY_RE="^https://github.com/${REPO}/\\.github/workflows/release\\.yml@"
+# actions/attest-build-provenance emits SLSA provenance v1; constrain cosign to
+# that predicate so it can't match some other attestation over the same digest.
+PROVENANCE_TYPE="https://slsa.dev/provenance/v1"
 
 say() { printf '%s\n' "$*" >&2; }
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -200,6 +203,7 @@ verify_sigstore() {
         if cosign verify-blob-attestation \
             --new-bundle-format \
             --bundle "$_bundle" \
+            --type "$PROVENANCE_TYPE" \
             --certificate-oidc-issuer "$OIDC_ISSUER" \
             --certificate-identity-regexp "$PROVENANCE_IDENTITY_RE" \
             "$_archive" >/dev/null 2>&1; then

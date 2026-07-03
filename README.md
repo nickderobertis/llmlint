@@ -121,6 +121,13 @@ checksum that shares the mirror's origin, since a tampered mirror would just ser
 a matching tampered checksum. If nothing independent of the mirror can vouch for
 the archive, the install aborts (install `cosign`).
 
+`cosign` is a single static binary, so provisioning it on a restricted-egress
+host (or a base image) is cheap — e.g. `brew install cosign`, your distro's
+sigstore package, `go install github.com/sigstore/cosign/v2/cmd/cosign@latest`,
+or the [`sigstore/cosign-installer`](https://github.com/sigstore/cosign-installer)
+GitHub Action in CI. With it present, verification is always the offline Sigstore
+path — no checksum root, no github.com round-trip.
+
 You also need a coding harness installed and authenticated (e.g. Claude Code).
 See `oneharness list` / `oneharness detect --all`.
 
