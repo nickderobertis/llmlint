@@ -95,9 +95,52 @@ llmlint doctor      # confirms oneharness is reachable
 
 The installer honors `LLMLINT_VERSION` / `LLMLINT_INSTALL_DIR` (or the `--version`
 / `--to` flags), works on Linux, macOS, and Windows under a POSIX shell
-(Git Bash / MSYS / WSL), and refuses an archive whose checksum does not match.
-Each tagged release publishes prebuilt, checksummed binaries for those
-platforms; on native Windows PowerShell, use `cargo install llmlint --locked`.
+(Git Bash / MSYS / WSL), and refuses a binary it cannot verify. Each tagged
+release publishes prebuilt binaries for those platforms, each with a SHA-256
+checksum and a keyless [Sigstore](https://www.sigstore.dev/) build-provenance
+attestation bundle (`.sigstore.json`); on native Windows PowerShell, use
+`cargo install llmlint --locked`.
+
+**Behind a mirror.** In a network that can reach a release-proxy mirror but not
+`github.com`, point the archive download at it:
+
+```console
+LLMLINT_RELEASE_BASE_URL=https://mirror.example/llmlint \
+  curl -fsSL https://raw.githubusercontent.com/nickderobertis/llmlint/main/scripts/install.sh | sh
+```
+
+The archive comes from the mirror, but its integrity is checked against a trust
+root the mirror does not control. If a Sigstore verifier is installed —
+[`cosign`](https://github.com/sigstore/cosign), the official
+[`sigstore`](https://pypi.org/project/sigstore/) Python client, or
+[`gh`](https://cli.github.com/) — the installer downloads the `.sigstore.json`
+bundle from the mirror and verifies it **offline** — no GitHub API — against the
+keyless signature bound to this repo's release workflow; the trusted digest comes
+from the *signed* attestation, so a mirror cannot forge it. With no verifier
+installed it falls back to a `.sha256` fetched from canonical GitHub
+(`LLMLINT_CHECKSUM_BASE_URL` overrides that root) — but it **refuses** a checksum
+that shares the mirror's origin, since a tampered mirror would just serve a
+matching tampered checksum. If nothing independent of the mirror can vouch for
+the archive, the install aborts.
+
+A verifier is one install away even where `github.com` itself is unreachable,
+because all three ship through package registries:
+
+```console
+pip install sigstore                                        # PyPI
+npm install -g @sigstore/cli                                # npm
+go install github.com/sigstore/cosign/v2/cmd/cosign@latest  # Go module proxy
+```
+
+(`go install` fetches through `proxy.golang.org` and integrity-checks against the
+`sum.golang.org` transparency log — it never contacts github.com.) So the pattern
+for a restricted-egress host or sandbox image is: provision one verifier from
+whichever registry is reachable, then run the installer with
+`LLMLINT_RELEASE_BASE_URL` pointing at your mirror — every byte comes from the
+mirror or a registry, and the signature still chains to the Sigstore root.
+Elsewhere, `brew install cosign`, a distro sigstore package, or the
+[`sigstore/cosign-installer`](https://github.com/sigstore/cosign-installer)
+GitHub Action in CI all work too.
 
 You also need a coding harness installed and authenticated (e.g. Claude Code).
 See `oneharness list` / `oneharness detect --all`.

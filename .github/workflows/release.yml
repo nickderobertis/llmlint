@@ -66,21 +66,33 @@ jobs:
     needs: test
     permissions:
       contents: write
+      # Keyless Sigstore signing: `id-token` mints the GitHub Actions OIDC
+      # identity the provenance is bound to; `attestations` records it. No repo
+      # secret or long-lived key is involved.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
         include:
           # Native runners per target so nothing needs cross-compilation.
+          # `ext` names the archive the upload action leaves in the workspace,
+          # which the attestation step then signs.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            ext: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
+            ext: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
+            ext: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
+            ext: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            ext: zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +105,81 @@ jobs:
           checksum: sha256
           include: README.md,LICENSE,CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
+      # Sign a Sigstore build-provenance attestation for the archive. The upload
+      # action leaves the archive at the workspace root; attesting it here proves
+      # the artifact was built by this workflow — a trust root independent of any
+      # mirror the archive might later be downloaded from. Keyless: no secret.
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: llmlint-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.ext }}
+      # Publish the Sigstore bundle as a release asset (next to the archive and
+      # its .sha256). Shipping the bundle — rather than relying on GitHub's
+      # attestation API — is what lets scripts/install.sh verify OFFLINE with
+      # `cosign` (or `gh --bundle`) after downloading everything from a mirror,
+      # which is the whole point for networks that can't reach github.com. The
+      # signature is bound to this workflow's OIDC identity, so a mirror serving
+      # the bundle cannot forge it.
+      - name: Publish attestation bundle to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bundle="llmlint-${GITHUB_REF_NAME}-${{ matrix.target }}.sigstore.json"
+          cp "${{ steps.attest.outputs.bundle-path }}" "$bundle"
+          gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
+
+  # Prove the offline verification path end to end on every real release: install
+  # the verifiers the easy ways (the official cosign installer action; `pip
+  # install sigstore` from PyPI) and run the EXACT commands scripts/install.sh
+  # uses against a just-published archive + its bundle. This is the only place
+  # the real invocations meet a genuine GitHub-OIDC-signed bundle, so it is what
+  # keeps install.sh's flags (--new-bundle-format, --type, the pinned
+  # identity/issuer, `verify github --offline --repository`) honest — a mismatch
+  # reddens the release instead of silently degrading users to the checksum
+  # fallback. Downloads from canonical GitHub (no mirror needed) since it is only
+  # exercising the verifiers.
+  verify-attestation:
+    needs: upload
+    runs-on: ubuntu-latest
+    steps:
+      # Pin >= 2.4.0: --new-bundle-format (new Sigstore bundle) lands there, and
+      # the action's unpinned default can be older.
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The registry-only bootstrap install.sh recommends for hosts that can't
+      # reach github.com; pinned to a version known to verify DSSE bundles
+      # offline.
+      - run: pip install sigstore==4.3.0
+      - name: Verify a release archive against its Sigstore bundle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          target="x86_64-unknown-linux-gnu"
+          base="llmlint-${tag}-${target}"
+          gh release download "$tag" --dir . \
+            --pattern "${base}.tar.gz" --pattern "${base}.sigstore.json"
+          cosign verify-blob-attestation \
+            --new-bundle-format \
+            --bundle "${base}.sigstore.json" \
+            --type "https://slsa.dev/provenance/v1" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
+            "${base}.tar.gz"
+          echo "cosign verified ${base}.tar.gz."
+          sigstore verify github \
+            --bundle "${base}.sigstore.json" \
+            --offline \
+            --repository "$GITHUB_REPOSITORY" \
+            "${base}.tar.gz"
+          echo "sigstore-python verified ${base}.tar.gz."
 
   # crates.io publishing: runs whenever the CARGO_REGISTRY_TOKEN secret is set
   # (see the `guard` job). Gated on the same `test` job as the binary upload (so

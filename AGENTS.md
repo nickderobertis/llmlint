@@ -268,6 +268,42 @@ it. The harness reads target files on-demand with its own tools.
   crates.io sparse index for the new version and `cargo install`s + smoke-tests
   it from the registry — a post-publish sanity check (a failure means a broken
   release, not a blocked publish).
+- **Release signing + mirror-configurable install**: the `upload` job attaches a
+  keyless [Sigstore](https://www.sigstore.dev/) build-provenance attestation to
+  each archive (`actions/attest-build-provenance`, bound to the GitHub Actions
+  OIDC identity — `id-token: write` + `attestations: write`, no secret/key) **and
+  publishes the bundle as a release asset** (`llmlint-<tag>-<target>.sigstore.json`,
+  from the step's `bundle-path` output). Shipping the bundle — not relying on
+  GitHub's attestation API — is what lets `scripts/install.sh`, pointed at a
+  release-proxy mirror (`LLMLINT_RELEASE_BASE_URL` / `--base-url`) for the archive,
+  verify integrity **offline** against a root the mirror does not control:
+  `cosign verify-blob-attestation --new-bundle-format --bundle …` (preferred,
+  vendor-neutral, no GitHub API — the trusted digest is the *signed* attestation
+  subject, so no checksum file is consulted on this path), else
+  `sigstore verify github --offline --repository …` (the official Python client,
+  `pip install sigstore` — the registry-only bootstrap for hosts that cannot
+  reach github.com at all; repo-pinned rather than workflow-pinned), else
+  `gh attestation verify … --bundle …`, else the `.sha256` fetched from an
+  independent root (default **canonical GitHub**; `LLMLINT_CHECKSUM_BASE_URL`
+  overrides it). The checksum fallback **refuses a mirror-origin checksum**
+  (`sum_trusted`): a checksum sharing the archive's mirror origin is no trust root
+  — the mirror would serve a matching tampered checksum — so with no verifier and
+  no independent checksum root the install aborts rather than trust the mirror to
+  vouch for itself. Verification otherwise fails safe: any verifier/tooling error
+  falls through to the next root, and it aborts only when nothing independent can
+  vouch for the archive (a real tamper is still rejected). The cosign identity is
+  pinned to the release workflow (`PROVENANCE_IDENTITY_RE` + `OIDC_ISSUER` +
+  `PROVENANCE_TYPE` = SLSA provenance v1, in `install.sh`). The `verify-attestation`
+  job in `release.yml` keeps those invocations honest: on every real release it
+  installs cosign (`sigstore/cosign-installer`, pinned `>= 2.4.0` for
+  `--new-bundle-format`) and sigstore-python (`pip install sigstore`, pinned) and
+  runs the **exact** `install.sh` commands against a just-published archive +
+  bundle, so a flag/predicate mismatch reddens the release instead of silently
+  degrading users to the checksum fallback. The
+  attestation `subject-path` names the archive the
+  `taiki-e/upload-rust-binary-action` step leaves in the workspace
+  (`llmlint-<tag>-<target>.<ext>`), so keep the matrix `ext` in sync with the
+  targets when the build matrix changes.
 
 ## Invariants (non-negotiable)
 
