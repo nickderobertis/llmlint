@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/nickderobertis/llmlint/compare/v0.3.1...v0.3.2) - 2026-07-03
+
+### Added
+
+- sign releases with Sigstore and make install.sh mirror-configurable ([#104](https://github.com/nickderobertis/llmlint/pull/104))
+
 ## [0.3.1](https://github.com/nickderobertis/llmlint/compare/v0.3.0...v0.3.1) - 2026-07-02
 
 ### Documentation
