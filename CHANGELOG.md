@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.6](https://github.com/nickderobertis/llmlint/compare/v0.3.5...v0.3.6) - 2026-07-03
+
+### Fixed
+
+- fall back to a oneharness beside the llmlint executable ([#114](https://github.com/nickderobertis/llmlint/pull/114))
+
 ## [0.3.5](https://github.com/nickderobertis/llmlint/compare/v0.3.4...v0.3.5) - 2026-07-03
 
 ### Fixed
