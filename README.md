@@ -81,13 +81,16 @@ llmlint **shells out to oneharness** — it is a runtime prerequisite (see Insta
 `llmlint` needs the `oneharness` binary on your `PATH`.
 
 ```console
+# One step via pip: prebuilt binaries for llmlint AND oneharness (a dependency)
+pip install llmlint-cli
+
+# Or piece by piece:
 # 1) oneharness (the harness driver)
 curl -fsSL https://raw.githubusercontent.com/nickderobertis/oneharness/main/scripts/install.sh | sh
 #    (or: cargo install --git https://github.com/nickderobertis/oneharness --locked)
 
 # 2) llmlint
 curl -fsSL https://raw.githubusercontent.com/nickderobertis/llmlint/main/scripts/install.sh | sh
-#    (or: pip install llmlint-cli — prebuilt binary wheel, no Rust toolchain needed)
 #    (or: cargo install llmlint --locked)
 #    (or, without a crates.io release: cargo install --git https://github.com/nickderobertis/llmlint --locked)
 
@@ -106,9 +109,11 @@ attestation bundle (`.sigstore.json`); on native Windows PowerShell, use
 prebuilt binary, so anywhere Python is present, `pip install llmlint-cli` (or
 `uv tool install llmlint-cli` / `pipx install llmlint-cli`) is a seconds-fast
 binary install with no Rust toolchain — handy in restricted-egress environments
-where package registries are reachable but `github.com` is not. (The PyPI
-package is `llmlint-cli` — PyPI reserves names too similar to existing projects
-— but the installed binary is `llmlint`.) Wheels are published
+where package registries are reachable but `github.com` is not. It depends on
+[`oneharness-cli`](https://pypi.org/project/oneharness-cli/), so the `oneharness`
+runtime prerequisite comes along automatically — one pip install is a complete,
+working setup. (The PyPI package is `llmlint-cli` — PyPI reserves names too
+similar to existing projects — but the installed binary is `llmlint`.) Wheels are published
 with PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) and
 carry [PEP 740](https://peps.python.org/pep-0740/) attestations — the same
 Sigstore build provenance as the GitHub release assets.

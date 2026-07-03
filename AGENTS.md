@@ -279,7 +279,11 @@ it. The harness reads target files on-demand with its own tools.
   is a seconds-fast binary install — the quickest trustworthy path where package
   registries are reachable but github.com is not. The PyPI *package* is
   `llmlint-cli` (PyPI rejected `llmlint` as too similar to an existing project);
-  the installed *binary* is still `llmlint` (named by the Cargo bin target). `build-wheels` in `release.yml`
+  the installed *binary* is still `llmlint` (named by the Cargo bin target). It
+  **depends on `oneharness-cli`** (the same prebuilt-wheel pattern for the
+  oneharness runtime prerequisite), so one pip install is a complete working
+  setup; the dependency floor mirrors `oneharness::MIN_VERSION`
+  (`src/io/oneharness.rs`) — bump both together when the floor moves. `build-wheels` in `release.yml`
   mirrors the binary `upload` matrix (manylinux via `PyO3/maturin-action`) and
   runs unconditioned so a packaging break reddens the release even before
   publishing is activated; `publish-pypi` + `verify-pypi` gate on the
