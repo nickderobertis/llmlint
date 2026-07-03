@@ -164,7 +164,9 @@ jobs:
           tag="$GITHUB_REF_NAME"
           target="x86_64-unknown-linux-gnu"
           base="llmlint-${tag}-${target}"
-          gh release download "$tag" --dir . \
+          # No checkout in this job, so gh cannot infer the repo from git —
+          # name it explicitly.
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir . \
             --pattern "${base}.tar.gz" --pattern "${base}.sigstore.json"
           cosign verify-blob-attestation \
             --new-bundle-format \
