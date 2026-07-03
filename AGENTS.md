@@ -55,7 +55,12 @@ Use the `just` recipes; do not hand-roll equivalents.
   `setup-check` and, when the environment is not ready, launches `just setup`
   **detached in the background** — it never blocks the session on the
   multi-minute install; tools appear within a few minutes (verify with
-  `just setup-check`). Set `LLMLINT_NO_AUTO_SETUP=1` to only *advise* instead, or
+  `just setup-check`). It also makes the **released llmlint binary** available
+  for self-usage (dogfooding `llmlint lint-config` etc. without waiting for a
+  source build): when `llmlint` is not on PATH it pip-installs `llmlint-cli`
+  (the prebuilt-binary wheel) into `.dev/llmlint-venv` in the background —
+  seconds, works where github.com is blocked but PyPI is not — and symlinks the
+  binary onto PATH. Set `LLMLINT_NO_AUTO_SETUP=1` to only *advise* instead, or
   `LLMLINT_SKIP_SETUP=1` to do nothing.
 - `just setup-check` — fast, install-free readiness check (no network); exit 0
   when ready, exit 1 with the reason and the fix. Source of truth for "ready" is
