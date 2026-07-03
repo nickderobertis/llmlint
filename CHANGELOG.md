@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.4](https://github.com/nickderobertis/llmlint/compare/v0.3.3...v0.3.4) - 2026-07-03
+
+### Fixed
+
+- publish PyPI wheels as llmlint-cli ([#109](https://github.com/nickderobertis/llmlint/pull/109))
+
 ## [0.3.3](https://github.com/nickderobertis/llmlint/compare/v0.3.2...v0.3.3) - 2026-07-03
 
 ### Added
