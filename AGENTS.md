@@ -270,9 +270,11 @@ it. The harness reads target files on-demand with its own tools.
   it from the registry — a post-publish sanity check (a failure means a broken
   release, not a blocked publish).
 - **PyPI wheels**: maturin `bin` bindings (`pyproject.toml`) wrap the prebuilt
-  binary in per-platform wheels (the ruff/uv pattern) so `pip install llmlint`
+  binary in per-platform wheels (the ruff/uv pattern) so `pip install llmlint-cli`
   is a seconds-fast binary install — the quickest trustworthy path where package
-  registries are reachable but github.com is not. `build-wheels` in `release.yml`
+  registries are reachable but github.com is not. The PyPI *package* is
+  `llmlint-cli` (PyPI rejected `llmlint` as too similar to an existing project);
+  the installed *binary* is still `llmlint` (named by the Cargo bin target). `build-wheels` in `release.yml`
   mirrors the binary `upload` matrix (manylinux via `PyO3/maturin-action`) and
   runs unconditioned so a packaging break reddens the release even before
   publishing is activated; `publish-pypi` + `verify-pypi` gate on the

@@ -328,22 +328,24 @@ jobs:
       - name: Wait for the version to land on PyPI
         run: |
           ver="${GITHUB_REF_NAME#v}"
-          url="https://pypi.org/pypi/llmlint/${ver}/json"
-          echo "Waiting for llmlint $ver on PyPI..."
+          # The PyPI package is llmlint-cli ("llmlint" was rejected as too
+          # similar to an existing project); the binary it installs is llmlint.
+          url="https://pypi.org/pypi/llmlint-cli/${ver}/json"
+          echo "Waiting for llmlint-cli $ver on PyPI..."
           for i in $(seq 1 30); do
             if curl -fsSL -o /dev/null "$url" 2>/dev/null; then
-              echo "llmlint $ver is available on PyPI."
+              echo "llmlint-cli $ver is available on PyPI."
               exit 0
             fi
             echo "  attempt $i: not indexed yet; sleeping 10s..."
             sleep 10
           done
-          echo "::error::llmlint $ver did not appear on PyPI within ~5 minutes"
+          echo "::error::llmlint-cli $ver did not appear on PyPI within ~5 minutes"
           exit 1
       - name: Install from PyPI and smoke-test
         run: |
           ver="${GITHUB_REF_NAME#v}"
-          pip install "llmlint==${ver}"
+          pip install "llmlint-cli==${ver}"
           installed="$(llmlint --version)"
           echo "installed: $installed"
           case "$installed" in

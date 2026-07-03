@@ -13,7 +13,10 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "llmlint"
+# PyPI rejected "llmlint" as too similar to an existing project, so the
+# *package* is llmlint-cli; the installed *binary* is still `llmlint` (it comes
+# from the Cargo bin target, not the project name).
+name = "llmlint-cli"
 description = "LLM-as-judge linter: enforce code-quality checks deterministic linters can't express, by driving real coding harnesses through oneharness."
 readme = "README.md"
 requires-python = ">=3.8"
