@@ -30,18 +30,22 @@
 # never trusts a mirror to attest its own download. Two independent roots, tried
 # in order:
 #   1. Sigstore build-provenance attestation (preferred). Each release ships a
-#      `.sigstore.json` bundle beside the archive; when `cosign` (or `gh`) is
-#      present the bundle is verified OFFLINE against the keyless signature bound
-#      to this repo's release workflow. The trusted digest comes from the SIGNED
-#      attestation itself — no checksum file is consulted — so a mirror cannot
-#      forge it. Served alongside the archive (from the mirror), it needs no
-#      GitHub API and works behind a mirror that can't reach github.com. No key
-#      or secret required.
+#      `.sigstore.json` bundle beside the archive; when a verifier is present —
+#      `cosign`, the official `sigstore` Python client (`pip install sigstore`),
+#      or `gh` — the bundle is verified OFFLINE against the keyless signature
+#      bound to this repo's release workflow. The trusted digest comes from the
+#      SIGNED attestation itself — no checksum file is consulted — so a mirror
+#      cannot forge it. Served alongside the archive (from the mirror), it needs
+#      no GitHub API and works behind a mirror that can't reach github.com. No
+#      key or secret required. Where GitHub itself is unreachable, a verifier is
+#      still one package-registry install away: `pip install sigstore`,
+#      `npm i -g @sigstore/cli`, or `go install .../cosign@latest` (the Go module
+#      proxy, not github.com).
 #   2. SHA-256 checksum from canonical GitHub (fallback, only when no verifier is
 #      installed). The `.sha256` is fetched from the release on github.com, NOT
 #      from the mirror. A checksum that shares the mirror's origin is no trust
 #      root at all — the mirror would serve a matching tampered checksum — so the
-#      installer REFUSES it (install `cosign` instead) rather than trust the
+#      installer REFUSES it (install a verifier instead) rather than trust the
 #      mirror to vouch for its own download.
 # If nothing independent of the mirror can vouch for the archive, the install
 # aborts.
@@ -179,19 +183,22 @@ sha256_of() {
 }
 
 # Try to verify the archive from its Sigstore build-provenance bundle, using
-# whichever standalone verifier is installed — `cosign` preferred (vendor-neutral,
-# no GitHub API), then `gh` with `--bundle` (also offline). The bundle is served
-# alongside the archive, so this works behind a mirror that can't reach github.com;
-# the signature is bound to this repo's release workflow, so the mirror can't forge
-# it. Returns 0 on a good verification; 1 to fall through to the checksum root (no
-# verifier installed, no bundle published, or a tooling/soft failure). A real
-# tamper still fails closed — the checksum root then rejects the archive.
+# whichever standalone verifier is installed — `cosign` (vendor-neutral, pins the
+# exact signing workflow + predicate type), then `sigstore` (the official Python
+# client, `pip install sigstore` — the easiest bootstrap where only package
+# registries are reachable; pins the repository identity), then `gh` with
+# `--bundle`. All three verify OFFLINE: the bundle is served alongside the
+# archive, so this works behind a mirror that can't reach github.com, and the
+# signature is bound to this repo's release workflow, so the mirror can't forge
+# it. Returns 0 on a good verification; 1 to fall through to the checksum root
+# (no verifier installed, no bundle published, or a tooling/soft failure). A
+# real tamper still fails closed — the checksum root then rejects the archive.
 verify_sigstore() {
     _archive="$1"       # local path to the downloaded archive
     _bundle_url="$2"    # bundle URL (served with the archive)
     _bundle="${_archive}.sigstore.json"
 
-    have cosign || have gh || return 1
+    have cosign || have sigstore || have gh || return 1
 
     download "$_bundle_url" "$_bundle" 2>/dev/null || {
         say "no attestation bundle at ${_bundle_url}; using the checksum root."
@@ -211,6 +218,22 @@ verify_sigstore() {
             return 0
         fi
         say "cosign could not verify the attestation; trying the next root."
+    fi
+
+    # sigstore-python pins the repository (any workflow in $REPO may sign) —
+    # slightly looser than cosign's workflow-pinned regexp, but still nothing a
+    # mirror or third party can forge.
+    if have sigstore; then
+        say "verifying build provenance with sigstore-python (offline)..."
+        if sigstore verify github \
+            --bundle "$_bundle" \
+            --offline \
+            --repository "$REPO" \
+            "$_archive" >/dev/null 2>&1; then
+            say "verified: attested by ${REPO}'s release workflow (sigstore)."
+            return 0
+        fi
+        say "sigstore could not verify the attestation; trying the next root."
     fi
 
     if have gh; then
@@ -247,9 +270,10 @@ verify_archive() {
 
     if [ "$_sum_trusted" != "yes" ]; then
         err "cannot verify $(basename "$_archive") independently of the mirror:\
- no Sigstore verifier vouched for it (install 'cosign'), and the only checksum\
- shares the mirror's origin so it is not an independent trust root. Install\
- cosign, or set LLMLINT_CHECKSUM_BASE_URL to a root the mirror does not control."
+ no Sigstore verifier vouched for it, and the only checksum shares the mirror's\
+ origin so it is not an independent trust root. Install a verifier (cosign, or\
+ 'pip install sigstore'), or set LLMLINT_CHECKSUM_BASE_URL to a root the mirror\
+ does not control."
     fi
 
     say "verifying SHA-256 checksum from ${_sum_url}..."
