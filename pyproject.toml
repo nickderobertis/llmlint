@@ -1,0 +1,40 @@
+# PyPI distribution of the prebuilt llmlint binary (the ruff/uv pattern):
+# maturin's `bin` bindings wrap the Rust binary in per-platform wheels, so
+# `pip install llmlint` puts the real binary on PATH in seconds with no Rust
+# toolchain — the quickest trustworthy path in restricted-egress environments
+# where package registries are reachable but github.com is not. Publishing uses
+# PyPI Trusted Publishing (GitHub OIDC) in release.yml, which auto-generates
+# PEP 740 attestations — the same Sigstore build provenance the GitHub release
+# assets carry. The name/version/description stay single-sourced from
+# Cargo.toml (release-plz remains the only version driver).
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "llmlint"
+description = "LLM-as-judge linter: enforce code-quality checks deterministic linters can't express, by driving real coding harnesses through oneharness."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+keywords = ["cli", "linter", "llm", "code-review", "oneharness"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Quality Assurance",
+]
+# Version comes from Cargo.toml (maturin resolves it), so release-plz stays the
+# single source of truth.
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/nickderobertis/llmlint"
+Changelog = "https://github.com/nickderobertis/llmlint/blob/main/CHANGELOG.md"
+
+[tool.maturin]
+bindings = "bin"

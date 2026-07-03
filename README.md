@@ -87,6 +87,7 @@ curl -fsSL https://raw.githubusercontent.com/nickderobertis/oneharness/main/scri
 
 # 2) llmlint
 curl -fsSL https://raw.githubusercontent.com/nickderobertis/llmlint/main/scripts/install.sh | sh
+#    (or: pip install llmlint — prebuilt binary wheel, no Rust toolchain needed)
 #    (or: cargo install llmlint --locked)
 #    (or, without a crates.io release: cargo install --git https://github.com/nickderobertis/llmlint --locked)
 
@@ -100,6 +101,15 @@ release publishes prebuilt binaries for those platforms, each with a SHA-256
 checksum and a keyless [Sigstore](https://www.sigstore.dev/) build-provenance
 attestation bundle (`.sigstore.json`); on native Windows PowerShell, use
 `cargo install llmlint --locked`.
+
+**Via pip.** Each release also ships per-platform wheels wrapping the same
+prebuilt binary, so anywhere Python is present, `pip install llmlint` (or
+`uv tool install llmlint` / `pipx install llmlint`) is a seconds-fast binary
+install with no Rust toolchain — handy in restricted-egress environments where
+package registries are reachable but `github.com` is not. Wheels are published
+with PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) and
+carry [PEP 740](https://peps.python.org/pep-0740/) attestations — the same
+Sigstore build provenance as the GitHub release assets.
 
 **Behind a mirror.** In a network that can reach a release-proxy mirror but not
 `github.com`, point the archive download at it:
