@@ -2586,6 +2586,85 @@ fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
         .stderr(predicate::str::contains("0.3.0"));
 }
 
+// ---- sibling oneharness resolution -----------------------------------------
+
+/// Copy the built llmlint binary and the mock (named `oneharness`) into one
+/// directory, mimicking how `uv tool install` / `pipx` lay out the llmlint-cli
+/// wheel and its oneharness-cli dependency inside a private venv `bin/`: both
+/// binaries side by side, but only llmlint linked onto PATH.
+fn tool_venv_layout(dir: &Path) -> PathBuf {
+    let exe = std::env::consts::EXE_SUFFIX;
+    let llmlint = dir.join(format!("llmlint{exe}"));
+    fs::copy(cargo_bin("llmlint"), &llmlint).unwrap();
+    fs::copy(mock_path(), dir.join(format!("oneharness{exe}"))).unwrap();
+    llmlint
+}
+
+#[test]
+fn doctor_finds_a_sibling_oneharness_when_path_has_none() {
+    // With no override and no oneharness on PATH, resolution falls back to the
+    // binary sitting beside llmlint itself — and doctor's output names that
+    // sibling path, so the fallback is visible, not silent.
+    let bin = TempDir::new().unwrap();
+    let llmlint = tool_venv_layout(bin.path());
+    // canonicalize: current_exe resolves symlinked temp roots (e.g. macOS
+    // /var -> /private/var), so the printed sibling path is the canonical one.
+    let canonical_bin = bin.path().canonicalize().unwrap();
+    let p = Project::new();
+    Command::from_std(std::process::Command::new(&llmlint))
+        .arg("doctor")
+        .current_dir(p.path())
+        .env("PATH", p.path()) // a real dir, but no oneharness in it
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(canonical_bin.to_str().unwrap()));
+}
+
+#[test]
+fn lint_uses_a_sibling_oneharness_when_path_has_none() {
+    // The full lint engine works through the sibling fallback with no
+    // --oneharness-bin flag and no oneharness on PATH: a uv-tool-style install
+    // lints out of the box.
+    let bin = TempDir::new().unwrap();
+    let llmlint = tool_venv_layout(bin.path());
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: sibling_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"sibling_rule": true}"#);
+    Command::from_std(std::process::Command::new(&llmlint))
+        .current_dir(p.path())
+        .env("PATH", p.path())
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+}
+
+#[test]
+fn path_oneharness_wins_over_the_sibling() {
+    // An environment's chosen oneharness (on PATH) is never shadowed by one
+    // bundled beside llmlint: with both present, resolution stays the bare
+    // PATH lookup — doctor prints `(oneharness)`, not the sibling's directory.
+    let bin = TempDir::new().unwrap();
+    let llmlint = tool_venv_layout(bin.path());
+    let pathdir = TempDir::new().unwrap();
+    let exe = std::env::consts::EXE_SUFFIX;
+    fs::copy(mock_path(), pathdir.path().join(format!("oneharness{exe}"))).unwrap();
+    let p = Project::new();
+    Command::from_std(std::process::Command::new(&llmlint))
+        .arg("doctor")
+        .current_dir(p.path())
+        .env("PATH", pathdir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(oneharness)"));
+}
+
 #[test]
 fn lint_fails_clearly_when_oneharness_is_too_old() {
     // The pre-flight version gate stops the run before any judge call.
