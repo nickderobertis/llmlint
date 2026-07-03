@@ -28,7 +28,8 @@ Deliberately excluded (so it isn't re-litigated):
 - **No `cargo-dist`** — `release.yml`'s native build matrix already ships
   checksummed cross-platform binaries; release-plz handles versioning.
 - **crates.io publish** — alongside GitHub Releases + `install.sh` +
-  `cargo install --git`, the `publish-crate` job in `release.yml` runs
+  `cargo install --git` + PyPI binary wheels (see "PyPI wheels" under Commits,
+  releases, and merging), the `publish-crate` job in `release.yml` runs
   `cargo publish` whenever the `CARGO_REGISTRY_TOKEN` secret is set (a `guard`
   job exposes its presence as an output, since `secrets` can't be read in a job
   `if:`). release-plz never publishes (`publish = false` in `release-plz.toml`),
@@ -268,6 +269,21 @@ it. The harness reads target files on-demand with its own tools.
   crates.io sparse index for the new version and `cargo install`s + smoke-tests
   it from the registry — a post-publish sanity check (a failure means a broken
   release, not a blocked publish).
+- **PyPI wheels**: maturin `bin` bindings (`pyproject.toml`) wrap the prebuilt
+  binary in per-platform wheels (the ruff/uv pattern) so `pip install llmlint`
+  is a seconds-fast binary install — the quickest trustworthy path where package
+  registries are reachable but github.com is not. `build-wheels` in `release.yml`
+  mirrors the binary `upload` matrix (manylinux via `PyO3/maturin-action`) and
+  runs unconditioned so a packaging break reddens the release even before
+  publishing is activated; `publish-pypi` + `verify-pypi` gate on the
+  `PYPI_PUBLISH` repository **variable** (Trusted Publishing is keyless, so
+  there is no secret whose presence could self-activate it like
+  `CARGO_REGISTRY_TOKEN`). One-time setup: create the PyPI project with this
+  repo + `release.yml` as its Trusted Publisher, then set `PYPI_PUBLISH=true`.
+  Trusted Publishing auto-generates PEP 740 attestations (the same Sigstore
+  provenance as the release assets). Name/version/description stay
+  single-sourced from `Cargo.toml` (`dynamic = ["version"]`); release-plz
+  remains the only version driver.
 - **Release signing + mirror-configurable install**: the `upload` job attaches a
   keyless [Sigstore](https://www.sigstore.dev/) build-provenance attestation to
   each archive (`actions/attest-build-provenance`, bound to the GitHub Actions
