@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.5](https://github.com/nickderobertis/llmlint/compare/v0.3.4...v0.3.5) - 2026-07-03
+
+### Fixed
+
+- depend on oneharness-cli so pip install is a complete setup ([#112](https://github.com/nickderobertis/llmlint/pull/112))
+
 ## [0.3.4](https://github.com/nickderobertis/llmlint/compare/v0.3.3...v0.3.4) - 2026-07-03
 
 ### Fixed
