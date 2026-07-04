@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.7](https://github.com/nickderobertis/llmlint/compare/v0.3.6...v0.3.7) - 2026-07-04
+
+### Added
+
+- log full run results and add the `history` command ([#116](https://github.com/nickderobertis/llmlint/pull/116))
+
 ## [0.3.6](https://github.com/nickderobertis/llmlint/compare/v0.3.5...v0.3.6) - 2026-07-03
 
 ### Fixed
