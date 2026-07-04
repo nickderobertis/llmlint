@@ -45,6 +45,14 @@ pub trait DiffProvider {
     /// an error — the user asked for diffs, so a silent empty result would be a
     /// false "nothing changed".
     fn diffs(&self, root: &Path, files: &[PathBuf]) -> Result<BTreeMap<PathBuf, String>>;
+
+    /// List the files that changed versus the base (paths relative to `root`), so
+    /// a `--diff` run can **narrow its targets to exactly what changed** — the
+    /// change is the task, and a file the change never touched should not be
+    /// reviewed. Same boundary contract as [`diffs`](DiffProvider::diffs): a
+    /// missing backend or a `root` not under version control is an error, never a
+    /// silent empty list.
+    fn changed_files(&self, root: &Path) -> Result<Vec<PathBuf>>;
 }
 
 /// Build the [`DiffProvider`] for `backend`, comparing against `base` (a git
@@ -136,12 +144,14 @@ impl GitDiff {
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
-}
 
-impl DiffProvider for GitDiff {
-    fn diffs(&self, root: &Path, files: &[PathBuf]) -> Result<BTreeMap<PathBuf, String>> {
-        // Validate the boundary once: a non-repo (or missing git) is a clear
-        // error rather than a per-file failure or a silent empty result.
+    /// Validate that `root` is inside a work tree and resolve the base each file
+    /// is compared against into a single `git diff` argument. An explicit
+    /// `--diff-base` (ref or range) is trusted as-is; the implicit default is
+    /// `HEAD`, falling back to `--cached` for an unborn HEAD (a fresh repo). Shared
+    /// by [`diffs`](GitDiff::diffs) and [`changed_files`](GitDiff::changed_files)
+    /// so the two never disagree about the boundary check or the base.
+    fn base_arg(&self, root: &Path) -> Result<String> {
         let inside = self.git(root, &["rev-parse", "--is-inside-work-tree"])?;
         if inside.trim() != "true" {
             return Err(Error::Diff {
@@ -149,17 +159,19 @@ impl DiffProvider for GitDiff {
                 message: format!("{} is not inside a git work tree", root.display()),
             });
         }
-        // Pick the base. An explicit `--diff-base` (a ref or range) is trusted
-        // as-is: a bad ref is git's own clear error, not a silent fallback, and
-        // a range never has an unborn-HEAD problem. The implicit default diffs
-        // the worktree against `HEAD`, but an unborn HEAD has no commit, so it
-        // diffs the staged index against the empty tree (`git diff --cached`)
-        // instead of fataling.
-        let base_arg = match &self.base {
+        Ok(match &self.base {
             Some(rev) => rev.clone(),
             None if self.rev_exists(root, "HEAD") => "HEAD".to_string(),
             None => "--cached".to_string(),
-        };
+        })
+    }
+}
+
+impl DiffProvider for GitDiff {
+    fn diffs(&self, root: &Path, files: &[PathBuf]) -> Result<BTreeMap<PathBuf, String>> {
+        // Validate the boundary once (a non-repo / missing git is a clear error,
+        // not a per-file failure or a silent empty result) and resolve the base.
+        let base_arg = self.base_arg(root)?;
 
         let mut out = BTreeMap::new();
         for file in files {
@@ -173,6 +185,26 @@ impl DiffProvider for GitDiff {
             }
         }
         Ok(out)
+    }
+
+    fn changed_files(&self, root: &Path) -> Result<Vec<PathBuf>> {
+        let base_arg = self.base_arg(root)?;
+        // `--name-only` lists the changed paths; `--relative` reports them relative
+        // to `root` (the `-C` dir) and drops changes outside it, so the paths line
+        // up with the cwd-relative spelling llmlint uses everywhere and a run under
+        // a subdirectory only sees its own subtree. Untracked files are not part of
+        // a diff and so are intentionally excluded — the change set is what git
+        // reports as changed against the base.
+        let out = self.git(
+            root,
+            &["diff", "--name-only", "--relative", base_arg.as_str()],
+        )?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(PathBuf::from)
+            .collect())
     }
 }
 
@@ -358,6 +390,113 @@ mod tests {
             .unwrap();
         assert!(diffs.contains_key(Path::new("a.rs")), "got {diffs:?}");
         assert!(diffs[Path::new("a.rs")].contains("ranged()"));
+    }
+
+    #[test]
+    fn changed_files_lists_only_the_changed_tracked_files() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        init_repo(root);
+        fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        fs::write(root.join("b.rs"), "fn b() {}\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "init"]);
+        fs::write(root.join("a.rs"), "fn a() { changed(); }\n").unwrap();
+
+        let changed = GitDiff::new().changed_files(root).unwrap();
+        assert_eq!(changed, vec![PathBuf::from("a.rs")]);
+    }
+
+    #[test]
+    fn changed_files_is_empty_on_a_clean_worktree() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        init_repo(root);
+        fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "init"]);
+
+        // Nothing changed since the commit -> no files, not a match-all fallback.
+        assert!(GitDiff::new().changed_files(root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn changed_files_excludes_untracked() {
+        // An untracked file is not part of a diff, so it is not in the change set.
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        init_repo(root);
+        fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "init"]);
+        fs::write(root.join("new.rs"), "fn new() {}\n").unwrap(); // untracked
+
+        assert!(GitDiff::new().changed_files(root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn changed_files_unborn_head_uses_cached() {
+        // A fresh repo (unborn HEAD): staged files show against the empty tree.
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        init_repo(root);
+        fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        git(root, &["add", "a.rs"]);
+
+        assert_eq!(
+            GitDiff::new().changed_files(root).unwrap(),
+            vec![PathBuf::from("a.rs")]
+        );
+    }
+
+    #[test]
+    fn changed_files_are_relative_to_root_under_a_subdir() {
+        // The git root is `root`, but the run cwd is the `sub/` subdirectory:
+        // `--relative` reports paths relative to that cwd and drops changes outside
+        // it, matching how llmlint keys files cwd-relative.
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        init_repo(root);
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("sub/a.rs"), "fn a() {}\n").unwrap();
+        fs::write(root.join("top.rs"), "fn t() {}\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "init"]);
+        fs::write(root.join("sub/a.rs"), "fn a() { changed(); }\n").unwrap();
+        fs::write(root.join("top.rs"), "fn t() { changed(); }\n").unwrap();
+
+        // Run relative to `sub`: only `a.rs`, reported without the `sub/` prefix.
+        let changed = GitDiff::new().changed_files(&root.join("sub")).unwrap();
+        assert_eq!(changed, vec![PathBuf::from("a.rs")]);
+    }
+
+    #[test]
+    fn changed_files_against_a_base_ref() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        init_repo(root);
+        fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        git(root, &["add", "a.rs"]);
+        git(root, &["commit", "-q", "-m", "baseline"]);
+        git(root, &["checkout", "-q", "-b", "feature"]);
+        fs::write(root.join("a.rs"), "fn a() { feature(); }\n").unwrap();
+        git(root, &["commit", "-q", "-am", "feature change"]);
+
+        // Clean vs HEAD -> nothing; vs main -> the committed change.
+        assert!(GitDiff::new().changed_files(root).unwrap().is_empty());
+        assert_eq!(
+            GitDiff::with_base(Some("main".into()))
+                .changed_files(root)
+                .unwrap(),
+            vec![PathBuf::from("a.rs")]
+        );
+    }
+
+    #[test]
+    fn changed_files_non_repo_is_a_clear_error() {
+        let dir = tempdir().unwrap();
+        let err = GitDiff::new().changed_files(dir.path()).unwrap_err();
+        assert!(matches!(err, Error::Diff { .. }), "got {err:?}");
     }
 
     #[test]

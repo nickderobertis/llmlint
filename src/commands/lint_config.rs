@@ -30,12 +30,20 @@ pub fn run(args: LintConfigArgs) -> Result<i32> {
     validate(&loaded.config)?;
 
     // Phase 1 — the comment check. Resolve the config-lint target files exactly as
-    // the lint run will (its agent globs pick the llmlint config files, unless the
-    // CLI passed explicit ones) and reject any malformed ignore directive before
-    // spending a judge call. `lint::run_loaded` re-runs this same check as its
-    // pre-flight, so the fast static phase and the full run can never disagree.
+    // the lint run will (its rules' globs pick the llmlint config files, narrowed
+    // to the CLI files or a `--diff`'s changed files when given) and reject any
+    // malformed ignore directive before spending a judge call. `lint::run_loaded`
+    // re-runs this same check over the same scoped set as its pre-flight, so the
+    // fast static phase and the full run can never disagree.
     let cli_files = files::from_cli(&cwd, &args.files);
-    let targets = ignores::target_files(&cwd, &loaded.config, &loaded.scopes, &cli_files)?;
+    // Mirror `apply_cli_overrides`' base precedence (`--diff-base` over a config
+    // `diff_base`) so phase 1 scopes to the same changed files phase 2 will.
+    let diff_base = args
+        .diff_base
+        .clone()
+        .or_else(|| loaded.config.diff_base.clone());
+    let universe = ignores::file_universe(&cwd, &cli_files, args.diff, diff_base)?;
+    let targets = ignores::target_files(&cwd, &loaded.config, &loaded.scopes, universe.as_deref())?;
     let known = ignores::known_rules(&loaded.config);
     ignores::check(&cwd, &targets, &known)?;
 

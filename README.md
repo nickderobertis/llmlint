@@ -549,8 +549,9 @@ every file read in full. Trade some back for fewer tokens, roughly by impact:
 - **Fewer agents, bigger `batch_size`** — every batch re-sends the prompt and
   re-reads its files ([Batching](#batching)). Merge rules onto one agent; split
   only for a different harness, model, or reviewer context.
-- **Read less** — narrow `files.include`/`exclude`; `--diff` reviews only changed
-  lines; `FILES`/`--rule`/`--agent` lint a subset.
+- **Read less** — narrow `files.include`/`exclude`; `--diff` reviews only the
+  changed files (and their changed lines); `FILES`/`--rule`/`--agent` lint a subset
+  (`FILES` intersects the config globs).
 - **`require_line_attribution`** off unless you need pinned locations — on can
   trigger localize re-prompts.
 - **`oneharness.schema_max_retries`** — caps re-asks on a schema-invalid answer.
@@ -707,19 +708,26 @@ source.
 ## Commands & exit codes
 
 - `llmlint [FILES...]` — lint (the default). `--format human|json`, `--agent`,
-  `--rule`, `--max-parallel`, `--timeout`, `--cwd`. Target individual rules with
+  `--rule`, `--max-parallel`, `--timeout`, `--cwd`. Passing `FILES` **intersects**
+  them with the config's globs (per-rule and config-level) — each rule lints only
+  the passed files its globs match, so a scoped run never pulls in files the config
+  never declared, and a passed file no rule matches is skipped. Target individual
+  rules with
   `--rule NAME` (repeatable) or a whole group with `--agent NAME`; an unknown
   rule/agent name is an exit-2 error that lists the available names. Every
   top-level setting also has a flag that wins over the config:
   `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
   `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`. Pass
-  `--diff [<backend>]` to add each changed file's diff to the judge prompt so it
-  reviews only the changed lines; bare `--diff` uses the `git` backend (compared
+  `--diff [<backend>]` to **review only what changed**: it narrows the targets to
+  the changed files (∩ config globs) and adds each one's diff to the judge prompt
+  so it focuses on the changed lines. Files not in the diff aren't reviewed (a
+  clean worktree reviews nothing); bare `--diff` uses the `git` backend (compared
   against `HEAD`). Add `--diff-base <REF>` to compare against a different git
   revision instead of `HEAD` — a branch, tag, commit, or `A..B`/`A...B` range —
   so `--diff --diff-base main` reviews exactly what the current branch changed
   versus `main` (the PR-review case). The base can also be set once in config as
-  `diff_base:` (the flag overrides it).
+  `diff_base:` (the flag overrides it). (When you pass both `FILES` and `--diff`,
+  the files are the scope and `--diff` just adds changed-line context.)
 - `llmlint check-ignores [FILES...]` — validate the *structure* of inline
   `llmlint: ignore` directives in the target files, **deterministically and with
   no model call** (`-c/--config`, `--cwd`; pass `FILES` to scope it, e.g. the

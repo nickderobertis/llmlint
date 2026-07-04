@@ -23,8 +23,13 @@ pub fn run(args: CheckIgnoresArgs) -> Result<i32> {
     let config = loaded.config;
     validate(&config)?;
 
+    // Explicit CLI files, when given, are the file universe each rule's globs
+    // intersect with (else the globs walk the tree) — the same scoping a lint run
+    // uses, so the fast static check and the full run never disagree. (No `--diff`
+    // on this command, so the diff-narrowed universe never applies.)
     let cli_files = files::from_cli(&cwd, &args.files);
-    let targets = ignores::target_files(&cwd, &config, &scopes, &cli_files)?;
+    let universe = ignores::file_universe(&cwd, &cli_files, None, None)?;
+    let targets = ignores::target_files(&cwd, &config, &scopes, universe.as_deref())?;
     let known = ignores::known_rules(&config);
 
     // A malformed directive is a hard exit-2 error (`Error::IgnoreDirective`),

@@ -80,6 +80,15 @@ pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs)
         .unwrap_or_else(|| assets::DEFAULT_TEMPLATE.to_string());
     let cli_files = files::from_cli(&cwd, &args.files);
 
+    // The file universe this run is scoped to (CLI files, else a `--diff`'s changed
+    // files, else the whole tree). A rule's globs **intersect** it rather than
+    // override it, so a scoped run never pulls in violations from files the change
+    // never touched. `config.diff_base` is already the effective base (`--diff-base`
+    // folded in by `apply_cli_overrides`).
+    let universe_owned =
+        ignores::file_universe(&cwd, &cli_files, args.diff, config.diff_base.clone())?;
+    let universe = universe_owned.as_deref();
+
     let mut resolved = Vec::new();
     // Rules declared statically not relevant (`relevance: false`) never reach a
     // judge — they are reported as not relevant directly.
@@ -106,7 +115,7 @@ pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs)
                 &fallback
             }
         };
-        let target = ignores::resolve_files(&cwd, rule, &cli_files, scope)?;
+        let target = ignores::resolve_files(&cwd, rule, universe, scope)?;
         resolved.push(plan::ResolvedRule {
             name: rule.name.clone(),
             description: rule.description.clone(),

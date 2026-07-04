@@ -92,6 +92,55 @@ pub fn resolve_scoped(
     Ok(out)
 }
 
+/// Intersect an **explicit candidate file list** with a [`FileFilter`] — the
+/// "explicit files ∩ config globs" path. Each candidate (given relative to
+/// `out_root`, or absolute) is matched by its `glob_root`-relative path against
+/// the filter's `include`/`exclude` globs, exactly as [`resolve_scoped`] matches
+/// a walked file, so a rule's globs *narrow* an explicit set instead of
+/// re-expanding across the whole tree. Only candidates that fall under `glob_root`
+/// are considered (a rule never judges a file outside its directory scope);
+/// returned paths keep their `out_root`-relative spelling, sorted and de-duped.
+///
+/// This is what makes an explicit file universe — the CLI file list, or the
+/// changed files from a `--diff` run — a filter that config globs intersect with
+/// rather than one the globs ignore. An empty `include` still means match-all (the
+/// repo-wide default), so a config with no `files` block keeps every candidate.
+pub fn filter_scoped(
+    glob_root: &Path,
+    out_root: &Path,
+    filter: &FileFilter,
+    candidates: &[PathBuf],
+) -> Result<Vec<PathBuf>> {
+    let include = build_set(&filter.include)?;
+    let exclude = build_set(&filter.exclude)?;
+
+    let mut out = Vec::new();
+    for cand in candidates {
+        // Absolutize (CLI paths are usually cwd-relative) and lexically normalize
+        // so the prefix test and glob match see a clean path, matching how
+        // `configfs` keys files elsewhere.
+        let abs = if cand.is_absolute() {
+            cand.clone()
+        } else {
+            out_root.join(cand)
+        };
+        let abs = crate::io::configfs::normalize(&abs);
+        // Match globs against the config-dir-relative path; a candidate outside the
+        // glob root is out of this rule's scope and dropped.
+        let Ok(rel_glob) = abs.strip_prefix(glob_root) else {
+            continue;
+        };
+        let excluded = exclude.as_ref().is_some_and(|e| e.is_match(rel_glob));
+        let included = include.as_ref().is_none_or(|set| set.is_match(rel_glob));
+        if included && !excluded {
+            out.push(cand.clone());
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// Read a target file (given relative to `root`) as UTF-8 text, for scanning
 /// inline `llmlint: ignore` directives. Returns `Ok(None)` for a non-UTF-8
 /// (binary) file — it can't carry a text directive, so it is skipped rather than
@@ -286,6 +335,61 @@ mod tests {
             read_text(dir.path(), Path::new("nope.rs")),
             Err(Error::Io(_))
         ));
+    }
+
+    #[test]
+    fn filter_scoped_intersects_candidates_with_globs() {
+        // The candidate list is the universe; the filter's globs narrow it. A
+        // candidate matching the include is kept; one that doesn't is dropped —
+        // globs never re-expand beyond the passed files.
+        let dir = tempdir().unwrap();
+        let filter = FileFilter {
+            include: vec!["src/**/*.rs".into()],
+            exclude: vec!["**/gen.rs".into()],
+        };
+        let candidates = vec![
+            PathBuf::from("src/a.rs"),   // matches include -> kept
+            PathBuf::from("src/gen.rs"), // excluded -> dropped
+            PathBuf::from("README.md"),  // outside include -> dropped
+        ];
+        let out = filter_scoped(dir.path(), dir.path(), &filter, &candidates).unwrap();
+        assert_eq!(out, vec![PathBuf::from("src/a.rs")]);
+    }
+
+    #[test]
+    fn filter_scoped_empty_include_keeps_every_candidate_under_root() {
+        // No `files` block (default filter) is match-all: every candidate under the
+        // glob root survives, so a flat config with an explicit file list is
+        // unchanged by the intersection.
+        let dir = tempdir().unwrap();
+        let candidates = vec![PathBuf::from("a.rs"), PathBuf::from("sub/b.rs")];
+        let out =
+            filter_scoped(dir.path(), dir.path(), &FileFilter::default(), &candidates).unwrap();
+        assert_eq!(out, candidates);
+    }
+
+    #[test]
+    fn filter_scoped_bounds_candidates_to_the_glob_root() {
+        // With a nested glob root, only candidates under it are considered; the
+        // returned paths keep their out_root-relative spelling.
+        let dir = tempdir().unwrap();
+        let glob_root = dir.path().join("frontend");
+        let candidates = vec![
+            PathBuf::from("frontend/app.ts"), // under glob_root -> kept
+            PathBuf::from("backend/svc.rs"),  // outside -> dropped
+        ];
+        let out =
+            filter_scoped(&glob_root, dir.path(), &FileFilter::default(), &candidates).unwrap();
+        assert_eq!(out, vec![PathBuf::from("frontend/app.ts")]);
+    }
+
+    #[test]
+    fn filter_scoped_empty_candidates_is_empty() {
+        // An explicit-but-empty universe (a `--diff` with no changes) yields
+        // nothing, never a match-all re-expansion.
+        let dir = tempdir().unwrap();
+        let out = filter_scoped(dir.path(), dir.path(), &FileFilter::default(), &[]).unwrap();
+        assert!(out.is_empty());
     }
 
     #[test]

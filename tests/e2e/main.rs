@@ -1063,7 +1063,12 @@ fn no_files_block_still_respects_gitignore_and_exclude() {
 }
 
 #[test]
-fn explicit_cli_files_override_config_globs() {
+fn explicit_cli_files_intersect_config_globs() {
+    // Explicit CLI files are **intersected** with the config's globs, not an
+    // override: a passed file inside the config's declared scope is linted; one
+    // outside it is dropped. So a scoped run only judges files the config actually
+    // cares about — it never drags in violations from files the change never
+    // touched, nor re-expands the config globs across the whole tree.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -1077,7 +1082,9 @@ fn explicit_cli_files_override_config_globs() {
     let verdicts = p.write_verdicts(r#"{"cli_rule": true}"#);
     let dump = p.path().join("system.txt");
 
+    // Pass both files; only `src/a.rs` is inside the `src/**` config scope.
     p.lint()
+        .arg("src/a.rs")
         .arg("README.md")
         .arg("--max-parallel")
         .arg("1")
@@ -1087,10 +1094,10 @@ fn explicit_cli_files_override_config_globs() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("README.md"), "system:\n{system}");
+    assert!(system.contains("src/a.rs"), "system:\n{system}");
     assert!(
-        !system.contains("src/a.rs"),
-        "config glob should be overridden"
+        !system.contains("README.md"),
+        "a passed file outside the config glob must not be linted:\n{system}"
     );
 }
 
@@ -1193,15 +1200,13 @@ fn diff_flag_adds_changed_lines_to_the_prompt() {
         system.contains("+fn a() { let x = 1; }"),
         "system:\n{system}"
     );
-    // The unchanged file gets no diff (nothing changed in it).
-    assert!(
-        !system.contains("diff --git a/src/b.rs"),
-        "system:\n{system}"
-    );
-    // Both files are still listed as targets (diffs are additive context, not a
-    // file filter).
+    // `--diff` narrows the targets to the changed files: only src/a.rs is reviewed,
+    // and the unchanged src/b.rs is not a target at all.
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
-    assert!(system.contains("- src/b.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("src/b.rs"),
+        "unchanged file must not be reviewed under --diff:\n{system}"
+    );
 }
 
 #[test]
@@ -1359,9 +1364,11 @@ fn diff_includes_both_staged_and_unstaged_changes() {
 }
 
 #[test]
-fn diff_untracked_new_file_is_a_target_without_a_block() {
-    // A brand-new untracked file has no diff vs HEAD, so it carries no block —
-    // but it is still a target (reviewed whole, since diffs are additive context).
+fn diff_untracked_new_file_is_not_reviewed() {
+    // A brand-new untracked file is not part of the diff (git reports no change
+    // for it against HEAD), so `--diff` does not review it. With nothing else
+    // changed there is nothing to lint: every rule is a clean skip and no judge
+    // runs (so the mock is never invoked and writes no dump).
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     p.write("src/new.rs", "fn brand_new() {}\n"); // never committed
@@ -1375,21 +1382,18 @@ fn diff_untracked_new_file_is_a_target_without_a_block() {
         .assert()
         .success();
 
-    let system = fs::read_to_string(&dump).unwrap();
-    // Listed as a target...
-    assert!(system.contains("- src/new.rs"), "target missing:\n{system}");
-    // ...but no diff block, and with nothing else changed, no section at all.
     assert!(
-        !system.contains("diff --git a/src/new.rs"),
-        "unexpected diff block:\n{system}"
+        !dump.exists(),
+        "an untracked file is not in the diff and must not be reviewed under --diff"
     );
-    assert!(!system.contains("```diff"), "system:\n{system}");
 }
 
 #[test]
-fn diff_clean_worktree_renders_no_section() {
-    // `--diff` on a pristine checkout: nothing changed, so no section — but the
-    // files are still linted (whole-file review), and the run is clean.
+fn diff_clean_worktree_reviews_nothing() {
+    // `--diff` on a pristine checkout: nothing changed, so there is nothing to
+    // review — `--diff` narrows to the (empty) change set rather than falling back
+    // to the whole tree. Every rule is a clean skip, no judge runs, and the run
+    // succeeds.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     let dump = p.path().join("system.txt");
@@ -1402,9 +1406,10 @@ fn diff_clean_worktree_renders_no_section() {
         .assert()
         .success();
 
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("```diff"), "system:\n{system}");
-    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(
+        !dump.exists(),
+        "a clean worktree under --diff has nothing to review"
+    );
 }
 
 #[test]
@@ -1586,9 +1591,10 @@ fn diff_base_reviews_changes_against_a_branch() {
 
 #[test]
 fn diff_base_default_head_shows_no_committed_branch_change() {
-    // The mirror of the test above: without `--diff-base`, the default `HEAD`
-    // base sees the clean worktree and renders no section — proving the branch
-    // change only surfaces because of the explicit base, not by accident.
+    // The mirror of the test above: without `--diff-base`, the default `HEAD` base
+    // sees the clean worktree as unchanged, so `--diff` reviews nothing — proving
+    // the branch change only surfaces (and only gets reviewed) because of the
+    // explicit base, not by accident.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     git(p.path(), &["checkout", "-q", "-b", "feature"]);
@@ -1604,9 +1610,10 @@ fn diff_base_default_head_shows_no_committed_branch_change() {
         .assert()
         .success();
 
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("```diff"), "system:\n{system}");
-    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(
+        !dump.exists(),
+        "the default HEAD base finds no change, so --diff reviews nothing"
+    );
 }
 
 #[test]
@@ -1994,10 +2001,10 @@ fn diff_base_respects_cwd_as_the_git_root() {
 }
 
 #[test]
-fn diff_base_equal_to_tip_renders_no_section() {
+fn diff_base_equal_to_tip_reviews_nothing() {
     // An explicit base that equals the current tip (here the branch you're on)
-    // means nothing differs: no ````diff` section, but the files are
-    // still linted (whole-file review) and the run is clean.
+    // means nothing differs: the change set is empty, so `--diff` reviews nothing
+    // and the run is a clean skip.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     let dump = p.path().join("system.txt");
@@ -2012,9 +2019,10 @@ fn diff_base_equal_to_tip_renders_no_section() {
         .assert()
         .success();
 
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("```diff"), "system:\n{system}");
-    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(
+        !dump.exists(),
+        "no diff vs the tip means nothing to review under --diff"
+    );
 }
 
 /// Like `committed_repo`, but the config also sets a top-level `diff_base`, so a
@@ -4193,6 +4201,42 @@ fn per_rule_files_override_global_globs() {
 }
 
 #[test]
+fn per_rule_files_intersect_explicit_cli_files() {
+    // The config_lint footgun: a rule whose per-rule `files` glob matches broadly
+    // (here every `*.yml`) must not re-expand across the whole tree when the CLI
+    // passes a handful of files — it intersects. Passing only `a.yml` lints just
+    // `a.yml`, never the sibling `b.yml` the glob would otherwise pull in.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: yml_rule, description: \"{RULE}\", files: {{ include: [\"**/*.yml\"] }} }}\n"
+        ),
+    );
+    p.write("a.yml", "x: 1\n");
+    p.write("b.yml", "y: 2\n");
+    let verdicts = p.write_verdicts(r#"{"yml_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("a.yml")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("a.yml"), "system:\n{system}");
+    assert!(
+        !system.contains("b.yml"),
+        "a broad per-rule glob must not re-expand past the passed files:\n{system}"
+    );
+}
+
+#[test]
 fn agent_files_is_a_removed_field() {
     // `agent.files` was removed (it duplicated per-rule `files` and let a subtree
     // agent silently retarget outside rules). A config that still sets it is a
@@ -4944,9 +4988,9 @@ fn check_ignores_reports_every_malformed_directive_across_files() {
 
 #[test]
 fn check_ignores_scopes_to_explicit_files_like_lint() {
-    // Passing files overrides the config globs: a malformed directive in a file
-    // not listed on the CLI is not scanned, exactly as for a lint run — so a
-    // pre-commit hook can pass just the changed files.
+    // Passing files intersects the config globs down to the listed set: a
+    // malformed directive in a file not listed on the CLI is not scanned, exactly
+    // as for a lint run — so a pre-commit hook can pass just the changed files.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -6448,9 +6492,9 @@ fn block_scoped_ignore_suppresses_violations_inside_the_block() {
 #[test]
 fn per_file_applicability_and_diff_compose_in_one_prompt() {
     // The per-file applicability context and the `--diff` changed-lines block are
-    // independent sections that must coexist: a merged call over two distinct
-    // file scopes shows both the per-file rule lists and the diff of the changed
-    // file (and only the changed file).
+    // independent sections that must coexist: a merged call over two distinct file
+    // scopes (both files changed, so both survive the `--diff` narrowing) shows
+    // both the per-file rule lists and each file's own diff.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -6465,8 +6509,9 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
     init_repo(p.path());
     git(p.path(), &["add", "."]);
     git(p.path(), &["commit", "-q", "-m", "baseline"]);
-    // Change only src/a.rs, so the diff block carries it and docs/b.md does not.
+    // Change both files, so both stay in the change set and each carries its diff.
     p.write("src/a.rs", "// after the change\n");
+    p.write("docs/b.md", "# doc changed\n");
 
     let verdicts = p.write_verdicts(r#"{"rule_src": true, "rule_docs": true}"#);
     let dump = p.path().join("system.txt");
@@ -6480,7 +6525,8 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    // Per-file applicability is present for both files.
+    // Per-file applicability is present for both files (still two distinct scopes
+    // in one merged call).
     assert!(
         system.contains("src/a.rs — only these rules apply: rule_src"),
         "system:\n{system}"
@@ -6489,7 +6535,7 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
         system.contains("docs/b.md — all rules apply except: rule_src"),
         "system:\n{system}"
     );
-    // The diff is inlined under src/a.rs (the only changed file).
+    // Each changed file's diff is inlined under its own target line.
     assert!(system.contains("```diff"), "system:\n{system}");
     assert!(
         system.contains("diff --git a/src/a.rs"),
@@ -6497,9 +6543,10 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
     );
     assert!(system.contains("+// after the change"), "system:\n{system}");
     assert!(
-        !system.contains("diff --git a/docs/b.md"),
-        "unchanged file has no diff:\n{system}"
+        system.contains("diff --git a/docs/b.md"),
+        "system:\n{system}"
     );
+    assert!(system.contains("+# doc changed"), "system:\n{system}");
 }
 
 #[test]

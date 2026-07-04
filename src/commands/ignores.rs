@@ -18,8 +18,36 @@ use std::path::{Path, PathBuf};
 use crate::domain::config::{Config, RelevanceMode, Rule};
 use crate::domain::ignore;
 use crate::errors::{Error, Result};
-use crate::io::configfs::{self, RuleScope};
+use crate::io::configfs::RuleScope;
+use crate::io::diff::{self, DiffBackend};
 use crate::io::files;
+
+/// The explicit file universe a run is scoped to, or `None` for "walk the tree":
+///
+///   * the CLI file list, when non-empty;
+///   * else, under `--diff`, the changed files the diff backend reports against
+///     `diff_base` (so a diff run reviews only what changed);
+///   * else `None` — no explicit set, so each rule's globs resolve by walking.
+///
+/// A rule **intersects** its globs with this set rather than override it (see
+/// [`resolve_files`]), so a scoped run never drags in violations from files the
+/// change never touched. Shared by `lint`, `check-ignores`, and `lint-config` so
+/// they all scope to the same files. `cli_files` should already be normalized via
+/// [`files::from_cli`].
+pub fn file_universe(
+    cwd: &Path,
+    cli_files: &[PathBuf],
+    diff: Option<DiffBackend>,
+    diff_base: Option<String>,
+) -> Result<Option<Vec<PathBuf>>> {
+    if !cli_files.is_empty() {
+        return Ok(Some(cli_files.to_vec()));
+    }
+    if let Some(backend) = diff {
+        return Ok(Some(diff::provider(backend, diff_base).changed_files(cwd)?));
+    }
+    Ok(None)
+}
 
 /// The configured rule names — the set a directive may legitimately reference.
 /// A directive may name any configured rule, not just the ones a given run
@@ -31,16 +59,17 @@ pub fn known_rules(config: &Config) -> BTreeSet<&str> {
 /// Resolve the union of every evaluated rule's target files (relative to `cwd`),
 /// de-duplicated and ordered. This mirrors what `lint` would scan: rules
 /// disabled with `relevance: false` never run, so their files are not scanned
-/// here either. `cli_files`, when non-empty, overrides the config globs exactly
-/// as it does for a lint run (per-rule / per-agent `files` still win). `scopes`
-/// are the per-rule directory scopes from [`crate::io::configfs::Loaded`], so a
-/// nested config's globs root at its own directory exactly as they do for a lint
-/// run — the two never disagree about which files carry directives.
+/// here either. `universe`, when `Some`, is the explicit file set (CLI files or a
+/// `--diff`'s changed files) each rule's globs **intersect** with — exactly as a
+/// lint run scopes its files, so the two never disagree about which files carry
+/// directives. `scopes` are the per-rule directory scopes from
+/// [`crate::io::configfs::Loaded`], so a nested config's globs root at its own
+/// directory just as they do for a lint run.
 pub fn target_files(
     cwd: &Path,
     config: &Config,
     scopes: &BTreeMap<String, RuleScope>,
-    cli_files: &[PathBuf],
+    universe: Option<&[PathBuf]>,
 ) -> Result<BTreeSet<PathBuf>> {
     let mut out: BTreeSet<PathBuf> = BTreeSet::new();
     for rule in &config.rules {
@@ -58,57 +87,40 @@ pub fn target_files(
                 &fallback
             }
         };
-        for f in resolve_files(cwd, rule, cli_files, scope)? {
+        for f in resolve_files(cwd, rule, universe, scope)? {
             out.insert(f);
         }
     }
     Ok(out)
 }
 
-/// The target files for a single rule, applying the same precedence a lint run
-/// uses: a per-rule `files` filter wins, then explicit CLI files, then the rule's
-/// [`RuleScope`] fallback filter. Glob filters root at the rule's config directory
-/// (`scope.dir`) so a nested config's globs mean "relative to me", while resolved
-/// paths stay relative to `cwd`.
+/// The target files for a single rule. The rule's effective globs are its own
+/// per-rule `files` filter when set, else its origin config's fallback filter
+/// (`scope.files`); glob filters root at the rule's config directory (`scope.dir`)
+/// so a nested config's globs mean "relative to me", while resolved paths stay
+/// relative to `cwd`.
+///
+/// `universe` selects between two modes:
+/// - `None` — no explicit file set: resolve the globs by **walking** the rule's
+///   scope (the whole tree under it).
+/// - `Some(files)` — an explicit file set (the CLI file list, or the changed files
+///   from a `--diff` run): **intersect** it with the rule's globs instead of
+///   letting the globs re-expand across the whole tree. Bounded to the rule's
+///   directory scope, so a passed file outside it is never judged by that rule. An
+///   empty set means nothing is in scope (a `--diff` with no changes), never a
+///   match-all re-expansion — which is what keeps a scoped run from dragging in
+///   violations from files the change never touched.
 pub fn resolve_files(
     cwd: &Path,
     rule: &Rule,
-    cli_files: &[PathBuf],
+    universe: Option<&[PathBuf]>,
     scope: &RuleScope,
 ) -> Result<Vec<PathBuf>> {
-    if let Some(f) = &rule.files {
-        return files::resolve_scoped(&scope.dir, cwd, f);
+    let filter = rule.files.as_ref().unwrap_or(&scope.files);
+    match universe {
+        Some(files) => files::filter_scoped(&scope.dir, cwd, filter, files),
+        None => files::resolve_scoped(&scope.dir, cwd, filter),
     }
-    if !cli_files.is_empty() {
-        // Explicit CLI files override the rule's globs, but they are still bounded
-        // to the rule's directory scope: a subtree config's rule must not be judged
-        // against a passed file outside its directory. Keep only the files under
-        // `scope.dir` (reported cwd-relative, as given); a rule with no passed file
-        // under its scope resolves to nothing and is skipped — the same
-        // "consolidated up from each leaf" trimming a discovery run does.
-        return Ok(scope_cli_files(cwd, &scope.dir, cli_files));
-    }
-    files::resolve_scoped(&scope.dir, cwd, &scope.files)
-}
-
-/// Keep the explicit CLI files that fall under `dir` (a rule's directory scope),
-/// preserving their given (cwd-relative) spelling. A file is under `dir` when its
-/// absolutized, lexically-normalized path is prefixed by `dir`; an ancestor-scoped
-/// rule (e.g. the cwd config, whose `dir` is `cwd` or above) keeps every passed
-/// file under `cwd`, so a flat single-config run is unchanged.
-fn scope_cli_files(cwd: &Path, dir: &Path, cli_files: &[PathBuf]) -> Vec<PathBuf> {
-    cli_files
-        .iter()
-        .filter(|f| {
-            let abs = if f.is_absolute() {
-                (*f).clone()
-            } else {
-                cwd.join(f)
-            };
-            configfs::normalize(&abs).starts_with(dir)
-        })
-        .cloned()
-        .collect()
 }
 
 /// Scan each file (read once, relative to `cwd`) for inline `llmlint: ignore`
@@ -143,32 +155,105 @@ pub fn check(cwd: &Path, targets: &BTreeSet<PathBuf>, known: &BTreeSet<&str>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::config::FileFilter;
+    use std::fs;
     use tempfile::tempdir;
 
-    #[test]
-    fn scope_cli_files_bounds_to_the_scope_dir_relative_and_absolute() {
-        let tmp = tempdir().unwrap();
-        let cwd = tmp.path();
-        let dir = cwd.join("backend");
-        let abs_in = cwd.join("backend/x.rs"); // absolute, under dir → kept
-        let abs_out = cwd.join("other/y.rs"); // absolute, outside → dropped
-        let files = vec![
-            PathBuf::from("backend/svc.rs"), // relative, under dir → kept
-            PathBuf::from("app.rs"),         // relative, outside → dropped
-            abs_in.clone(),
-            abs_out,
-        ];
-        let kept = scope_cli_files(cwd, &dir, &files);
-        assert_eq!(kept, vec![PathBuf::from("backend/svc.rs"), abs_in]);
+    fn rule_named(name: &str, files: Option<FileFilter>) -> Rule {
+        Rule {
+            name: name.into(),
+            description: "true when ok; false otherwise.".into(),
+            r#override: false,
+            agent: None,
+            judges: None,
+            files,
+            rationale: None,
+            relevance: None,
+            require_line_attribution: None,
+        }
+    }
+
+    fn scope_at(dir: &Path, filter: FileFilter) -> RuleScope {
+        RuleScope {
+            dir: dir.to_path_buf(),
+            files: filter,
+        }
     }
 
     #[test]
-    fn scope_cli_files_ancestor_scope_keeps_all_files_under_cwd() {
+    fn resolve_files_intersects_the_universe_with_the_rule_globs() {
+        // An explicit universe is narrowed by the rule's own `files` filter: a
+        // passed file matching the filter is kept; one that doesn't is dropped, so
+        // the glob never re-expands beyond the passed set.
         let tmp = tempdir().unwrap();
         let cwd = tmp.path();
-        // A cwd/ancestor scope (the root config) keeps every passed file, so a flat
-        // single-config run is unchanged by the per-rule scoping.
-        let files = vec![PathBuf::from("a.rs"), PathBuf::from("sub/b.rs")];
-        assert_eq!(scope_cli_files(cwd, cwd, &files), files);
+        let rule = rule_named(
+            "r",
+            Some(FileFilter {
+                include: vec!["**/*.yml".into()],
+                exclude: vec![],
+            }),
+        );
+        let scope = scope_at(cwd, FileFilter::default());
+        let universe = vec![PathBuf::from("a.yml"), PathBuf::from("b.rs")];
+        let out = resolve_files(cwd, &rule, Some(&universe), &scope).unwrap();
+        assert_eq!(out, vec![PathBuf::from("a.yml")]);
+    }
+
+    #[test]
+    fn resolve_files_falls_back_to_config_filter_when_rule_has_none() {
+        // With no per-rule `files`, the scope's (config-level) filter narrows the
+        // universe — the config `include` intersects the passed files too.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        let rule = rule_named("r", None);
+        let scope = scope_at(
+            cwd,
+            FileFilter {
+                include: vec!["src/**".into()],
+                exclude: vec![],
+            },
+        );
+        let universe = vec![PathBuf::from("src/a.rs"), PathBuf::from("README.md")];
+        let out = resolve_files(cwd, &rule, Some(&universe), &scope).unwrap();
+        assert_eq!(out, vec![PathBuf::from("src/a.rs")]);
+    }
+
+    #[test]
+    fn resolve_files_empty_universe_scopes_to_nothing() {
+        // A `--diff` with no changes hands an empty universe: the rule resolves to
+        // nothing (and is skipped), never a match-all walk.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        let rule = rule_named("r", None);
+        let scope = scope_at(cwd, FileFilter::default());
+        let out = resolve_files(cwd, &rule, Some(&[]), &scope).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn resolve_files_no_universe_walks_the_scope() {
+        // Without an explicit universe the globs resolve by walking the tree.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        fs::write(cwd.join("a.rs"), "x").unwrap();
+        fs::write(cwd.join("b.rs"), "x").unwrap();
+        let rule = rule_named("r", None);
+        let scope = scope_at(cwd, FileFilter::default());
+        let out = resolve_files(cwd, &rule, None, &scope).unwrap();
+        assert_eq!(out, vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]);
+    }
+
+    #[test]
+    fn resolve_files_universe_bounds_to_the_scope_dir() {
+        // A subtree rule (scope under `backend/`) only sees passed files under its
+        // directory — a file outside is never judged by it.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        let rule = rule_named("r", None);
+        let scope = scope_at(&cwd.join("backend"), FileFilter::default());
+        let universe = vec![PathBuf::from("backend/x.rs"), PathBuf::from("app.rs")];
+        let out = resolve_files(cwd, &rule, Some(&universe), &scope).unwrap();
+        assert_eq!(out, vec![PathBuf::from("backend/x.rs")]);
     }
 }

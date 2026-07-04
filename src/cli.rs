@@ -62,8 +62,10 @@ pub enum Command {
 
 #[derive(Args, Debug, Default)]
 pub struct LintArgs {
-    /// Files to lint. When given, overrides the config's file globs (per-rule
-    /// and per-agent `files` still take precedence).
+    /// Files to lint. When given, they are **intersected** with the config's file
+    /// globs (per-rule and config-level `files`), not an override: each rule lints
+    /// only the passed files its globs match, so a scoped run never pulls in files
+    /// the config never declared. A passed file no rule's globs match is skipped.
     pub files: Vec<PathBuf>,
 
     /// llmlint config file(s); repeatable. Replaces nested upward discovery.
@@ -151,10 +153,14 @@ pub struct LintArgs {
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
 
-    /// Add each target file's diff to the judge prompt so it reviews only the
-    /// changed lines. Bare `--diff` uses the `git` backend (compared against
-    /// `HEAD`); pass a backend (`--diff git`) to choose one explicitly. Omitted:
-    /// the whole file is reviewed as before.
+    /// Review only what changed: narrow the target files to the ones the diff
+    /// reports as changed (intersected with the config globs) and add each one's
+    /// diff to the judge prompt so it focuses on the changed lines. Files not in
+    /// the diff are not reviewed. Bare `--diff` uses the `git` backend (compared
+    /// against `HEAD`); pass a backend (`--diff git`) to choose one explicitly.
+    /// Omitted: every config-matched file is reviewed. (When explicit files are
+    /// also passed, those are the scope and `--diff` only adds changed-line
+    /// context.)
     #[arg(
         long = "diff",
         value_name = "BACKEND",
@@ -163,11 +169,11 @@ pub struct LintArgs {
     )]
     pub diff: Option<DiffBackend>,
 
-    /// Base the `--diff` git backend compares target files against, instead of
-    /// the default `HEAD`. Accepts any git revision — a branch, tag, commit, or
-    /// an `A..B`/`A...B` range — so `--diff-base main` reviews exactly what the
-    /// current branch changed versus `main`. Overrides the config `diff_base`.
-    /// Requires `--diff`.
+    /// Base the `--diff` git backend compares against, instead of the default
+    /// `HEAD`. Accepts any git revision — a branch, tag, commit, or an
+    /// `A..B`/`A...B` range — so `--diff-base main` reviews exactly what the
+    /// current branch changed versus `main` (and scopes the run to those files).
+    /// Overrides the config `diff_base`. Requires `--diff`.
     #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
     pub diff_base: Option<String>,
 }
@@ -330,9 +336,9 @@ pub struct InitArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct CheckIgnoresArgs {
-    /// Files to scan. When given, overrides the config's file globs (per-rule
-    /// and per-agent `files` still take precedence) — pass the changed files to
-    /// scope the check in a pre-commit hook.
+    /// Files to scan. When given, they are **intersected** with the config's file
+    /// globs (each rule scans only the passed files its globs match), not an
+    /// override — pass the changed files to scope the check in a pre-commit hook.
     pub files: Vec<PathBuf>,
 
     /// llmlint config file(s); repeatable. Replaces upward config discovery.
@@ -346,8 +352,9 @@ pub struct CheckIgnoresArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct LintConfigArgs {
-    /// Config files to lint. When given, overrides the bundled config-lint globs
-    /// (which otherwise discover every llmlint config in the tree).
+    /// Config files to lint. When given, they are **intersected** with the bundled
+    /// config-lint globs (which otherwise discover every llmlint config in the
+    /// tree), so only the passed config files that those globs match are linted.
     pub files: Vec<PathBuf>,
 
     /// oneharness config file to forward via `--config` (single-file; extras warn).
@@ -401,9 +408,11 @@ pub struct LintConfigArgs {
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
 
-    /// Add each target config's diff to the judge prompt so it reviews only the
-    /// changed lines. Bare `--diff` uses the `git` backend (compared against
-    /// `HEAD`); pass a backend (`--diff git`) to choose one explicitly.
+    /// Review only changed configs: narrow the target config files to the ones the
+    /// diff reports as changed (intersected with the config-lint globs) and add
+    /// each one's diff to the judge prompt. Bare `--diff` uses the `git` backend
+    /// (compared against `HEAD`); pass a backend (`--diff git`) to choose one
+    /// explicitly.
     #[arg(
         long = "diff",
         value_name = "BACKEND",

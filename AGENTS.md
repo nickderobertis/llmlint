@@ -222,22 +222,30 @@ harness reads target files on-demand with its own tools.
   forms as a backstop (so the judge's verdict reads true) but no longer needs to
   carry the file-scoped guidance — and a custom `prompt_template` can drop the
   ignore guidance entirely without changing behavior, since llmlint enforces it.
-- **Diff context (convention):** `--diff [<backend>]` adds each changed target
-  file's diff to the judge prompt so it reviews only the changed lines (bare
-  `--diff` defaults to `git`, compared against `HEAD`). The capability is
+- **Diff context (convention):** `--diff [<backend>]` **narrows the run to what
+  changed** *and* adds each changed file's diff to the judge prompt so it focuses
+  on the changed lines (bare `--diff` defaults to `git`, compared against `HEAD`).
+  The capability is
   **backend-agnostic**: `src/io/diff.rs` defines a `DiffProvider` trait and a
   `DiffBackend` value enum; `GitDiff` is the first impl (`git diff`, with an
   unborn-HEAD `--cached` fallback) and `provider()` is the only place that maps a
   backend to an impl, so a new VCS/range source is a variant + impl with no
-  call-site changes — `lint` only talks to the trait. Diffs are computed once at
+  call-site changes — `lint` only talks to the trait. The trait has two calls:
+  `changed_files` (the change set, `git diff --name-only --relative`, reported
+  cwd-relative and bounded to the run's cwd; untracked files are not in a diff, so
+  they are excluded) and `diffs` (the per-file unified diffs); both share one
+  boundary check + base resolution (`GitDiff::base_arg`). The change set becomes
+  the **file universe** the run scopes to (see the file-universe convention
+  below), so a `--diff` run reviews **only** the changed files (∩ config globs) —
+  a clean worktree reviews nothing. Diffs are computed once at
   the I/O boundary (per target file, before planning) and **inlined per file in
   the prompt's "Target files" section**: each changed file's unified diff is shown
   right under its applicability line (rules + diff together), so the judge sees a
-  changed file's scope and change in one place. They are **not** a file filter —
-  every target file is still reviewed, an unchanged one just carries no diff. The
+  changed file's scope and change in one place. The
   same diffs stay available to a custom `prompt_template` as the `diffs` context
   block (and per-file as `file_rules[i].diff`), so a `{% if diffs %}…{% endfor %}`
-  block still works. A
+  block still works. When explicit `FILES` are *also* passed, those are the scope
+  and `--diff` only adds changed-line context (it does not further narrow). A
   `--diff git` run outside a git work tree is a clear exit-2 `Error::Diff`, never
   a silent empty diff. **Base selection:** `--diff-base <REF>` (clap `requires`
   `--diff`) sets `GitDiff.base` to any git revision or range — a branch, tag,
@@ -399,6 +407,22 @@ harness reads target files on-demand with its own tools.
   full discovered set, so a project whose only config sits in an unrelated subtree
   is a clean zero-rule run, not a `ConfigNotFound`. `--config` replaces the whole
   walk with no cascade (`load_explicit`, globs rooted at `cwd`).
+- **File universe = intersection, not override (convention):** an explicit file
+  set — the CLI `FILES`, or the changed files from a `--diff` run — is a universe
+  each rule's globs **intersect** with, never one they override. `commands/ignores.rs`
+  centralizes it: `file_universe` yields `Some(files)` (CLI files, else a
+  `--diff`'s `changed_files`) or `None` (no explicit set), and `resolve_files`
+  either walks the rule's scope (`None`) or intersects the universe against the
+  rule's effective globs (per-rule `files`, else the origin config's `files`) via
+  `files::filter_scoped` — bounded to the rule's directory scope, reported
+  cwd-relative. So a passed/changed file a rule's globs don't match is dropped from
+  that rule (a rule left with no files is skipped), and a config that declares
+  `files: {include: [src/**]}` never re-expands across the whole tree when you lint
+  a handful of files. An **empty** universe (a `--diff` with nothing changed) scopes
+  every rule to nothing rather than falling back to match-all — the point is to
+  never drag in violations from files the change never touched. `lint`,
+  `check-ignores`, and `lint-config` all route through `file_universe` so they scope
+  identically; only `lint`/`lint-config` expose `--diff`.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `lint-config`, `init`, `config` (`--sources` adds per-item provenance), `where`
   (locate one config item's source), `doctor`. `commands/ignores.rs` holds the
