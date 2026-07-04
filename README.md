@@ -572,7 +572,7 @@ FAIL no_inline_sql
      src/db.rs:12: inline SQL
 
 2 rules: 1 passed, 1 failed, 0 skipped
-Run 20260704T153000Z-1a2b3 logged — see full results with `llmlint history 20260704T153000Z-1a2b3`
+See full results with `llmlint history 20260704T153000Z-1a2b3`
 ```
 
 Inspect what was logged with `llmlint history`:

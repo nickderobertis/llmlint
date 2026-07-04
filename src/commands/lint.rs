@@ -420,7 +420,7 @@ fn log_history(
             // goes to stderr, and only for the human format (a JSON consumer reads
             // the record file itself). This keeps stdout byte-identical to before.
             if args.format == OutputFormat::Human {
-                eprintln!("Run {id} logged — see full results with `llmlint history {id}`");
+                eprintln!("See full results with `llmlint history {id}`");
             }
         }
         Err(e) => eprintln!("llmlint: warning: could not log run results: {e}"),

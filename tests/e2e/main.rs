@@ -6689,7 +6689,7 @@ fn a_run_is_logged_and_can_be_listed_and_shown() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("logged") && stderr.contains("llmlint history"),
+        stderr.contains("See full results with `llmlint history"),
         "stderr:\n{stderr}"
     );
     // Exactly one record landed in the isolated store.
@@ -6980,4 +6980,153 @@ fn history_explicit_dir_and_path_listing() {
         .assert()
         .success()
         .stdout(predicate::str::contains("1 passed, 1 failed"));
+}
+
+#[test]
+fn history_env_off_switch_matches_the_flag() {
+    // `LLMLINT_NO_HISTORY=1` disables logging for a run, like `--no-history`.
+    let (p, verdicts) = history_project();
+    p.lint()
+        .env("LLMLINT_NO_HISTORY", "1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("llmlint history").not());
+    assert_eq!(history_record_count(&p), 0);
+}
+
+#[test]
+fn history_latest_on_empty_store_is_a_clear_error() {
+    // Nothing recorded yet: `history latest` is a clear exit-2 error, while a bare
+    // `history` listing reports the empty store (exit 0).
+    let p = Project::new();
+    p.bare()
+        .arg("history")
+        .arg("latest")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no runs recorded"));
+    p.bare()
+        .arg("history")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No runs recorded"));
+}
+
+#[test]
+fn history_records_a_run_error_with_its_errors_and_exit_code() {
+    // A run that could not complete (oneharness produced no structured output) is
+    // still logged: the record carries exit_code 2 and the non-empty errors array,
+    // so a failed run is inspectable after the fact.
+    let (p, _verdicts) = history_project();
+    p.lint()
+        .env("LLMLINT_MOCK_NO_STRUCTURED", "1")
+        .assert()
+        .code(2);
+    let out = p
+        .bare()
+        .arg("history")
+        .arg("latest")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["exit_code"], 2);
+    assert!(!v["errors"].as_array().unwrap().is_empty());
+    // The human view surfaces the ERROR line too.
+    p.bare()
+        .arg("history")
+        .arg("latest")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("exit: 2"))
+        .stdout(predicate::str::contains("ERROR"));
+}
+
+#[test]
+fn history_shows_multi_judge_breakdown() {
+    // A multi-judge rule's per-judge results + rationales are recorded and shown
+    // by `history` — the disagreement the terminal report collapses is retrievable.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: voted_rule, description: \"{RULE}\", judges: 3 }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(
+        r#"{"voted_rule": [
+            {"holds": false, "rationale": "raw SQL"},
+            {"holds": true, "rationale": "query layer"},
+            {"holds": false, "rationale": "string built"}
+        ]}"#,
+    );
+    let state = p.path().join("state");
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", &state)
+        .assert()
+        .code(1);
+
+    p.bare()
+        .arg("history")
+        .arg("latest")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "FAIL voted_rule (1/3 judges held)",
+        ))
+        .stdout(predicate::str::contains("judge 1 violated: raw SQL"))
+        .stdout(predicate::str::contains("judge 2 held: query layer"))
+        .stdout(predicate::str::contains("judge 3 violated: string built"));
+}
+
+#[test]
+fn history_limit_truncates_the_listing() {
+    // Three runs, `--limit 2` shows exactly the two most recent lines.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: a_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"a_rule": true}"#);
+    for _ in 0..3 {
+        p.lint()
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .assert()
+            .success();
+    }
+    let out = p
+        .bare()
+        .arg("history")
+        .arg("--limit")
+        .arg("2")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let lines = String::from_utf8_lossy(&out.stdout);
+    let n = lines.lines().filter(|l| l.contains("rules:")).count();
+    assert_eq!(n, 2, "expected 2 listed runs, got:\n{lines}");
+    // JSON listing respects the limit identically.
+    let out = p
+        .bare()
+        .arg("history")
+        .arg("--format")
+        .arg("json")
+        .arg("--limit")
+        .arg("2")
+        .output()
+        .unwrap();
+    let arr: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(arr.as_array().unwrap().len(), 2);
 }
