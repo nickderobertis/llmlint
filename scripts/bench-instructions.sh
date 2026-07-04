@@ -27,6 +27,11 @@
 
 set -euo pipefail
 
+# Reproducible instruction counts + no side effects: results logging is on by
+# default and would write a record per invocation. Off so cachegrind measures
+# llmlint's own work and nothing touches the real data dir.
+export LLMLINT_NO_HISTORY=1
+
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
     exit 1

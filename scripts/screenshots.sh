@@ -39,6 +39,12 @@
 # Requires `freeze` on PATH (install the pinned version with `just screenshots-tools`).
 set -euo pipefail
 
+# Deterministic, side-effect-free capture: results logging is on by default and
+# would (a) write a record to the real user data dir on every fixture run and
+# (b) print a run id — nondeterministic — to stderr, which the `debug` scene
+# captures. Turn it off so the shots stay byte-reproducible and hash-gateable.
+export LLMLINT_NO_HISTORY=1
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 

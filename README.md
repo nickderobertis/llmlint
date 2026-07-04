@@ -558,6 +558,55 @@ every file read in full. Trade some back for fewer tokens, roughly by impact:
 
 `llmlint check-ignores` spends no tokens at all.
 
+### Results logging & history
+
+The terminal report is deliberately terse — failing rules and a summary. But the
+full results (every rule's verdict, votes, per-judge breakdown, violations, and
+rationales) are worth keeping. **Results logging is on by default:** each
+`lint`/`lint-config` run is also written to disk as one JSON record under an
+auto-generated, time-sortable id, and the run prints that id on stderr:
+
+```console
+$ llmlint
+FAIL no_inline_sql
+     src/db.rs:12: inline SQL
+
+2 rules: 1 passed, 1 failed, 0 skipped
+See full results with `llmlint history 20260704T153000Z-1a2b3`
+```
+
+Inspect what was logged with `llmlint history`:
+
+```console
+llmlint history                       # list recent runs (most recent first)
+llmlint history latest                # full results of the most recent run
+llmlint history <id>                  # full results of a specific run
+llmlint history <id> --status fail    # only the failing rules
+llmlint history <id> --rule my_rule   # only one rule
+llmlint history <id> --path           # just the JSON record's path (for scripting)
+llmlint history <id> --format json    # the raw record
+llmlint history --format json         # a JSON array of run summaries
+```
+
+Records live in the platform per-user **data** directory by default
+(`~/.local/share/llmlint/history` on Linux, `~/Library/Application Support` /
+`%LOCALAPPDATA%\llmlint\data\history` on macOS/Windows; `$XDG_DATA_HOME` is
+honored). Only the newest **100** runs are kept; older records are pruned after
+each run. All three knobs are configurable:
+
+```yaml
+history:
+  enabled: true          # false turns logging off entirely
+  max_runs: 100          # how many recent runs to keep
+  dir: .llmlint/history  # where records go (relative to nothing in particular; an absolute path is clearer)
+```
+
+The `LLMLINT_HISTORY_DIR` environment variable overrides `dir`, and `--no-history`
+(or `LLMLINT_NO_HISTORY=1`) disables logging for a single run. Like the other
+top-level settings, `history` is a cwd-and-up **session setting** (a subtree
+config never retunes it) and traces through `llmlint config --sources` / `llmlint
+where history.dir`.
+
 ### oneharness passthrough
 
 llmlint lets oneharness discover its own `oneharness.toml` by default. To force a
@@ -750,6 +799,12 @@ source.
 - `llmlint doctor` — check that oneharness is installed and reachable.
 
   ![llmlint doctor reporting the resolved oneharness version](docs/screenshots/doctor.svg)
+- `llmlint history [ID]` — inspect [logged run results](#results-logging--history).
+  With no id, list recent runs; with an id (or `latest`), show that run's full
+  results. `--status pass|fail|skipped|not_relevant` and `--rule NAME` (both
+  repeatable) drill into part of a run; `--path` prints just the record's file
+  path; `--format json` emits the raw record (or a JSON array when listing);
+  `--dir`/`--cwd`/`--limit` tune where and how much.
 
 Exit codes: `0` all rules hold · `1` at least one violation · `2` usage,
 configuration, or harness error (could not complete the lint).

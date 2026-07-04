@@ -20,7 +20,7 @@ use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
 use crate::domain::{applicability, attribution, ignore, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
-use crate::io::{assets, configfs, diff, files, oneharness};
+use crate::io::{assets, configfs, diff, files, history, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const DEFAULT_TIMEOUT: u64 = 120;
@@ -39,7 +39,7 @@ pub fn run(args: LintArgs) -> Result<i32> {
     // Explicit CLI files relevance-gate the subtree cascade: linting specific
     // files never loads an unrelated subtree's config (see `load_with_targets`).
     let loaded = configfs::load_with_targets(&args.config, &cwd, &args.files)?;
-    run_loaded(loaded, cwd, args)
+    run_loaded(loaded, cwd, args, "lint")
 }
 
 /// Resolve the working directory for a run: the `--cwd` override, else the
@@ -55,8 +55,14 @@ pub(crate) fn resolve_cwd(arg: &Option<PathBuf>) -> Result<PathBuf> {
 /// `lint-config` subcommand can hand in the bundled config-lint config (loaded
 /// without discovery) and reuse the entire engine — validation, planning,
 /// judging, voting, and reporting — unchanged.
-pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs) -> Result<i32> {
+pub(crate) fn run_loaded(
+    loaded: configfs::Loaded,
+    cwd: PathBuf,
+    args: LintArgs,
+    command: &str,
+) -> Result<i32> {
     let scopes = loaded.scopes;
+    let sources = loaded.sources;
     let mut config = loaded.config;
     validate(&config)?;
     validate_filters(&config, &args)?;
@@ -70,8 +76,7 @@ pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs)
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
         let report = Report::new(Vec::new(), Vec::new());
-        emit(&report, args.format, args.verbose, args.color);
-        return Ok(report.exit_code());
+        return Ok(finish(&report, &args, &cwd, &sources, command, &config));
     }
 
     let master_template = config
@@ -359,8 +364,67 @@ pub(crate) fn run_loaded(loaded: configfs::Loaded, cwd: PathBuf, args: LintArgs)
     }
 
     let report = Report::new(outcomes, run_errors);
-    emit(&report, args.format, args.verbose, args.color);
-    Ok(report.exit_code())
+    Ok(finish(&report, &args, &cwd, &sources, command, &config))
+}
+
+/// Emit the report, log the run's full results to disk (best-effort, when results
+/// logging is on), and return the process exit code. Shared by both `run_loaded`
+/// return paths so every completed run — including a zero-rule one — is both
+/// reported and recorded identically.
+fn finish(
+    report: &Report,
+    args: &LintArgs,
+    cwd: &Path,
+    sources: &[String],
+    command: &str,
+    config: &Config,
+) -> i32 {
+    emit(report, args.format, args.verbose, args.color);
+    let code = report.exit_code();
+    log_history(report, args, cwd, sources, command, config, code);
+    code
+}
+
+/// Write this run's full results as a JSON record and, for the human report,
+/// print the run id + how to retrieve it. Logging is best-effort: any failure is
+/// a stderr warning, never a change to the lint's exit code — a broken history
+/// dir must not fail an otherwise-good run. Suppressed entirely when logging is
+/// off or no history directory can be determined.
+fn log_history(
+    report: &Report,
+    args: &LintArgs,
+    cwd: &Path,
+    sources: &[String],
+    command: &str,
+    config: &Config,
+    exit_code: i32,
+) {
+    let settings = history::resolve(config, args.no_history);
+    if !settings.enabled {
+        return;
+    }
+    let Some(dir) = &settings.dir else {
+        eprintln!(
+            "llmlint: warning: results logging is on but no history directory could be \
+             determined (set history.dir or LLMLINT_HISTORY_DIR)"
+        );
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    let id = history::generate_id(now);
+    let timestamp = history::format_timestamp(now);
+    let record = history::build_record(&id, &timestamp, command, cwd, exit_code, sources, report);
+    match history::write_record(dir, &id, &record, settings.max_runs) {
+        Ok(_) => {
+            // The report on stdout stays the clean report/JSON channel; the note
+            // goes to stderr, and only for the human format (a JSON consumer reads
+            // the record file itself). This keeps stdout byte-identical to before.
+            if args.format == OutputFormat::Human {
+                eprintln!("See full results with `llmlint history {id}`");
+            }
+        }
+        Err(e) => eprintln!("llmlint: warning: could not log run results: {e}"),
+    }
 }
 
 /// Reject `--rule`/`--agent` targets that name nothing in the config. Without

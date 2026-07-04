@@ -40,5 +40,5 @@ pub fn run(args: LintConfigArgs) -> Result<i32> {
     ignores::check(&cwd, &targets, &known)?;
 
     // Phase 2 — the LLM-as-judge config lint, through the shared engine.
-    lint::run_loaded(loaded, cwd, args.into_lint_args())
+    lint::run_loaded(loaded, cwd, args.into_lint_args(), "lint-config")
 }

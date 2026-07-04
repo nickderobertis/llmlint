@@ -70,6 +70,47 @@ impl OneharnessCfg {
     }
 }
 
+/// Whether, how many, and where to log each run's full results to disk. When
+/// logging is on (the default) every `lint`/`lint-config` run is written as one
+/// JSON record so callers can retrieve the complete results later — including
+/// the per-rule detail the terminal report omits — via `llmlint history <id>`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryCfg {
+    /// Whether to log each run's results (default `true`). Set `false` to turn
+    /// the feature off entirely; nothing is written and no run id is shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// How many of the most recent runs to keep (default 100). After each run the
+    /// oldest records beyond this count are pruned. Must be >= 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1))]
+    pub max_runs: Option<usize>,
+    /// Directory the JSON records are written to. Defaults to the platform
+    /// per-user data directory for llmlint (e.g. `~/.local/share/llmlint/history`
+    /// on Linux, `%LOCALAPPDATA%\llmlint\data\history` on Windows). The
+    /// `LLMLINT_HISTORY_DIR` environment variable overrides this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+}
+
+impl HistoryCfg {
+    /// Whether every field is unset — used both as the merge "is unset" test and
+    /// by provenance to decide whether this config contributed a `history` block.
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none() && self.max_runs.is_none() && self.dir.is_none()
+    }
+
+    /// Fill any unset field from `other` (a plugin's or more-distant config's
+    /// `history` block), keeping this (nearer-root) config's own values. Mirrors
+    /// [`OneharnessCfg::merge_under`].
+    pub fn merge_under(&mut self, other: HistoryCfg) {
+        self.enabled = self.enabled.or(other.enabled);
+        self.max_runs = self.max_runs.or(other.max_runs);
+        self.dir = self.dir.take().or(other.dir);
+    }
+}
+
 /// A group of rules sharing reviewer context and harness/model/batch config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -258,6 +299,10 @@ pub struct Config {
     /// built-in `HEAD` (working-tree) base; the `--diff-base` flag overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_base: Option<String>,
+    /// Whether/how/where to log each run's full results to disk (default: on, the
+    /// last 100 runs, in the platform data dir). See [`HistoryCfg`].
+    #[serde(default, skip_serializing_if = "HistoryCfg::is_empty")]
+    pub history: HistoryCfg,
     /// Plugins (shared rule sets) merged in, one entry each: a local file path
     /// or a URL (`http(s)://`, `file://`), the URL optionally pinned with an
     /// `@version` suffix. Named `plugins` (not `include`) to avoid confusion
@@ -293,6 +338,7 @@ impl Config {
         self.oneharness.merge_under(other.oneharness);
         self.rationales = self.rationales.or(other.rationales);
         self.diff_base = self.diff_base.take().or(other.diff_base);
+        self.history.merge_under(other.history);
         for (name, agent) in other.agents {
             self.agents.entry(name).or_insert(agent);
         }
@@ -308,6 +354,18 @@ impl Config {
     /// `rationales` value, or `true` when unset.
     pub fn rationales_default(&self) -> bool {
         self.rationales.unwrap_or(true)
+    }
+
+    /// Whether results logging is on after merging: the config's `history.enabled`
+    /// value, or `true` when unset (the feature is on by default).
+    pub fn history_enabled(&self) -> bool {
+        self.history.enabled.unwrap_or(true)
+    }
+
+    /// How many recent runs to keep after merging: the config's `history.max_runs`
+    /// value, or `100` when unset.
+    pub fn history_max_runs(&self) -> usize {
+        self.history.max_runs.unwrap_or(100)
     }
 }
 
@@ -353,6 +411,9 @@ pub const SETTING_KEYS: &[&str] = &[
     "oneharness.schema_max_retries",
     "rationales",
     "diff_base",
+    "history.enabled",
+    "history.max_runs",
+    "history.dir",
 ];
 
 /// The per-rule fields a `rules.<name>.<field>` query can name. `name` always
@@ -445,6 +506,9 @@ impl ProvenanceBuilder {
             ),
             ("rationales", cfg.rationales.is_some()),
             ("diff_base", cfg.diff_base.is_some()),
+            ("history.enabled", cfg.history.enabled.is_some()),
+            ("history.max_runs", cfg.history.max_runs.is_some()),
+            ("history.dir", cfg.history.dir.is_some()),
         ];
         for (key, present) in settings {
             if *present {
@@ -819,6 +883,13 @@ pub fn validate(config: &Config) -> Result<()> {
         if agent.batch_size == Some(0) {
             problems.push(format!("agent {:?} has batch_size: 0 (must be >= 1)", name));
         }
+    }
+
+    if config.history.max_runs == Some(0) {
+        problems.push(
+            "history.max_runs is 0 (must be >= 1; set history.enabled: false to turn logging off)"
+                .to_string(),
+        );
     }
 
     if problems.is_empty() {
@@ -1336,6 +1407,11 @@ mod tests {
             prompt_template: Some("t".into()),
             rationales: Some(true),
             diff_base: Some("main".into()),
+            history: HistoryCfg {
+                enabled: Some(true),
+                max_runs: Some(50),
+                dir: Some("h".into()),
+            },
             files: FileFilter {
                 include: vec!["x".into()],
                 exclude: vec![],
@@ -1422,6 +1498,90 @@ mod tests {
         assert!(resolve_source(&prov, "nonsense")
             .unwrap_err()
             .contains("expected a setting"));
+    }
+
+    #[test]
+    fn history_defaults_on_with_hundred_runs() {
+        // Unset -> logging on, keep the last 100.
+        let c = Config::default();
+        assert!(c.history_enabled());
+        assert_eq!(c.history_max_runs(), 100);
+        // Explicit values win.
+        let c = Config {
+            history: HistoryCfg {
+                enabled: Some(false),
+                max_runs: Some(5),
+                dir: Some("/tmp/h".into()),
+            },
+            ..Default::default()
+        };
+        assert!(!c.history_enabled());
+        assert_eq!(c.history_max_runs(), 5);
+    }
+
+    #[test]
+    fn history_merges_under_a_plugin_root_first() {
+        // Root sets `enabled`; the plugin fills the gaps it left (max_runs, dir).
+        let mut root = Config {
+            history: HistoryCfg {
+                enabled: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plugin = Config {
+            history: HistoryCfg {
+                enabled: Some(true), // clash -> root wins
+                max_runs: Some(7),
+                dir: Some("/plugin/h".into()),
+            },
+            ..Default::default()
+        };
+        root.merge_plugin(plugin);
+        assert_eq!(root.history.enabled, Some(false));
+        assert_eq!(root.history.max_runs, Some(7));
+        assert_eq!(root.history.dir.as_deref(), Some("/plugin/h"));
+    }
+
+    #[test]
+    fn history_max_runs_zero_is_invalid() {
+        let c = Config {
+            history: HistoryCfg {
+                max_runs: Some(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = validate(&c).unwrap_err();
+        assert!(err.to_string().contains("history.max_runs is 0"));
+    }
+
+    #[test]
+    fn history_provenance_traces_each_subfield() {
+        // The root sets `enabled`; a plugin fills `max_runs`/`dir` -> each
+        // sub-field traces to its first (nearest-root) writer.
+        let mut b = ProvenanceBuilder::default();
+        let root = Config {
+            history: HistoryCfg {
+                enabled: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plugin = Config {
+            history: HistoryCfg {
+                enabled: Some(false),
+                max_runs: Some(9),
+                dir: Some("/h".into()),
+            },
+            ..Default::default()
+        };
+        b.record(&root, "root.yml");
+        b.record(&plugin, "plugin.yml");
+        let prov = b.finish();
+        assert_eq!(prov.settings["history.enabled"], "root.yml");
+        assert_eq!(prov.settings["history.max_runs"], "plugin.yml");
+        assert_eq!(prov.settings["history.dir"], "plugin.yml");
     }
 
     #[test]
