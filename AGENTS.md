@@ -401,9 +401,23 @@ harness reads target files on-demand with its own tools.
   walk with no cascade (`load_explicit`, globs rooted at `cwd`).
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `lint-config`, `init`, `config` (`--sources` adds per-item provenance), `where`
-  (locate one config item's source), `doctor`. `commands/ignores.rs` holds the
-  ignore-directive resolution + scan shared by `lint`, `check-ignores`, and
-  `lint-config`.
+  (locate one config item's source), `doctor`, `history` (inspect logged run
+  results). `commands/ignores.rs` holds the ignore-directive resolution + scan
+  shared by `lint`, `check-ignores`, and `lint-config`.
+- **Results logging** is a session setting (`history:` — `enabled`/`max_runs`/`dir`,
+  default on / last 100 / platform **data** dir). `lint::run_loaded` writes each
+  completed run's full results (the pure `Report` JSON plus run metadata) as one
+  time-sortable-id JSON record via `io::history`, best-effort (a write failure is a
+  stderr warning, never a change to the exit code); only for the human report is the
+  id hinted on stderr (stdout stays the clean report/JSON channel). Env overrides:
+  `LLMLINT_HISTORY_DIR` (dir, wins over config), `LLMLINT_NO_HISTORY` /
+  `--no-history` (off). `llmlint history` reads records back (list / show-by-id /
+  `latest`, `--status`/`--rule` filters, `--path`, `--format json`); the store,
+  id/clock generation, and record shape live in `io::history` (pure logic
+  unit-tested there). Like the other session settings it comes from `cwd`-and-up
+  only, in `SETTING_KEYS` + provenance. The e2e harness points
+  `LLMLINT_HISTORY_DIR` at a per-project temp dir so runs never touch the real data
+  dir.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled
   plugin whose rules lint llmlint config files themselves (a clear/unambiguous
   description, a descriptive name that matches what the rule checks, `relevance`

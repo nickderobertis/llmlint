@@ -491,6 +491,7 @@ fn fold_session_settings(session: &mut Config, unit: &Config) {
     session.oneharness.merge_under(unit.oneharness.clone());
     session.rationales = session.rationales.or(unit.rationales);
     session.diff_base = session.diff_base.take().or_else(|| unit.diff_base.clone());
+    session.history.merge_under(unit.history.clone());
 }
 
 enum Node {

@@ -32,6 +32,11 @@
 
 set -euo pipefail
 
+# Measure llmlint's own work, not disk logging: results logging is on by default
+# and would write a record per invocation (perturbing timings + touching the real
+# data dir). Off for a clean, side-effect-free benchmark.
+export LLMLINT_NO_HISTORY=1
+
 mode="${1:-run}"
 case "$mode" in
     run | --dry-run) ;;

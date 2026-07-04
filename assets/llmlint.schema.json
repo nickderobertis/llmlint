@@ -57,6 +57,10 @@
         "null"
       ]
     },
+    "history": {
+      "description": "Whether/how/where to log each run's full results to disk (default: on, the\nlast 100 runs, in the platform data dir). See [`HistoryCfg`].",
+      "$ref": "#/$defs/HistoryCfg"
+    },
     "plugins": {
       "description": "Plugins (shared rule sets) merged in, one entry each: a local file path\nor a URL (`http(s)://`, `file://`), the URL optionally pinned with an\n`@version` suffix. Named `plugins` (not `include`) to avoid confusion\nwith `files.include`. Resolution lives in [`crate::io::plugins`].",
       "type": "array",
@@ -160,6 +164,36 @@
           "format": "uint32",
           "minimum": 0,
           "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "HistoryCfg": {
+      "description": "Whether, how many, and where to log each run's full results to disk. When\nlogging is on (the default) every `lint`/`lint-config` run is written as one\nJSON record so callers can retrieve the complete results later — including\nthe per-rule detail the terminal report omits — via `llmlint history <id>`.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether to log each run's results (default `true`). Set `false` to turn\nthe feature off entirely; nothing is written and no run id is shown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "max_runs": {
+          "description": "How many of the most recent runs to keep (default 100). After each run the\noldest records beyond this count are pruned. Must be >= 1.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 1
+        },
+        "dir": {
+          "description": "Directory the JSON records are written to. Defaults to the platform\nper-user data directory for llmlint (e.g. `~/.local/share/llmlint/history`\non Linux, `%LOCALAPPDATA%\\llmlint\\data\\history` on Windows). The\n`LLMLINT_HISTORY_DIR` environment variable overrides this.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

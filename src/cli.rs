@@ -58,6 +58,11 @@ pub enum Command {
     Where(WhereArgs),
     /// Check that oneharness is installed and reachable.
     Doctor,
+    /// Inspect logged run results. With no id, list recent runs; with an id (or
+    /// `latest`), show that run's full results — the complete per-rule detail the
+    /// terminal report omits. Drill in with `--status`/`--rule` filters, print the
+    /// record's path with `--path`, or emit `--format json`.
+    History(HistoryArgs),
 }
 
 #[derive(Args, Debug, Default)]
@@ -170,6 +175,12 @@ pub struct LintArgs {
     /// Requires `--diff`.
     #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
     pub diff_base: Option<String>,
+
+    /// Do not log this run's results to disk (overrides the config's
+    /// `history.enabled`). Results logging is on by default: each run is saved so
+    /// its full results can be retrieved later with `llmlint history <id>`.
+    #[arg(long = "no-history", action = clap::ArgAction::SetTrue)]
+    pub no_history: bool,
 }
 
 impl LintArgs {
@@ -416,6 +427,11 @@ pub struct LintConfigArgs {
     /// revision — a branch, tag, commit, or `A..B`/`A...B` range. Requires `--diff`.
     #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
     pub diff_base: Option<String>,
+
+    /// Do not log this run's results to disk (overrides the config's
+    /// `history.enabled`).
+    #[arg(long = "no-history", action = clap::ArgAction::SetTrue)]
+    pub no_history: bool,
 }
 
 impl LintConfigArgs {
@@ -440,6 +456,7 @@ impl LintConfigArgs {
             cwd: self.cwd,
             diff: self.diff,
             diff_base: self.diff_base,
+            no_history: self.no_history,
             ..Default::default()
         }
     }
@@ -478,6 +495,48 @@ pub struct WhereArgs {
     pub config: Vec<PathBuf>,
 
     /// Directory to resolve config discovery from. Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct HistoryArgs {
+    /// The run id to show (or `latest` for the most recent run). Omit to list
+    /// recent runs instead.
+    #[arg(value_name = "ID")]
+    pub id: Option<String>,
+
+    /// Show only rules with this outcome: `pass`, `fail`, `skipped`, or
+    /// `not_relevant`. Repeatable (any match is shown). Requires an id.
+    #[arg(long = "status", value_name = "STATUS")]
+    pub status: Vec<String>,
+
+    /// Show only these named rules. Repeatable. Requires an id.
+    #[arg(long = "rule", value_name = "NAME")]
+    pub rule: Vec<String>,
+
+    /// Print only the filesystem path — the run's JSON record when an id is given,
+    /// else the history directory — and nothing else, for scripting.
+    #[arg(long = "path")]
+    pub path: bool,
+
+    /// Output format. `human` (default) prints a readable summary; `json` prints
+    /// the raw record (or, when listing, a JSON array of run summaries).
+    #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
+    pub format: OutputFormat,
+
+    /// When listing runs, show at most this many (most recent first; default 20).
+    /// Ignored when an id is given.
+    #[arg(long = "limit", value_name = "N")]
+    pub limit: Option<usize>,
+
+    /// Read history from this directory, overriding the config `history.dir`, the
+    /// `LLMLINT_HISTORY_DIR` env var, and the platform default.
+    #[arg(long = "dir", value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+
+    /// Directory to resolve config discovery from (to read `history.dir`).
+    /// Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
 }

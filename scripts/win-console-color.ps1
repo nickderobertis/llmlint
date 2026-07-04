@@ -139,6 +139,10 @@ try {
     $psi.Arguments = "-c `"$Config`" --oneharness-bin `"$MockOneharness`" --color always --max-parallel 1 -v"
     $psi.EnvironmentVariables["LLMLINT_MOCK_VERDICTS"] = $Verdicts
     $psi.EnvironmentVariables["LLMLINT_MOCK_STATE"] = (Join-Path $env:TEMP ("llmlint-winstate-" + [guid]::NewGuid().ToString()))
+    # Results logging is on by default; disable it so this render is side-effect-
+    # free (no record written to the real user data dir) and the note never lands
+    # in the console buffer we assert on.
+    $psi.EnvironmentVariables["LLMLINT_NO_HISTORY"] = "1"
 
     $p = [System.Diagnostics.Process]::Start($psi)
     $stderr = $p.StandardError.ReadToEnd()

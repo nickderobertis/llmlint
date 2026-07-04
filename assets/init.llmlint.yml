@@ -27,6 +27,17 @@ files:
 # `--no-rationales`); override per rule with a rule-level `rationale:`.
 rationales: true
 
+# Results logging (on by default). Each run's full results are saved as a JSON
+# record so you can retrieve everything the terminal report omits later with
+# `llmlint history <id>` (the run id is printed after each run). Only the newest
+# `max_runs` records are kept. Records live in the platform per-user data dir by
+# default (override with `dir`, or the `LLMLINT_HISTORY_DIR` env var). Turn the
+# feature off with `enabled: false`.
+# history:
+#   enabled: true
+#   max_runs: 100
+#   dir: .llmlint/history
+
 # Plugins / shared rule sets, merged in one line each. An entry is a config
 # file: a local path or a URL (`http(s)://`, `file://`). Pin a URL to a version
 # with `@` (e.g. `…/rules.yml@1.2.3`); a pinned URL is fetched and cached once

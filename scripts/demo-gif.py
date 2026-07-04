@@ -57,6 +57,9 @@ def _run(binp: str, mock: str, fixture: str, extra: list[str]) -> subprocess.Com
     env = dict(os.environ)
     env["LLMLINT_MOCK_VERDICTS"] = str(Path(fixture) / "verdicts.json")
     env["LLMLINT_MOCK_STATE"] = tempfile.mkdtemp(prefix="llmlint-gif-")
+    # Keep the capture side-effect-free: results logging is on by default and
+    # would write a record to the real user data dir on every frame's run.
+    env["LLMLINT_NO_HISTORY"] = "1"
     return subprocess.run(
         [binp, "-c", str(Path(fixture) / "llmlint.yml"), "--oneharness-bin", mock,
          "--max-parallel", "1", *extra],

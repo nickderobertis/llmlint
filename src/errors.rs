@@ -92,6 +92,9 @@ pub enum Error {
 
     #[error("{0}")]
     ConfigPathNotFound(String),
+
+    #[error("{0}")]
+    History(String),
 }
 
 impl Error {
@@ -189,6 +192,9 @@ mod tests {
                 .to_string()
                 .contains("unknown config path")
         );
+        assert!(Error::History("no run with id \"x\"".into())
+            .to_string()
+            .contains("no run with id"));
         assert!(Error::ConfigParse {
             path: "f".into(),
             message: "m".into()

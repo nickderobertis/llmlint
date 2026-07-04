@@ -364,6 +364,22 @@ logic is also covered hermetically via `file://` plugins.
 - `--format json` is a stable machine contract: a passing run lists rule names; a
   failing run carries `summary` counts and located `violations` (exit 1); a
   run-error carries the `errors` array (exit 2).
+- Results logging (on by default): every `lint`/`lint-config` run writes one JSON
+  record (metadata + the full report — summary/rules/errors) under an
+  auto-generated, time-sortable id, and prints the id + `llmlint history <id>` hint
+  to **stderr** (stdout stays the clean report/JSON channel). `history` (no id)
+  lists recent runs; `history <id>`/`history latest` shows a run's full results —
+  including the located violations and skipped rules the terminal report omits;
+  `--status`/`--rule` narrow to part of a run (an unknown `--status`, and a filter
+  with no id, are exit-2 errors); `--path` prints just the record's file path (or
+  the history dir when listing); `--format json` emits the raw record (or a JSON
+  array of run summaries when listing); an unknown id is a clear exit-2 error.
+  `history.enabled: false` and `--no-history` both suppress logging (no record, no
+  hint); `history.max_runs: N` prunes to the newest N records (0 is a config
+  error). The e2e harness points `LLMLINT_HISTORY_DIR` at a per-project temp dir so
+  runs never touch the real user data dir; the store, id/timestamp generation, and
+  the record shape are unit-tested in `io::history`, the config model + provenance
+  in `domain::config`, and the record rendering/filtering in `commands::history`.
 - Failure/recovery: missing config, malformed config, and each deterministic
   validation error — duplicate rule names, an even `judges` count, an invalid
   rule name, an empty description, an empty relevance condition, `judges: 0`,
