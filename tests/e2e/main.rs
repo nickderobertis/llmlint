@@ -645,6 +645,30 @@ fn config_lint_plugin_catches_a_bad_rule() {
 }
 
 #[test]
+fn config_lint_plugin_flags_relevance_where_files_globs_belong() {
+    // The `path_scoped_rules_use_files_not_relevance` check: a rule scoped to a
+    // file type/location via `relevance` (where `files` globs belong) is flagged.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nplugins:\n  - {CONFIG_LINT}\n"),
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"path_scoped_rules_use_files_not_relevance":
+              {"holds": false, "violations": [{"file": "llmlint.yml", "line": 3, "message": "relevance restates a path scope"}]}}"#,
+    );
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL path_scoped_rules_use_files_not_relevance",
+        ))
+        .stdout(predicate::str::contains("relevance restates a path scope"));
+}
+
+#[test]
 fn lint_config_lints_a_config_without_the_plugin_declared() {
     // `lint-config` includes the bundled config-lint rules by default, so it
     // catches a bad rule in a config that never declared the plugin itself.
