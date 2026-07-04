@@ -327,9 +327,12 @@ mod tests {
 
     #[test]
     fn id_suffix_reflects_subsecond_nanos() {
-        // Two ids in the same second differ by their nanosecond suffix.
-        let a = generate_id(SystemTime::UNIX_EPOCH + Duration::new(10, 1));
-        let b = generate_id(SystemTime::UNIX_EPOCH + Duration::new(10, 2));
+        // Two ids in the same second differ by their nanosecond suffix. The
+        // offsets are 0.1ms/0.2ms apart, well above the coarsest `SystemTime`
+        // granularity (Windows FILETIME ticks at 100ns), so the difference
+        // survives the platform clock rounding a constructed instant.
+        let a = generate_id(SystemTime::UNIX_EPOCH + Duration::new(10, 100_000));
+        let b = generate_id(SystemTime::UNIX_EPOCH + Duration::new(10, 200_000));
         assert_ne!(a, b);
         assert!(a.starts_with("19700101T000010Z-"));
     }
