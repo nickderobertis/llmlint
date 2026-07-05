@@ -421,7 +421,8 @@ harness reads target files on-demand with its own tools.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled
   plugin whose rules lint llmlint config files themselves (a clear/unambiguous
   description, a descriptive name that matches what the rule checks, `relevance`
-  over inline "not applicable"; each rule is phrased to pass its own checks): the
+  over inline "not applicable", `files` globs over `relevance` for a rule scoped
+  to a file type or location; each rule is phrased to pass its own checks): the
   README's "Writing good rules" guidance, enforced. It is
   **structural checks' complement** — unique names, valid identifiers, resolvable
   agents stay deterministic in `validate` and are deliberately not re-checked

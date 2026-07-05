@@ -310,6 +310,12 @@ directory with no cascade.
   that match what each rule checks.
 - **Names** are unique, terse, and descriptive (`^[A-Za-z][A-Za-z0-9_]*$`); they
   become the JSON keys of the structured output.
+- **Scope a rule by file type or location with `files`, not `relevance`.** When a
+  rule applies only to files you can name by path — a file type (`*.py`) or a
+  location (`src/**`) — put that subset in the rule's `files` globs. A path scope
+  is deterministic and costs no judge tokens, and it keeps the verdict about the
+  property, not about applicability. Reserve `relevance` for conditions on a
+  file's content or changes that a glob can't express.
 - **Scope a rule to the changes it applies to with `relevance`** (see below)
   instead of bolting "…or not applicable" onto the description — that keeps the
   true/false outcome clean and lets llmlint tell "didn't apply" apart from "true".
@@ -677,8 +683,9 @@ The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 llmlint ships with a **config-lint** rule set that lints llmlint config files
 themselves — that every rule's `description` yields a clear, unambiguous verdict,
 its `name` is descriptive (non-placeholder) and matches what the description
-checks, and a conditional rule uses `relevance` instead of bolting "…or not
-applicable" onto the description. It's the [Writing good rules](#writing-good-rules)
+checks, a conditional rule uses `relevance` instead of bolting "…or not
+applicable" onto the description, and a rule scoped to a file type or location
+uses `files` globs rather than `relevance`. It's the [Writing good rules](#writing-good-rules)
 guidance, enforced (and each rule is phrased to pass its own checks). Each finding
 cites the config file + the offending rule's line (`require_line_attribution`).
 There are two ways to use it:
