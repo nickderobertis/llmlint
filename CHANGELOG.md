@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.8](https://github.com/nickderobertis/llmlint/compare/v0.3.7...v0.3.8) - 2026-07-05
+
+### Added
+
+- *(config-lint)* prefer files globs over relevance for path-scoped rules ([#118](https://github.com/nickderobertis/llmlint/pull/118))
+
 ## [0.3.7](https://github.com/nickderobertis/llmlint/compare/v0.3.6...v0.3.7) - 2026-07-04
 
 ### Added
