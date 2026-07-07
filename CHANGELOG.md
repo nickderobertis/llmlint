@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.9](https://github.com/nickderobertis/llmlint/compare/v0.3.8...v0.3.9) - 2026-07-07
+
+### Fixed
+
+- raise default per-judge timeout to 600s (10 minutes) ([#120](https://github.com/nickderobertis/llmlint/pull/120))
+
 ## [0.3.8](https://github.com/nickderobertis/llmlint/compare/v0.3.7...v0.3.8) - 2026-07-05
 
 ### Added
