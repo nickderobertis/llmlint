@@ -146,7 +146,7 @@
           "default": null
         },
         "timeout": {
-          "description": "Per-judge timeout in seconds (default 120).",
+          "description": "Per-judge timeout in seconds (default 600).",
           "type": [
             "integer",
             "null"

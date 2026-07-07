@@ -23,7 +23,7 @@ use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, diff, files, history, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
-const DEFAULT_TIMEOUT: u64 = 120;
+const DEFAULT_TIMEOUT: u64 = 600;
 const DEFAULT_MAX_PARALLEL: usize = 8;
 const PROMPT_TRIGGER: &str =
     "Evaluate each rule against the target files and respond with the structured verdict object.";

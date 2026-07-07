@@ -46,7 +46,7 @@ pub struct OneharnessCfg {
     /// Default model for every judge (an agent's `model` overrides it).
     #[serde(default)]
     pub model: Option<String>,
-    /// Per-judge timeout in seconds (default 120).
+    /// Per-judge timeout in seconds (default 600).
     #[serde(default)]
     #[schemars(range(min = 1))]
     pub timeout: Option<u64>,
