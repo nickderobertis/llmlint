@@ -148,7 +148,7 @@ pub struct LintArgs {
     #[arg(long = "max-parallel", value_name = "N")]
     pub max_parallel: Option<usize>,
 
-    /// Per-judge timeout in seconds (default 120).
+    /// Per-judge timeout in seconds (default 600).
     #[arg(long = "timeout", value_name = "SECS")]
     pub timeout: Option<u64>,
 
@@ -404,7 +404,7 @@ pub struct LintConfigArgs {
     #[arg(long = "max-parallel", value_name = "N")]
     pub max_parallel: Option<usize>,
 
-    /// Per-judge timeout in seconds (default 120).
+    /// Per-judge timeout in seconds (default 600).
     #[arg(long = "timeout", value_name = "SECS")]
     pub timeout: Option<u64>,
 
