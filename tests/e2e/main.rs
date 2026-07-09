@@ -6553,6 +6553,34 @@ fn plan_only_shows_excluded_files_and_ignored_rules() {
 }
 
 #[test]
+fn plan_only_groups_shared_scopes_and_reports_the_saving() {
+    // Four rules over two scopes, interleaved so order-based chunking (batch_size 2)
+    // would split each scope across both batches. Affinity groups by shared file,
+    // and `--plan-only` reports the reuse and the counterfactual.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nagents:\n  grp: {{ batch_size: 2 }}\nrules:\n  \
+             - {{ name: a, description: \"{RULE}\", agent: grp, files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: c, description: \"{RULE}\", agent: grp, files: {{ include: [\"docs/**\"] }} }}\n  \
+             - {{ name: b, description: \"{RULE}\", agent: grp, files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: d, description: \"{RULE}\", agent: grp, files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.write("docs/x.md", "# doc\n");
+    p.bare()
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("grouped: shares src/lib.rs"))
+        .stdout(predicate::str::contains(
+            "saved 2 duplicate file review(s) by grouping shared scopes",
+        ));
+}
+
+#[test]
 fn verbose_report_appends_the_plan_section() {
     // At `-v` the human report carries the plan explanation so a reader can see how
     // the run was batched.

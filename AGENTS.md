@@ -232,19 +232,33 @@ harness reads target files on-demand with its own tools.
   but no longer needs the file-scoped guidance — and a custom `prompt_template` can
   drop the ignore guidance entirely without changing behavior, since llmlint
   enforces it.
+- **Affinity batching + counterfactual (convention):** within the fixed batch
+  count `ceil(n / batch_size)`, `plan::build` assigns rules to batches to minimize
+  the total *file load* — a file counted once per batch it lands in (the token
+  driver, since a file's content/diff is re-shown in every batch that needs it).
+  `affinity_chunks` (greedy least-marginal-file placement, widest scope first, then
+  a bounded deterministic local search of cost-reducing moves) co-locates rules
+  that share files. It is used **only when it strictly beats** order-based
+  `balanced_chunks` (tie → order-based), so single-batch runs — the common case —
+  stay byte-identical to before. Both costs are computed and the cheaper layout is
+  chosen, so the optimizer can never regress vs the baseline; the saving is the
+  `Optimization` counterfactual in the explanation. The proxy is deliberately
+  file-*count*, not diff bytes (the planner doesn't read files); it stays monotonic
+  with the real cost and weightable later.
 - **Plan explanation + `--plan-only` (convention):** `plan::build` returns, beside
   the runs, a `PlanExplanation` built *while deciding* (so it can never drift): per
-  agent → judge index → batch, the batched rule set, the effective file union, and
-  any files excluded because every declaring rule `ignore-file`s them, plus the
-  rules left unjudged with their reason. It renders as a readable tree
-  (`to_human`) and serializes (`Serialize`). The `lint` command attaches it to the
-  `Report` (`with_plan`), so the human report shows it at `-v`, `--format json`
-  carries it under `plan`, and the history record persists it — one source, no
-  drift. `--plan-only` prints the explanation and exits before any oneharness call
-  or history write — a zero-cost batching-debug view. **Agents are the hard
-  isolation boundary:** the planner never batches rules across agents even when
-  their harness/model/template are identical and merging would save tokens — an
-  agent split is user intent (isolating rules that interfere when judged
+  agent → judge index → batch, the batched rule set, the effective file union, the
+  files reused across the batch's rules (the grouping's justification), any files
+  excluded because every declaring rule `ignore-file`s them, plus the rules left
+  unjudged with their reason and the batching counterfactual. It renders as a
+  readable tree (`to_human`) and serializes (`Serialize`). The `lint` command
+  attaches it to the `Report` (`with_plan`), so the human report shows it at `-v`,
+  `--format json` carries it under `plan`, and the history record persists it — one
+  source, no drift. `--plan-only` prints the explanation and exits before any
+  oneharness call or history write — a zero-cost batching-debug view. **Agents are
+  the hard isolation boundary:** the planner never batches rules across agents even
+  when their harness/model/template are identical and merging would save tokens —
+  an agent split is user intent (isolating rules that interfere when judged
   together), asserted in `plan.rs` tests.
 - **Diff context (convention):** `--diff [<backend>]` adds each changed target
   file's diff to the judge prompt so it reviews only the changed lines (bare

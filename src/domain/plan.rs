@@ -1,14 +1,24 @@
-//! Plan the judge runs: group rules by agent and target files, expand the
-//! multi-judge scheme, and split into batches — each batch is one `oneharness`
-//! invocation.
+//! Plan the judge runs: group rules by agent, narrow each to its effective files,
+//! expand the multi-judge scheme, and assign rules to batches — each batch is one
+//! `oneharness` invocation.
 //!
-//! Multi-judge majority vote (per the configured scheme): within an
-//! (agent, files) group, `maxJudges = max(rule.judges)`. For judge index
-//! `j ∈ 1..=maxJudges` the judge evaluates `{rules | judges >= j}`, split into
-//! balanced batches no larger than `batch_size` (the fewest batches that respect
-//! the cap, with sizes kept within one of each other — see `balanced_chunks`). So
-//! a `judges: N` rule appears in judges `1..=N` → N independent verdicts →
-//! majority; a `judges: 1` rule runs exactly once.
+//! Multi-judge majority vote (per the configured scheme): within an agent,
+//! `maxJudges = max(rule.judges)`. For judge index `j ∈ 1..=maxJudges` the judge
+//! evaluates `{rules | judges >= j}`. So a `judges: N` rule appears in judges
+//! `1..=N` → N independent verdicts → majority; a `judges: 1` rule runs once.
+//!
+//! **Batch assignment.** Within the fixed batch count `ceil(n / batch_size)`,
+//! rules are assigned to minimize the total *file load* — a file counted once per
+//! batch it lands in, since a file's content/diff is re-shown in every batch that
+//! needs it. `affinity_chunks` (greedy least-marginal-cost placement + a bounded
+//! local search) co-locates rules that share files; it is used only when it
+//! strictly beats order-based `balanced_chunks`, so single-batch runs and ties are
+//! byte-identical to the order-based layout. The saving vs the baseline is reported
+//! in the [`PlanExplanation`]. Agents are never merged, whatever the saving.
+//!
+//! **Ignore narrowing.** A whole-file `ignore-file` (via [`PlanContext`]) drops the
+//! file from a rule's effective scope before batching; a rule left with no file is
+//! reported [`SkipReason::AllFilesIgnored`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -209,11 +219,22 @@ pub fn build(
         let max_judges = eligible.iter().map(|e| e.rule.judges).max().unwrap_or(1);
         for j in 1..=max_judges {
             let subset: Vec<&Eligible> = eligible.iter().filter(|e| e.rule.judges >= j).collect();
+            // Assign rules to batches to minimize the total file "load" (a file
+            // counted once per batch it lands in — the token driver, since a file's
+            // content/diff is re-shown in every batch that needs it), within the
+            // fixed batch count `ceil(n / batch_size)`. Affinity co-locates rules
+            // that share files; it is used only when it strictly beats order-based
+            // chunking, so the common single-batch case is unchanged.
+            let (chunks, chosen_cost, naive_cost) = chunk_indices(&subset, batch_size);
+            plan.explanation.optimization.file_loads += chosen_cost;
+            plan.explanation.optimization.baseline_file_loads += naive_cost;
+
             let mut judge_plan = JudgePlan {
                 judge_index: j,
                 batches: Vec::new(),
             };
-            for (bi, chunk) in balanced_chunks(&subset, batch_size).into_iter().enumerate() {
+            for (bi, idxs) in chunks.into_iter().enumerate() {
+                let chunk: Vec<&Eligible> = idxs.iter().map(|&i| subset[i]).collect();
                 // The call's file list is the union of its rules' *effective*
                 // files; a file every rule in the batch ignore-file's simply never
                 // appears (recorded as an exclusion in the explanation below).
@@ -224,7 +245,8 @@ pub fn build(
                 files.sort();
                 files.dedup();
 
-                let excluded = excluded_files(chunk);
+                let excluded = excluded_files(&chunk);
+                let reused = reused_files(&chunk);
 
                 plan.runs.push(JudgeRun {
                     agent: agent_name.clone(),
@@ -254,6 +276,7 @@ pub fn build(
                     rules: chunk.iter().map(|e| e.rule.name.clone()).collect(),
                     files: files.iter().map(|p| to_slash(p)).collect(),
                     excluded_files: excluded,
+                    reused_files: reused,
                 });
             }
             agent_plan.judges.push(judge_plan);
@@ -261,6 +284,11 @@ pub fn build(
         plan.explanation.agents.push(agent_plan);
     }
 
+    plan.explanation.optimization.saved_file_loads = plan
+        .explanation
+        .optimization
+        .baseline_file_loads
+        .saturating_sub(plan.explanation.optimization.file_loads);
     plan.explanation.skipped = plan
         .skipped
         .iter()
@@ -270,6 +298,170 @@ pub fn build(
         })
         .collect();
     plan
+}
+
+/// The effective (post-ignore) file set of one eligible rule, as slash paths.
+fn eligible_files(e: &Eligible) -> BTreeSet<String> {
+    e.effective.iter().map(|p| to_slash(p)).collect()
+}
+
+/// The distinct-file union of a batch (rules given as indices into `subset`).
+fn batch_union(subset: &[&Eligible], idxs: &[usize]) -> BTreeSet<String> {
+    let mut u = BTreeSet::new();
+    for &i in idxs {
+        u.extend(eligible_files(subset[i]));
+    }
+    u
+}
+
+/// Total file "load" of an assignment: each batch's distinct-file count, summed.
+/// A file shared by two rules in the same batch is loaded once; split across two
+/// batches it is loaded twice — so a lower total means fewer (paid) file reviews.
+fn total_load(subset: &[&Eligible], batches: &[Vec<usize>]) -> usize {
+    batches.iter().map(|b| batch_union(subset, b).len()).sum()
+}
+
+/// Order-based chunking as index lists — the baseline the affinity assignment must
+/// beat (and the fallback on a tie, preserving today's layout/order).
+fn naive_chunks(subset: &[&Eligible], batch_size: usize) -> Vec<Vec<usize>> {
+    let idx: Vec<usize> = (0..subset.len()).collect();
+    balanced_chunks(&idx, batch_size)
+        .into_iter()
+        .map(|c| c.to_vec())
+        .collect()
+}
+
+/// Choose a rule→batch assignment minimizing [`total_load`] within the fixed batch
+/// count. Computes both the order-based baseline and the affinity layout, returns
+/// whichever costs less (tie → baseline, so single-batch runs and ties are
+/// byte-identical to order-based chunking), plus both costs for the counterfactual.
+fn chunk_indices(subset: &[&Eligible], batch_size: usize) -> (Vec<Vec<usize>>, usize, usize) {
+    let naive = naive_chunks(subset, batch_size);
+    let naive_cost = total_load(subset, &naive);
+    let affinity = affinity_chunks(subset, batch_size);
+    let affinity_cost = total_load(subset, &affinity);
+    if affinity_cost < naive_cost {
+        (affinity, affinity_cost, naive_cost)
+    } else {
+        (naive, naive_cost, naive_cost)
+    }
+}
+
+/// Assign rules to `ceil(n / batch_size)` batches to minimize the file load:
+/// greedily place each rule (largest file set first) into the batch whose union it
+/// grows the least, then a bounded local search of cost-reducing moves. Fully
+/// deterministic: rules are ordered by (file count desc, name), ties break by
+/// (smaller union, fewer rules, lower index), and each batch is name-sorted at the
+/// end. Never exceeds `batch_size`; empty batches (a run clustered tighter than the
+/// baseline) are dropped, which only lowers the call count.
+fn affinity_chunks(subset: &[&Eligible], batch_size: usize) -> Vec<Vec<usize>> {
+    let n = subset.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let bs = batch_size.max(1);
+    let num_batches = n.div_ceil(bs);
+    let files: Vec<BTreeSet<String>> = subset.iter().map(|e| eligible_files(e)).collect();
+
+    // Placement order: widest scope first (it constrains the most), then by name.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| {
+        files[b]
+            .len()
+            .cmp(&files[a].len())
+            .then_with(|| subset[a].rule.name.cmp(&subset[b].rule.name))
+    });
+
+    let mut batches: Vec<Vec<usize>> = vec![Vec::new(); num_batches];
+    let mut unions: Vec<BTreeSet<String>> = vec![BTreeSet::new(); num_batches];
+    for &ri in &order {
+        // The non-full batch this rule grows the least, tie-broken toward the
+        // emptier/smaller batch (spreads load, keeps empties from stranding) then
+        // the lower index (determinism).
+        let mut best: Option<(usize, usize, usize, usize)> = None;
+        for (bi, batch) in batches.iter().enumerate() {
+            if batch.len() >= bs {
+                continue;
+            }
+            let marginal = files[ri].difference(&unions[bi]).count();
+            let key = (marginal, unions[bi].len(), batch.len(), bi);
+            if best.is_none_or(|b| key < b) {
+                best = Some(key);
+            }
+        }
+        let bi = best.expect("n <= num_batches * bs guarantees a slot").3;
+        batches[bi].push(ri);
+        for f in &files[ri] {
+            unions[bi].insert(f.clone());
+        }
+    }
+
+    improve(&mut batches, &mut unions, &files, bs);
+
+    for b in &mut batches {
+        b.sort_by(|&a, &c| subset[a].rule.name.cmp(&subset[c].rule.name));
+    }
+    batches.retain(|b| !b.is_empty());
+    batches
+}
+
+/// Bounded local search: repeatedly move a rule to another non-full batch when it
+/// strictly lowers the total file load, until a pass makes no improvement (or a
+/// small pass cap). Deterministic (fixed iteration order, strict-improvement only).
+fn improve(
+    batches: &mut [Vec<usize>],
+    unions: &mut [BTreeSet<String>],
+    files: &[BTreeSet<String>],
+    bs: usize,
+) {
+    for _ in 0..4 {
+        let mut improved = false;
+        for from in 0..batches.len() {
+            for ri in batches[from].clone() {
+                for to in 0..batches.len() {
+                    if to == from || batches[to].len() >= bs {
+                        continue;
+                    }
+                    // Union of `from` without ri, and of `to` with ri.
+                    let new_from: BTreeSet<String> = batches[from]
+                        .iter()
+                        .filter(|&&x| x != ri)
+                        .flat_map(|&x| files[x].iter().cloned())
+                        .collect();
+                    let new_to: BTreeSet<String> = unions[to].union(&files[ri]).cloned().collect();
+                    let before = unions[from].len() + unions[to].len();
+                    let after = new_from.len() + new_to.len();
+                    if after < before {
+                        batches[from].retain(|&x| x != ri);
+                        batches[to].push(ri);
+                        unions[from] = new_from;
+                        unions[to] = new_to;
+                        improved = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+}
+
+/// Files used by two or more rules in a batch — the reuse batching captured (shown
+/// in the explanation to justify the grouping). Deterministic order.
+fn reused_files(chunk: &[&Eligible]) -> Vec<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for e in chunk {
+        for f in eligible_files(e) {
+            *counts.entry(f).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .filter(|(_, c)| *c >= 2)
+        .map(|(f, _)| f)
+        .collect()
 }
 
 /// The files dropped entirely from a batch because *every* rule in the batch that
@@ -315,6 +507,21 @@ pub struct PlanExplanation {
     /// Rules that were not judged, each with the reason.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<SkipEntry>,
+    /// The batching cost outcome: the file-load total the chosen layout pays vs the
+    /// order-based baseline, and what grouping saved.
+    pub optimization: Optimization,
+}
+
+/// The counterfactual for the batching decision. A "file load" is one file shown in
+/// one batch (a file needed by two batches is loaded twice — the token driver, since
+/// its content/diff is re-shown each time). `file_loads` is what the chosen layout
+/// pays; `baseline_file_loads` is what plain order-based chunking would pay;
+/// `saved_file_loads` (baseline − chosen, ≥ 0) is the duplication grouping avoided.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Optimization {
+    pub file_loads: usize,
+    pub baseline_file_loads: usize,
+    pub saved_file_loads: usize,
 }
 
 /// One agent's slice of the plan: its config knobs and the judge calls it drives.
@@ -349,6 +556,10 @@ pub struct BatchPlan {
     /// Files a batch would have carried but every declaring rule `ignore-file`s.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub excluded_files: Vec<ExcludedFile>,
+    /// Files used by two or more of the batch's rules — the shared scope that made
+    /// grouping them worthwhile (paid once instead of once per batch).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reused_files: Vec<String>,
 }
 
 /// A file dropped from a batch's union, and the rules whose whole-file ignore
@@ -442,6 +653,12 @@ impl PlanExplanation {
                             b.files.join(", ")
                         ));
                     }
+                    if !b.reused_files.is_empty() {
+                        out.push_str(&format!(
+                            "{indent}  grouped: shares {} with other rules in this batch (paid once)\n",
+                            b.reused_files.join(", ")
+                        ));
+                    }
                     for x in &b.excluded_files {
                         out.push_str(&format!(
                             "{indent}  excluded {}: ignored (ignore-file) by {}\n",
@@ -451,6 +668,16 @@ impl PlanExplanation {
                     }
                 }
             }
+        }
+        // The counterfactual: only worth a line when grouping actually saved a
+        // re-review over the order-based baseline.
+        let opt = &self.optimization;
+        if opt.saved_file_loads > 0 {
+            out.push_str(&format!(
+                "  batching: {} file-load(s), down from {} order-based — saved {} \
+                 duplicate file review(s) by grouping shared scopes\n",
+                opt.file_loads, opt.baseline_file_loads, opt.saved_file_loads,
+            ));
         }
         if !self.skipped.is_empty() {
             out.push_str("  not judged:\n");
@@ -916,6 +1143,103 @@ mod tests {
         let text = plan.explanation.to_human();
         assert!(text.contains("not judged:"), "{text}");
         assert!(text.contains("a — no files matched"), "{text}");
+    }
+
+    #[test]
+    fn affinity_groups_shared_scopes_to_cut_duplicate_file_loads() {
+        // Four rules, two file scopes, interleaved so order-based chunking (bs 2)
+        // would split each scope across both batches (4 file loads). Affinity groups
+        // by shared file (2 loads), a strict win, so it is chosen.
+        let cfg = Config::default();
+        let plan = bp(
+            &cfg,
+            "T",
+            2, // default_batch_size -> the "default" agent's batch size
+            vec![
+                rr("a", 1, "default", &["shared_x.rs"]),
+                rr("c", 1, "default", &["shared_y.rs"]),
+                rr("b", 1, "default", &["shared_x.rs"]),
+                rr("d", 1, "default", &["shared_y.rs"]),
+            ],
+        );
+        assert_eq!(plan.runs.len(), 2);
+        // Each run carries exactly one file — the scope its two rules share.
+        for run in &plan.runs {
+            assert_eq!(run.files.len(), 1, "each batch is one shared scope");
+            assert_eq!(run.rules.len(), 2);
+        }
+        // The batches are the shared-scope groups, not the input order.
+        let groups: BTreeSet<Vec<String>> = plan
+            .runs
+            .iter()
+            .map(|r| {
+                let mut ns: Vec<String> = r.rules.iter().map(|s| s.name.clone()).collect();
+                ns.sort();
+                ns
+            })
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                vec!["a".to_string(), "b".into()],
+                vec!["c".into(), "d".into()]
+            ]
+            .into_iter()
+            .collect()
+        );
+        // The counterfactual: 2 file loads chosen, 4 under order-based, saved 2.
+        let opt = plan.explanation.optimization;
+        assert_eq!(opt.file_loads, 2);
+        assert_eq!(opt.baseline_file_loads, 4);
+        assert_eq!(opt.saved_file_loads, 2);
+        // Rendered explanation names the reuse and the saving.
+        let text = plan.explanation.to_human();
+        assert!(text.contains("grouped: shares shared_x.rs"), "{text}");
+        assert!(text.contains("saved 2 duplicate file review(s)"), "{text}");
+    }
+
+    #[test]
+    fn a_single_batch_run_keeps_order_and_reports_no_saving() {
+        // When everything fits one batch, affinity ties order-based -> order kept,
+        // no counterfactual line, saved 0.
+        let cfg = Config::default();
+        let plan = bp(
+            &cfg,
+            "T",
+            20,
+            vec![
+                rr("b", 1, "default", &["f.rs"]),
+                rr("a", 1, "default", &["f.rs"]),
+            ],
+        );
+        assert_eq!(plan.runs.len(), 1);
+        // Input order is preserved (order-based layout on the tie).
+        let names: Vec<&str> = plan.runs[0].rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["b", "a"]);
+        assert_eq!(plan.explanation.optimization.saved_file_loads, 0);
+        assert!(!plan.explanation.to_human().contains("batching:"));
+    }
+
+    #[test]
+    fn affinity_assignment_is_deterministic() {
+        let cfg = Config::default();
+        let rules = || {
+            vec![
+                rr("a", 1, "default", &["x.rs"]),
+                rr("c", 1, "default", &["y.rs"]),
+                rr("b", 1, "default", &["x.rs"]),
+                rr("d", 1, "default", &["y.rs"]),
+            ]
+        };
+        let p1 = bp(&cfg, "T", 2, rules());
+        let p2 = bp(&cfg, "T", 2, rules());
+        let names = |p: &Plan| -> Vec<Vec<String>> {
+            p.runs
+                .iter()
+                .map(|r| r.rules.iter().map(|s| s.name.clone()).collect())
+                .collect()
+        };
+        assert_eq!(names(&p1), names(&p2), "same input -> same plan");
     }
 
     #[test]

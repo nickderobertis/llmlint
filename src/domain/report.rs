@@ -744,10 +744,12 @@ mod tests {
                         rules: vec!["a".into(), "b".into()],
                         files: vec!["src/lib.rs".into()],
                         excluded_files: vec![],
+                        reused_files: vec![],
                     }],
                 }],
             }],
             skipped: vec![],
+            optimization: Default::default(),
         };
         let r = Report::new(vec![pass("a")], vec![]).with_plan(plan);
 
