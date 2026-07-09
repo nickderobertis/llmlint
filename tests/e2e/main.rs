@@ -7198,6 +7198,53 @@ fn lint_config_run_is_recorded_with_its_command() {
 }
 
 #[test]
+fn history_records_and_filters_an_ignored_rule() {
+    // A rule whose only file is `ignore-file`d is recorded as ignored: the listing
+    // summary counts it, `history latest` labels it IGN, and `--status ignored`
+    // narrows to it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: normal, description: \"{RULE}\" }}\n  \
+             - {{ name: vendored, description: \"{RULE}\", files: {{ include: [\"vendor/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.write(
+        "vendor/x.rs",
+        "/* llmlint: ignore-file[vendored] third-party */\n// code\n",
+    );
+    let verdicts = p.write_verdicts(r#"{"normal": true}"#);
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+
+    p.bare()
+        .arg("history")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 ignored"));
+    p.bare()
+        .arg("history")
+        .arg("latest")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("IGN  vendored"));
+    p.bare()
+        .arg("history")
+        .arg("latest")
+        .arg("--status")
+        .arg("ignored")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("IGN  vendored"))
+        .stdout(predicate::str::contains("normal").not());
+}
+
+#[test]
 fn history_explicit_dir_and_path_listing() {
     // A run logs into an explicit `--dir`, and `history --dir … --path` (no id)
     // prints that directory — the scripting hook for locating the store.
