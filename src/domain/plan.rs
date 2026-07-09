@@ -1246,6 +1246,29 @@ mod tests {
     }
 
     #[test]
+    fn affinity_chunks_of_an_empty_subset_is_empty() {
+        assert!(affinity_chunks(&[], 5).is_empty());
+    }
+
+    #[test]
+    fn multi_judge_explanation_labels_each_judge_index() {
+        // A judges:2 rule renders per-judge-index headers in the tree.
+        let cfg = Config::default();
+        let plan = bp(
+            &cfg,
+            "T",
+            20,
+            vec![
+                rr("a", 2, "default", &["f.rs"]),
+                rr("b", 1, "default", &["f.rs"]),
+            ],
+        );
+        let text = plan.explanation.to_human();
+        assert!(text.contains("judge 1 — 1 batch(es)"), "{text}");
+        assert!(text.contains("judge 2 — 1 batch(es)"), "{text}");
+    }
+
+    #[test]
     fn affinity_assignment_is_deterministic() {
         let cfg = Config::default();
         let rules = || {

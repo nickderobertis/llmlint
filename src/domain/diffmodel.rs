@@ -268,6 +268,28 @@ index e69de29..1c2d3e4 100644
     }
 
     #[test]
+    fn no_newline_marker_attaches_to_its_run_or_to_context() {
+        // A "\ No newline" after an added line stays with that run; after a context
+        // line it is passed through as context. Both render byte-identical.
+        let attached = "@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file\n";
+        let d = FileDiff::parse(attached);
+        let run = d.hunks[0]
+            .segments
+            .iter()
+            .find_map(|s| match s {
+                Segment::Run(r) => Some(r),
+                Segment::Context(_) => None,
+            })
+            .unwrap();
+        assert!(run.lines.iter().any(|l| l.contains("No newline")));
+        assert_eq!(d.render_filtered(|_| false), attached);
+
+        let ctx = "@@ -1 +1 @@\n keep\n\\ No newline at end of file\n";
+        let d2 = FileDiff::parse(ctx);
+        assert_eq!(d2.render_filtered(|_| false), ctx);
+    }
+
+    #[test]
     fn an_unparseable_header_still_passes_through() {
         // A malformed hunk header defaults new_start to 1 and renders verbatim.
         let diff = "@@ garbage @@\n context\n+added\n";
