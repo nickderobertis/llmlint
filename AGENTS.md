@@ -213,15 +213,39 @@ harness reads target files on-demand with its own tools.
   and the standalone, model-free `check-ignores` command (`commands/check_ignores.rs`),
   so the fast static check and the full run can never disagree about what's valid.
   Keep that one shared path — don't reimplement the scan in a command.
-  **Honoring** them is now llmlint's own job, done deterministically *after* the
-  judge answers: `ignore::suppressions` parses each well-formed directive into
-  per-rule line spans (`ignore-file` → whole file; `ignore` → its line and the one
-  below; `ignore-block`…`ignore-end` → the spanned lines), and `clean_verdict`
-  drops any violation a directive covers (flipping a fail to a pass when that
-  removes its only basis). The default template still documents the line/block
-  forms as a backstop (so the judge's verdict reads true) but no longer needs to
-  carry the file-scoped guidance — and a custom `prompt_template` can drop the
-  ignore guidance entirely without changing behavior, since llmlint enforces it.
+  **Honoring** them is now llmlint's own job, deterministic and layered by scope:
+  `ignore::suppressions` parses each well-formed directive into per-rule line spans
+  (`ignore-file` → whole file; `ignore` → its line and the one below;
+  `ignore-block`…`ignore-end` → the spanned lines). A **whole-file `ignore-file`**
+  is honored *up front in the planner* (`plan::build` via `PlanContext` +
+  `Suppressions::is_file_scoped`): the file is dropped from that rule's **effective
+  scope** before the judge runs, so the prompt never carries (nor pays tokens for)
+  a file whose every verdict for that rule would be discarded anyway. A rule left
+  with no effective file is reported **ignored** (`Outcome::Ignored`, a reasoned
+  exemption distinct from an incidental `Skipped`), never judged; a file every
+  declaring rule ignores leaves the batch union entirely (surfaced as an *excluded*
+  file in the plan explanation). Line/block ignores (which leave judgeable lines)
+  stay a *post-vote* drop in `clean_verdict` (flipping a fail to a pass when that
+  removes its only basis) — the backstop that also catches any file-scoped
+  violation the judge reports despite the exclusion. The default template still
+  documents the line/block forms as a backstop (so the judge's verdict reads true)
+  but no longer needs the file-scoped guidance — and a custom `prompt_template` can
+  drop the ignore guidance entirely without changing behavior, since llmlint
+  enforces it.
+- **Plan explanation + `--plan-only` (convention):** `plan::build` returns, beside
+  the runs, a `PlanExplanation` built *while deciding* (so it can never drift): per
+  agent → judge index → batch, the batched rule set, the effective file union, and
+  any files excluded because every declaring rule `ignore-file`s them, plus the
+  rules left unjudged with their reason. It renders as a readable tree
+  (`to_human`) and serializes (`Serialize`). The `lint` command attaches it to the
+  `Report` (`with_plan`), so the human report shows it at `-v`, `--format json`
+  carries it under `plan`, and the history record persists it — one source, no
+  drift. `--plan-only` prints the explanation and exits before any oneharness call
+  or history write — a zero-cost batching-debug view. **Agents are the hard
+  isolation boundary:** the planner never batches rules across agents even when
+  their harness/model/template are identical and merging would save tokens — an
+  agent split is user intent (isolating rules that interfere when judged
+  together), asserted in `plan.rs` tests.
 - **Diff context (convention):** `--diff [<backend>]` adds each changed target
   file's diff to the judge prompt so it reviews only the changed lines (bare
   `--diff` defaults to `git`, compared against `HEAD`). The capability is

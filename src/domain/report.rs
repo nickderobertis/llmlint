@@ -4,6 +4,7 @@
 use anstyle::{AnsiColor, Style};
 use serde_json::{json, Value};
 
+use crate::domain::plan::PlanExplanation;
 use crate::domain::verdict::{Outcome, RuleOutcome, Violation};
 
 // Status styling for the human report. A red failure and green pass are the
@@ -36,6 +37,7 @@ struct Counts {
     pass: usize,
     fail: usize,
     skip: usize,
+    ignored: usize,
     not_relevant: usize,
 }
 
@@ -46,6 +48,11 @@ pub struct Report {
     /// Judge runs that could not produce a usable verdict (oneharness/schema
     /// failures). Their presence makes the run exit `2` (could not complete).
     pub run_errors: Vec<String>,
+    /// How the judge runs were planned (agents, batches, exclusions). Attached by
+    /// the `lint` command so the `-v` report, `--format json`, and the persisted
+    /// history record all explain the batching from one source. `None` for reports
+    /// built without a plan (e.g. unit tests).
+    pub plan: Option<PlanExplanation>,
 }
 
 impl Report {
@@ -54,7 +61,15 @@ impl Report {
         Report {
             outcomes,
             run_errors,
+            plan: None,
         }
+    }
+
+    /// Attach the plan explanation (builder style), so the report can render and
+    /// persist why the runs were shaped as they were.
+    pub fn with_plan(mut self, plan: PlanExplanation) -> Self {
+        self.plan = Some(plan);
+        self
     }
 
     fn counts(&self) -> Counts {
@@ -64,6 +79,7 @@ impl Report {
                 Outcome::Pass => c.pass += 1,
                 Outcome::Fail => c.fail += 1,
                 Outcome::Skipped => c.skip += 1,
+                Outcome::Ignored => c.ignored += 1,
                 Outcome::NotRelevant => c.not_relevant += 1,
             }
         }
@@ -120,6 +136,13 @@ impl Report {
                     let label = paint("SKIP", SKIP_STYLE, color);
                     out.push_str(&format!("{label} {} (no files matched)\n", o.name))
                 }
+                // Ignored rules (all files ignore-file'd) are a reasoned exemption;
+                // itemized at `-v` so the reader can tell them from an incidental
+                // skip, hidden by default like passes/skips.
+                Outcome::Ignored if verbosity >= 1 => {
+                    let label = paint("IGN", SKIP_STYLE, color);
+                    out.push_str(&format!("{label} {} (all files ignored)\n", o.name))
+                }
                 // Not-relevant rules carry an explanation worth surfacing at
                 // `-v`, so the reader can tell "the judge ruled this N/A" apart
                 // from "the property held".
@@ -128,7 +151,7 @@ impl Report {
                     out.push_str(&format!("{label} {} (not relevant)\n", o.name));
                     push_reasoning(&mut out, o);
                 }
-                Outcome::Pass | Outcome::Skipped | Outcome::NotRelevant => {}
+                Outcome::Pass | Outcome::Skipped | Outcome::Ignored | Outcome::NotRelevant => {}
             }
         }
         for e in &self.run_errors {
@@ -142,6 +165,7 @@ impl Report {
             pass,
             fail,
             skip,
+            ignored,
             not_relevant,
         } = self.counts();
         // Color the counts that carry signal: passes green, failures red (only
@@ -157,8 +181,11 @@ impl Report {
             "{} rules: {passed}, {failed}, {skip} skipped",
             self.outcomes.len(),
         ));
-        // Append the not-relevant count only when there are any, so a run with no
-        // conditional rules keeps the familiar three-part summary unchanged.
+        // Append the ignored and not-relevant counts only when there are any, so a
+        // run with neither keeps the familiar three-part summary unchanged.
+        if ignored > 0 {
+            out.push_str(&format!(", {ignored} ignored"));
+        }
         if not_relevant > 0 {
             out.push_str(&format!(", {not_relevant} not relevant"));
         }
@@ -171,6 +198,17 @@ impl Report {
             out.push_str(&format!(", {errored}"));
         }
         out.push('\n');
+        // At `-v`, append the plan explanation so a reader can see (and debug) how
+        // the judge runs were batched and which files were excluded. The report on
+        // stdout stays parseable — the plan is a trailing, clearly-headed block.
+        if verbosity >= 1 {
+            if let Some(plan) = &self.plan {
+                if !plan.is_empty() {
+                    out.push('\n');
+                    out.push_str(&plan.to_human());
+                }
+            }
+        }
         out
     }
 
@@ -179,20 +217,30 @@ impl Report {
             pass,
             fail,
             skip,
+            ignored,
             not_relevant,
         } = self.counts();
-        json!({
+        let mut obj = json!({
             "summary": {
                 "total": self.outcomes.len(),
                 "passed": pass,
                 "failed": fail,
                 "skipped": skip,
+                "ignored": ignored,
                 "not_relevant": not_relevant,
                 "errored": self.run_errors.len(),
             },
             "rules": self.outcomes,
             "errors": self.run_errors,
-        })
+        });
+        // The plan section is present only when a plan was attached (the `lint`
+        // path), keeping test/JSON output for plan-less reports byte-stable.
+        if let Some(plan) = &self.plan {
+            if let (Value::Object(map), Ok(pv)) = (&mut obj, serde_json::to_value(plan)) {
+                map.insert("plan".to_string(), pv);
+            }
+        }
+        obj
     }
 }
 
@@ -642,5 +690,79 @@ mod tests {
         assert_eq!(j["rules"][0]["name"], "a");
         assert_eq!(j["rules"][0]["outcome"], "pass");
         assert_eq!(j["rules"][1]["outcome"], "fail");
+        // No plan attached -> no `plan` key (byte-stable for plan-less reports).
+        assert!(j.get("plan").is_none());
+    }
+
+    #[test]
+    fn ignored_is_hidden_by_default_itemized_at_verbose_and_exits_clean() {
+        let r = Report::new(
+            vec![pass("a"), RuleOutcome::ignored("vendored_rule")],
+            vec![],
+        );
+        // Ignored is not a failure — a pass + ignored run exits 0.
+        assert_eq!(r.exit_code(), 0);
+
+        // Default: the ignored rule is only counted, in its own summary segment so
+        // it is not conflated with passes or skips.
+        let quiet = r.to_human(0, false);
+        assert!(!quiet.contains("vendored_rule"));
+        assert!(quiet.contains("2 rules: 1 passed, 0 failed, 0 skipped, 1 ignored"));
+
+        // `-v`: itemized as IGN with its reason.
+        let loud = r.to_human(1, false);
+        assert!(
+            loud.contains("IGN vendored_rule (all files ignored)"),
+            "{loud}"
+        );
+
+        // JSON carries the ignored count and the outcome value.
+        let j = r.to_json();
+        assert_eq!(j["summary"]["ignored"], 1);
+        let ign = j["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["name"] == "vendored_rule")
+            .unwrap();
+        assert_eq!(ign["outcome"], "ignored");
+    }
+
+    #[test]
+    fn a_plan_renders_in_verbose_human_and_in_json() {
+        use crate::domain::plan::{AgentPlan, BatchPlan, JudgePlan, PlanExplanation};
+        let plan = PlanExplanation {
+            agents: vec![AgentPlan {
+                agent: "default".into(),
+                batch_size: 20,
+                model: None,
+                harness: None,
+                judges: vec![JudgePlan {
+                    judge_index: 1,
+                    batches: vec![BatchPlan {
+                        id: 1,
+                        rules: vec!["a".into(), "b".into()],
+                        files: vec!["src/lib.rs".into()],
+                        excluded_files: vec![],
+                    }],
+                }],
+            }],
+            skipped: vec![],
+        };
+        let r = Report::new(vec![pass("a")], vec![]).with_plan(plan);
+
+        // Default verbosity does not show the plan; `-v` appends it.
+        assert!(!r.to_human(0, false).contains("Plan:"));
+        let loud = r.to_human(1, false);
+        assert!(
+            loud.contains("Plan: 1 judge call(s) across 1 agent(s)"),
+            "{loud}"
+        );
+        assert!(loud.contains("batch 1: [a, b]"), "{loud}");
+
+        // JSON embeds the structured plan.
+        let j = r.to_json();
+        assert_eq!(j["plan"]["agents"][0]["agent"], "default");
+        assert_eq!(j["plan"]["agents"][0]["judges"][0]["batches"][0]["id"], 1);
     }
 }

@@ -6419,9 +6419,11 @@ fn unfixed_wrong_file_violation_is_dropped_after_the_rework() {
 }
 
 #[test]
-fn file_scoped_ignore_suppresses_a_reported_violation() {
-    // A file-top `ignore-file` is enforced by llmlint itself: a violation the judge
-    // reports anyway is dropped, flipping the fail to a pass.
+fn file_scoped_ignore_excludes_the_file_so_the_rule_is_not_judged() {
+    // A file-top `ignore-file` is honored by the *planner*: when it covers a
+    // rule's only file, the rule is dropped from the run entirely — no judge call
+    // (nothing left to review), reported as *ignored* rather than
+    // judged-then-suppressed. The mock verdict is never consulted.
     let p = ignore_project(
         "/* llmlint: ignore-file[no_todo] vendored, reviewed upstream */\n// TODO: later\n",
     );
@@ -6429,12 +6431,164 @@ fn file_scoped_ignore_suppresses_a_reported_violation() {
         r#"{"no_todo": {"holds": false, "violations": [
                 {"file": "src/lib.rs", "line": 2, "message": "stray TODO"}]}}"#,
     );
+    let runlog = p.path().join("runlog");
     p.lint()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
         .assert()
         .success()
         .stdout(predicate::str::contains("stray TODO").not())
-        .stdout(predicate::str::contains("1 rules: 1 passed"));
+        .stdout(predicate::str::contains(
+            "1 rules: 0 passed, 0 failed, 0 skipped, 1 ignored",
+        ));
+    // The file-ignored rule never reached oneharness — the runlog dir, which the
+    // mock creates only on invocation, does not exist.
+    assert!(
+        !runlog.exists(),
+        "the fully-ignored rule must not be judged (no oneharness call)"
+    );
+}
+
+#[test]
+fn file_scoped_ignore_narrows_scope_but_keeps_the_rule_for_its_other_files() {
+    // A rule spanning two files, one `ignore-file`d: the ignored file is dropped
+    // from the rule's scope, but the rule is still judged over its other file.
+    // A violation the judge nonetheless pins to the ignored file is discarded.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: no_todo, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n"
+        ),
+    );
+    p.write(
+        "src/vendored.rs",
+        "/* llmlint: ignore-file[no_todo] vendored */\n// TODO: later\n",
+    );
+    p.write("src/app.rs", "// TODO: real\n");
+    let verdicts = p.write_verdicts(
+        r#"{"no_todo": {"holds": false, "violations": [
+                {"file": "src/vendored.rs", "line": 2, "message": "ignored TODO"},
+                {"file": "src/app.rs", "line": 1, "message": "real TODO"}]}}"#,
+    );
+    let dump = p.path().join("system.txt");
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("src/app.rs:1: real TODO"))
+        .stdout(predicate::str::contains("ignored TODO").not());
+    // The ignored file is not even presented to the judge (excluded from the union).
+    let system = std::fs::read_to_string(&dump).unwrap();
+    assert!(
+        !system.contains("src/vendored.rs"),
+        "the ignore-file'd file must be excluded from the prompt:\n{system}"
+    );
+    assert!(system.contains("src/app.rs"), "system:\n{system}");
+}
+
+#[test]
+fn plan_only_prints_the_batching_and_makes_no_judge_call() {
+    // `--plan-only` explains how the runs would batch and exits — needing no
+    // harness at all (run via `bare`, with no `--oneharness-bin`) and writing no
+    // history record.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: rule_a, description: \"{RULE}\" }}\n  \
+             - {{ name: rule_b, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    p.bare()
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Plan: 1 judge call(s) across 1 agent(s)",
+        ))
+        .stdout(predicate::str::contains("batch 1: [rule_a, rule_b]"))
+        .stdout(predicate::str::contains("src/lib.rs"));
+    // A dry inspection logs nothing.
+    assert_eq!(history_record_count(&p), 0);
+}
+
+#[test]
+fn plan_only_shows_excluded_files_and_ignored_rules() {
+    // A file every declaring rule `ignore-file`s is shown as excluded; a rule whose
+    // every file is ignored is listed under "not judged".
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: keep, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: gone, description: \"{RULE}\", files: {{ include: [\"vendor/**\"] }} }}\n"
+        ),
+    );
+    p.write(
+        "src/gen.rs",
+        "// llmlint: ignore-file[keep] generated\n// code\n",
+    );
+    p.write("src/app.rs", "// code\n");
+    p.write(
+        "vendor/x.rs",
+        "/* llmlint: ignore-file[gone] vendored */\n// code\n",
+    );
+    p.bare()
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("excluded src/gen.rs"))
+        .stdout(predicate::str::contains("not judged:"))
+        .stdout(predicate::str::contains(
+            "gone — all matching files ignored (ignore-file)",
+        ));
+}
+
+#[test]
+fn verbose_report_appends_the_plan_section() {
+    // At `-v` the human report carries the plan explanation so a reader can see how
+    // the run was batched.
+    let p = ignore_project("// code\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    p.lint_v()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Plan: 1 judge call(s)"))
+        .stdout(predicate::str::contains("batch 1: [no_todo]"));
+}
+
+#[test]
+fn json_report_carries_the_plan_and_ignored_count() {
+    // `--format json` exposes the ignored count and the structured plan, so tooling
+    // and the history record both explain the batching from one source.
+    let p = ignore_project("/* llmlint: ignore-file[no_todo] vendored */\n// code\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    let out = p
+        .lint()
+        .arg("--format")
+        .arg("json")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["summary"]["ignored"], 1);
+    let skipped = v["plan"]["skipped"].as_array().unwrap();
+    assert!(
+        skipped
+            .iter()
+            .any(|s| s["rule"] == "no_todo" && s["reason"] == "all_files_ignored"),
+        "plan.skipped should record the ignored rule: {v:#}"
+    );
 }
 
 #[test]

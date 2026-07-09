@@ -88,8 +88,17 @@ fn main() {
         println!("| config_parse | {name} | {calls} | {bytes} |");
     }
 
-    let (calls, bytes) =
-        measure(|| plan::build(&cfg, tmpl, 20, support::synthetic_resolved(100, 3)));
+    let empty = std::collections::BTreeMap::new();
+    let plan_ctx = plan::PlanContext::new(&empty);
+    let (calls, bytes) = measure(|| {
+        plan::build(
+            &cfg,
+            tmpl,
+            20,
+            support::synthetic_resolved(100, 3),
+            &plan_ctx,
+        )
+    });
     println!("| plan_build | 100 rules × 3 judges | {calls} | {bytes} |");
 
     let (calls, bytes) =

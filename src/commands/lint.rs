@@ -13,7 +13,7 @@ use crate::commands::ignores;
 use crate::commands::progress::{LiveStatus, ProgressView};
 use crate::domain::config::{validate, Config, RelevanceMode, Rule};
 use crate::domain::ignore::Suppressions;
-use crate::domain::plan::{self, JudgeRun};
+use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
@@ -187,7 +187,22 @@ pub(crate) fn run_loaded(
         .map(|r| r.name.clone())
         .collect();
 
-    let the_plan = plan::build(&config, &master_template, DEFAULT_BATCH_SIZE, resolved);
+    let plan_ctx = PlanContext::new(&suppressions);
+    let the_plan = plan::build(
+        &config,
+        &master_template,
+        DEFAULT_BATCH_SIZE,
+        resolved,
+        &plan_ctx,
+    );
+
+    // `--plan-only`: print how the runs would be batched (agents, batches, dropped
+    // files) and stop — no oneharness, no model calls, no history write. The
+    // batching-debug view must never cost a judge invocation.
+    if args.plan_only {
+        print!("{}", the_plan.explanation.to_human());
+        return Ok(0);
+    }
 
     let bin = args
         .oneharness_bin
@@ -242,7 +257,7 @@ pub(crate) fn run_loaded(
             *expected.entry(rs.name.clone()).or_default() += 1;
         }
     }
-    view_rules.extend(the_plan.skipped.iter().cloned());
+    view_rules.extend(the_plan.skipped.iter().map(|s| s.rule.clone()));
     view_rules.extend(not_relevant.iter().cloned());
     let view_rules: Vec<String> = view_rules.into_iter().collect();
     let view = ProgressView::new(
@@ -251,8 +266,12 @@ pub(crate) fn run_loaded(
         the_plan.runs.len(),
         show_progress,
     );
-    for name in &the_plan.skipped {
-        view.finish_rule(name, LiveStatus::Skipped);
+    for skip in &the_plan.skipped {
+        let status = match skip.reason {
+            SkipReason::NoFiles => LiveStatus::Skipped,
+            SkipReason::AllFilesIgnored => LiveStatus::Ignored,
+        };
+        view.finish_rule(&skip.rule, status);
     }
     for name in &not_relevant {
         view.finish_rule(name, LiveStatus::NotRelevant);
@@ -346,8 +365,11 @@ pub(crate) fn run_loaded(
             }
         }
     }
-    for name in &the_plan.skipped {
-        outcomes.push(RuleOutcome::skipped(name));
+    for skip in &the_plan.skipped {
+        outcomes.push(match skip.reason {
+            SkipReason::NoFiles => RuleOutcome::skipped(&skip.rule),
+            SkipReason::AllFilesIgnored => RuleOutcome::ignored(&skip.rule),
+        });
     }
     for name in &not_relevant {
         outcomes.push(RuleOutcome::not_relevant(name));
@@ -363,7 +385,7 @@ pub(crate) fn run_loaded(
         ));
     }
 
-    let report = Report::new(outcomes, run_errors);
+    let report = Report::new(outcomes, run_errors).with_plan(the_plan.explanation.clone());
     Ok(finish(&report, &args, &cwd, &sources, command, &config))
 }
 
@@ -565,6 +587,7 @@ fn live_status(o: &RuleOutcome) -> LiveStatus {
         Outcome::Pass => LiveStatus::Pass,
         Outcome::Fail => LiveStatus::Fail,
         Outcome::Skipped => LiveStatus::Skipped,
+        Outcome::Ignored => LiveStatus::Ignored,
         Outcome::NotRelevant => LiveStatus::NotRelevant,
     }
 }

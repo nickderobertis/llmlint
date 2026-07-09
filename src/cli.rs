@@ -181,6 +181,13 @@ pub struct LintArgs {
     /// its full results can be retrieved later with `llmlint history <id>`.
     #[arg(long = "no-history", action = clap::ArgAction::SetTrue)]
     pub no_history: bool,
+
+    /// Print how the judge runs would be batched (agents, batches, and files
+    /// dropped as ignored) and exit, without calling any harness or model. A
+    /// zero-cost way to understand and debug the batching before spending judge
+    /// calls.
+    #[arg(long = "plan-only", action = clap::ArgAction::SetTrue)]
+    pub plan_only: bool,
 }
 
 impl LintArgs {

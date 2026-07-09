@@ -188,6 +188,15 @@ impl Suppressions {
     pub fn is_empty(&self) -> bool {
         self.file_scoped.is_empty() && self.ranges.is_empty()
     }
+
+    /// Whether a whole-file (`ignore-file`) directive suppresses `rule` in this
+    /// file. Unlike [`covers`](Self::covers), this reflects only file-scoped
+    /// ignores — the ones that make an entire file pointless to review for a rule
+    /// — so the planner can drop the file from that rule's effective scope before
+    /// the judge ever sees it, rather than only discarding the violation post-vote.
+    pub fn is_file_scoped(&self, rule: &str) -> bool {
+        self.file_scoped.contains(rule)
+    }
 }
 
 /// Parse `text` into the inline-ignore [`Suppressions`] it declares. Mirrors
@@ -648,5 +657,18 @@ mod tests {
     #[test]
     fn suppressions_empty_when_no_directives() {
         assert!(suppressions("just code\n", &known(&["r"])).is_empty());
+    }
+
+    #[test]
+    fn is_file_scoped_reports_only_whole_file_ignores() {
+        // A file-scoped ignore for `a`, and a line-scoped one for `b`.
+        let text = "/* llmlint: ignore-file[a] generated */\n\
+                    // llmlint: ignore[b] one-off\n";
+        let s = suppressions(text, &known(&["a", "b"]));
+        assert!(s.is_file_scoped("a"));
+        // A line/block ignore is not whole-file: the file still has lines to judge.
+        assert!(!s.is_file_scoped("b"));
+        // A rule with no directive at all.
+        assert!(!s.is_file_scoped("c"));
     }
 }
