@@ -364,7 +364,12 @@ logic is also covered hermetically via `file://` plugins.
   is `ignore-file`d is reported as **ignored** (its own `IGN` line at `-v`, its own
   `ignored` summary segment and JSON count, exit 0) — distinct from an incidental
   skip; a rule that keeps other files is still judged over them while the ignored
-  file is excluded from the prompt.
+  file is excluded from the prompt. Under `--diff`, a contiguous run of changed
+  lines wholly covered by an `ignore-block` (for the only applicable rule) is
+  replaced with an omission marker in the prompt, while an adjacent non-ignored
+  change is kept in full (asserted via `LLMLINT_MOCK_DUMP`); the finer diff-parsing
+  variants (run splitting, single-line vs span wording, pure deletion, unparseable
+  header) are unit-tested in `domain::diffmodel`.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`

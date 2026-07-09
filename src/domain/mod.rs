@@ -9,6 +9,7 @@ pub mod applicability;
 pub mod attribution;
 pub mod config;
 pub mod config_schema;
+pub mod diffmodel;
 pub mod ignore;
 pub mod plan;
 pub mod report;

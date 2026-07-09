@@ -17,7 +17,7 @@ use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
-use crate::domain::{applicability, attribution, ignore, schema, vote};
+use crate::domain::{applicability, attribution, diffmodel, ignore, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, diff, files, history, oneharness};
@@ -644,15 +644,44 @@ fn execute(
 ) {
     let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
     // Per-file diffs for this run's files, in the same order as `files_str`. Only
-    // files that actually changed appear in `diffs`, so unchanged ones are
-    // skipped here; the slice is empty when `--diff` wasn't passed.
+    // files that actually changed appear in `diffs`, so unchanged ones are skipped
+    // here; the slice is empty when `--diff` wasn't passed. Each diff is trimmed to
+    // what the judge still needs to see: a change run whose every added line is
+    // ignored (line/block directives) for *every* rule that still applies to the
+    // file is replaced with an honest one-line marker (`diffmodel`), so the prompt
+    // never carries — nor pays tokens for — changes no applicable rule will judge.
     let file_diffs: Vec<template::FileDiff> = run
         .files
         .iter()
         .filter_map(|p| {
-            diffs.get(p).map(|d| template::FileDiff {
-                file: files::to_slash(p),
-                diff: d.clone(),
+            let diff = diffs.get(p)?;
+            let slash = files::to_slash(p);
+            // Rules in this batch that still apply to this file (its effective
+            // scope). A change run is omittable only if ignored for all of them.
+            let applying: Vec<&str> = run
+                .rules
+                .iter()
+                .filter(|r| r.files.iter().any(|f| f == &slash))
+                .map(|r| r.name.as_str())
+                .collect();
+            let supp = suppressions.get(&slash);
+            let model = diffmodel::FileDiff::parse(diff);
+            let omit = |cr: &diffmodel::ChangeRun| {
+                // Never omit a pure deletion (no new-file line to match), and never
+                // omit when no rule applies (nothing to justify dropping it).
+                if cr.added_lines.is_empty() || applying.is_empty() {
+                    return false;
+                }
+                let Some(supp) = supp else { return false };
+                applying.iter().all(|rule| {
+                    cr.added_lines
+                        .iter()
+                        .all(|&ln| supp.covers(rule, Some(ln as u64)))
+                })
+            };
+            Some(template::FileDiff {
+                file: slash,
+                diff: model.render_filtered(omit),
             })
         })
         .collect();

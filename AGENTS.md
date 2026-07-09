@@ -258,7 +258,15 @@ harness reads target files on-demand with its own tools.
   the prompt's "Target files" section**: each changed file's unified diff is shown
   right under its applicability line (rules + diff together), so the judge sees a
   changed file's scope and change in one place. They are **not** a file filter —
-  every target file is still reviewed, an unchanged one just carries no diff. The
+  every target file is still reviewed, an unchanged one just carries no diff.
+  **Ignore-aware trimming (`src/domain/diffmodel.rs`):** before a file's diff goes
+  into the prompt, it is parsed into *change runs* (maximal contiguous `+`/`-`
+  blocks, bounded by context) keyed by new-file line; a run whose every added line
+  is ignored (line/block directives) for *every* rule that still applies to the
+  file is replaced with an honest one-line marker, never a line pulled from the
+  middle of a run (that would misrepresent its neighbors) and never a pure deletion
+  (no new-file line to match). This trims tokens for wholly-ignored changes while
+  the post-vote cleanup stays the actual enforcement. The
   same diffs stay available to a custom `prompt_template` as the `diffs` context
   block (and per-file as `file_rules[i].diff`), so a `{% if diffs %}…{% endfor %}`
   block still works. A

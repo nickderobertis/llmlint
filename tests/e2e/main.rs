@@ -6592,6 +6592,49 @@ fn json_report_carries_the_plan_and_ignored_count() {
 }
 
 #[test]
+fn diff_omits_change_runs_wholly_ignored_by_a_block() {
+    // Under `--diff`, a contiguous run of changed lines fully covered by an
+    // `ignore-block` (for the only applicable rule) is replaced with a marker in the
+    // prompt, while an adjacent non-ignored change is kept in full.
+    let p = ignore_project("// header\n// middle\n// footer\n");
+    // Commit the baseline so the diff is against a real HEAD.
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    // New content: an ignored block (added lines 2–4) separated by the unchanged
+    // `// middle` (line 5) from a non-ignored change (`// TODO real`, line 6).
+    p.write(
+        "src/lib.rs",
+        "// header\n\
+         // llmlint: ignore-block[no_todo] legacy region, tracked in JIRA-1\n\
+         // TODO ignored\n\
+         // llmlint: ignore-end[no_todo]\n\
+         // middle\n\
+         // TODO real\n\
+         // footer\n",
+    );
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    let dump = p.path().join("system.txt");
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .arg("--diff")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let system = std::fs::read_to_string(&dump).unwrap();
+    // The wholly-ignored run is replaced by an honest marker…
+    assert!(
+        system.contains("omitted — ignored for all applicable rules"),
+        "system:\n{system}"
+    );
+    assert!(!system.contains("// TODO ignored"), "system:\n{system}");
+    // …while the adjacent, non-ignored change is shown verbatim.
+    assert!(system.contains("+// TODO real"), "system:\n{system}");
+}
+
+#[test]
 fn line_scoped_ignore_suppresses_only_the_covered_line() {
     // A line directive covers its own line and the one below it; a violation there
     // is dropped, but a violation on an uncovered line still fails.
