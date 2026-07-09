@@ -548,12 +548,16 @@ rule scoped to its own files in the prompt. Multi-judge rules fan out per judge
 round-trips. Files a rule wholly `ignore-file`s are dropped from its scope first,
 so an ignored file never bloats a batch.
 
-Within that batch count, rules are assigned to **minimize duplicated file
-reviews**: rules that share files are grouped so a file's content (and its diff
-under `--diff`) is shown once instead of once per batch. This never adds batches or
-crosses agents — it only rearranges which rule lands in which batch, and only when
-that strictly helps, so a run that fits one batch is unchanged. `--plan-only`
-reports the saving vs the naive order-based layout.
+Within that fixed batch count, rules are assigned to **minimize token cost**, in
+priority order: first the tokens *billed* (a file's content is re-billed in every
+batch it lands in, so rules that share files are grouped to pay it once), then each
+rule's *prompt size* (a rule is judged against its whole batch's files, so the
+batcher keeps heavy-file batches small — parking a wide-scope rule with as few
+others as possible). Because the number of calls is fixed, the second goal is free:
+it never adds a call or costs a token, it just gives each rule a more focused prompt
+(better judgment). File weights are estimated from file size, so one large file
+counts for more than several small ones. `--plan-only` shows both numbers and what
+grouping saved versus the naive order-based layout.
 
 Agents are also an **isolation boundary**: rules in different agents are never
 batched together, even when their harness/model/template are identical. If two

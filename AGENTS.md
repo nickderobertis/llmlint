@@ -232,19 +232,25 @@ harness reads target files on-demand with its own tools.
   but no longer needs the file-scoped guidance — and a custom `prompt_template` can
   drop the ignore guidance entirely without changing behavior, since llmlint
   enforces it.
-- **Affinity batching + counterfactual (convention):** within the fixed batch
-  count `ceil(n / batch_size)`, `plan::build` assigns rules to batches to minimize
-  the total *file load* — a file counted once per batch it lands in (the token
-  driver, since a file's content/diff is re-shown in every batch that needs it).
-  `affinity_chunks` (greedy least-marginal-file placement, widest scope first, then
-  a bounded deterministic local search of cost-reducing moves) co-locates rules
-  that share files. It is used **only when it strictly beats** order-based
-  `balanced_chunks` (tie → order-based), so single-batch runs — the common case —
-  stay byte-identical to before. Both costs are computed and the cheaper layout is
-  chosen, so the optimizer can never regress vs the baseline; the saving is the
-  `Optimization` counterfactual in the explanation. The proxy is deliberately
-  file-*count*, not diff bytes (the planner doesn't read files); it stays monotonic
-  with the real cost and weightable later.
+- **Token-weighted batching + counterfactual (convention):** within the fixed
+  batch count `ceil(n / batch_size)`, `plan::build` assigns rules to batches to
+  minimize a **lexicographic, token-weighted objective** (`src/domain/cost.rs`):
+  (1) tokens *billed* — Σ over batches of the batch's file-token union (each file's
+  content is re-billed in every batch it lands in); (2) per-rule *exposure* —
+  Σ over rules of their batch's union (each rule is judged against its whole batch's
+  files, so a big union shared by many rules is read many times); (3) a balanced-size
+  tiebreak. **At a fixed batch count these never trade off** — you can't split a rule
+  into its own call to shrink its prompt — so minimizing per-rule exposure is a free
+  quality win over the billing-optimal-but-tied layouts (e.g. it parks a wide-scope
+  rule in the *smaller* batch so fewer rules read its heavy files). `cost::Model::assign`
+  is a **provable minimum** via branch-and-bound within a node budget, falling back to
+  a deterministic greedy + local-search heuristic past it; the exhaustive
+  `domain::cost` test suite brute-forces the optimum across a broad shape table and
+  asserts `assign` achieves it. File weights are estimated tokens (≈ file bytes / 4,
+  computed in `commands/lint.rs` from the text it already reads for ignore-scanning;
+  a weightless context falls back to unit file counts, which the pure planner tests
+  use). The order-based layout is costed too, only to report the `Optimization`
+  counterfactual (billed + per-rule saved) in the explanation.
 - **Plan explanation + `--plan-only` (convention):** `plan::build` returns, beside
   the runs, a `PlanExplanation` built *while deciding* (so it can never drift): per
   agent → judge index → batch, the batched rule set, the effective file union, the

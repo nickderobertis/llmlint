@@ -142,13 +142,22 @@ pub(crate) fn run_loaded(
     // violation an ignore covers is dropped deterministically — llmlint honors
     // the directives itself rather than trusting the judge to (the default
     // template still documents line/block ignores as a backstop).
+    // In the same pass, estimate each target file's token weight (≈ bytes / 4) so
+    // the batcher minimizes real token cost, not a raw file count — a big file
+    // counts for more than several small ones. A file we can't read (binary,
+    // missing) simply has no weight and defaults to 1 in the planner. This is a
+    // content-size proxy (stable and always available); it can be refined to the
+    // diff size under `--diff` later.
     let mut suppressions: BTreeMap<String, Suppressions> = BTreeMap::new();
+    let mut file_tokens: BTreeMap<String, usize> = BTreeMap::new();
     for rel in &targets {
         if let Some(text) = files::read_text(&cwd, rel)? {
+            let slash = files::to_slash(rel);
             let s = ignore::suppressions(&text, &known);
             if !s.is_empty() {
-                suppressions.insert(files::to_slash(rel), s);
+                suppressions.insert(slash.clone(), s);
             }
+            file_tokens.insert(slash, (text.len() / 4).max(1));
         }
     }
 
@@ -187,7 +196,7 @@ pub(crate) fn run_loaded(
         .map(|r| r.name.clone())
         .collect();
 
-    let plan_ctx = PlanContext::new(&suppressions);
+    let plan_ctx = PlanContext::new(&suppressions).with_weights(&file_tokens);
     let the_plan = plan::build(
         &config,
         &master_template,

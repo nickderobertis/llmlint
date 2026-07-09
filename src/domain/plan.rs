@@ -8,13 +8,14 @@
 //! `1..=N` → N independent verdicts → majority; a `judges: 1` rule runs once.
 //!
 //! **Batch assignment.** Within the fixed batch count `ceil(n / batch_size)`,
-//! rules are assigned to minimize the total *file load* — a file counted once per
-//! batch it lands in, since a file's content/diff is re-shown in every batch that
-//! needs it. `affinity_chunks` (greedy least-marginal-cost placement + a bounded
-//! local search) co-locates rules that share files; it is used only when it
-//! strictly beats order-based `balanced_chunks`, so single-batch runs and ties are
-//! byte-identical to the order-based layout. The saving vs the baseline is reported
-//! in the [`PlanExplanation`]. Agents are never merged, whatever the saving.
+//! [`cost::Model::assign`] picks the rule→batch layout that minimizes the
+//! token-weighted objective — lexicographically the tokens *billed* (each file's
+//! content re-billed per batch it lands in), then per-rule token *exposure* (each
+//! rule reads its whole batch's files), then a balanced-size tiebreak. At a fixed
+//! batch count these never trade off; `assign` is a provable minimum within its
+//! search budget (else a deterministic heuristic). The order-based layout is costed
+//! too, only to report what the optimization saved in the [`PlanExplanation`].
+//! Agents are never merged, whatever the saving.
 //!
 //! **Ignore narrowing.** A whole-file `ignore-file` (via [`PlanContext`]) drops the
 //! file from a rule's effective scope before batching; a rule left with no file is
@@ -26,6 +27,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::domain::config::Config;
+use crate::domain::cost;
 use crate::domain::ignore::Suppressions;
 use crate::domain::template::RuleSpec;
 use crate::domain::to_slash;
@@ -48,21 +50,37 @@ pub struct ResolvedRule {
     pub require_line_attribution: bool,
 }
 
-/// Inputs the planner consults *besides* the rules themselves: the per-file
-/// inline-ignore suppressions (keyed by the file's forward-slash path), so a file
-/// a rule wholly `ignore-file`s can be dropped from that rule's effective scope
-/// before the judge sees it — never sending (nor paying tokens for) a file whose
-/// every verdict would be discarded post-vote anyway. Empty context = no ignores,
-/// i.e. every declared file is effective (the pre-filtering behavior).
+/// Inputs the planner consults *besides* the rules themselves:
+///
+/// - the per-file inline-ignore suppressions (keyed by the file's forward-slash
+///   path), so a file a rule wholly `ignore-file`s can be dropped from that rule's
+///   effective scope before the judge sees it — never sending (nor paying tokens
+///   for) a file whose every verdict would be discarded post-vote anyway;
+/// - the per-file token weights (also slash-keyed), so the batcher minimizes *real*
+///   token cost rather than a raw file count. A file absent from the map (or an
+///   empty map) weighs 1, reducing the objective to file counts — the behavior
+///   tests and weightless callers rely on.
 #[derive(Debug, Clone, Copy)]
 pub struct PlanContext<'a> {
     suppressions: &'a BTreeMap<String, Suppressions>,
+    file_tokens: Option<&'a BTreeMap<String, usize>>,
 }
 
 impl<'a> PlanContext<'a> {
-    /// Build a context from the per-file suppressions the caller already parsed.
+    /// Build a context from the per-file suppressions the caller already parsed,
+    /// with unit (count-based) file weights.
     pub fn new(suppressions: &'a BTreeMap<String, Suppressions>) -> Self {
-        PlanContext { suppressions }
+        PlanContext {
+            suppressions,
+            file_tokens: None,
+        }
+    }
+
+    /// Attach per-file token weights (slash path → estimated tokens) so the batcher
+    /// optimizes token cost, not file count.
+    pub fn with_weights(mut self, file_tokens: &'a BTreeMap<String, usize>) -> Self {
+        self.file_tokens = Some(file_tokens);
+        self
     }
 
     /// Whether `rule` is suppressed for the whole of `file` (slash path) by an
@@ -71,6 +89,15 @@ impl<'a> PlanContext<'a> {
         self.suppressions
             .get(file)
             .is_some_and(|s| s.is_file_scoped(rule))
+    }
+
+    /// The token weight of `file` (slash path): its configured weight, or 1 when no
+    /// weights were supplied (so the objective reduces to a file count).
+    fn weight(&self, file: &str) -> usize {
+        self.file_tokens
+            .and_then(|m| m.get(file))
+            .copied()
+            .unwrap_or(1)
     }
 }
 
@@ -219,15 +246,29 @@ pub fn build(
         let max_judges = eligible.iter().map(|e| e.rule.judges).max().unwrap_or(1);
         for j in 1..=max_judges {
             let subset: Vec<&Eligible> = eligible.iter().filter(|e| e.rule.judges >= j).collect();
-            // Assign rules to batches to minimize the total file "load" (a file
-            // counted once per batch it lands in — the token driver, since a file's
-            // content/diff is re-shown in every batch that needs it), within the
-            // fixed batch count `ceil(n / batch_size)`. Affinity co-locates rules
-            // that share files; it is used only when it strictly beats order-based
-            // chunking, so the common single-batch case is unchanged.
-            let (chunks, chosen_cost, naive_cost) = chunk_indices(&subset, batch_size);
-            plan.explanation.optimization.file_loads += chosen_cost;
-            plan.explanation.optimization.baseline_file_loads += naive_cost;
+            // Assign rules to batches to minimize the token cost, within the fixed
+            // batch count `ceil(n / batch_size)`. The objective is lexicographic:
+            // first the tokens billed (each file's content re-billed per batch it
+            // lands in), then per-rule token exposure (each rule reads its whole
+            // batch's files — so a big union shared by many rules is expensive).
+            // At a fixed batch count these never trade off; `Model::assign` returns a
+            // provable minimum (see `domain::cost`). The order-based layout is costed
+            // too, only to report what the optimization saved.
+            let model = build_cost_model(ctx, &subset);
+            let batch_count = subset.len().div_ceil(batch_size.max(1));
+            let chunks = model.assign(batch_count, batch_size);
+            let baseline: Vec<Vec<usize>> =
+                balanced_chunks(&(0..subset.len()).collect::<Vec<_>>(), batch_size)
+                    .into_iter()
+                    .map(|c| c.to_vec())
+                    .collect();
+            let chosen_obj = model.objective(&chunks);
+            let baseline_obj = model.objective(&baseline);
+            let opt = &mut plan.explanation.optimization;
+            opt.billed_tokens += chosen_obj.billed;
+            opt.per_rule_tokens += chosen_obj.per_rule;
+            opt.baseline_billed_tokens += baseline_obj.billed;
+            opt.baseline_per_rule_tokens += baseline_obj.per_rule;
 
             let mut judge_plan = JudgePlan {
                 judge_index: j,
@@ -284,11 +325,11 @@ pub fn build(
         plan.explanation.agents.push(agent_plan);
     }
 
-    plan.explanation.optimization.saved_file_loads = plan
-        .explanation
-        .optimization
-        .baseline_file_loads
-        .saturating_sub(plan.explanation.optimization.file_loads);
+    let opt = &mut plan.explanation.optimization;
+    opt.saved_billed_tokens = opt.baseline_billed_tokens.saturating_sub(opt.billed_tokens);
+    opt.saved_per_rule_tokens = opt
+        .baseline_per_rule_tokens
+        .saturating_sub(opt.per_rule_tokens);
     plan.explanation.skipped = plan
         .skipped
         .iter()
@@ -305,147 +346,27 @@ fn eligible_files(e: &Eligible) -> BTreeSet<String> {
     e.effective.iter().map(|p| to_slash(p)).collect()
 }
 
-/// The distinct-file union of a batch (rules given as indices into `subset`).
-fn batch_union(subset: &[&Eligible], idxs: &[usize]) -> BTreeSet<String> {
-    let mut u = BTreeSet::new();
-    for &i in idxs {
-        u.extend(eligible_files(subset[i]));
-    }
-    u
-}
-
-/// Total file "load" of an assignment: each batch's distinct-file count, summed.
-/// A file shared by two rules in the same batch is loaded once; split across two
-/// batches it is loaded twice — so a lower total means fewer (paid) file reviews.
-fn total_load(subset: &[&Eligible], batches: &[Vec<usize>]) -> usize {
-    batches.iter().map(|b| batch_union(subset, b).len()).sum()
-}
-
-/// Order-based chunking as index lists — the baseline the affinity assignment must
-/// beat (and the fallback on a tie, preserving today's layout/order).
-fn naive_chunks(subset: &[&Eligible], batch_size: usize) -> Vec<Vec<usize>> {
-    let idx: Vec<usize> = (0..subset.len()).collect();
-    balanced_chunks(&idx, batch_size)
-        .into_iter()
-        .map(|c| c.to_vec())
-        .collect()
-}
-
-/// Choose a rule→batch assignment minimizing [`total_load`] within the fixed batch
-/// count. Computes both the order-based baseline and the affinity layout, returns
-/// whichever costs less (tie → baseline, so single-batch runs and ties are
-/// byte-identical to order-based chunking), plus both costs for the counterfactual.
-fn chunk_indices(subset: &[&Eligible], batch_size: usize) -> (Vec<Vec<usize>>, usize, usize) {
-    let naive = naive_chunks(subset, batch_size);
-    let naive_cost = total_load(subset, &naive);
-    let affinity = affinity_chunks(subset, batch_size);
-    let affinity_cost = total_load(subset, &affinity);
-    if affinity_cost < naive_cost {
-        (affinity, affinity_cost, naive_cost)
-    } else {
-        (naive, naive_cost, naive_cost)
-    }
-}
-
-/// Assign rules to `ceil(n / batch_size)` batches to minimize the file load:
-/// greedily place each rule (largest file set first) into the batch whose union it
-/// grows the least, then a bounded local search of cost-reducing moves. Fully
-/// deterministic: rules are ordered by (file count desc, name), ties break by
-/// (smaller union, fewer rules, lower index), and each batch is name-sorted at the
-/// end. Never exceeds `batch_size`; empty batches (a run clustered tighter than the
-/// baseline) are dropped, which only lowers the call count.
-fn affinity_chunks(subset: &[&Eligible], batch_size: usize) -> Vec<Vec<usize>> {
-    let n = subset.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    let bs = batch_size.max(1);
-    let num_batches = n.div_ceil(bs);
-    let files: Vec<BTreeSet<String>> = subset.iter().map(|e| eligible_files(e)).collect();
-
-    // Placement order: widest scope first (it constrains the most), then by name.
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| {
-        files[b]
-            .len()
-            .cmp(&files[a].len())
-            .then_with(|| subset[a].rule.name.cmp(&subset[b].rule.name))
-    });
-
-    let mut batches: Vec<Vec<usize>> = vec![Vec::new(); num_batches];
-    let mut unions: Vec<BTreeSet<String>> = vec![BTreeSet::new(); num_batches];
-    for &ri in &order {
-        // The non-full batch this rule grows the least, tie-broken toward the
-        // emptier/smaller batch (spreads load, keeps empties from stranding) then
-        // the lower index (determinism).
-        let mut best: Option<(usize, usize, usize, usize)> = None;
-        for (bi, batch) in batches.iter().enumerate() {
-            if batch.len() >= bs {
-                continue;
-            }
-            let marginal = files[ri].difference(&unions[bi]).count();
-            let key = (marginal, unions[bi].len(), batch.len(), bi);
-            if best.is_none_or(|b| key < b) {
-                best = Some(key);
-            }
+/// Build the token-cost model for a judge's rule subset: number each distinct
+/// effective file, weight it via the plan context (unit weight when none supplied),
+/// and list each rule's file ids. Feeds [`cost::Model::assign`], which returns a
+/// provably minimum-cost batch layout.
+fn build_cost_model(ctx: &PlanContext, subset: &[&Eligible]) -> cost::Model {
+    let mut ids: BTreeMap<String, usize> = BTreeMap::new();
+    let mut weights: Vec<usize> = Vec::new();
+    let mut items: Vec<Vec<usize>> = Vec::with_capacity(subset.len());
+    for e in subset {
+        let mut files = Vec::new();
+        for f in &e.effective {
+            let slash = to_slash(f);
+            let id = *ids.entry(slash.clone()).or_insert_with(|| {
+                weights.push(ctx.weight(&slash));
+                weights.len() - 1
+            });
+            files.push(id);
         }
-        let bi = best.expect("n <= num_batches * bs guarantees a slot").3;
-        batches[bi].push(ri);
-        for f in &files[ri] {
-            unions[bi].insert(f.clone());
-        }
+        items.push(files);
     }
-
-    improve(&mut batches, &mut unions, &files, bs);
-
-    for b in &mut batches {
-        b.sort_by(|&a, &c| subset[a].rule.name.cmp(&subset[c].rule.name));
-    }
-    batches.retain(|b| !b.is_empty());
-    batches
-}
-
-/// Bounded local search: repeatedly move a rule to another non-full batch when it
-/// strictly lowers the total file load, until a pass makes no improvement (or a
-/// small pass cap). Deterministic (fixed iteration order, strict-improvement only).
-fn improve(
-    batches: &mut [Vec<usize>],
-    unions: &mut [BTreeSet<String>],
-    files: &[BTreeSet<String>],
-    bs: usize,
-) {
-    for _ in 0..4 {
-        let mut improved = false;
-        for from in 0..batches.len() {
-            for ri in batches[from].clone() {
-                for to in 0..batches.len() {
-                    if to == from || batches[to].len() >= bs {
-                        continue;
-                    }
-                    // Union of `from` without ri, and of `to` with ri.
-                    let new_from: BTreeSet<String> = batches[from]
-                        .iter()
-                        .filter(|&&x| x != ri)
-                        .flat_map(|&x| files[x].iter().cloned())
-                        .collect();
-                    let new_to: BTreeSet<String> = unions[to].union(&files[ri]).cloned().collect();
-                    let before = unions[from].len() + unions[to].len();
-                    let after = new_from.len() + new_to.len();
-                    if after < before {
-                        batches[from].retain(|&x| x != ri);
-                        batches[to].push(ri);
-                        unions[from] = new_from;
-                        unions[to] = new_to;
-                        improved = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if !improved {
-            break;
-        }
-    }
+    cost::Model::new(items, weights)
 }
 
 /// Files used by two or more rules in a batch — the reuse batching captured (shown
@@ -512,16 +433,20 @@ pub struct PlanExplanation {
     pub optimization: Optimization,
 }
 
-/// The counterfactual for the batching decision. A "file load" is one file shown in
-/// one batch (a file needed by two batches is loaded twice — the token driver, since
-/// its content/diff is re-shown each time). `file_loads` is what the chosen layout
-/// pays; `baseline_file_loads` is what plain order-based chunking would pay;
-/// `saved_file_loads` (baseline − chosen, ≥ 0) is the duplication grouping avoided.
+/// The counterfactual for the batching decision, in estimated tokens (unit file
+/// counts when no weights were supplied). `billed_tokens` is the file content the
+/// chosen layout bills (a file re-billed per batch it lands in); `per_rule_tokens`
+/// is the per-rule exposure (Σ over rules of their batch's file tokens — the
+/// quality axis). Each has a `baseline_*` (what order-based chunking would pay) and
+/// a `saved_*` (baseline − chosen, ≥ 0).
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct Optimization {
-    pub file_loads: usize,
-    pub baseline_file_loads: usize,
-    pub saved_file_loads: usize,
+    pub billed_tokens: usize,
+    pub baseline_billed_tokens: usize,
+    pub saved_billed_tokens: usize,
+    pub per_rule_tokens: usize,
+    pub baseline_per_rule_tokens: usize,
+    pub saved_per_rule_tokens: usize,
 }
 
 /// One agent's slice of the plan: its config knobs and the judge calls it drives.
@@ -669,14 +594,19 @@ impl PlanExplanation {
                 }
             }
         }
-        // The counterfactual: only worth a line when grouping actually saved a
-        // re-review over the order-based baseline.
+        // The counterfactual: worth a line when grouping saved billed tokens or
+        // tightened per-rule focus over the order-based baseline.
         let opt = &self.optimization;
-        if opt.saved_file_loads > 0 {
+        if opt.saved_billed_tokens > 0 || opt.saved_per_rule_tokens > 0 {
             out.push_str(&format!(
-                "  batching: {} file-load(s), down from {} order-based — saved {} \
-                 duplicate file review(s) by grouping shared scopes\n",
-                opt.file_loads, opt.baseline_file_loads, opt.saved_file_loads,
+                "  batching: ~{} file tokens billed (down from {} order-based, saved {}); \
+                 per-rule exposure ~{} (down from {}, saved {})\n",
+                opt.billed_tokens,
+                opt.baseline_billed_tokens,
+                opt.saved_billed_tokens,
+                opt.per_rule_tokens,
+                opt.baseline_per_rule_tokens,
+                opt.saved_per_rule_tokens,
             ));
         }
         if !self.skipped.is_empty() {
@@ -1187,15 +1117,21 @@ mod tests {
             .into_iter()
             .collect()
         );
-        // The counterfactual: 2 file loads chosen, 4 under order-based, saved 2.
+        // The counterfactual (unit weights): 2 file tokens billed vs 4 order-based,
+        // per-rule exposure 2 vs 8 (each of 4 rules read a 2-file union order-based).
         let opt = plan.explanation.optimization;
-        assert_eq!(opt.file_loads, 2);
-        assert_eq!(opt.baseline_file_loads, 4);
-        assert_eq!(opt.saved_file_loads, 2);
+        assert_eq!(opt.billed_tokens, 2);
+        assert_eq!(opt.baseline_billed_tokens, 4);
+        assert_eq!(opt.saved_billed_tokens, 2);
+        // per_rule: chosen 2×1 + 2×1 = 4; baseline each rule reads a 2-file union
+        // (2×2 + 2×2 = 8) -> saved 4.
+        assert_eq!(opt.per_rule_tokens, 4);
+        assert_eq!(opt.baseline_per_rule_tokens, 8);
+        assert_eq!(opt.saved_per_rule_tokens, 4);
         // Rendered explanation names the reuse and the saving.
         let text = plan.explanation.to_human();
         assert!(text.contains("grouped: shares shared_x.rs"), "{text}");
-        assert!(text.contains("saved 2 duplicate file review(s)"), "{text}");
+        assert!(text.contains("batching: ~2 file tokens billed"), "{text}");
     }
 
     #[test]
@@ -1213,41 +1149,12 @@ mod tests {
             ],
         );
         assert_eq!(plan.runs.len(), 1);
-        // Input order is preserved (order-based layout on the tie).
+        // Input order is preserved (a single batch is the whole subset in order).
         let names: Vec<&str> = plan.runs[0].rules.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["b", "a"]);
-        assert_eq!(plan.explanation.optimization.saved_file_loads, 0);
+        assert_eq!(plan.explanation.optimization.saved_billed_tokens, 0);
+        assert_eq!(plan.explanation.optimization.saved_per_rule_tokens, 0);
         assert!(!plan.explanation.to_human().contains("batching:"));
-    }
-
-    #[test]
-    fn local_search_consolidates_a_rule_where_its_files_already_live() {
-        // A deliberately bad start splits the two {A} rules across batches; the
-        // move-based local search consolidates them at no cost, emptying a batch.
-        let fs =
-            |names: &[&str]| -> BTreeSet<String> { names.iter().map(|s| s.to_string()).collect() };
-        let files = vec![fs(&["A"]), fs(&["A"]), fs(&["B"])];
-        let mut batches = vec![vec![0usize, 2], vec![1usize]];
-        let mut unions: Vec<BTreeSet<String>> = batches
-            .iter()
-            .map(|b| b.iter().flat_map(|&i| files[i].clone()).collect())
-            .collect();
-        // Before: {A,B} + {A} = 3 file loads.
-        assert_eq!(unions.iter().map(|u| u.len()).sum::<usize>(), 3);
-        improve(&mut batches, &mut unions, &files, 3);
-        // After: the two {A} rules (0 and 1) end up in the same batch, {B} alone —
-        // total file load down to 2.
-        assert_eq!(unions.iter().map(|u| u.len()).sum::<usize>(), 2);
-        let together = batches.iter().any(|b| b.contains(&0) && b.contains(&1));
-        assert!(
-            together,
-            "the two shared-scope rules were consolidated: {batches:?}"
-        );
-    }
-
-    #[test]
-    fn affinity_chunks_of_an_empty_subset_is_empty() {
-        assert!(affinity_chunks(&[], 5).is_empty());
     }
 
     #[test]

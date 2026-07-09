@@ -6575,9 +6575,8 @@ fn plan_only_groups_shared_scopes_and_reports_the_saving() {
         .assert()
         .success()
         .stdout(predicate::str::contains("grouped: shares src/lib.rs"))
-        .stdout(predicate::str::contains(
-            "saved 2 duplicate file review(s) by grouping shared scopes",
-        ));
+        .stdout(predicate::str::contains("batching: ~"))
+        .stdout(predicate::str::contains("per-rule exposure"));
 }
 
 #[test]

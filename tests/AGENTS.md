@@ -364,13 +364,15 @@ logic is also covered hermetically via `file://` plugins.
   is `ignore-file`d is reported as **ignored** (its own `IGN` line at `-v`, its own
   `ignored` summary segment and JSON count, exit 0) — distinct from an incidental
   skip; a rule that keeps other files is still judged over them while the ignored
-  file is excluded from the prompt. **Affinity batching** is also proven through
-  `--plan-only`: four rules over two scopes, interleaved so order-based chunking
-  (`batch_size 2`) would split each scope across both batches, are regrouped by
-  shared file — the output names the reuse (`grouped: shares …`) and the
-  counterfactual (`saved 2 duplicate file review(s)`); the assignment/cost internals
-  (greedy + local search, tie→order-based, determinism) are unit-tested in
-  `domain::plan`. Under `--diff`, a contiguous run of changed
+  file is excluded from the prompt. **Token-weighted batching** is proven through
+  `--plan-only`: rules over interleaved scopes are regrouped so shared files are paid
+  once, and the output names the reuse (`grouped: shares …`) plus the token
+  counterfactual (`batching: ~N file tokens billed …; per-rule exposure ~…`). The
+  cost model's core guarantee — that `Model::assign` reaches the **true minimum
+  objective** — is enforced in `domain::cost` by an independent brute-force oracle
+  run across a broad table of item/file/weight shapes and every batch size, plus a
+  heuristic-fallback validity check for oversized inputs. Under `--diff`, a
+  contiguous run of changed
   lines wholly covered by an `ignore-block` (for the only applicable rule) is
   replaced with an omission marker in the prompt, while an adjacent non-ignored
   change is kept in full (asserted via `LLMLINT_MOCK_DUMP`); the finer diff-parsing
