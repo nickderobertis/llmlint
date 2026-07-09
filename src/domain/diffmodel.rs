@@ -134,15 +134,6 @@ impl FileDiff {
         FileDiff { preamble, hunks }
     }
 
-    /// Whether any change run in this diff would be dropped by `omit` — so a caller
-    /// can note that the prompt was trimmed.
-    pub fn any_omitted(&self, omit: impl Fn(&ChangeRun) -> bool) -> bool {
-        self.hunks
-            .iter()
-            .flat_map(|h| &h.segments)
-            .any(|s| matches!(s, Segment::Run(r) if omit(r)))
-    }
-
     /// Render the diff back to text, replacing each run for which `omit` returns
     /// true with a one-line marker naming the omitted line span. Context, headers,
     /// preamble, and kept runs render verbatim, so a kept diff is byte-identical to
@@ -248,13 +239,6 @@ index e69de29..1c2d3e4 100644
         let d = FileDiff::parse(DIFF);
         let out = d.render_filtered(|r| r.added_lines == vec![5]);
         assert!(out.contains("1 changed line 5 omitted"), "{out}");
-    }
-
-    #[test]
-    fn any_omitted_reflects_the_predicate() {
-        let d = FileDiff::parse(DIFF);
-        assert!(!d.any_omitted(|_| false));
-        assert!(d.any_omitted(|r| r.added_lines == vec![2, 3]));
     }
 
     #[test]

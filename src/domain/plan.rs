@@ -1221,6 +1221,31 @@ mod tests {
     }
 
     #[test]
+    fn local_search_consolidates_a_rule_where_its_files_already_live() {
+        // A deliberately bad start splits the two {A} rules across batches; the
+        // move-based local search consolidates them at no cost, emptying a batch.
+        let fs =
+            |names: &[&str]| -> BTreeSet<String> { names.iter().map(|s| s.to_string()).collect() };
+        let files = vec![fs(&["A"]), fs(&["A"]), fs(&["B"])];
+        let mut batches = vec![vec![0usize, 2], vec![1usize]];
+        let mut unions: Vec<BTreeSet<String>> = batches
+            .iter()
+            .map(|b| b.iter().flat_map(|&i| files[i].clone()).collect())
+            .collect();
+        // Before: {A,B} + {A} = 3 file loads.
+        assert_eq!(unions.iter().map(|u| u.len()).sum::<usize>(), 3);
+        improve(&mut batches, &mut unions, &files, 3);
+        // After: the two {A} rules (0 and 1) end up in the same batch, {B} alone —
+        // total file load down to 2.
+        assert_eq!(unions.iter().map(|u| u.len()).sum::<usize>(), 2);
+        let together = batches.iter().any(|b| b.contains(&0) && b.contains(&1));
+        assert!(
+            together,
+            "the two shared-scope rules were consolidated: {batches:?}"
+        );
+    }
+
+    #[test]
     fn affinity_assignment_is_deterministic() {
         let cfg = Config::default();
         let rules = || {
