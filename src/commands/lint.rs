@@ -265,6 +265,18 @@ pub(crate) fn run_loaded(
     // requires oneharness >= MIN_VERSION. Check once up front and fail with a
     // clear message rather than letting every judge's `--mode read-only` error.
     client.check_min_version()?;
+
+    // At `-v`, narrate the plan up front — before any judge runs — so a reader sees
+    // what will be linted (the file set, the batching, any diff-excluded files)
+    // and then watches it execute, rather than meeting the plan only at the end of
+    // the report. Human format only (JSON carries the structured plan itself); a
+    // zero-rule run has an empty explanation and prints nothing.
+    if args.verbose >= 1 && args.format == OutputFormat::Human && !the_plan.explanation.is_empty() {
+        print!("{}", the_plan.explanation.to_human());
+        println!();
+        let _ = std::io::stdout().flush();
+    }
+
     let timeout = args
         .timeout
         .or(config.oneharness.timeout)

@@ -6941,17 +6941,32 @@ fn plan_only_under_diff_states_the_lint_set_and_names_excluded_files() {
 }
 
 #[test]
-fn verbose_report_appends_the_plan_section() {
-    // At `-v` the human report carries the plan explanation so a reader can see how
-    // the run was batched.
+fn verbose_run_narrates_the_plan_before_the_results() {
+    // At `-v` the plan is narrated up front — before the judges run — so a reader
+    // sees what will be linted and how it batches, then the results follow. The plan
+    // must therefore appear *before* the summary/results block on stdout, not after.
     let p = ignore_project("// code\n");
     let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
-    p.lint_v()
+    let out = p
+        .lint_v()
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Plan: 1 judge call(s)"))
-        .stdout(predicate::str::contains("batch 1: [no_todo]"));
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let plan_at = stdout
+        .find("Plan: 1 judge call(s)")
+        .unwrap_or_else(|| panic!("plan header missing:\n{stdout}"));
+    let batch_at = stdout
+        .find("batch 1: [no_todo]")
+        .unwrap_or_else(|| panic!("batch line missing:\n{stdout}"));
+    // "passed" only appears in the results summary line.
+    let results_at = stdout
+        .find("passed")
+        .unwrap_or_else(|| panic!("results summary missing:\n{stdout}"));
+    assert!(
+        plan_at < results_at && batch_at < results_at,
+        "the plan must be narrated before the results:\n{stdout}"
+    );
 }
 
 #[test]
