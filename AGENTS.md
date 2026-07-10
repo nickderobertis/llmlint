@@ -262,12 +262,23 @@ harness reads target files on-demand with its own tools.
   agent → judge index → batch, the batched rule set, the effective file union, the
   files reused across the batch's rules (the grouping's justification), any files
   excluded because every declaring rule `ignore-file`s them, plus the rules left
-  unjudged with their reason and the batching counterfactual. It renders as a
-  readable tree (`to_human`) and serializes (`Serialize`). The `lint` command
-  attaches it to the `Report` (`with_plan`), so the human report shows it at `-v`,
-  `--format json` carries it under `plan`, and the history record persists it — one
-  source, no drift. `--plan-only` prints the explanation and exits before any
-  oneharness call or history write — a zero-cost batching-debug view. **Agents are
+  unjudged with their reason and the batching counterfactual. It also states the
+  **actual lint set** up front: `linted_files` (the distinct union across every
+  batch — computed while planning, so it can't drift) drives the header's
+  "linting N file(s)", making clear what gets judged without counting across
+  batches. Under `--diff` the header also names `diff_excluded_files` — files that
+  matched the globs but were dropped as unchanged/deleted vs the base (set by the
+  `lint` command after building, since the planner is diff-unaware) — so a smaller
+  lint set is explained, not a mystery. It renders as a
+  readable tree (`to_human`) and serializes (`Serialize`). At `-v` the `lint`
+  command **narrates it up front — before the judges run** (to stdout, then the
+  results follow), so a reader sees what will be linted and how it batches, then
+  watches it execute, rather than meeting the plan only at the end of the report;
+  the human `Report` deliberately does *not* re-render it (no duplication). It is
+  still attached to the `Report` (`with_plan`), so `--format json` carries it under
+  `plan` and the history record persists it — one source, no drift. `--plan-only`
+  prints the explanation and exits before any oneharness call or history write — a
+  zero-cost batching-debug view. **Agents are
   the hard isolation boundary:** the planner never batches rules across agents even
   when their harness/model/template are identical and merging would save tokens —
   an agent split is user intent (isolating rules that interfere when judged

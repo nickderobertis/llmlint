@@ -392,10 +392,17 @@ logic is also covered hermetically via `file://` plugins.
   how judge runs are batched (agents → judge indices → batches, each batch's rule
   set + effective file union, and any files excluded because every declaring rule
   `ignore-file`s them), plus the rules left unjudged with their reason (no files /
-  all files ignored). `--plan-only` prints it and exits with **no harness call and
+  all files ignored). Its header states the **actual lint set** ("linting N
+  file(s)", the distinct union across batches), and under `--diff` it names the
+  files that matched the globs but were dropped as unchanged/deleted vs the base
+  ("N file(s) matched globs but excluded … (--diff): …") — so the smaller lint set
+  is explained, not a mystery (`plan_only_under_diff_states_the_lint_set_and_names_excluded_files`).
+  `--plan-only` prints it and exits with **no harness call and
   no history write** (proven by running via `bare`, without `--oneharness-bin`,
-  and asserting zero records) — a zero-cost way to debug batching. The same
-  explanation is appended to the human report at `-v`, embedded in `--format json`
+  and asserting zero records) — a zero-cost way to debug batching. At `-v` the same
+  explanation is **narrated up front — before the judges run** (to stdout, then the
+  results follow, asserted by `verbose_run_narrates_the_plan_before_the_results`),
+  not appended after the report; it is embedded in `--format json`
   under `plan`, and thus persisted in the history record. A rule whose every file
   is `ignore-file`d is reported as **ignored** (its own `IGN` line at `-v`, its own
   `ignored` summary segment and JSON count, exit 0) — distinct from an incidental

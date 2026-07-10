@@ -6974,17 +6974,75 @@ fn plan_only_groups_shared_scopes_and_reports_the_saving() {
 }
 
 #[test]
-fn verbose_report_appends_the_plan_section() {
-    // At `-v` the human report carries the plan explanation so a reader can see how
-    // the run was batched.
-    let p = ignore_project("// code\n");
-    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
-    p.lint_v()
-        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+fn plan_only_under_diff_states_the_lint_set_and_names_excluded_files() {
+    // The `--plan-only` view must reflect the `--diff` narrowing: it lints only the
+    // changed file, states that count in the header, and names the glob-matched file
+    // that was excluded as unchanged — so a reader sees exactly what gets linted and
+    // why the set is smaller than the config's globs imply. No judge call is made.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "fn a() {}\n");
+    p.write("src/b.rs", "fn b() {}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    // Only src/a.rs changes after the baseline.
+    p.write("src/a.rs", "fn a() { let x = 1; }\n");
+
+    p.bare()
+        .arg("--diff")
+        .arg("--plan-only")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Plan: 1 judge call(s)"))
-        .stdout(predicate::str::contains("batch 1: [no_todo]"));
+        .stdout(predicate::str::contains("linting 1 file(s)"))
+        .stdout(predicate::str::contains("batch 1: [r]"))
+        .stdout(predicate::str::contains("src/a.rs"))
+        .stdout(predicate::str::contains(
+            "1 file(s) matched globs but excluded as unchanged/deleted vs base (--diff): src/b.rs",
+        ));
+    // A dry inspection makes no judge call and logs nothing.
+    assert_eq!(history_record_count(&p), 0);
+}
+
+#[test]
+fn verbose_run_narrates_the_plan_before_the_results() {
+    // At `-v` the plan is narrated up front — before the judges run — so a reader
+    // sees what will be linted and how it batches, then the results follow. The plan
+    // must therefore appear *before* the summary/results block on stdout, not after.
+    let p = ignore_project("// code\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    let out = p
+        .lint_v()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let plan_at = stdout
+        .find("Plan: 1 judge call(s)")
+        .unwrap_or_else(|| panic!("plan header missing:\n{stdout}"));
+    let batch_at = stdout
+        .find("batch 1: [no_todo]")
+        .unwrap_or_else(|| panic!("batch line missing:\n{stdout}"));
+    // "passed" only appears in the results summary line.
+    let results_at = stdout
+        .find("passed")
+        .unwrap_or_else(|| panic!("results summary missing:\n{stdout}"));
+    assert!(
+        plan_at < results_at && batch_at < results_at,
+        "the plan must be narrated before the results:\n{stdout}"
+    );
+    // ...and narrated exactly once — the report no longer re-renders it at the end.
+    assert_eq!(
+        stdout.matches("Plan:").count(),
+        1,
+        "the plan must appear once (not duplicated in the report):\n{stdout}"
+    );
 }
 
 #[test]
@@ -7009,6 +7067,14 @@ fn json_report_carries_the_plan_and_ignored_count() {
             .iter()
             .any(|s| s["rule"] == "no_todo" && s["reason"] == "all_files_ignored"),
         "plan.skipped should record the ignored rule: {v:#}"
+    );
+    // The structured plan also carries the actual lint set (`linted_files`) so
+    // tooling and history see it without unioning batches. Here every file is
+    // ignore-file'd, so nothing is linted.
+    assert_eq!(
+        v["plan"]["linted_files"].as_array().unwrap().len(),
+        0,
+        "plan.linted_files should be present and empty: {v:#}"
     );
 }
 

@@ -198,17 +198,11 @@ impl Report {
             out.push_str(&format!(", {errored}"));
         }
         out.push('\n');
-        // At `-v`, append the plan explanation so a reader can see (and debug) how
-        // the judge runs were batched and which files were excluded. The report on
-        // stdout stays parseable — the plan is a trailing, clearly-headed block.
-        if verbosity >= 1 {
-            if let Some(plan) = &self.plan {
-                if !plan.is_empty() {
-                    out.push('\n');
-                    out.push_str(&plan.to_human());
-                }
-            }
-        }
+        // The plan explanation is intentionally *not* appended here. At `-v` the
+        // `lint` command narrates it up front, before the judges run (so a reader
+        // sees what will be linted, and how it batches, before watching it execute)
+        // rather than meeting it only after the results. `--format json` still
+        // carries the structured plan under `plan`, and history persists it.
         out
     }
 
@@ -729,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_renders_in_verbose_human_and_in_json() {
+    fn a_plan_is_carried_in_json_but_not_in_the_human_report() {
         use crate::domain::plan::{AgentPlan, BatchPlan, JudgePlan, PlanExplanation};
         let plan = PlanExplanation {
             agents: vec![AgentPlan {
@@ -750,19 +744,17 @@ mod tests {
             }],
             skipped: vec![],
             optimization: Default::default(),
+            ..Default::default()
         };
         let r = Report::new(vec![pass("a")], vec![]).with_plan(plan);
 
-        // Default verbosity does not show the plan; `-v` appends it.
+        // The human report never carries the plan — the `lint` command narrates it
+        // up front (before the judges run), not inside the results block. So it is
+        // absent at every verbosity, keeping stdout the clean results channel.
         assert!(!r.to_human(0, false).contains("Plan:"));
-        let loud = r.to_human(1, false);
-        assert!(
-            loud.contains("Plan: 1 judge call(s) across 1 agent(s)"),
-            "{loud}"
-        );
-        assert!(loud.contains("batch 1: [a, b]"), "{loud}");
+        assert!(!r.to_human(1, false).contains("Plan:"));
 
-        // JSON embeds the structured plan.
+        // JSON still embeds the structured plan for tooling and history.
         let j = r.to_json();
         assert_eq!(j["plan"]["agents"][0]["agent"], "default");
         assert_eq!(j["plan"]["agents"][0]["judges"][0]["batches"][0]["id"], 1);
