@@ -1022,6 +1022,67 @@ fn include_exclude_globs_select_the_right_files() {
 }
 
 #[test]
+fn rule_include_cannot_resurrect_a_top_level_excluded_path() {
+    // Issue #128: a top-level `files.exclude` is a hard denylist — a rule's own
+    // `files.include` narrows *within* the allowed set and can never bring back an
+    // excluded path. Here `**/tests/**` includes `tests/fixtures/...`, but the
+    // top-level `exclude: ["tests/fixtures/**"]` still drops it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  exclude: [\"tests/fixtures/**\"]\nrules:\n  \
+             - name: judge_tests\n    description: \"{RULE}\"\n    files:\n      \
+             include: [\"**/tests/**\"]\n"
+        ),
+    );
+    p.write("tests/unit.rs", "// a real test\n");
+    p.write("tests/fixtures/big.json", "{}\n");
+    let verdicts = p.write_verdicts(r#"{"judge_tests": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("tests/unit.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("tests/fixtures/big.json"),
+        "a rule include must not resurrect a top-level excluded path:\n{system}"
+    );
+}
+
+#[test]
+fn plan_only_omits_a_top_level_excluded_path_a_rule_include_matches() {
+    // The same fix must hold on the `--plan-only` path (the issue's repro used it):
+    // the globally-excluded fixture never enters the plan even though the rule's
+    // `**/tests/**` include matches it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  exclude: [\"tests/fixtures/**\"]\nrules:\n  \
+             - name: judge_tests\n    description: \"{RULE}\"\n    files:\n      \
+             include: [\"**/tests/**\"]\n"
+        ),
+    );
+    p.write("tests/unit.rs", "// a real test\n");
+    p.write("tests/fixtures/big.json", "{}\n");
+
+    p.lint()
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tests/unit.rs"))
+        .stdout(predicate::str::contains("tests/fixtures/big.json").not());
+}
+
+#[test]
 fn no_files_block_lints_every_file_in_the_tree() {
     // A config with no `files` block is the repo-wide "lint everything under cwd"
     // default: every file in the tree is a target, not zero. Files sit at the root
@@ -1418,6 +1479,94 @@ fn diff_untracked_new_file_has_no_diff_so_it_is_skipped() {
     assert!(
         !dump.exists(),
         "harness was invoked but should not have been"
+    );
+}
+
+#[test]
+fn diff_rule_include_cannot_resurrect_a_top_level_excluded_path() {
+    // Issue #128, the `--diff` mode it explicitly names: a top-level
+    // `files.exclude` must still drop an excluded path even when it *changed* and a
+    // rule's `files.include` matches it. Here the rule scopes to `**/tests/**`; the
+    // top-level exclude denies `tests/fixtures/**`. Both a real test file and a
+    // fixture change, but only the real test file reaches the judge.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  exclude: [\"tests/fixtures/**\"]\nrules:\n  \
+             - name: judge_tests\n    description: \"{RULE}\"\n    files:\n      \
+             include: [\"**/tests/**\"]\n"
+        ),
+    );
+    p.write("tests/unit.rs", "fn t() {}\n");
+    p.write("tests/fixtures/big.json", "{}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    // Change both files after the baseline.
+    p.write("tests/unit.rs", "fn t() { assert!(true); }\n");
+    p.write("tests/fixtures/big.json", "{\"k\": 1}\n");
+
+    let verdicts = p.write_verdicts(r#"{"judge_tests": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("tests/unit.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("tests/fixtures/big.json"),
+        "a changed but top-level-excluded path must not reach the judge under --diff:\n{system}"
+    );
+}
+
+#[test]
+fn subtree_rule_include_cannot_resurrect_an_ancestor_excluded_path() {
+    // The session-level (cwd-and-up) `files.exclude` is a hard denylist across the
+    // whole cascade: a subtree config's rule with its own `files.include` still
+    // can't bring back a path the top-level config excluded. The cwd config excludes
+    // `**/vendored/**`; the subtree rule includes `**/*.rs`, matching a vendored
+    // file under it — which must stay excluded.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  exclude: [\"**/vendored/**\"]\n",
+    );
+    p.write(
+        "sub/llmlint.yml",
+        &format!(
+            "rules:\n  - name: sub_rule\n    description: \"{RULE}\"\n    files:\n      \
+             include: [\"**/*.rs\"]\n"
+        ),
+    );
+    p.write("sub/keep.rs", "// keep\n");
+    p.write(
+        "sub/vendored/gen.rs",
+        "// vendored, excluded by the ancestor\n",
+    );
+    let verdicts = p.write_verdicts(r#"{"sub_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("sub/keep.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("sub/vendored/gen.rs"),
+        "an ancestor's top-level exclude must win over a subtree rule include:\n{system}"
     );
 }
 
@@ -4945,6 +5094,33 @@ fn malformed_directive_in_an_excluded_file_does_not_fail() {
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
         .success();
+}
+
+#[test]
+fn malformed_directive_in_a_top_level_excluded_but_rule_included_file_does_not_fail() {
+    // Issue #128 through the ignore-scan path: a file the top-level `exclude`
+    // denies is never a target even when a rule's `files.include` matches it, so a
+    // malformed directive in it must not fail the run. This also proves the shared
+    // `target_files` resolution (used by the `lint` pre-flight *and* the standalone
+    // `check-ignores`) honors the exclude, so the two can't disagree.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  exclude: [\"tests/fixtures/**\"]\nrules:\n  \
+             - name: no_todo\n    description: \"{RULE}\"\n    files:\n      \
+             include: [\"**/tests/**\"]\n"
+        ),
+    );
+    p.write("tests/unit.rs", "// code\n");
+    p.write("tests/fixtures/api.rs", "// llmlint: ignore[bogus]\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+    // `check-ignores` sees the same target set — the excluded file is not scanned.
+    p.check_ignores().assert().success();
 }
 
 #[test]

@@ -46,6 +46,28 @@ pub fn resolve_scoped(
     out_root: &Path,
     filter: &FileFilter,
 ) -> Result<Vec<PathBuf>> {
+    resolve_scoped_excluding(glob_root, out_root, filter, &[], &[])
+}
+
+/// Like [`resolve_scoped`], but with two extra exclude glob lists applied as a
+/// **hard denylist** on top of `filter`: a path either list denies is dropped
+/// even when `filter.include` matches it — an `include` can never resurrect an
+/// excluded path (see issue #128). Both *add to* whatever `filter.exclude`
+/// already subtracts.
+///
+/// - `scoped_exclude` is matched against the **`glob_root`-relative** path, so it
+///   is a config-level `files.exclude` co-rooted with the rule's own globs (the
+///   top-level `exclude` of the config that declared the rule).
+/// - `global_exclude` is matched against the **`out_root`-relative** (cwd-relative)
+///   path — the session-level `files.exclude`, which is cwd-rooted like every
+///   session setting, so it applies uniformly across nested configs.
+pub fn resolve_scoped_excluding(
+    glob_root: &Path,
+    out_root: &Path,
+    filter: &FileFilter,
+    scoped_exclude: &[String],
+    global_exclude: &[String],
+) -> Result<Vec<PathBuf>> {
     // An empty `include` set means "every file under the walk root": `build_set`
     // returns `None` for it, which the loop below reads as match-all (see the
     // `is_none_or`). This is the repo-wide default — a config with no `files`
@@ -54,6 +76,10 @@ pub fn resolve_scoped(
     // from whatever `include` picks.
     let include = build_set(&filter.include)?;
     let exclude = build_set(&filter.exclude)?;
+    // The two hard-denylist sets, applied on top of `filter` (see the doc above):
+    // `scoped_exclude` rooted like the rule's globs, `global_exclude` cwd-rooted.
+    let scoped_ex = build_set(scoped_exclude)?;
+    let global_ex = build_set(global_exclude)?;
 
     // Walk the more specific (deeper) root so every visited file is under both;
     // if neither root contains the other the scopes don't overlap — no files.
@@ -81,7 +107,11 @@ pub fn resolve_scoped(
         else {
             continue;
         };
-        let excluded = exclude.as_ref().is_some_and(|e| e.is_match(rel_glob));
+        // `exclude` wins over `include`, and the two hard denylists win over both:
+        // include minus exclude, and an include never brings back an excluded path.
+        let excluded = exclude.as_ref().is_some_and(|e| e.is_match(rel_glob))
+            || scoped_ex.as_ref().is_some_and(|e| e.is_match(rel_glob))
+            || global_ex.as_ref().is_some_and(|e| e.is_match(rel_out));
         let included = include.as_ref().is_none_or(|set| set.is_match(rel_glob));
         if included && !excluded {
             out.push(rel_out.to_path_buf());
@@ -252,6 +282,78 @@ mod tests {
         };
         let files = resolve(dir.path(), &filter).unwrap();
         assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
+    }
+
+    #[test]
+    fn global_exclude_wins_over_a_rule_include() {
+        // Issue #128: a rule-level `include` must not resurrect a path the
+        // top-level `exclude` denied. `**/tests/**` includes `tests/fixtures/*`,
+        // but the cwd-rooted global exclude `tests/fixtures/**` still drops it.
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "src/a.rs");
+        touch(dir.path(), "tests/unit.rs");
+        touch(dir.path(), "tests/fixtures/big.json");
+        let rule_filter = FileFilter {
+            include: vec!["**/tests/**".into()],
+            exclude: vec![],
+        };
+        let files = resolve_scoped_excluding(
+            dir.path(),
+            dir.path(),
+            &rule_filter,
+            &[],
+            &["tests/fixtures/**".into()],
+        )
+        .unwrap();
+        // The rule's own test file is judged; the globally-excluded fixture is not.
+        assert_eq!(files, vec![PathBuf::from("tests/unit.rs")]);
+    }
+
+    #[test]
+    fn scoped_exclude_wins_over_a_rule_include() {
+        // The rule's own config-level `exclude` (co-rooted at glob_root) also wins
+        // over the rule's `include`, independent of any global exclude.
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "tests/unit.rs");
+        touch(dir.path(), "tests/fixtures/big.json");
+        let rule_filter = FileFilter {
+            include: vec!["**/tests/**".into()],
+            exclude: vec![],
+        };
+        let files = resolve_scoped_excluding(
+            dir.path(),
+            dir.path(),
+            &rule_filter,
+            &["tests/fixtures/**".into()],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(files, vec![PathBuf::from("tests/unit.rs")]);
+    }
+
+    #[test]
+    fn global_exclude_matches_cwd_relative_under_a_nested_glob_root() {
+        // The global exclude is matched cwd-relative (out_root), while the rule
+        // filter roots at the nested glob_root. A `sub/vendored/**` global exclude
+        // drops the vendored file even though the rule include (`*.rs`, rooted at
+        // `sub`) matches it.
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "sub/keep.rs");
+        touch(dir.path(), "sub/vendored/gen.rs");
+        let rule_filter = FileFilter {
+            include: vec!["**/*.rs".into()],
+            exclude: vec![],
+        };
+        let glob_root = dir.path().join("sub");
+        let files = resolve_scoped_excluding(
+            &glob_root,
+            dir.path(),
+            &rule_filter,
+            &[],
+            &["sub/vendored/**".into()],
+        )
+        .unwrap();
+        assert_eq!(files, vec![PathBuf::from("sub/keep.rs")]);
     }
 
     #[test]

@@ -111,7 +111,7 @@ pub(crate) fn run_loaded(
                 &fallback
             }
         };
-        let target = ignores::resolve_files(&cwd, rule, &cli_files, scope)?;
+        let target = ignores::resolve_files(&cwd, rule, &cli_files, scope, &config.files.exclude)?;
         resolved.push(plan::ResolvedRule {
             name: rule.name.clone(),
             description: rule.description.clone(),

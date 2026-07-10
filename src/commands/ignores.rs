@@ -58,7 +58,7 @@ pub fn target_files(
                 &fallback
             }
         };
-        for f in resolve_files(cwd, rule, cli_files, scope)? {
+        for f in resolve_files(cwd, rule, cli_files, scope, &config.files.exclude)? {
             out.insert(f);
         }
     }
@@ -70,14 +70,31 @@ pub fn target_files(
 /// [`RuleScope`] fallback filter. Glob filters root at the rule's config directory
 /// (`scope.dir`) so a nested config's globs mean "relative to me", while resolved
 /// paths stay relative to `cwd`.
+///
+/// `global_exclude` is the session-level top-level `files.exclude` (cwd-rooted). It
+/// is applied as a **hard denylist in every glob mode**: a per-rule `files.include`
+/// narrows *within* the allowed set — it can never resurrect a path the top-level
+/// (or the rule's own config-level) `exclude` denied (issue #128). Explicit CLI
+/// files stay a direct request and are not filtered by it.
 pub fn resolve_files(
     cwd: &Path,
     rule: &Rule,
     cli_files: &[PathBuf],
     scope: &RuleScope,
+    global_exclude: &[String],
 ) -> Result<Vec<PathBuf>> {
     if let Some(f) = &rule.files {
-        return files::resolve_scoped(&scope.dir, cwd, f);
+        // A per-rule `files.include` selects *within* the allowed set. Layer both
+        // the rule's own config-level `exclude` (`scope.files.exclude`, co-rooted
+        // at `scope.dir`) and the session-level global `exclude` on top, so neither
+        // can be overridden by the rule's include.
+        return files::resolve_scoped_excluding(
+            &scope.dir,
+            cwd,
+            f,
+            &scope.files.exclude,
+            global_exclude,
+        );
     }
     if !cli_files.is_empty() {
         // Explicit CLI files override the rule's globs, but they are still bounded
@@ -88,7 +105,10 @@ pub fn resolve_files(
         // "consolidated up from each leaf" trimming a discovery run does.
         return Ok(scope_cli_files(cwd, &scope.dir, cli_files));
     }
-    files::resolve_scoped(&scope.dir, cwd, &scope.files)
+    // The rule falls back to its config's `files` (whose own `exclude` is already
+    // in the filter); still layer the session-level global `exclude` on top so a
+    // subtree rule honors an ancestor's top-level exclude too.
+    files::resolve_scoped_excluding(&scope.dir, cwd, &scope.files, &[], global_exclude)
 }
 
 /// Keep the explicit CLI files that fall under `dir` (a rule's directory scope),
@@ -160,6 +180,74 @@ mod tests {
         ];
         let kept = scope_cli_files(cwd, &dir, &files);
         assert_eq!(kept, vec![PathBuf::from("backend/svc.rs"), abs_in]);
+    }
+
+    use crate::domain::config::FileFilter;
+
+    fn touch(root: &Path, rel: &str) {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, "x").unwrap();
+    }
+
+    fn rule_named(name: &str, files: Option<FileFilter>) -> Rule {
+        Rule {
+            name: name.into(),
+            description: "true when ok; false otherwise.".into(),
+            r#override: false,
+            agent: None,
+            judges: None,
+            files,
+            rationale: None,
+            relevance: None,
+            require_line_attribution: None,
+        }
+    }
+
+    #[test]
+    fn resolve_files_applies_global_exclude_over_a_rule_include() {
+        // Issue #128: a rule's `files.include` must not resurrect a path the
+        // top-level `files.exclude` denied.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        touch(cwd, "tests/unit.rs");
+        touch(cwd, "tests/fixtures/big.json");
+        let rule = rule_named(
+            "judge_tests",
+            Some(FileFilter {
+                include: vec!["**/tests/**".into()],
+                exclude: vec![],
+            }),
+        );
+        let scope = RuleScope {
+            dir: cwd.to_path_buf(),
+            files: FileFilter {
+                include: vec![],
+                exclude: vec!["tests/fixtures/**".into()],
+            },
+        };
+        let files = resolve_files(cwd, &rule, &[], &scope, &["tests/fixtures/**".into()]).unwrap();
+        assert_eq!(files, vec![PathBuf::from("tests/unit.rs")]);
+    }
+
+    #[test]
+    fn resolve_files_fallback_still_honors_global_exclude() {
+        // A rule with no own `files` falls back to its config's filter; the
+        // session-level global exclude still drops the excluded path.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        touch(cwd, "src/a.rs");
+        touch(cwd, "vendored/gen.rs");
+        let rule = rule_named("r", None);
+        let scope = RuleScope {
+            dir: cwd.to_path_buf(),
+            files: FileFilter {
+                include: vec!["**/*.rs".into()],
+                exclude: vec![],
+            },
+        };
+        let files = resolve_files(cwd, &rule, &[], &scope, &["vendored/**".into()]).unwrap();
+        assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
     }
 
     #[test]

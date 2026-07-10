@@ -203,7 +203,9 @@ version: 1                     # this config's published version (used when it i
 
 # Files linted when none are passed on the CLI. Omit the whole block (or leave
 # `include` empty) to lint every file in the tree from the current directory;
-# `exclude` and `.gitignore` still apply.
+# `exclude` and `.gitignore` still apply. `exclude` is a hard denylist that always
+# wins: a path it matches is never linted, and a per-rule `files.include` (below)
+# narrows *within* the allowed set — it can't bring back an excluded path.
 files:
   include: ["src/**/*.rs"]
   exclude: ["**/generated/**"]
@@ -244,8 +246,9 @@ rules:
     judges: 3                  # optional; independent judges, majority wins (default 1)
     rationale: true            # optional; override the session-wide `rationales` for this rule
     relevance: true            # optional; when to evaluate — see Relevance below (default true)
-    files:                     # optional; override the target files for this rule
-      include: ["src/api/**"]
+    files:                     # optional; narrow the target files for this rule
+      include: ["src/api/**"]  #   selects *within* the allowed set; the top-level
+                               #   `files.exclude` still wins (can't re-include it)
 ```
 
 ### Nested & per-directory configs
