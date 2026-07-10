@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.11](https://github.com/nickderobertis/llmlint/compare/v0.3.10...v0.3.11) - 2026-07-10
+
+### Added
+
+- *(diff)* restrict --diff to the changed files, skipping empty diffs ([#126](https://github.com/nickderobertis/llmlint/pull/126))
+
 ## [0.3.10](https://github.com/nickderobertis/llmlint/compare/v0.3.9...v0.3.10) - 2026-07-10
 
 ### Added
