@@ -6967,6 +6967,12 @@ fn verbose_run_narrates_the_plan_before_the_results() {
         plan_at < results_at && batch_at < results_at,
         "the plan must be narrated before the results:\n{stdout}"
     );
+    // ...and narrated exactly once — the report no longer re-renders it at the end.
+    assert_eq!(
+        stdout.matches("Plan:").count(),
+        1,
+        "the plan must appear once (not duplicated in the report):\n{stdout}"
+    );
 }
 
 #[test]
@@ -6991,6 +6997,14 @@ fn json_report_carries_the_plan_and_ignored_count() {
             .iter()
             .any(|s| s["rule"] == "no_todo" && s["reason"] == "all_files_ignored"),
         "plan.skipped should record the ignored rule: {v:#}"
+    );
+    // The structured plan also carries the actual lint set (`linted_files`) so
+    // tooling and history see it without unioning batches. Here every file is
+    // ignore-file'd, so nothing is linted.
+    assert_eq!(
+        v["plan"]["linted_files"].as_array().unwrap().len(),
+        0,
+        "plan.linted_files should be present and empty: {v:#}"
     );
 }
 
