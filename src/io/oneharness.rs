@@ -24,10 +24,12 @@ use crate::errors::{io_err, Error, Result};
 pub const DEFAULT_BIN: &str = "oneharness";
 
 /// Minimum oneharness version llmlint requires, as `(major, minor, patch)`.
-/// Read-only mode (`--mode read-only`) — which guarantees the harness reads but
-/// never edits target files — landed in oneharness 0.3.0, so an older binary
-/// can't honor llmlint's "never make edits" contract and is rejected up front.
-pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 0);
+/// `--system-file` — which lets llmlint pass its (potentially large) rendered
+/// system prompt by file path instead of as an argv string that could trip the
+/// OS `Argument list too long` limit — landed in oneharness 0.3.12. (Read-only
+/// mode, `--mode read-only`, has been required since 0.3.0.) An older binary
+/// lacks the flag, so it is rejected up front.
+pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 12);
 
 /// Render a `(major, minor, patch)` version as `major.minor.patch`.
 fn format_version((major, minor, patch): (u64, u64, u64)) -> String {
@@ -259,12 +261,36 @@ impl Client {
             Err(e) => return (trace, Err(e)),
         }
 
+        // The rendered system prompt carries the whole judge briefing — rules,
+        // per-file applicability, and every changed file's inlined diff — so it
+        // can be large. Passed inline as `--system <TEXT>` it trips the OS
+        // single-argument limit and fails at spawn with `Argument list too long`
+        // (E2BIG). Write it to a temp file and hand oneharness `--system-file`
+        // instead, exactly as the schema is passed by path (requires oneharness
+        // >= MIN_VERSION; checked up front).
+        let mut system_file = match tempfile::Builder::new()
+            .prefix("llmlint-system-")
+            .suffix(".txt")
+            .tempfile()
+        {
+            Ok(f) => f,
+            Err(e) => return (trace, Err(io_err("creating system temp file", e))),
+        };
+        match system_file
+            .write_all(req.system.as_bytes())
+            .and_then(|_| system_file.flush())
+            .map_err(|e| io_err("writing system temp file", e))
+        {
+            Ok(()) => {}
+            Err(e) => return (trace, Err(e)),
+        }
+
         // Build the arg vector once, so the spawned command and the displayed
         // trace command can never drift apart.
         let mut args: Vec<OsString> = vec![
             "run".into(),
-            "--system".into(),
-            req.system.into(),
+            "--system-file".into(),
+            system_file.path().as_os_str().to_os_string(),
             "--prompt".into(),
             req.prompt.into(),
             "--schema".into(),
@@ -493,7 +519,9 @@ mod tests {
         let (trace, result) = client.run_with_trace(&req(&schema, &cwd));
         // The exact command is captured for `-v` even though spawning failed.
         assert!(trace.command.contains("definitely-not-a-real-binary-xyz"));
-        assert!(trace.command.contains("run --system sys"));
+        // The large system prompt is passed by file, not inline, so the traced
+        // command shows `--system-file <path>` rather than the system text.
+        assert!(trace.command.contains("run --system-file"));
         assert!(trace.command.contains("--harness claude-code"));
         // No process ran, so there is no output and the run errored.
         assert!(trace.exit_code.is_none());
@@ -525,11 +553,11 @@ mod tests {
     #[test]
     fn min_version_comparison_uses_tuple_order() {
         // Sanity-check the ordering the `check_min_version` gate relies on.
-        assert!((0, 3, 0) >= MIN_VERSION);
-        assert!((0, 3, 1) >= MIN_VERSION);
+        assert!((0, 3, 12) >= MIN_VERSION);
+        assert!((0, 4, 0) >= MIN_VERSION);
         assert!((1, 0, 0) >= MIN_VERSION);
-        assert!((0, 2, 529) < MIN_VERSION);
-        assert!((0, 2, 9) < MIN_VERSION);
+        assert!((0, 3, 11) < MIN_VERSION);
+        assert!((0, 3, 0) < MIN_VERSION);
     }
 
     #[test]

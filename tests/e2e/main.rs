@@ -257,9 +257,39 @@ fn default_shows_failures_and_verbose_adds_rules_and_debug() {
         // The debug view goes to stderr: the exact `oneharness run …` command
         // and the raw JSON result it returned.
         .stderr(predicate::str::contains("# oneharness: agent default"))
-        .stderr(predicate::str::contains("run --system"))
+        .stderr(predicate::str::contains("run --system-file"))
         .stderr(predicate::str::contains("result:"))
         .stderr(predicate::str::contains("\"oneharness_version\":\"mock\""));
+}
+
+#[test]
+fn large_system_prompt_runs_via_system_file_not_argv() {
+    // Regression: the rendered system prompt (rules + per-file applicability +
+    // inlined diffs) can exceed the OS single-argument limit (Linux
+    // MAX_ARG_STRLEN = 128 KiB; Windows' command line is smaller still). Passed
+    // inline as `--system <TEXT>` that fails at spawn with `Argument list too
+    // long` (E2BIG) before the harness runs; llmlint writes it to a temp file and
+    // passes `--system-file`, so a large briefing runs cleanly. A rule
+    // description well past the limit forces a system prompt over any argv cap.
+    let big = "ok ".repeat(80_000); // ~240 KiB, comfortably over the limit
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: big_rule, description: \"{big}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"big_rule": true}"#);
+    // The run must spawn oneharness and complete (exit 0) rather than dying with
+    // "Argument list too long" while building the command.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("1 passed"))
+        .stderr(predicate::str::contains("Argument list too long").not());
 }
 
 #[test]
@@ -2891,22 +2921,22 @@ fn doctor_fails_clearly_when_oneharness_is_missing() {
 
 #[test]
 fn doctor_fails_clearly_when_oneharness_is_too_old() {
-    // A pre-0.3.0 oneharness can't run read-only mode, so doctor rejects it.
+    // A pre-0.3.12 oneharness lacks `--system-file`, so doctor rejects it.
     let p = Project::new();
     p.bare()
         .arg("doctor")
         .env("LLMLINT_ONEHARNESS_BIN", mock_path())
-        .env("LLMLINT_MOCK_VERSION", "0.2.9")
+        .env("LLMLINT_MOCK_VERSION", "0.3.11")
         .assert()
         .code(2)
         .stderr(predicate::str::contains("too old"))
-        .stderr(predicate::str::contains("0.3.0"));
+        .stderr(predicate::str::contains("0.3.12"));
 }
 
 #[test]
 fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
     // A `--version` output with no numeric version can't be checked against the
-    // minimum, so the read-only-mode requirement can't be honored: hard error.
+    // minimum, so the required capabilities can't be honored: hard error.
     let p = Project::new();
     p.bare()
         .arg("doctor")
@@ -2915,7 +2945,7 @@ fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("could not determine"))
-        .stderr(predicate::str::contains("0.3.0"));
+        .stderr(predicate::str::contains("0.3.12"));
 }
 
 // ---- sibling oneharness resolution -----------------------------------------
@@ -3107,7 +3137,7 @@ fn verbose_debug_view_is_shown_even_when_a_judge_errors() {
             "could not parse oneharness output",
         ))
         .stderr(predicate::str::contains("# oneharness: agent default"))
-        .stderr(predicate::str::contains("run --system"))
+        .stderr(predicate::str::contains("run --system-file"))
         // The raw (unparseable) result the mock printed is captured verbatim.
         .stderr(predicate::str::contains("result:"))
         .stderr(predicate::str::contains("this is not json"));
@@ -3144,7 +3174,7 @@ fn json_format_is_unaffected_by_verbosity() {
     // The debug view is still emitted, but on stderr.
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("# oneharness:"));
-    assert!(err.contains("run --system"));
+    assert!(err.contains("run --system-file"));
 }
 
 /// A minimal one-rule project used by the failure-path tests.
@@ -3457,6 +3487,46 @@ fn oneharness_runs_in_read_only_mode() {
         .nth(1)
         .expect("--mode flag should be forwarded on every run");
     assert_eq!(mode, "read-only");
+}
+
+#[test]
+fn system_prompt_is_delivered_by_file_not_inline() {
+    // Contract: the (potentially large) system prompt is passed via
+    // `--system-file <path>`, never inline as `--system <TEXT>` — that is what
+    // keeps a big briefing from tripping the OS argv limit. Assert the arg vector
+    // directly (the companion to the behavioral large-prompt regression test).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: sf_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"sf_rule": true}"#);
+    let args_dump = p.path().join("sf-args.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+    let dumped = fs::read_to_string(&args_dump).unwrap();
+    let lines: Vec<&str> = dumped.lines().collect();
+    // `--system-file` is present and followed by a non-empty path value.
+    let sf = lines
+        .iter()
+        .position(|l| *l == "--system-file")
+        .expect("--system-file should be forwarded on every run");
+    assert!(
+        lines.get(sf + 1).is_some_and(|v| !v.is_empty()),
+        "--system-file must carry a path value"
+    );
+    // The inline `--system` form is never used (it is what blows the argv limit).
+    assert!(
+        !lines.contains(&"--system"),
+        "system prompt must not be passed inline via --system; got: {dumped}"
+    );
 }
 
 #[test]

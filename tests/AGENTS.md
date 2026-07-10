@@ -326,12 +326,21 @@ logic is also covered hermetically via `file://` plugins.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
-  via the dumped arg vector. The minimum-oneharness-version gate (>= 0.3.0,
-  needed for read-only mode) is exercised both ways: `doctor` and `lint` reject a
-  too-old oneharness with a clear exit-2 "too old" error (the mock's reported
-  version is driven by `LLMLINT_MOCK_VERSION`), a version string with no parseable
-  number is a distinct exit-2 "could not determine" error, and `lint`'s gate
-  fires *before* any judge runs (no oneharness `run` is recorded).
+  via the dumped arg vector. The minimum-oneharness-version gate (>= 0.3.12,
+  needed for read-only mode and `--system-file`) is exercised both ways: `doctor`
+  and `lint` reject a too-old oneharness with a clear exit-2 "too old" error (the
+  mock's reported version is driven by `LLMLINT_MOCK_VERSION`), a version string
+  with no parseable number is a distinct exit-2 "could not determine" error, and
+  `lint`'s gate fires *before* any judge runs (no oneharness `run` is recorded).
+- The rendered system prompt is delivered by file, not inline: every `run` passes
+  `--system-file <path>` and never `--system` (asserted via the dumped arg
+  vector), so a large briefing — rules + per-file applicability + inlined diffs —
+  can't trip the OS single-argument limit. A system prompt driven well past that
+  limit (a rule description of ~240 KiB) still completes cleanly (exit 0, no
+  "Argument list too long"), the regression for the inline-argv E2BIG failure.
+  The mock reads the system back from `--system-file` (as real oneharness does),
+  so the `LLMLINT_MOCK_DUMP` content assertions prove the by-file delivery carries
+  the exact rendered prompt.
 - Inline `llmlint: ignore[rule, ...] <reason>` (line-scoped),
   `llmlint: ignore-file[...] <reason>` (file-scoped), and the block-scoped pair
   `llmlint: ignore-block[...] <reason>` / `llmlint: ignore-end[...]` (the close

@@ -66,8 +66,9 @@ pub enum Error {
 
     #[error(
         "oneharness {found} is too old; llmlint requires oneharness >= {required} \
-         for read-only mode (the agent reads but never edits files). Upgrade \
-         oneharness (https://github.com/nickderobertis/oneharness)."
+         for read-only mode (the agent reads but never edits files) and for \
+         passing the system prompt by file (--system-file). Upgrade oneharness \
+         (https://github.com/nickderobertis/oneharness)."
     )]
     OneharnessTooOld { found: String, required: String },
 

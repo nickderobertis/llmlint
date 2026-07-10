@@ -15,7 +15,7 @@
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
 //! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
-//!   (default `0.3.0`), so a test can drive llmlint's minimum-version gate.
+//!   (default `0.3.12`), so a test can drive llmlint's minimum-version gate.
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
@@ -49,6 +49,23 @@ fn arg_value(args: &[String], key: &str) -> Option<String> {
     args.iter()
         .position(|a| a == key)
         .and_then(|i| args.get(i + 1).cloned())
+}
+
+/// Resolve the effective system prompt from `--system` (inline) or
+/// `--system-file` (a path; `-` for stdin), mirroring real oneharness. llmlint
+/// always passes it by file, so the file branch is the live path here.
+fn resolve_system(args: &[String]) -> Option<String> {
+    if let Some(text) = arg_value(args, "--system") {
+        return Some(text);
+    }
+    let path = arg_value(args, "--system-file")?;
+    if path == "-" {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).ok()?;
+        Some(buf)
+    } else {
+        fs::read_to_string(path).ok()
+    }
 }
 
 fn rule_names(schema_path: &str) -> Vec<String> {
@@ -172,7 +189,7 @@ fn main() {
     // --version`. Default to a version that satisfies llmlint's minimum;
     // `LLMLINT_MOCK_VERSION` overrides it so a test can drive the too-old path.
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.0".into());
+        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.12".into());
         println!("oneharness {version} (mock)");
         return;
     }
@@ -187,8 +204,10 @@ fn main() {
 
     // Optionally record the rendered system prompt so the e2e suite can assert
     // on which files/rules reached the judge (file globbing + template render).
+    // llmlint passes the system prompt by file (`--system-file <path>`), so read
+    // it back the way real oneharness does.
     if let Some(dump) = env::var_os("LLMLINT_MOCK_DUMP") {
-        if let Some(system) = arg_value(&args, "--system") {
+        if let Some(system) = resolve_system(&args) {
             let _ = fs::write(PathBuf::from(dump), system);
         }
     }
