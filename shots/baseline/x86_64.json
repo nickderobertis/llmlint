@@ -21,7 +21,7 @@
       "toggles": {
         "view": "debug"
       },
-      "hash": "09a5cc979fbd627e27fb4768ee9299ef2da3717ec71d0faaab9d7513a53b648c"
+      "hash": "f89790f9386c24b38128ced4930e5533942c8bc3383b6c4584a0d3b36d64ab7e"
     },
     {
       "name": "lint",
@@ -35,7 +35,7 @@
       "toggles": {
         "view": "verbose"
       },
-      "hash": "8f810fc5cb4abbc580e1efd28de602ab920ae9eed54356f8a79616f7b6d7719e"
+      "hash": "d2ea8e9341e8715cb323a908de2635ad196263fa3970ae4443022788b672020a"
     },
     {
       "name": "multi-judge",
