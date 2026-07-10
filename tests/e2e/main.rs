@@ -1228,15 +1228,16 @@ fn diff_flag_adds_changed_lines_to_the_prompt() {
         system.contains("+fn a() { let x = 1; }"),
         "system:\n{system}"
     );
-    // The unchanged file gets no diff (nothing changed in it).
+    // The changed file is a target...
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    // ...but the unchanged file is dropped entirely under `--diff` (the target
+    // set is the intersection of the changed files with the globs), so it never
+    // reaches the judge — no diff block and not even listed as a target.
     assert!(
         !system.contains("diff --git a/src/b.rs"),
         "system:\n{system}"
     );
-    // Both files are still listed as targets (diffs are additive context, not a
-    // file filter).
-    assert!(system.contains("- src/a.rs"), "system:\n{system}");
-    assert!(system.contains("- src/b.rs"), "system:\n{system}");
+    assert!(!system.contains("- src/b.rs"), "system:\n{system}");
 }
 
 #[test]
@@ -1394,43 +1395,78 @@ fn diff_includes_both_staged_and_unstaged_changes() {
 }
 
 #[test]
-fn diff_untracked_new_file_is_a_target_without_a_block() {
-    // A brand-new untracked file has no diff vs HEAD, so it carries no block —
-    // but it is still a target (reviewed whole, since diffs are additive context).
+fn diff_untracked_new_file_has_no_diff_so_it_is_skipped() {
+    // A brand-new untracked file has no diff vs HEAD (git doesn't track it), so
+    // under `--diff` it isn't a "changed file" and is skipped — no model call.
+    // The one committed file is unchanged too, so the whole run is a clean, empty
+    // intersection: every rule is skipped and the harness is never invoked.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     p.write("src/new.rs", "fn brand_new() {}\n"); // never committed
     let dump = p.path().join("system.txt");
 
-    p.lint()
+    p.lint_v()
         .arg("--diff")
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_DUMP", &dump)
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("SKIP r"));
 
-    let system = fs::read_to_string(&dump).unwrap();
-    // Listed as a target...
-    assert!(system.contains("- src/new.rs"), "target missing:\n{system}");
-    // ...but no diff block, and with nothing else changed, no section at all.
+    // No judge ran, so the mock never dumped a prompt.
     assert!(
-        !system.contains("diff --git a/src/new.rs"),
-        "unexpected diff block:\n{system}"
+        !dump.exists(),
+        "harness was invoked but should not have been"
     );
-    assert!(!system.contains("```diff"), "system:\n{system}");
 }
 
 #[test]
-fn diff_clean_worktree_renders_no_section() {
-    // `--diff` on a pristine checkout: nothing changed, so no section — but the
-    // files are still linted (whole-file review), and the run is clean.
+fn diff_clean_worktree_lints_nothing() {
+    // `--diff` on a pristine checkout: nothing changed vs the base, so the target
+    // set (changed ∩ globs) is empty — every rule is skipped and no model call is
+    // made. This is the issue's core case: an empty diff must never hang on the
+    // judge or produce verdicts on files the branch never touched.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     let dump = p.path().join("system.txt");
 
+    p.lint_v()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SKIP r"));
+
+    assert!(
+        !dump.exists(),
+        "harness was invoked but should not have been"
+    );
+}
+
+#[test]
+fn diff_intersects_explicit_files_with_the_changed_set() {
+    // Explicit `FILES` args are intersected with the changed set too: pass one
+    // changed and one unchanged file and only the changed one is judged. This is
+    // exactly the wrapper logic callers used to hand-roll (`git diff --name-only`
+    // then pass the result) — now `--diff` does it.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    p.write("src/a.rs", "fn a() { changed(); }\n"); // only a.rs changes
+    let dump = p.path().join("system.txt");
+
+    // `--diff git` (explicit backend) so the following positional FILES aren't
+    // swallowed as the flag's optional backend value.
     p.lint()
         .arg("--diff")
+        .arg("git")
+        .arg("src/a.rs")
+        .arg("src/b.rs") // both passed explicitly, but b.rs is unchanged
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_DUMP", &dump)
@@ -1438,8 +1474,52 @@ fn diff_clean_worktree_renders_no_section() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("```diff"), "system:\n{system}");
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
+    // The unchanged, explicitly-passed file is dropped just the same.
+    assert!(!system.contains("- src/b.rs"), "system:\n{system}");
+}
+
+#[test]
+fn diff_drops_a_deleted_path_without_erroring() {
+    // A tracked file deleted from the work tree has a (deletion) diff but no file
+    // for the harness to read. It must be dropped from the target set, never
+    // judged — linting a deleted path would otherwise error. The sibling changed
+    // file is still judged.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    fs::remove_file(p.path().join("src/a.rs")).unwrap(); // deleted from the work tree
+    p.write("src/b.rs", "fn b() { changed(); }\n"); // b.rs changed
+    let dump = p.path().join("system.txt");
+
+    // Pass the deleted path explicitly so it enters the target set (globbing the
+    // work tree would never surface a deleted file on its own). `--diff git` so
+    // the positional FILES aren't swallowed as the flag's backend value.
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .arg("src/a.rs")
+        .arg("src/b.rs")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // The deleted file is dropped; only b.rs is judged.
+    assert!(!system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(system.contains("- src/b.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/b.rs"),
+        "system:\n{system}"
+    );
 }
 
 #[test]
@@ -1622,8 +1702,9 @@ fn diff_base_reviews_changes_against_a_branch() {
 #[test]
 fn diff_base_default_head_shows_no_committed_branch_change() {
     // The mirror of the test above: without `--diff-base`, the default `HEAD`
-    // base sees the clean worktree and renders no section — proving the branch
-    // change only surfaces because of the explicit base, not by accident.
+    // base sees the clean worktree, so nothing changed — the rule is skipped and
+    // no model call is made. This proves the branch change only surfaces because
+    // of the explicit base, not by accident.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     git(p.path(), &["checkout", "-q", "-b", "feature"]);
@@ -1631,17 +1712,19 @@ fn diff_base_default_head_shows_no_committed_branch_change() {
     git(p.path(), &["commit", "-q", "-am", "feature change"]);
     let dump = p.path().join("system.txt");
 
-    p.lint()
+    p.lint_v()
         .arg("--diff")
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_DUMP", &dump)
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("SKIP r"));
 
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("```diff"), "system:\n{system}");
-    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(
+        !dump.exists(),
+        "harness was invoked but should not have been"
+    );
 }
 
 #[test]
@@ -2029,15 +2112,15 @@ fn diff_base_respects_cwd_as_the_git_root() {
 }
 
 #[test]
-fn diff_base_equal_to_tip_renders_no_section() {
+fn diff_base_equal_to_tip_lints_nothing() {
     // An explicit base that equals the current tip (here the branch you're on)
-    // means nothing differs: no ````diff` section, but the files are
-    // still linted (whole-file review) and the run is clean.
+    // means nothing differs: the changed ∩ globs target set is empty, so every
+    // rule is skipped and no model call is made.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     let dump = p.path().join("system.txt");
 
-    p.lint()
+    p.lint_v()
         .arg("--diff")
         .arg("--diff-base")
         .arg("main") // we are on main, work tree clean -> no diff vs main
@@ -2045,11 +2128,13 @@ fn diff_base_equal_to_tip_renders_no_section() {
         .arg("1")
         .env("LLMLINT_MOCK_DUMP", &dump)
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("SKIP r"));
 
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("```diff"), "system:\n{system}");
-    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(
+        !dump.exists(),
+        "harness was invoked but should not have been"
+    );
 }
 
 /// Like `committed_repo`, but the config also sets a top-level `diff_base`, so a
@@ -6708,8 +6793,9 @@ fn block_scoped_ignore_suppresses_violations_inside_the_block() {
 fn per_file_applicability_and_diff_compose_in_one_prompt() {
     // The per-file applicability context and the `--diff` changed-lines block are
     // independent sections that must coexist: a merged call over two distinct
-    // file scopes shows both the per-file rule lists and the diff of the changed
-    // file (and only the changed file).
+    // file scopes shows both the per-file rule lists and each changed file's diff
+    // inlined under its own applicability line. Both files change here, so both
+    // survive the changed-file narrowing and land in one prompt.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -6724,8 +6810,9 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
     init_repo(p.path());
     git(p.path(), &["add", "."]);
     git(p.path(), &["commit", "-q", "-m", "baseline"]);
-    // Change only src/a.rs, so the diff block carries it and docs/b.md does not.
+    // Change both files so each is a changed target with its own diff.
     p.write("src/a.rs", "// after the change\n");
+    p.write("docs/b.md", "# doc, revised\n");
 
     let verdicts = p.write_verdicts(r#"{"rule_src": true, "rule_docs": true}"#);
     let dump = p.path().join("system.txt");
@@ -6748,7 +6835,7 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
         system.contains("docs/b.md — all rules apply except: rule_src"),
         "system:\n{system}"
     );
-    // The diff is inlined under src/a.rs (the only changed file).
+    // Each changed file's diff is inlined under its own applicability line.
     assert!(system.contains("```diff"), "system:\n{system}");
     assert!(
         system.contains("diff --git a/src/a.rs"),
@@ -6756,9 +6843,10 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
     );
     assert!(system.contains("+// after the change"), "system:\n{system}");
     assert!(
-        !system.contains("diff --git a/docs/b.md"),
-        "unchanged file has no diff:\n{system}"
+        system.contains("diff --git a/docs/b.md"),
+        "system:\n{system}"
     );
+    assert!(system.contains("+# doc, revised"), "system:\n{system}");
 }
 
 #[test]

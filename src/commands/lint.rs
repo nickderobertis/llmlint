@@ -124,12 +124,46 @@ pub(crate) fn run_loaded(
         });
     }
 
-    // Reject malformed inline `llmlint: ignore` directives in the target files
-    // before spending any judge calls. Honoring well-formed ones is the judge's
-    // job (the default template tells it how); their *structure* is enforced here
-    // so a typo'd or reason-less ignore fails loudly instead of silently doing
-    // nothing. This is the same check `llmlint check-ignores` runs standalone, so
-    // the fast static loop and the full run never disagree.
+    // Under `--diff`, compute each target file's changed-line diff once (at the
+    // I/O boundary) so every judge prompt can show exactly what changed, *and* so
+    // the run can be restricted to the changed files. The backend is selected
+    // behind the `DiffProvider` trait, comparing against `--diff-base` (a
+    // branch/tag/commit/range) or the backend default; an unchanged file simply
+    // has no entry. Absent the flag this is empty and nothing renders.
+    let diffs: BTreeMap<PathBuf, String> = match args.diff {
+        Some(backend) => {
+            // Diff every glob-resolved target once. The base is the effective
+            // config value: `--diff-base` already won over a config `diff_base`
+            // in `apply_cli_overrides`; `None` leaves the backend's built-in
+            // default (`HEAD` for git).
+            let all: Vec<PathBuf> = resolved
+                .iter()
+                .flat_map(|r| r.files.iter().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            diff::provider(backend, config.diff_base.clone()).diffs(&cwd, &all)?
+        }
+        None => BTreeMap::new(),
+    };
+    // With `--diff` active, the default target set is the **intersection** of the
+    // changed files with the configured globs — never the whole glob set. Narrow
+    // each rule's files to what actually changed against the base (and still
+    // exists on disk): an unchanged file has no diff and is dropped without a
+    // model call, and a deleted path has a diff but no file the harness could
+    // read, so it is dropped too. A rule left with no files becomes a skip in
+    // planning, so an empty intersection is a clean, model-free exit 0.
+    if args.diff.is_some() {
+        restrict_to_changed(&mut resolved, &diffs, &cwd);
+    }
+
+    // Reject malformed inline `llmlint: ignore` directives in the (now
+    // diff-narrowed) target files before spending any judge calls. Honoring
+    // well-formed ones is the judge's job (the default template tells it how);
+    // their *structure* is enforced here so a typo'd or reason-less ignore fails
+    // loudly instead of silently doing nothing. This is the same check
+    // `llmlint check-ignores` runs standalone, so the fast static loop and the
+    // full run never disagree.
     let targets: BTreeSet<PathBuf> = resolved
         .iter()
         .flat_map(|r| r.files.iter().cloned())
@@ -160,23 +194,6 @@ pub(crate) fn run_loaded(
             file_tokens.insert(slash, (text.len() / 4).max(1));
         }
     }
-
-    // Under `--diff`, compute each target file's changed-line diff once (at the
-    // I/O boundary) so every judge prompt can show exactly what changed. The
-    // backend is selected behind the `DiffProvider` trait, comparing against
-    // `--diff-base` (a branch/tag/commit/range) or the backend default; an
-    // unchanged file simply has no entry. Absent the flag this is empty and
-    // nothing renders.
-    let diffs: BTreeMap<PathBuf, String> = match args.diff {
-        Some(backend) => {
-            let targets: Vec<PathBuf> = targets.iter().cloned().collect();
-            // The base is the effective config value: `--diff-base` already won
-            // over a config `diff_base` in `apply_cli_overrides`; `None` leaves
-            // the backend's built-in default (`HEAD` for git).
-            diff::provider(backend, config.diff_base.clone()).diffs(&cwd, &targets)?
-        }
-        None => BTreeMap::new(),
-    };
 
     // Rules whose rationale is disabled: llmlint is authoritative, so we drop any
     // rationale a harness returns anyway, keeping `--no-rationales` deterministic
@@ -563,6 +580,24 @@ fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
         config.diff_base = args.diff_base.clone();
     }
     Ok(())
+}
+
+/// Narrow each rule's resolved target list to the files that changed against the
+/// `--diff` base, making the effective target set the intersection of the changed
+/// files with the configured globs. A file is kept only when it has a non-empty
+/// diff (an entry in `diffs`) *and* still exists on disk: an unchanged file has
+/// no diff and is dropped without a judge call, and a deleted path has a diff but
+/// no file the harness could read, so it is dropped too. A rule left with no
+/// files is skipped in planning — an empty intersection means a clean exit 0.
+fn restrict_to_changed(
+    resolved: &mut [plan::ResolvedRule],
+    diffs: &BTreeMap<PathBuf, String>,
+    cwd: &Path,
+) {
+    for rule in resolved.iter_mut() {
+        rule.files
+            .retain(|f| diffs.contains_key(f) && cwd.join(f).exists());
+    }
 }
 
 fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Option<PathBuf> {
@@ -979,6 +1014,56 @@ mod tests {
         apply_cli_overrides(&mut cfg, &LintArgs::default()).unwrap();
         // No --model/--schema-max-retries/--rationales: config value survives.
         assert_eq!(cfg.rationales, Some(false));
+    }
+
+    #[test]
+    fn restrict_to_changed_keeps_only_changed_existing_files() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        // a.rs changed and on disk -> kept; b.rs unchanged (no diff) -> dropped;
+        // gone.rs changed but deleted (diff present, no file) -> dropped.
+        std::fs::write(cwd.join("a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(cwd.join("b.rs"), "fn b() {}\n").unwrap();
+        let mut resolved = vec![plan::ResolvedRule {
+            name: "r".into(),
+            description: "d".into(),
+            judges: 1,
+            agent: "default".into(),
+            files: vec![
+                PathBuf::from("a.rs"),
+                PathBuf::from("b.rs"),
+                PathBuf::from("gone.rs"),
+            ],
+            rationale: true,
+            relevance: None,
+            require_line_attribution: false,
+        }];
+        let mut diffs: BTreeMap<PathBuf, String> = BTreeMap::new();
+        diffs.insert(PathBuf::from("a.rs"), "diff a".into());
+        diffs.insert(PathBuf::from("gone.rs"), "diff gone".into());
+        restrict_to_changed(&mut resolved, &diffs, cwd);
+        assert_eq!(resolved[0].files, vec![PathBuf::from("a.rs")]);
+    }
+
+    #[test]
+    fn restrict_to_changed_empties_a_rule_with_no_changed_files() {
+        // No file changed -> the rule's target set is emptied, so planning skips
+        // it (a clean, model-free exit).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+        let mut resolved = vec![plan::ResolvedRule {
+            name: "r".into(),
+            description: "d".into(),
+            judges: 1,
+            agent: "default".into(),
+            files: vec![PathBuf::from("a.rs")],
+            rationale: true,
+            relevance: None,
+            require_line_attribution: false,
+        }];
+        restrict_to_changed(&mut resolved, &BTreeMap::new(), dir.path());
+        assert!(resolved[0].files.is_empty());
     }
 
     #[test]

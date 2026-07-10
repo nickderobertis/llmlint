@@ -342,7 +342,7 @@ These variables are in scope when a template renders:
 | `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
 | `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), `.rationale` (whether this rule wants a justification), `.relevance` (the relevance condition string, or unset for an always-evaluated rule), `.require_line_attribution` (whether every violation must cite a `file` + `line`), and `.files` (the subset of `files` this rule applies to). |
 | `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), and `.diff` (that file's unified diff, present only under `--diff` when the file changed). The default template's "Target files" section is built from this. |
-| `diffs` | list of objects | Per-file changed-line diffs — one entry per *changed* file, present only under `--diff` (empty otherwise). Each has `.file` (matching its entry in `files`) and `.diff` (the unified diff text). The default template inlines these per file via `file_rules`; kept separately for custom templates. |
+| `diffs` | list of objects | Per-file changed-line diffs — one entry per *changed* file, present only under `--diff` (empty otherwise). Each has `.file` (matching its entry in `files`) and `.diff` (the unified diff text). Under `--diff` `files` is itself narrowed to the changed files, so there is one diff per target. The default template inlines these per file via `file_rules`; kept separately for custom templates. |
 | `rationales` | bool | True when any rule in this batch wants a rationale — gate the rationale guidance on it. |
 | `relevance` | bool | True when any rule in this batch carries a relevance condition — gate the relevance guidance on it. |
 | `line_attribution` | bool | True when any rule in this batch requires line attribution — gate the line-attribution guidance on it. |
@@ -590,8 +590,9 @@ every file read in full. Trade some back for fewer tokens, roughly by impact:
 - **Fewer agents, bigger `batch_size`** — every batch re-sends the prompt and
   re-reads its files ([Batching](#batching)). Merge rules onto one agent; split
   only for a different harness, model, or reviewer context.
-- **Read less** — narrow `files.include`/`exclude`; `--diff` reviews only changed
-  lines; `FILES`/`--rule`/`--agent` lint a subset.
+- **Read less** — narrow `files.include`/`exclude`; `--diff` reviews only the
+  changed files (skipping unchanged ones with no model call) and only their
+  changed lines; `FILES`/`--rule`/`--agent` lint a subset.
 - **`require_line_attribution`** off unless you need pinned locations — on can
   trigger localize re-prompts.
 - **`oneharness.schema_max_retries`** — caps re-asks on a schema-invalid answer.
@@ -804,8 +805,13 @@ source.
   top-level setting also has a flag that wins over the config:
   `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
   `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`. Pass
-  `--diff [<backend>]` to add each changed file's diff to the judge prompt so it
-  reviews only the changed lines; bare `--diff` uses the `git` backend (compared
+  `--diff [<backend>]` to **review only the changed files**: the target set
+  becomes the intersection of the changed files with your configured globs (and
+  any explicit `FILES`), and each changed file's diff is added to the judge
+  prompt so it focuses on the changed lines. A file with an empty diff vs the
+  base is skipped with no model call — an empty intersection is a clean exit 0,
+  so `--diff` is self-sufficient for the PR-review case without a caller-side
+  changed-file computation. Bare `--diff` uses the `git` backend (compared
   against `HEAD`). Add `--diff-base <REF>` to compare against a different git
   revision instead of `HEAD` — a branch, tag, commit, or `A..B`/`A...B` range —
   so `--diff --diff-base main` reviews exactly what the current branch changed
