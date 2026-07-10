@@ -13,11 +13,11 @@ use crate::commands::ignores;
 use crate::commands::progress::{LiveStatus, ProgressView};
 use crate::domain::config::{validate, Config, RelevanceMode, Rule};
 use crate::domain::ignore::Suppressions;
-use crate::domain::plan::{self, JudgeRun};
+use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
-use crate::domain::{applicability, attribution, ignore, schema, vote};
+use crate::domain::{applicability, attribution, diffmodel, ignore, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, diff, files, history, oneharness};
@@ -142,13 +142,22 @@ pub(crate) fn run_loaded(
     // violation an ignore covers is dropped deterministically — llmlint honors
     // the directives itself rather than trusting the judge to (the default
     // template still documents line/block ignores as a backstop).
+    // In the same pass, estimate each target file's token weight (≈ bytes / 4) so
+    // the batcher minimizes real token cost, not a raw file count — a big file
+    // counts for more than several small ones. A file we can't read (binary,
+    // missing) simply has no weight and defaults to 1 in the planner. This is a
+    // content-size proxy (stable and always available); it can be refined to the
+    // diff size under `--diff` later.
     let mut suppressions: BTreeMap<String, Suppressions> = BTreeMap::new();
+    let mut file_tokens: BTreeMap<String, usize> = BTreeMap::new();
     for rel in &targets {
         if let Some(text) = files::read_text(&cwd, rel)? {
+            let slash = files::to_slash(rel);
             let s = ignore::suppressions(&text, &known);
             if !s.is_empty() {
-                suppressions.insert(files::to_slash(rel), s);
+                suppressions.insert(slash.clone(), s);
             }
+            file_tokens.insert(slash, (text.len() / 4).max(1));
         }
     }
 
@@ -187,7 +196,22 @@ pub(crate) fn run_loaded(
         .map(|r| r.name.clone())
         .collect();
 
-    let the_plan = plan::build(&config, &master_template, DEFAULT_BATCH_SIZE, resolved);
+    let plan_ctx = PlanContext::new(&suppressions).with_weights(&file_tokens);
+    let the_plan = plan::build(
+        &config,
+        &master_template,
+        DEFAULT_BATCH_SIZE,
+        resolved,
+        &plan_ctx,
+    );
+
+    // `--plan-only`: print how the runs would be batched (agents, batches, dropped
+    // files) and stop — no oneharness, no model calls, no history write. The
+    // batching-debug view must never cost a judge invocation.
+    if args.plan_only {
+        print!("{}", the_plan.explanation.to_human());
+        return Ok(0);
+    }
 
     let bin = args
         .oneharness_bin
@@ -242,7 +266,7 @@ pub(crate) fn run_loaded(
             *expected.entry(rs.name.clone()).or_default() += 1;
         }
     }
-    view_rules.extend(the_plan.skipped.iter().cloned());
+    view_rules.extend(the_plan.skipped.iter().map(|s| s.rule.clone()));
     view_rules.extend(not_relevant.iter().cloned());
     let view_rules: Vec<String> = view_rules.into_iter().collect();
     let view = ProgressView::new(
@@ -251,8 +275,12 @@ pub(crate) fn run_loaded(
         the_plan.runs.len(),
         show_progress,
     );
-    for name in &the_plan.skipped {
-        view.finish_rule(name, LiveStatus::Skipped);
+    for skip in &the_plan.skipped {
+        let status = match skip.reason {
+            SkipReason::NoFiles => LiveStatus::Skipped,
+            SkipReason::AllFilesIgnored => LiveStatus::Ignored,
+        };
+        view.finish_rule(&skip.rule, status);
     }
     for name in &not_relevant {
         view.finish_rule(name, LiveStatus::NotRelevant);
@@ -346,8 +374,11 @@ pub(crate) fn run_loaded(
             }
         }
     }
-    for name in &the_plan.skipped {
-        outcomes.push(RuleOutcome::skipped(name));
+    for skip in &the_plan.skipped {
+        outcomes.push(match skip.reason {
+            SkipReason::NoFiles => RuleOutcome::skipped(&skip.rule),
+            SkipReason::AllFilesIgnored => RuleOutcome::ignored(&skip.rule),
+        });
     }
     for name in &not_relevant {
         outcomes.push(RuleOutcome::not_relevant(name));
@@ -363,7 +394,7 @@ pub(crate) fn run_loaded(
         ));
     }
 
-    let report = Report::new(outcomes, run_errors);
+    let report = Report::new(outcomes, run_errors).with_plan(the_plan.explanation.clone());
     Ok(finish(&report, &args, &cwd, &sources, command, &config))
 }
 
@@ -565,6 +596,7 @@ fn live_status(o: &RuleOutcome) -> LiveStatus {
         Outcome::Pass => LiveStatus::Pass,
         Outcome::Fail => LiveStatus::Fail,
         Outcome::Skipped => LiveStatus::Skipped,
+        Outcome::Ignored => LiveStatus::Ignored,
         Outcome::NotRelevant => LiveStatus::NotRelevant,
     }
 }
@@ -621,15 +653,44 @@ fn execute(
 ) {
     let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
     // Per-file diffs for this run's files, in the same order as `files_str`. Only
-    // files that actually changed appear in `diffs`, so unchanged ones are
-    // skipped here; the slice is empty when `--diff` wasn't passed.
+    // files that actually changed appear in `diffs`, so unchanged ones are skipped
+    // here; the slice is empty when `--diff` wasn't passed. Each diff is trimmed to
+    // what the judge still needs to see: a change run whose every added line is
+    // ignored (line/block directives) for *every* rule that still applies to the
+    // file is replaced with an honest one-line marker (`diffmodel`), so the prompt
+    // never carries — nor pays tokens for — changes no applicable rule will judge.
     let file_diffs: Vec<template::FileDiff> = run
         .files
         .iter()
         .filter_map(|p| {
-            diffs.get(p).map(|d| template::FileDiff {
-                file: files::to_slash(p),
-                diff: d.clone(),
+            let diff = diffs.get(p)?;
+            let slash = files::to_slash(p);
+            // Rules in this batch that still apply to this file (its effective
+            // scope). A change run is omittable only if ignored for all of them.
+            let applying: Vec<&str> = run
+                .rules
+                .iter()
+                .filter(|r| r.files.iter().any(|f| f == &slash))
+                .map(|r| r.name.as_str())
+                .collect();
+            let supp = suppressions.get(&slash);
+            let model = diffmodel::FileDiff::parse(diff);
+            let omit = |cr: &diffmodel::ChangeRun| {
+                // Never omit a pure deletion (no new-file line to match), and never
+                // omit when no rule applies (nothing to justify dropping it).
+                if cr.added_lines.is_empty() || applying.is_empty() {
+                    return false;
+                }
+                let Some(supp) = supp else { return false };
+                applying.iter().all(|rule| {
+                    cr.added_lines
+                        .iter()
+                        .all(|&ln| supp.covers(rule, Some(ln as u64)))
+                })
+            };
+            Some(template::FileDiff {
+                file: slash,
+                diff: model.render_filtered(omit),
             })
         })
         .collect();

@@ -22,7 +22,7 @@ use crate::io::{configfs, history};
 
 /// Rule outcomes that `--status` accepts, matching the `outcome` field in a
 /// stored record (see [`crate::domain::verdict::Outcome`]).
-const VALID_STATUSES: &[&str] = &["pass", "fail", "skipped", "not_relevant"];
+const VALID_STATUSES: &[&str] = &["pass", "fail", "skipped", "ignored", "not_relevant"];
 
 pub fn run(args: HistoryArgs) -> Result<i32> {
     let cwd = match &args.cwd {
@@ -240,6 +240,7 @@ fn push_rule(out: &mut String, rule: &Value) {
         "pass" => "PASS",
         "fail" => "FAIL",
         "skipped" => "SKIP",
+        "ignored" => "IGN ",
         "not_relevant" => "N/A ",
         _ => "?   ",
     };
@@ -317,6 +318,9 @@ fn counts_summary(summary: &Value) -> String {
         g("failed"),
         g("skipped")
     );
+    if g("ignored") > 0 {
+        s.push_str(&format!(", {} ignored", g("ignored")));
+    }
     if g("not_relevant") > 0 {
         s.push_str(&format!(", {} not relevant", g("not_relevant")));
     }

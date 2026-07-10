@@ -312,11 +312,15 @@ logic is also covered hermetically via `file://` plugins.
   validation when well-formed (in any comment style; a prose mention of the
   marker is not a directive), and the default prompt documents the line/block forms
   (as a backstop) — the file-scoped guidance is dropped since llmlint enforces it.
-  **Honoring is now deterministic, done by llmlint after the judge answers:** a
-  `ignore-file` drops every reported violation of that rule in the file (flipping
-  the fail to a pass); a line `ignore` drops a violation on its own line or the one
-  below but not an uncovered line; an `ignore-block`…`ignore-end` drops violations
-  inside the span but not outside it. Their *structure* is still enforced
+  **Honoring is now deterministic, done by llmlint — for `ignore-file` up front in
+  the *planner*, for line/block ignores after the judge answers:** an
+  `ignore-file` drops the file from that rule's effective scope before the judge
+  runs — the file is never presented for that rule (when it is the rule's only
+  file the rule is reported **ignored**, never judged; when the file is every
+  declaring rule's ignore it leaves the prompt entirely, recorded as an
+  *excluded* file in the plan); a line `ignore` drops a violation on its own line
+  or the one below but not an uncovered line; an `ignore-block`…`ignore-end` drops
+  violations inside the span but not outside it. Their *structure* is still enforced
   deterministically: a directive with no brackets, an empty rule list, an
   unknown/invalid rule name, or (where one is required) no reason is a clear exit-2
   error located as `file:line:`. Block pairing
@@ -348,6 +352,32 @@ logic is also covered hermetically via `file://` plugins.
   scanned), so the fast static loop and the full run resolve the same files. The
   same relevance-gating applies: an explicit file outside a subtree never pulls
   that subtree's directives into scope, while passing a file under it does.
+- **Plan explanation + `--plan-only`.** The planner builds a readable account of
+  how judge runs are batched (agents → judge indices → batches, each batch's rule
+  set + effective file union, and any files excluded because every declaring rule
+  `ignore-file`s them), plus the rules left unjudged with their reason (no files /
+  all files ignored). `--plan-only` prints it and exits with **no harness call and
+  no history write** (proven by running via `bare`, without `--oneharness-bin`,
+  and asserting zero records) — a zero-cost way to debug batching. The same
+  explanation is appended to the human report at `-v`, embedded in `--format json`
+  under `plan`, and thus persisted in the history record. A rule whose every file
+  is `ignore-file`d is reported as **ignored** (its own `IGN` line at `-v`, its own
+  `ignored` summary segment and JSON count, exit 0) — distinct from an incidental
+  skip; a rule that keeps other files is still judged over them while the ignored
+  file is excluded from the prompt. **Token-weighted batching** is proven through
+  `--plan-only`: rules over interleaved scopes are regrouped so shared files are paid
+  once, and the output names the reuse (`grouped: shares …`) plus the token
+  counterfactual (`batching: ~N file tokens billed …; per-rule exposure ~…`). The
+  cost model's core guarantee — that `Model::assign` reaches the **true minimum
+  objective** — is enforced in `domain::cost` by an independent brute-force oracle
+  run across a broad table of item/file/weight shapes and every batch size, plus a
+  heuristic-fallback validity check for oversized inputs. Under `--diff`, a
+  contiguous run of changed
+  lines wholly covered by an `ignore-block` (for the only applicable rule) is
+  replaced with an omission marker in the prompt, while an adjacent non-ignored
+  change is kept in full (asserted via `LLMLINT_MOCK_DUMP`); the finer diff-parsing
+  variants (run splitting, single-line vs span wording, pure deletion, unparseable
+  header) are unit-tested in `domain::diffmodel`.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
   self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`

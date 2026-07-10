@@ -213,15 +213,59 @@ harness reads target files on-demand with its own tools.
   and the standalone, model-free `check-ignores` command (`commands/check_ignores.rs`),
   so the fast static check and the full run can never disagree about what's valid.
   Keep that one shared path — don't reimplement the scan in a command.
-  **Honoring** them is now llmlint's own job, done deterministically *after* the
-  judge answers: `ignore::suppressions` parses each well-formed directive into
-  per-rule line spans (`ignore-file` → whole file; `ignore` → its line and the one
-  below; `ignore-block`…`ignore-end` → the spanned lines), and `clean_verdict`
-  drops any violation a directive covers (flipping a fail to a pass when that
-  removes its only basis). The default template still documents the line/block
-  forms as a backstop (so the judge's verdict reads true) but no longer needs to
-  carry the file-scoped guidance — and a custom `prompt_template` can drop the
-  ignore guidance entirely without changing behavior, since llmlint enforces it.
+  **Honoring** them is now llmlint's own job, deterministic and layered by scope:
+  `ignore::suppressions` parses each well-formed directive into per-rule line spans
+  (`ignore-file` → whole file; `ignore` → its line and the one below;
+  `ignore-block`…`ignore-end` → the spanned lines). A **whole-file `ignore-file`**
+  is honored *up front in the planner* (`plan::build` via `PlanContext` +
+  `Suppressions::is_file_scoped`): the file is dropped from that rule's **effective
+  scope** before the judge runs, so the prompt never carries (nor pays tokens for)
+  a file whose every verdict for that rule would be discarded anyway. A rule left
+  with no effective file is reported **ignored** (`Outcome::Ignored`, a reasoned
+  exemption distinct from an incidental `Skipped`), never judged; a file every
+  declaring rule ignores leaves the batch union entirely (surfaced as an *excluded*
+  file in the plan explanation). Line/block ignores (which leave judgeable lines)
+  stay a *post-vote* drop in `clean_verdict` (flipping a fail to a pass when that
+  removes its only basis) — the backstop that also catches any file-scoped
+  violation the judge reports despite the exclusion. The default template still
+  documents the line/block forms as a backstop (so the judge's verdict reads true)
+  but no longer needs the file-scoped guidance — and a custom `prompt_template` can
+  drop the ignore guidance entirely without changing behavior, since llmlint
+  enforces it.
+- **Token-weighted batching + counterfactual (convention):** within the fixed
+  batch count `ceil(n / batch_size)`, `plan::build` assigns rules to batches to
+  minimize a **lexicographic, token-weighted objective** (`src/domain/cost.rs`):
+  (1) tokens *billed* — Σ over batches of the batch's file-token union (each file's
+  content is re-billed in every batch it lands in); (2) per-rule *exposure* —
+  Σ over rules of their batch's union (each rule is judged against its whole batch's
+  files, so a big union shared by many rules is read many times); (3) a balanced-size
+  tiebreak. **At a fixed batch count these never trade off** — you can't split a rule
+  into its own call to shrink its prompt — so minimizing per-rule exposure is a free
+  quality win over the billing-optimal-but-tied layouts (e.g. it parks a wide-scope
+  rule in the *smaller* batch so fewer rules read its heavy files). `cost::Model::assign`
+  is a **provable minimum** via branch-and-bound within a node budget, falling back to
+  a deterministic greedy + local-search heuristic past it; the exhaustive
+  `domain::cost` test suite brute-forces the optimum across a broad shape table and
+  asserts `assign` achieves it. File weights are estimated tokens (≈ file bytes / 4,
+  computed in `commands/lint.rs` from the text it already reads for ignore-scanning;
+  a weightless context falls back to unit file counts, which the pure planner tests
+  use). The order-based layout is costed too, only to report the `Optimization`
+  counterfactual (billed + per-rule saved) in the explanation.
+- **Plan explanation + `--plan-only` (convention):** `plan::build` returns, beside
+  the runs, a `PlanExplanation` built *while deciding* (so it can never drift): per
+  agent → judge index → batch, the batched rule set, the effective file union, the
+  files reused across the batch's rules (the grouping's justification), any files
+  excluded because every declaring rule `ignore-file`s them, plus the rules left
+  unjudged with their reason and the batching counterfactual. It renders as a
+  readable tree (`to_human`) and serializes (`Serialize`). The `lint` command
+  attaches it to the `Report` (`with_plan`), so the human report shows it at `-v`,
+  `--format json` carries it under `plan`, and the history record persists it — one
+  source, no drift. `--plan-only` prints the explanation and exits before any
+  oneharness call or history write — a zero-cost batching-debug view. **Agents are
+  the hard isolation boundary:** the planner never batches rules across agents even
+  when their harness/model/template are identical and merging would save tokens —
+  an agent split is user intent (isolating rules that interfere when judged
+  together), asserted in `plan.rs` tests.
 - **Diff context (convention):** `--diff [<backend>]` adds each changed target
   file's diff to the judge prompt so it reviews only the changed lines (bare
   `--diff` defaults to `git`, compared against `HEAD`). The capability is
@@ -234,7 +278,15 @@ harness reads target files on-demand with its own tools.
   the prompt's "Target files" section**: each changed file's unified diff is shown
   right under its applicability line (rules + diff together), so the judge sees a
   changed file's scope and change in one place. They are **not** a file filter —
-  every target file is still reviewed, an unchanged one just carries no diff. The
+  every target file is still reviewed, an unchanged one just carries no diff.
+  **Ignore-aware trimming (`src/domain/diffmodel.rs`):** before a file's diff goes
+  into the prompt, it is parsed into *change runs* (maximal contiguous `+`/`-`
+  blocks, bounded by context) keyed by new-file line; a run whose every added line
+  is ignored (line/block directives) for *every* rule that still applies to the
+  file is replaced with an honest one-line marker, never a line pulled from the
+  middle of a run (that would misrepresent its neighbors) and never a pure deletion
+  (no new-file line to match). This trims tokens for wholly-ignored changes while
+  the post-vote cleanup stays the actual enforcement. The
   same diffs stay available to a custom `prompt_template` as the `diffs` context
   block (and per-file as `file_rules[i].diff`), so a `{% if diffs %}…{% endfor %}`
   block still works. A

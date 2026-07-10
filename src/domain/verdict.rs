@@ -68,6 +68,11 @@ pub enum Outcome {
     Pass,
     Fail,
     Skipped,
+    /// Every file the rule would cover is suppressed by a whole-file `ignore-file`
+    /// directive, so no judge was run. A deliberate, reasoned exemption — reported
+    /// distinctly from an incidental `Skipped` (no files matched). Not a violation
+    /// — exits clean.
+    Ignored,
     /// The rule did not apply to the change (statically `relevance: false`, or a
     /// majority of judges ruled it not relevant). Not a violation — exits clean.
     NotRelevant,
@@ -121,6 +126,20 @@ impl RuleOutcome {
             name: name.into(),
             rationale: None,
             outcome: Outcome::Skipped,
+            votes_total: 0,
+            votes_hold: 0,
+            judges: Vec::new(),
+            violations: Vec::new(),
+        }
+    }
+
+    /// A rule whose every matching file is `ignore-file`d away: no judge was run,
+    /// and the rationale records why. Neither pass nor fail — exits clean.
+    pub fn ignored(name: impl Into<String>) -> Self {
+        RuleOutcome {
+            name: name.into(),
+            rationale: Some("all matching files ignored (ignore-file)".to_string()),
+            outcome: Outcome::Ignored,
             votes_total: 0,
             votes_hold: 0,
             judges: Vec::new(),

@@ -86,7 +86,8 @@ fn pick_rationale(verdicts: &[RuleVerdict], outcome: Outcome) -> Option<String> 
         Outcome::NotRelevant => !v.is_relevant(),
         Outcome::Pass => v.is_relevant() && v.holds,
         Outcome::Fail => v.is_relevant() && !v.holds,
-        Outcome::Skipped => false,
+        // Skipped/Ignored rules never run a judge, so no verdict can agree.
+        Outcome::Skipped | Outcome::Ignored => false,
     };
     verdicts
         .iter()

@@ -31,6 +31,8 @@ pub enum LiveStatus {
     Fail,
     NotRelevant,
     Skipped,
+    /// Every matching file was `ignore-file`d away, so no judge ran.
+    Ignored,
     /// A judge run could not complete (oneharness/schema failure) and left the
     /// rule with no usable verdict.
     Error,
@@ -47,6 +49,7 @@ impl LiveStatus {
             LiveStatus::Fail => ("✗", "failed"),
             LiveStatus::NotRelevant => ("–", "not relevant"),
             LiveStatus::Skipped => ("–", "skipped"),
+            LiveStatus::Ignored => ("–", "ignored"),
             LiveStatus::Error => ("!", "error"),
         }
     }
@@ -55,7 +58,7 @@ impl LiveStatus {
         match self {
             LiveStatus::Pass => "green",
             LiveStatus::Fail | LiveStatus::Error => "red",
-            LiveStatus::NotRelevant | LiveStatus::Skipped => "yellow",
+            LiveStatus::NotRelevant | LiveStatus::Skipped | LiveStatus::Ignored => "yellow",
         }
     }
 }
@@ -219,17 +222,19 @@ mod tests {
     #[test]
     fn every_status_renders_its_glyph_and_word() {
         let term = InMemoryTerm::new(16, 80);
-        let view = view_over(&term, &["p", "f", "n", "s", "e"], 5);
+        let view = view_over(&term, &["p", "f", "n", "s", "i", "e"], 6);
         view.finish_rule("p", LiveStatus::Pass);
         view.finish_rule("f", LiveStatus::Fail);
         view.finish_rule("n", LiveStatus::NotRelevant);
         view.finish_rule("s", LiveStatus::Skipped);
+        view.finish_rule("i", LiveStatus::Ignored);
         view.finish_rule("e", LiveStatus::Error);
         let screen = term.contents();
         assert!(screen.contains("✓ p  passed"), "got: {screen:?}");
         assert!(screen.contains("✗ f  failed"), "got: {screen:?}");
         assert!(screen.contains("– n  not relevant"), "got: {screen:?}");
         assert!(screen.contains("– s  skipped"), "got: {screen:?}");
+        assert!(screen.contains("– i  ignored"), "got: {screen:?}");
         assert!(screen.contains("! e  error"), "got: {screen:?}");
     }
 

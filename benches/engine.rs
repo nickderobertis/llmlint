@@ -51,11 +51,13 @@ fn bench_plan_build(c: &mut Criterion) {
     let cfg = Config::default();
     let tmpl = support::example_template();
     let resolved = support::example_resolved();
+    let empty = std::collections::BTreeMap::new();
+    let ctx = plan::PlanContext::new(&empty);
     c.bench_function("plan_build/examples", |b| {
         // `plan::build` consumes the `Vec`, so clone outside the timer.
         b.iter_batched(
             || resolved.clone(),
-            |r| plan::build(black_box(&cfg), black_box(tmpl), 20, r),
+            |r| plan::build(black_box(&cfg), black_box(tmpl), 20, r, &ctx),
             BatchSize::SmallInput,
         );
     });
@@ -66,13 +68,15 @@ fn bench_plan_build(c: &mut Criterion) {
 fn bench_plan_build_scaling(c: &mut Criterion) {
     let cfg = Config::default();
     let tmpl = support::example_template();
+    let empty = std::collections::BTreeMap::new();
+    let ctx = plan::PlanContext::new(&empty);
     let mut group = c.benchmark_group("plan_build/scaling");
     for n in [10usize, 100, 1000] {
         let resolved = support::synthetic_resolved(n, 1);
         group.bench_with_input(BenchmarkId::new("rules", n), &resolved, |b, resolved| {
             b.iter_batched(
                 || resolved.clone(),
-                |r| plan::build(&cfg, tmpl, 20, r),
+                |r| plan::build(&cfg, tmpl, 20, r, &ctx),
                 BatchSize::SmallInput,
             );
         });
@@ -82,7 +86,7 @@ fn bench_plan_build_scaling(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("judges", j), &resolved, |b, resolved| {
             b.iter_batched(
                 || resolved.clone(),
-                |r| plan::build(&cfg, tmpl, 20, r),
+                |r| plan::build(&cfg, tmpl, 20, r, &ctx),
                 BatchSize::SmallInput,
             );
         });

@@ -511,12 +511,24 @@ and carry a **reason** (except `ignore-end`, which only closes a block). A direc
 with no brackets, an empty list, an unknown or misspelled rule, or no reason is a
 hard `file:line:` error (exit 2), so a typo fails loudly instead of silently
 suppressing nothing. Block pairing is checked too: an unclosed `ignore-block`, an
-`ignore-end` with no open block, or re-opening a rule already open is a hard error. Actually *honoring* a
-well-formed directive is the judge's job: the default prompt tells it to skip a
-named rule's violation at the directive's location. (A custom `prompt_template`
-should carry the same guidance if you want directives honored.) Because the
-prefix is reserved, a *linted* file that merely documents the feature must use
-real rule names or avoid the literal `llmlint: ignore[…]` form.
+`ignore-end` with no open block, or re-opening a rule already open is a hard error.
+*Honoring* a well-formed directive is llmlint's own job, done deterministically:
+
+- A **file-scoped `ignore-file`** is honored *before the judge runs* — the file is
+  dropped from that rule's review entirely, so it's never sent to the model (nor
+  paid for in tokens). When it covers a rule's only file, the rule is reported
+  **ignored** (a reasoned exemption, distinct from a skip; exit 0) and no judge
+  runs at all. See [`--plan-only`](#batching) to preview exactly which files and
+  rules a run drops.
+- **Line- and block-scoped** ignores are honored *after* the judge answers: a
+  violation inside the covered line/span is dropped (flipping a fail to a pass when
+  it was the only basis).
+
+The default prompt still documents the line/block forms so the judge's own verdict
+reads true, but a custom `prompt_template` can omit the ignore guidance without
+changing behavior — llmlint enforces it either way. Because the prefix is
+reserved, a *linted* file that merely documents the feature must use real rule
+names or avoid the literal `llmlint: ignore[…]` form.
 
 This structural check is **deterministic and free** — no model call — so it is
 also exposed as its own command, [`llmlint check-ignores`](#commands--exit-codes).
@@ -533,7 +545,30 @@ Rules group **by agent**, then split into batches of at most `batch_size`
 (default 20) — one `oneharness run` per batch, over the union of its files, each
 rule scoped to its own files in the prompt. Multi-judge rules fan out per judge
 (judge `j` runs the rules with `judges >= j`). Fewer, fuller batches, fewer
-round-trips.
+round-trips. Files a rule wholly `ignore-file`s are dropped from its scope first,
+so an ignored file never bloats a batch.
+
+Within that fixed batch count, rules are assigned to **minimize token cost**, in
+priority order: first the tokens *billed* (a file's content is re-billed in every
+batch it lands in, so rules that share files are grouped to pay it once), then each
+rule's *prompt size* (a rule is judged against its whole batch's files, so the
+batcher keeps heavy-file batches small — parking a wide-scope rule with as few
+others as possible). Because the number of calls is fixed, the second goal is free:
+it never adds a call or costs a token, it just gives each rule a more focused prompt
+(better judgment). File weights are estimated from file size, so one large file
+counts for more than several small ones. `--plan-only` shows both numbers and what
+grouping saved versus the naive order-based layout.
+
+Agents are also an **isolation boundary**: rules in different agents are never
+batched together, even when their harness/model/template are identical. If two
+rules interfere when judged in the same prompt, put them in separate agents (or set
+an agent's `batch_size: 1` to judge its rules one at a time).
+
+Run **`llmlint lint --plan-only`** to see how a run would batch — agents, judge
+indices, each batch's rules and file union, and any files excluded as ignored —
+without calling a model or writing history. The same plan is appended to the
+report at `-v`, included in `--format json` under `plan`, and saved with each
+history record.
 
 ### Judges and voting
 
@@ -775,7 +810,9 @@ source.
   revision instead of `HEAD` — a branch, tag, commit, or `A..B`/`A...B` range —
   so `--diff --diff-base main` reviews exactly what the current branch changed
   versus `main` (the PR-review case). The base can also be set once in config as
-  `diff_base:` (the flag overrides it).
+  `diff_base:` (the flag overrides it). Pass `--plan-only` to print how the run
+  would batch (agents, batches, files excluded as ignored, rules left unjudged) and
+  exit — no model call, no history write.
 - `llmlint check-ignores [FILES...]` — validate the *structure* of inline
   `llmlint: ignore` directives in the target files, **deterministically and with
   no model call** (`-c/--config`, `--cwd`; pass `FILES` to scope it, e.g. the
