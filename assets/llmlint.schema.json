@@ -51,7 +51,7 @@
       ]
     },
     "diff_base": {
-      "description": "Default base the `--diff` git backend compares target files against when\n`--diff-base` is not passed. Any git revision — a branch, tag, commit, or\n`A..B`/`A...B` range — e.g. `main` to make a quality gate review whatever\nthe current branch changed versus the default branch. Unset keeps the\nbuilt-in `HEAD` (working-tree) base; the `--diff-base` flag overrides it.",
+      "description": "Default base the `--diff` git backend compares target files against when\n`--diff-base` is not passed. Any git revision — a branch, tag, commit, or\n`A..B`/`A...B` range — e.g. `main` to make a quality gate review whatever\nthe current branch changed versus the default branch. A plain ref uses\nthree-dot / merge-base semantics (like a PR's \"Files changed\"), so a\nbranch behind its base doesn't see base-branch drift as its own changes;\nan `A..B` range is forwarded to git as-is. Unset keeps the built-in `HEAD`\n(working-tree) base; the `--diff-base` flag overrides it.",
       "type": [
         "string",
         "null"
