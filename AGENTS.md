@@ -256,7 +256,14 @@ harness reads target files on-demand with its own tools.
   agent → judge index → batch, the batched rule set, the effective file union, the
   files reused across the batch's rules (the grouping's justification), any files
   excluded because every declaring rule `ignore-file`s them, plus the rules left
-  unjudged with their reason and the batching counterfactual. It renders as a
+  unjudged with their reason and the batching counterfactual. It also states the
+  **actual lint set** up front: `linted_files` (the distinct union across every
+  batch — computed while planning, so it can't drift) drives the header's
+  "linting N file(s)", making clear what gets judged without counting across
+  batches. Under `--diff` the header also names `diff_excluded_files` — files that
+  matched the globs but were dropped as unchanged/deleted vs the base (set by the
+  `lint` command after building, since the planner is diff-unaware) — so a smaller
+  lint set is explained, not a mystery. It renders as a
   readable tree (`to_human`) and serializes (`Serialize`). The `lint` command
   attaches it to the `Report` (`with_plan`), so the human report shows it at `-v`,
   `--format json` carries it under `plan`, and the history record persists it — one

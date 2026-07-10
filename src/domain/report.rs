@@ -750,6 +750,7 @@ mod tests {
             }],
             skipped: vec![],
             optimization: Default::default(),
+            ..Default::default()
         };
         let r = Report::new(vec![pass("a")], vec![]).with_plan(plan);
 

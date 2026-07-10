@@ -325,6 +325,19 @@ pub fn build(
         plan.explanation.agents.push(agent_plan);
     }
 
+    // The actual lint set: the distinct union of every batch's files, so the
+    // explanation can state "what gets linted" once at the top rather than leaving
+    // the reader to union the per-batch lists by hand.
+    let mut linted: BTreeSet<String> = BTreeSet::new();
+    for a in &plan.explanation.agents {
+        for j in &a.judges {
+            for b in &j.batches {
+                linted.extend(b.files.iter().cloned());
+            }
+        }
+    }
+    plan.explanation.linted_files = linted.into_iter().collect();
+
     let opt = &mut plan.explanation.optimization;
     opt.saved_billed_tokens = opt.baseline_billed_tokens.saturating_sub(opt.billed_tokens);
     opt.saved_per_rule_tokens = opt
@@ -425,6 +438,20 @@ fn excluded_files(chunk: &[&Eligible]) -> Vec<ExcludedFile> {
 pub struct PlanExplanation {
     /// One entry per agent that owned any selected rule, in stable (sorted) order.
     pub agents: Vec<AgentPlan>,
+    /// The distinct files the plan will actually send to a judge — the union across
+    /// every batch of every agent, deduplicated and sorted. This is the real
+    /// "what gets linted" set, surfaced at the top level so a reader sees it (and
+    /// its size) at a glance instead of counting across batches. Built while
+    /// planning, so it can never drift from the batches.
+    pub linted_files: Vec<String>,
+    /// Files that matched the configured globs but were dropped *before* planning —
+    /// today only by `--diff` narrowing (unchanged vs the base, or a deleted path
+    /// with no file left to read). The planner itself is diff-unaware, so the `lint`
+    /// command sets this after building; empty otherwise. Surfaced so a `--diff` run
+    /// makes clear the glob set was larger than what's actually linted, rather than
+    /// silently showing a smaller set than the config implies.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diff_excluded_files: Vec<String>,
     /// Rules that were not judged, each with the reason.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<SkipEntry>,
@@ -535,10 +562,35 @@ impl PlanExplanation {
     pub fn to_human(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "Plan: {} judge call(s) across {} agent(s)\n",
+            "Plan: {} judge call(s) across {} agent(s), linting {} file(s)\n",
             self.total_runs(),
             self.agents.len(),
+            self.linted_files.len(),
         ));
+        // Under `--diff`, files that matched the globs but didn't change are dropped
+        // before planning — call that out so the smaller lint set is explained, not
+        // a mystery. Named up to a small cap, then summarized, so a huge glob set
+        // doesn't flood the plan (the full list stays in `--format json`).
+        if !self.diff_excluded_files.is_empty() {
+            const SHOWN: usize = 8;
+            let n = self.diff_excluded_files.len();
+            let head = self
+                .diff_excluded_files
+                .iter()
+                .take(SHOWN)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = n.saturating_sub(SHOWN);
+            let suffix = if more > 0 {
+                format!(", …+{more} more")
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                "  {n} file(s) matched globs but excluded as unchanged/deleted vs base (--diff): {head}{suffix}\n",
+            ));
+        }
         for a in &self.agents {
             out.push_str(&format!(
                 "  agent \"{}\" (batch_size {}{}{})\n",
@@ -1064,6 +1116,69 @@ mod tests {
         assert!(text.contains("agent \"default\" (batch_size 20)"), "{text}");
         assert!(text.contains("batch 1: [a, b]"), "{text}");
         assert!(text.contains("x.rs"), "{text}");
+    }
+
+    #[test]
+    fn linted_files_is_the_distinct_union_and_the_header_states_its_size() {
+        // Two rules over two distinct files -> the plan lints two files, deduped
+        // across batches, and the header states the count.
+        let cfg = Config::default();
+        let plan = bp(
+            &cfg,
+            "T",
+            20,
+            vec![
+                rr("a", 1, "default", &["x.rs"]),
+                rr("b", 1, "default", &["y.rs", "x.rs"]),
+            ],
+        );
+        assert_eq!(
+            plan.explanation.linted_files,
+            vec!["x.rs".to_string(), "y.rs".into()],
+            "distinct, sorted union of every batch's files"
+        );
+        let text = plan.explanation.to_human();
+        assert!(
+            text.contains("Plan: 1 judge call(s) across 1 agent(s), linting 2 file(s)"),
+            "{text}"
+        );
+        // With no diff narrowing there is no exclusion line.
+        assert!(!text.contains("excluded as unchanged"), "{text}");
+    }
+
+    #[test]
+    fn diff_excluded_files_render_a_summary_line() {
+        // The `lint` command sets `diff_excluded_files` after building; the header
+        // then names them so a `--diff` run explains its smaller lint set.
+        let cfg = Config::default();
+        let mut plan = bp(&cfg, "T", 20, vec![rr("a", 1, "default", &["x.rs"])]);
+        plan.explanation.diff_excluded_files =
+            vec!["unchanged_a.rs".into(), "unchanged_b.rs".into()];
+        let text = plan.explanation.to_human();
+        assert!(text.contains("linting 1 file(s)"), "{text}");
+        assert!(
+            text.contains(
+                "2 file(s) matched globs but excluded as unchanged/deleted vs base (--diff): \
+                 unchanged_a.rs, unchanged_b.rs"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn many_diff_excluded_files_are_capped_with_a_more_suffix() {
+        // A large excluded set is truncated in the human view (the full list stays
+        // in JSON), so the plan never floods.
+        let cfg = Config::default();
+        let mut plan = bp(&cfg, "T", 20, vec![rr("a", 1, "default", &["x.rs"])]);
+        plan.explanation.diff_excluded_files =
+            (0..10).map(|i| format!("f{i}.rs")).collect::<Vec<_>>();
+        let text = plan.explanation.to_human();
+        assert!(text.contains("10 file(s) matched globs"), "{text}");
+        assert!(text.contains("…+2 more"), "{text}");
+        // Only the first 8 are named inline.
+        assert!(text.contains("f7.rs"), "{text}");
+        assert!(!text.contains("f8.rs"), "{text}");
     }
 
     #[test]

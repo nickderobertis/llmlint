@@ -153,8 +153,25 @@ pub(crate) fn run_loaded(
     // model call, and a deleted path has a diff but no file the harness could
     // read, so it is dropped too. A rule left with no files becomes a skip in
     // planning, so an empty intersection is a clean, model-free exit 0.
+    // Files that matched the configured globs but are dropped by the diff narrowing
+    // (unchanged vs the base, or a deleted path) — captured so the plan explanation
+    // can state that the glob set was larger than what's actually linted, instead of
+    // silently showing a smaller set. Empty without `--diff`.
+    let mut diff_excluded: Vec<String> = Vec::new();
     if args.diff.is_some() {
+        let before: BTreeSet<PathBuf> = resolved
+            .iter()
+            .flat_map(|r| r.files.iter().cloned())
+            .collect();
         restrict_to_changed(&mut resolved, &diffs, &cwd);
+        let after: BTreeSet<PathBuf> = resolved
+            .iter()
+            .flat_map(|r| r.files.iter().cloned())
+            .collect();
+        diff_excluded = before
+            .difference(&after)
+            .map(|p| files::to_slash(p))
+            .collect();
     }
 
     // Reject malformed inline `llmlint: ignore` directives in the (now
@@ -214,13 +231,17 @@ pub(crate) fn run_loaded(
         .collect();
 
     let plan_ctx = PlanContext::new(&suppressions).with_weights(&file_tokens);
-    let the_plan = plan::build(
+    let mut the_plan = plan::build(
         &config,
         &master_template,
         DEFAULT_BATCH_SIZE,
         resolved,
         &plan_ctx,
     );
+    // Record the diff-narrowed files on the explanation so `--plan-only`, the `-v`
+    // report, JSON, and history all show which files were excluded (and that the
+    // lint set is the changed subset, not the whole glob set).
+    the_plan.explanation.diff_excluded_files = diff_excluded;
 
     // `--plan-only`: print how the runs would be batched (agents, batches, dropped
     // files) and stop — no oneharness, no model calls, no history write. The
