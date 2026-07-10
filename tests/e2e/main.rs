@@ -3341,6 +3341,46 @@ fn oneharness_runs_in_read_only_mode() {
 }
 
 #[test]
+fn system_prompt_is_delivered_by_file_not_inline() {
+    // Contract: the (potentially large) system prompt is passed via
+    // `--system-file <path>`, never inline as `--system <TEXT>` — that is what
+    // keeps a big briefing from tripping the OS argv limit. Assert the arg vector
+    // directly (the companion to the behavioral large-prompt regression test).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: sf_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"sf_rule": true}"#);
+    let args_dump = p.path().join("sf-args.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .assert()
+        .success();
+    let dumped = fs::read_to_string(&args_dump).unwrap();
+    let lines: Vec<&str> = dumped.lines().collect();
+    // `--system-file` is present and followed by a non-empty path value.
+    let sf = lines
+        .iter()
+        .position(|l| *l == "--system-file")
+        .expect("--system-file should be forwarded on every run");
+    assert!(
+        lines.get(sf + 1).is_some_and(|v| !v.is_empty()),
+        "--system-file must carry a path value"
+    );
+    // The inline `--system` form is never used (it is what blows the argv limit).
+    assert!(
+        !lines.iter().any(|l| *l == "--system"),
+        "system prompt must not be passed inline via --system; got: {dumped}"
+    );
+}
+
+#[test]
 fn multiple_oneharness_configs_warns() {
     let p = Project::new();
     p.write(
