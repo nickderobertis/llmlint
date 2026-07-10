@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.15](https://github.com/nickderobertis/llmlint/compare/v0.3.14...v0.3.15) - 2026-07-10
+
+### Fixed
+
+- *(diff)* use three-dot/merge-base semantics for a plain --diff-base ref ([#138](https://github.com/nickderobertis/llmlint/pull/138))
+
 ## [0.3.14](https://github.com/nickderobertis/llmlint/compare/v0.3.13...v0.3.14) - 2026-07-10
 
 ### Added
