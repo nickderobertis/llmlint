@@ -1022,6 +1022,67 @@ fn include_exclude_globs_select_the_right_files() {
 }
 
 #[test]
+fn rule_include_cannot_resurrect_a_top_level_excluded_path() {
+    // Issue #128: a top-level `files.exclude` is a hard denylist — a rule's own
+    // `files.include` narrows *within* the allowed set and can never bring back an
+    // excluded path. Here `**/tests/**` includes `tests/fixtures/...`, but the
+    // top-level `exclude: ["tests/fixtures/**"]` still drops it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  exclude: [\"tests/fixtures/**\"]\nrules:\n  \
+             - name: judge_tests\n    description: \"{RULE}\"\n    files:\n      \
+             include: [\"**/tests/**\"]\n"
+        ),
+    );
+    p.write("tests/unit.rs", "// a real test\n");
+    p.write("tests/fixtures/big.json", "{}\n");
+    let verdicts = p.write_verdicts(r#"{"judge_tests": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("tests/unit.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("tests/fixtures/big.json"),
+        "a rule include must not resurrect a top-level excluded path:\n{system}"
+    );
+}
+
+#[test]
+fn plan_only_omits_a_top_level_excluded_path_a_rule_include_matches() {
+    // The same fix must hold on the `--plan-only` path (the issue's repro used it):
+    // the globally-excluded fixture never enters the plan even though the rule's
+    // `**/tests/**` include matches it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  exclude: [\"tests/fixtures/**\"]\nrules:\n  \
+             - name: judge_tests\n    description: \"{RULE}\"\n    files:\n      \
+             include: [\"**/tests/**\"]\n"
+        ),
+    );
+    p.write("tests/unit.rs", "// a real test\n");
+    p.write("tests/fixtures/big.json", "{}\n");
+
+    p.lint()
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tests/unit.rs"))
+        .stdout(predicate::str::contains("tests/fixtures/big.json").not());
+}
+
+#[test]
 fn no_files_block_lints_every_file_in_the_tree() {
     // A config with no `files` block is the repo-wide "lint everything under cwd"
     // default: every file in the tree is a target, not zero. Files sit at the root

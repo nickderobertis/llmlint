@@ -115,6 +115,11 @@ logic is also covered hermetically via `file://` plugins.
   subtree config with no `files` block lints its whole subtree, still bounded to
   its own directory. `agent.files` was **removed** — a config that still sets it
   is a clear exit-2 error (it duplicated per-rule `files`).
+- The top-level `files.exclude` is a **hard denylist**: a per-rule `files.include`
+  narrows within the allowed set and can never resurrect an excluded path (issue
+  #128). Proven both on the full lint path (a `**/tests/**`-scoped rule never sees
+  a top-level-excluded `tests/fixtures/**` file in its prompt) and on `--plan-only`
+  (the excluded path never enters the plan).
 - Agent-namespace footgun guard: a subtree config's agent used by a rule **outside**
   that subtree is a hard exit-2 error (naming the rule, agent, and subtree config),
   so a nested folder can't silently retune how an outside rule is judged; the
