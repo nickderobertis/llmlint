@@ -176,7 +176,11 @@ pub struct LintArgs {
     /// the default `HEAD`. Accepts any git revision — a branch, tag, commit, or
     /// an `A..B`/`A...B` range — so `--diff-base main` reviews exactly what the
     /// current branch changed versus `main` (skipping every file `main` didn't
-    /// touch). Overrides the config `diff_base`. Requires `--diff`.
+    /// touch). A plain ref uses three-dot / merge-base semantics (like a PR's
+    /// "Files changed"): the diff is taken from where the branch diverged, so
+    /// commits that landed on the base branch after the fork aren't reported as
+    /// this branch's changes. An explicit `A..B` range is passed to git as-is.
+    /// Overrides the config `diff_base`. Requires `--diff`.
     #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
     pub diff_base: Option<String>,
 
@@ -437,7 +441,9 @@ pub struct LintConfigArgs {
     pub diff: Option<DiffBackend>,
 
     /// Base the `--diff` git backend compares against, instead of `HEAD`. Any git
-    /// revision — a branch, tag, commit, or `A..B`/`A...B` range. Requires `--diff`.
+    /// revision — a branch, tag, commit, or `A..B`/`A...B` range. A plain ref uses
+    /// three-dot / merge-base semantics (like a PR's "Files changed"); an `A..B`
+    /// range is passed to git as-is. Requires `--diff`.
     #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
     pub diff_base: Option<String>,
 
