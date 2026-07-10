@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.10](https://github.com/nickderobertis/llmlint/compare/v0.3.9...v0.3.10) - 2026-07-10
+
+### Added
+
+- *(plan)* token-weighted batching, ignore-aware scope/diff trimming, and plan explanation ([#122](https://github.com/nickderobertis/llmlint/pull/122))
+
 ## [0.3.9](https://github.com/nickderobertis/llmlint/compare/v0.3.8...v0.3.9) - 2026-07-07
 
 ### Fixed
