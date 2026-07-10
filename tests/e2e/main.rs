@@ -2095,7 +2095,8 @@ fn diff_base_accepts_a_tag() {
 
 #[test]
 fn diff_base_plain_ref_includes_uncommitted_worktree() {
-    // `git diff <base>` (a plain ref) compares the *working tree* to the base,
+    // A plain ref compares the *working tree* to the branch point (three-dot /
+    // merge-base semantics; here `main` is the fork point so it equals the tip),
     // so a committed branch change AND an uncommitted edit on top both show —
     // exactly what a reviewer wants when iterating before pushing.
     let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
@@ -2207,6 +2208,57 @@ fn diff_base_three_dot_range_uses_merge_base() {
         "main's change leaked into the three-dot diff:\n{system}"
     );
     assert!(!system.contains("main_moved"), "system:\n{system}");
+}
+
+#[test]
+fn diff_base_plain_ref_ignores_stale_base_branch_drift() {
+    // Regression for the stale-base false positive (issue 137): a feature branch
+    // forks from `main`, then `main` advances with an unrelated commit the branch
+    // never merged. A plain `--diff-base main` must use three-dot / merge-base
+    // semantics — showing only what the branch changed, never rendering the
+    // base-branch drift as this branch's (spurious) deletions. A two-dot diff
+    // against the base *tip* would flag `main`'s later change as a change of this
+    // PR, failing the author on code they never wrote.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    // feature forks off the baseline and changes only a.rs.
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { feat(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature changes a"]);
+    // main advances independently, changing b.rs after feature forked.
+    git(p.path(), &["checkout", "-q", "main"]);
+    p.write("src/b.rs", "fn b() { main_drifted(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "main changes b"]);
+    git(p.path(), &["checkout", "-q", "feature"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main") // a PLAIN ref -> three-dot semantics, no explicit range
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // The branch's own change is reviewed...
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
+    assert!(system.contains("+fn a() { feat(); }"), "system:\n{system}");
+    // ...but the base-branch drift the branch never touched must not appear as
+    // this branch's change (the false positive from issue 137).
+    assert!(
+        !system.contains("diff --git a/src/b.rs"),
+        "stale base-branch drift leaked into a plain-ref diff:\n{system}"
+    );
+    assert!(!system.contains("main_drifted"), "system:\n{system}");
 }
 
 #[test]

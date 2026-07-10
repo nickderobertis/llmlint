@@ -216,6 +216,9 @@ rationales: true
 # Default base for `--diff` (when `--diff-base` isn't passed). Any git revision —
 # a branch, tag, commit, or `A..B`/`A...B` range. Set it to your default branch so
 # a CI quality gate reviews whatever the current branch changed; unset = `HEAD`.
+# A plain ref uses three-dot / merge-base semantics (like a PR's "Files changed"),
+# so a branch that's behind its base doesn't see base-branch drift as its own
+# changes; an explicit `A..B` range gets git's raw two-dot behavior.
 diff_base: main
 
 # Pull in shared rule sets / plugins with one line each. An entry is a local
@@ -818,8 +821,14 @@ source.
   against `HEAD`). Add `--diff-base <REF>` to compare against a different git
   revision instead of `HEAD` — a branch, tag, commit, or `A..B`/`A...B` range —
   so `--diff --diff-base main` reviews exactly what the current branch changed
-  versus `main` (the PR-review case). The base can also be set once in config as
-  `diff_base:` (the flag overrides it). Pass `--plan-only` to print how the run
+  versus `main` (the PR-review case). A **plain ref uses three-dot / merge-base
+  semantics** — the same as a PR's "Files changed": the diff is taken from where
+  the branch diverged (`merge-base(REF, HEAD)`), *not* the base tip, so commits
+  that landed on the base branch **after** your branch forked aren't reported as
+  your branch's changes (no false positives from a stale, behind-the-base
+  branch). Pass an explicit **`A..B` range** when you want git's raw two-dot
+  behavior instead — it's forwarded untouched. The base can also be set once in
+  config as `diff_base:` (the flag overrides it). Pass `--plan-only` to print how the run
   would batch (agents, batches, files excluded as ignored, rules left unjudged) and
   exit — no model call, no history write.
 - `llmlint check-ignores [FILES...]` — validate the *structure* of inline

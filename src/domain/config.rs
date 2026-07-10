@@ -295,8 +295,11 @@ pub struct Config {
     /// Default base the `--diff` git backend compares target files against when
     /// `--diff-base` is not passed. Any git revision — a branch, tag, commit, or
     /// `A..B`/`A...B` range — e.g. `main` to make a quality gate review whatever
-    /// the current branch changed versus the default branch. Unset keeps the
-    /// built-in `HEAD` (working-tree) base; the `--diff-base` flag overrides it.
+    /// the current branch changed versus the default branch. A plain ref uses
+    /// three-dot / merge-base semantics (like a PR's "Files changed"), so a
+    /// branch behind its base doesn't see base-branch drift as its own changes;
+    /// an `A..B` range is forwarded to git as-is. Unset keeps the built-in `HEAD`
+    /// (working-tree) base; the `--diff-base` flag overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_base: Option<String>,
     /// Whether/how/where to log each run's full results to disk (default: on, the
