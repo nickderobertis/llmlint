@@ -1523,6 +1523,69 @@ fn diff_drops_a_deleted_path_without_erroring() {
 }
 
 #[test]
+fn diff_narrowing_is_per_rule_not_all_or_nothing() {
+    // The intersection is applied per rule: two rules each scoped to their own
+    // file, only one file changed. The changed rule is judged (PASS) while the
+    // other — its sole file unchanged — is skipped in the *same* run, proving the
+    // narrowing isn't all-or-nothing across the invocation.
+    let rules = format!(
+        "  - {{ name: rule_a, description: \"{RULE}\", files: {{ include: [\"src/a.rs\"] }} }}\n  \
+         - {{ name: rule_b, description: \"{RULE}\", files: {{ include: [\"src/b.rs\"] }} }}\n"
+    );
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    p.write("src/a.rs", "fn a() { changed(); }\n"); // only a.rs changes
+    let verdicts = p.write_verdicts(r#"{"rule_a": true}"#);
+
+    p.lint_v()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PASS rule_a"))
+        .stdout(predicate::str::contains("SKIP rule_b"));
+}
+
+#[test]
+fn diff_base_intersection_drops_files_unchanged_vs_the_base() {
+    // The changed-file narrowing honors an explicit `--diff-base`: on a feature
+    // branch that changed only a.rs vs `main`, a.rs is judged while the unchanged
+    // b.rs is dropped — the intersection is against the chosen base, not just HEAD.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { feature(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("- src/a.rs"), "system:\n{system}");
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
+    // b.rs is unchanged vs main -> dropped, not a target.
+    assert!(!system.contains("- src/b.rs"), "system:\n{system}");
+}
+
+#[test]
 fn diff_unborn_head_uses_cached_fallback() {
     // A repo with no commit has an unborn HEAD; the git backend falls back to a
     // `--cached` diff so a staged new file still shows as added (no fatal).

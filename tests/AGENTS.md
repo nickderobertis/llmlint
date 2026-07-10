@@ -137,8 +137,11 @@ logic is also covered hermetically via `file://` plugins.
   `diff_untracked_new_file_has_no_diff_so_it_is_skipped`). Explicit `FILES` are
   intersected the same way (`diff_intersects_explicit_files_with_the_changed_set`),
   and a deleted path passed explicitly (a diff but no file on disk) is dropped
-  rather than erroring (`diff_drops_a_deleted_path_without_erroring`). Without
-  `--diff` no diff renders even in a git repo with pending changes. Diffs are
+  rather than erroring (`diff_drops_a_deleted_path_without_erroring`). The
+  narrowing is **per rule, not all-or-nothing**: with two rules each scoped to
+  their own file and only one changed, the changed rule is judged while the other
+  is skipped in the same run (`diff_narrowing_is_per_rule_not_all_or_nothing`).
+  Without `--diff` no diff renders even in a git repo with pending changes. Diffs are
   **scoped to
   each judge run's files** — a rule scoped to `src/a.rs` sees only `a.rs`'s diff,
   never a sibling rule's `b.rs`. `--cwd` is the git root (the work tree can live
@@ -165,8 +168,10 @@ logic is also covered hermetically via `file://` plugins.
   plain ref (includes the uncommitted worktree), a two-dot range (commit-to-commit,
   excludes the worktree), a three-dot range (merge-base, excludes the base
   branch's own commits), additions+deletions across files, per-rule diff scoping,
-  `--cwd` as the git root, and a base equal to the tip (nothing changed → every
-  rule skipped, no harness call).
+  `--cwd` as the git root, a base equal to the tip (nothing changed → every rule
+  skipped, no harness call), and the changed-file narrowing against a base (a file
+  unchanged vs `main` is dropped while the changed one is judged —
+  `diff_base_intersection_drops_files_unchanged_vs_the_base`).
 - A config `diff_base:` sets the default base for `--diff` without the flag: bare
   `--diff` reviews vs the configured branch, the `--diff-base` flag overrides the
   config value, and `diff_base` is inert without `--diff` (it only tunes the
