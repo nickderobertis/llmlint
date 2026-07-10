@@ -328,8 +328,9 @@ harness reads target files on-demand with its own tools.
   merge/rebase commits disabled, so one PR is one squash commit whose subject is
   the PR title. Queue with `gh pr merge --auto --squash`; merged heads auto-delete.
   Admins may break-glass.
-- **All gating checks required**: `check` (full e2e gate), `deny`, `install`, and
-  `pr-title`, plus linear history, conversation resolution, no force-push/deletion.
+- **All gating checks required**: `check` (full e2e gate), `deny`, `install`,
+  `pr-title`, and the Visual docs diff check (`visual-docs / report (x86_64)`),
+  plus linear history, conversation resolution, no force-push/deletion.
 - **PRs follow `.github/pull_request_template.md`** (What / Why; the squash body).
 - **Releases**: Conventional Commits drive release-plz (pre-1.0: `feat`→minor,
   `fix`/`perf`→patch, `!`/`BREAKING`→minor; `docs`/`test`/`chore`/`ci`→no release).
