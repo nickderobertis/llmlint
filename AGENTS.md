@@ -139,7 +139,10 @@ Use the `just` recipes; do not hand-roll equivalents.
 
 llmlint shells out to `oneharness run` once per `(agent, judge, batch)` (plus a
 bounded corrective re-ask — see the scope bullet below), passing the rendered
-template via `--system`, a generated JSON Schema via `--schema` (oneharness
+template via `--system-file` (a temp file, not an inline argv string — the
+briefing carries every changed file's inlined diff, so an inline `--system`
+would trip the OS `Argument list too long` limit; this is why the floor is
+oneharness >= 0.3.12), a generated JSON Schema via `--schema` (oneharness
 validates it and re-prompts on failure), and reading the per-result `structured`
 value. **oneharness is a runtime prerequisite** — found on PATH, overridable via
 `--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config, with a **sibling
@@ -152,14 +155,17 @@ PATH always wins over the sibling so an environment's chosen oneharness is never
 shadowed. `llmlint doctor` checks resolution and names the resolved path. The
 harness reads target files on-demand with its own tools.
 
-- **Read-only mode + minimum version:** llmlint is a judge, never an editor, so
-  every `run` passes `--mode read-only` — the harness may read target files but
-  can't edit them or run commands. That mode requires **oneharness >= 0.3.0**
-  (`oneharness::MIN_VERSION`); both `lint` (pre-flight, once per run) and `doctor`
-  parse `oneharness --version` and fail with a clear exit-2 error when the binary
-  is older (or its version can't be parsed) rather than letting `--mode read-only`
-  blow up mid-run. Bump `MIN_VERSION` in `src/io/oneharness.rs` (and the mock's
-  default in `tests/support/mock_oneharness.rs`) together when the floor moves.
+- **Read-only mode + system-by-file + minimum version:** llmlint is a judge,
+  never an editor, so every `run` passes `--mode read-only` — the harness may
+  read target files but can't edit them or run commands (needs oneharness >=
+  0.3.0). It also passes the rendered system prompt by file (`--system-file`, so
+  a large briefing never trips the OS argv limit — needs oneharness >= 0.3.12), so
+  the floor is **oneharness >= 0.3.12** (`oneharness::MIN_VERSION`). Both `lint`
+  (pre-flight, once per run) and `doctor` parse `oneharness --version` and fail
+  with a clear exit-2 error when the binary is older (or its version can't be
+  parsed) rather than letting a missing flag blow up mid-run. Bump `MIN_VERSION`
+  in `src/io/oneharness.rs` (and the mock's default in
+  `tests/support/mock_oneharness.rs`) together when the floor moves.
 
 - **Verdict polarity (convention):** rules are authored as positive invariants.
   `holds=true` = property holds (pass); `holds=false` = **violation** (fail).
