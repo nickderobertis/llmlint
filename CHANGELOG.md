@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.14](https://github.com/nickderobertis/llmlint/compare/v0.3.13...v0.3.14) - 2026-07-10
+
+### Added
+
+- *(plan)* show the actual lint set and narrate the plan before judging ([#135](https://github.com/nickderobertis/llmlint/pull/135))
+
 ## [0.3.13](https://github.com/nickderobertis/llmlint/compare/v0.3.12...v0.3.13) - 2026-07-10
 
 ### Fixed
