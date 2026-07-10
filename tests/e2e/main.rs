@@ -2262,6 +2262,42 @@ fn diff_base_plain_ref_ignores_stale_base_branch_drift() {
 }
 
 #[test]
+fn diff_base_unrelated_history_falls_back_to_two_dot_diff() {
+    // A base with no common ancestor (disjoint history) has no merge base, so the
+    // three-dot path can't apply; rather than erroring, the diff falls back to a
+    // two-dot diff against the ref, so an unrelated base is still reviewable. Here
+    // `main` and the orphan branch share no history, yet `--diff-base main`
+    // surfaces the orphan's file as a full addition.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn on_main() {}\n")]);
+    // An orphan branch with its own root commit — no shared history with `main`.
+    git(p.path(), &["checkout", "-q", "--orphan", "orphan"]);
+    p.write("src/a.rs", "fn on_orphan() {}\n");
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "orphan root"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    // Two-dot fallback against the ref: the file differs from `main`, so it's
+    // reviewed (the orphan's line added, main's removed) rather than dropped.
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "unrelated base was not diffable:\n{system}"
+    );
+    assert!(system.contains("+fn on_orphan() {}"), "system:\n{system}");
+}
+
+#[test]
 fn diff_base_renders_additions_and_deletions_across_files() {
     // Against a branch base, one file gains a line and another loses one across
     // the branch's commits; both get a block with the `+`/`-` lines.

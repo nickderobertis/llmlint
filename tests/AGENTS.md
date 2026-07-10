@@ -176,10 +176,14 @@ logic is also covered hermetically via `file://` plugins.
   the fork is never rendered as this branch's change
   (`diff_base_plain_ref_ignores_stale_base_branch_drift`, the issue-137 regression;
   mirrored as a unit test in `io::diff`). An explicit `A..B`/`A...B` **range** is
-  forwarded to git untouched (the escape hatch to raw two-dot). Backend internals
-  (named ref → merge-base, range pass-through, unknown-ref falls back to a two-dot
-  diff that surfaces git's own error, disjoint-history fallback) are also
-  unit-tested in `io::diff`. The full base matrix is exercised: explicit
+  forwarded to git untouched (the escape hatch to raw two-dot). A base with **no
+  common ancestor** (disjoint history) has no merge base, so the diff falls back
+  to a two-dot diff against the ref and stays reviewable rather than erroring
+  (`diff_base_unrelated_history_falls_back_to_two_dot_diff`, mirrored in
+  `io::diff`). Backend internals (named ref → merge-base, range pass-through,
+  unknown-ref falls back to a two-dot diff that surfaces git's own error,
+  disjoint-history fallback) are also unit-tested in `io::diff`. The full base
+  matrix is exercised: explicit
   `--diff git --diff-base`, a commit SHA, a tag, a plain ref (three-dot; includes
   the uncommitted worktree, ignores stale base drift), a two-dot range
   (commit-to-commit, excludes the worktree), a three-dot range (merge-base,
