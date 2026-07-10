@@ -156,10 +156,14 @@ pub struct LintArgs {
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
 
-    /// Add each target file's diff to the judge prompt so it reviews only the
-    /// changed lines. Bare `--diff` uses the `git` backend (compared against
-    /// `HEAD`); pass a backend (`--diff git`) to choose one explicitly. Omitted:
-    /// the whole file is reviewed as before.
+    /// Review only the changed files, with each one's diff added to the judge
+    /// prompt so it focuses on the changed lines. The target set becomes the
+    /// intersection of the changed files with your configured globs (and any
+    /// explicit FILES): a file with an empty diff vs the base is skipped with no
+    /// model call, so an empty intersection is a clean exit 0. Bare `--diff` uses
+    /// the `git` backend (compared against `HEAD`); pass a backend (`--diff git`)
+    /// to choose one explicitly. Omitted: every file matching your globs is
+    /// reviewed whole, as before.
     #[arg(
         long = "diff",
         value_name = "BACKEND",
@@ -171,8 +175,8 @@ pub struct LintArgs {
     /// Base the `--diff` git backend compares target files against, instead of
     /// the default `HEAD`. Accepts any git revision — a branch, tag, commit, or
     /// an `A..B`/`A...B` range — so `--diff-base main` reviews exactly what the
-    /// current branch changed versus `main`. Overrides the config `diff_base`.
-    /// Requires `--diff`.
+    /// current branch changed versus `main` (skipping every file `main` didn't
+    /// touch). Overrides the config `diff_base`. Requires `--diff`.
     #[arg(long = "diff-base", value_name = "REF", requires = "diff")]
     pub diff_base: Option<String>,
 
@@ -419,9 +423,11 @@ pub struct LintConfigArgs {
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
 
-    /// Add each target config's diff to the judge prompt so it reviews only the
-    /// changed lines. Bare `--diff` uses the `git` backend (compared against
-    /// `HEAD`); pass a backend (`--diff git`) to choose one explicitly.
+    /// Review only the changed config files, with each one's diff added to the
+    /// judge prompt so it focuses on the changed lines. A config with an empty
+    /// diff vs the base is skipped with no model call. Bare `--diff` uses the
+    /// `git` backend (compared against `HEAD`); pass a backend (`--diff git`) to
+    /// choose one explicitly.
     #[arg(
         long = "diff",
         value_name = "BACKEND",

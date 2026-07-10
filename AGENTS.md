@@ -266,19 +266,26 @@ harness reads target files on-demand with its own tools.
   when their harness/model/template are identical and merging would save tokens —
   an agent split is user intent (isolating rules that interfere when judged
   together), asserted in `plan.rs` tests.
-- **Diff context (convention):** `--diff [<backend>]` adds each changed target
-  file's diff to the judge prompt so it reviews only the changed lines (bare
-  `--diff` defaults to `git`, compared against `HEAD`). The capability is
+- **Diff context + changed-file filter (convention):** `--diff [<backend>]`
+  **restricts the run to the changed files** and adds each one's diff to the judge
+  prompt so it reviews only the changed lines (bare `--diff` defaults to `git`,
+  compared against `HEAD`). The default target set becomes the **intersection of
+  the changed files with the configured globs** (and any explicit `FILES`): a file
+  with an empty diff vs the base is dropped from planning with no model call, a
+  deleted path (a diff but no file on disk) is dropped too, and a rule left with no
+  files is skipped — so an empty intersection is a clean, model-free exit 0. This
+  is `restrict_to_changed` in `commands/lint.rs`, applied right after the diffs are
+  computed (once, at the I/O boundary, over every glob-resolved target) and before
+  the ignore/suppression scan and planning, so the whole engine downstream sees
+  only the changed set. The capability is
   **backend-agnostic**: `src/io/diff.rs` defines a `DiffProvider` trait and a
   `DiffBackend` value enum; `GitDiff` is the first impl (`git diff`, with an
   unborn-HEAD `--cached` fallback) and `provider()` is the only place that maps a
   backend to an impl, so a new VCS/range source is a variant + impl with no
-  call-site changes — `lint` only talks to the trait. Diffs are computed once at
-  the I/O boundary (per target file, before planning) and **inlined per file in
-  the prompt's "Target files" section**: each changed file's unified diff is shown
-  right under its applicability line (rules + diff together), so the judge sees a
-  changed file's scope and change in one place. They are **not** a file filter —
-  every target file is still reviewed, an unchanged one just carries no diff.
+  call-site changes — `lint` only talks to the trait. The kept files' diffs are
+  **inlined per file in the prompt's "Target files" section**: each changed file's
+  unified diff is shown right under its applicability line (rules + diff together),
+  so the judge sees a changed file's scope and change in one place.
   **Ignore-aware trimming (`src/domain/diffmodel.rs`):** before a file's diff goes
   into the prompt, it is parsed into *change runs* (maximal contiguous `+`/`-`
   blocks, bounded by context) keyed by new-file line; a run whose every added line
@@ -289,7 +296,8 @@ harness reads target files on-demand with its own tools.
   the post-vote cleanup stays the actual enforcement. The
   same diffs stay available to a custom `prompt_template` as the `diffs` context
   block (and per-file as `file_rules[i].diff`), so a `{% if diffs %}…{% endfor %}`
-  block still works. A
+  block still works. An untracked never-added file has no `git diff` output, so it
+  counts as unchanged and is skipped (stage or commit it to review it). A
   `--diff git` run outside a git work tree is a clear exit-2 `Error::Diff`, never
   a silent empty diff. **Base selection:** `--diff-base <REF>` (clap `requires`
   `--diff`) sets `GitDiff.base` to any git revision or range — a branch, tag,

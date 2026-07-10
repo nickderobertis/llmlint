@@ -119,17 +119,30 @@ logic is also covered hermetically via `file://` plugins.
   that subtree is a hard exit-2 error (naming the rule, agent, and subtree config),
   so a nested folder can't silently retune how an outside rule is judged; the
   legitimate case — a subtree rule using an agent from its own subtree — still runs.
-- `--diff` adds each changed target file's diff to the judge prompt so it reviews
-  only the changed lines, exercised end to end against **real git repos**. Bare
-  `--diff` and the explicit `--diff git` both inline each changed file's unified
-  diff (a fenced `diff` block carrying its `+`/`-` lines) right under that file's
-  applicability line in the "Target files" section (additions and deletions across
-  multiple files); diffs use `git diff HEAD` so **both staged and unstaged** edits
-  show. Diffs are additive context, not a file filter: an unchanged file, and a
-  brand-new untracked file (no diff vs HEAD), each get no diff but stay listed as a
-  target for whole-file review; a clean work tree renders no diff yet still lints;
-  and without `--diff` no diff renders even in a git repo with pending changes.
-  Diffs are **scoped to
+- `--diff` **restricts the run to the changed files** and adds each one's diff to
+  the judge prompt so it reviews only the changed lines, exercised end to end
+  against **real git repos**. Bare `--diff` and the explicit `--diff git` both
+  inline each changed file's unified diff (a fenced `diff` block carrying its
+  `+`/`-` lines) right under that file's applicability line in the "Target files"
+  section (additions and deletions across multiple files); diffs use
+  `git diff HEAD` so **both staged and unstaged** edits show. The target set is the
+  intersection of the changed files with the globs (and explicit `FILES`): an
+  unchanged file is dropped entirely — not a target, no model call — so a file that
+  changes is judged while its unchanged sibling is not
+  (`diff_flag_adds_changed_lines_to_the_prompt`), and a run whose files are all
+  unchanged (a clean work tree, or an untracked never-added file that `git diff`
+  doesn't see) skips every rule with **no harness invocation at all** (asserted by
+  the mock's prompt-dump file never being written —
+  `diff_clean_worktree_lints_nothing`,
+  `diff_untracked_new_file_has_no_diff_so_it_is_skipped`). Explicit `FILES` are
+  intersected the same way (`diff_intersects_explicit_files_with_the_changed_set`),
+  and a deleted path passed explicitly (a diff but no file on disk) is dropped
+  rather than erroring (`diff_drops_a_deleted_path_without_erroring`). The
+  narrowing is **per rule, not all-or-nothing**: with two rules each scoped to
+  their own file and only one changed, the changed rule is judged while the other
+  is skipped in the same run (`diff_narrowing_is_per_rule_not_all_or_nothing`).
+  Without `--diff` no diff renders even in a git repo with pending changes. Diffs are
+  **scoped to
   each judge run's files** — a rule scoped to `src/a.rs` sees only `a.rs`'s diff,
   never a sibling rule's `b.rs`. `--cwd` is the git root (the work tree can live
   in a subdir the process cwd is not). The backend is selected behind a
@@ -137,14 +150,16 @@ logic is also covered hermetically via `file://` plugins.
   clap usage error (exit 2) listing valid values, and `--diff git` outside a git
   work tree is a clear exit-2 `diff (git): …` error (never a silent "nothing
   changed"). An unborn HEAD (no commit) falls back to a `--cached` diff instead
-  of fataling. Backend internals (only-changed-files, the `--cached` fallback,
+  of fataling. `restrict_to_changed` (the changed-file narrowing) is unit-tested in
+  `commands::lint`; backend internals (only-changed-files, the `--cached` fallback,
   the non-repo/bare-repo/missing-git errors, `provider` dispatch) are also
   unit-tested in `io::diff`.
 - `--diff-base <REF>` compares against a chosen git revision instead of `HEAD`:
   with a baseline on `main` and a committed change on a feature branch (a clean
   worktree vs HEAD), `--diff --diff-base main` renders the branch's change in the
-  `## Changed lines` section, while plain `--diff` (default HEAD) renders no
-  section — proving the change surfaces *because* of the base, not by accident.
+  `## Changed lines` section, while plain `--diff` (default HEAD) sees nothing
+  changed and skips every rule with no harness call — proving the change surfaces
+  *because* of the base, not by accident.
   `--diff-base` without `--diff` is a clap usage error (exit 2 naming `--diff`),
   and an unknown ref is a clear exit-2 `diff (git): …` error (an explicit base is
   trusted, never silently falling back). Backend internals (named ref, `A..B`
@@ -153,7 +168,10 @@ logic is also covered hermetically via `file://` plugins.
   plain ref (includes the uncommitted worktree), a two-dot range (commit-to-commit,
   excludes the worktree), a three-dot range (merge-base, excludes the base
   branch's own commits), additions+deletions across files, per-rule diff scoping,
-  `--cwd` as the git root, and a base equal to the tip (no section).
+  `--cwd` as the git root, a base equal to the tip (nothing changed → every rule
+  skipped, no harness call), and the changed-file narrowing against a base (a file
+  unchanged vs `main` is dropped while the changed one is judged —
+  `diff_base_intersection_drops_files_unchanged_vs_the_base`).
 - A config `diff_base:` sets the default base for `--diff` without the flag: bare
   `--diff` reviews vs the configured branch, the `--diff-base` flag overrides the
   config value, and `diff_base` is inert without `--diff` (it only tunes the
