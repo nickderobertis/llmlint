@@ -3375,7 +3375,7 @@ fn system_prompt_is_delivered_by_file_not_inline() {
     );
     // The inline `--system` form is never used (it is what blows the argv limit).
     assert!(
-        !lines.iter().any(|l| *l == "--system"),
+        !lines.contains(&"--system"),
         "system prompt must not be passed inline via --system; got: {dumped}"
     );
 }

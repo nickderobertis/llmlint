@@ -179,8 +179,9 @@ done
 # clean). That deeper view is the only thing the verbose level adds, so capture
 # it as its own `view=debug` scene. It is plain text (no ANSI) and carries three
 # values that vary by machine/run: the mock binary path, the generated `--schema`
-# tempfile, and `--cwd`. Normalize all three to fixed placeholders so the bytes
-# (and hash) are identical on every machine — exactly as `config`'s path is.
+# and `--system-file` tempfiles, and `--cwd`. Normalize them all to fixed
+# placeholders so the bytes (and hash) are identical on every machine — exactly
+# as `config`'s path is.
 out="$tmp_state/lint-debug.ansi"
 ( cd "$fixture" \
     && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
@@ -190,6 +191,7 @@ sed -i \
   -e "s|$mock_bin|oneharness|g" \
   -e "s|$fixture|.|g" \
   -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
+  -e 's#/[^ ]*/llmlint-system-[A-Za-z0-9]*\.txt#/tmp/llmlint-system.txt#g' \
   "$out"
 render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
 
