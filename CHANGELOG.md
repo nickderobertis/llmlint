@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.18](https://github.com/nickderobertis/llmlint/compare/v0.3.17...v0.3.18) - 2026-07-11
+
+### Fixed
+
+- read fallback winner from fallback.ran, not results[0] ([#147](https://github.com/nickderobertis/llmlint/pull/147))
+
 ## [0.3.17](https://github.com/nickderobertis/llmlint/compare/v0.3.16...v0.3.17) - 2026-07-11
 
 ### Added
