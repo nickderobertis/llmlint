@@ -235,3 +235,19 @@ screenshots-bless: screenshots
     @command -v screencomp >/dev/null || { echo "screencomp not installed: https://github.com/nickderobertis/screencomp#install" >&2; exit 1; }
     screencomp manifest --input shots/current --output shots/baseline/$(uname -m | sed 's/amd64/x86_64/;s/aarch64/arm64/').json
     @echo "baseline refreshed; commit shots/baseline/ + docs/screenshots/"
+
+# Install/refresh the optional llmlint toolchain. Idempotent.
+setup-llmlint:
+    ./scripts/setup-llmlint.sh
+
+# Optional LLM-as-judge lint; non-deterministic and out of `check`.
+lint-llm *paths:
+    llmlint {{paths}}
+
+# Deterministic llmlint config/ignore/version-bump validation.
+lint-llm-validate *args:
+    PATH="$HOME/.local/bin:$PATH" llmlint validate {{args}}
+
+# llmlint scoped to changed files since the merge-base with main.
+lint-llm-diff base="origin/main" *args:
+    llmlint --diff --diff-base "{{base}}" {{args}}
