@@ -17,7 +17,10 @@
 # of the CLI's target files.
 #
 # `version` is the published plugin version consumers pin with `@` (e.g. `@1`).
-version: 1
+# A minor bump (new rule, backward-compatible) still satisfies an existing `@1`
+# pin, so consumers pick it up with no pin change; bump the major only on an
+# incompatible change (see AGENTS.md).
+version: 1.1
 
 # Every check localizes its findings to the offending rule (require_line_attribution:
 # true) — a config-lint violation always points at a concrete file + line, which is
