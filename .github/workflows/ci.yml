@@ -44,7 +44,7 @@ jobs:
       # `just check` already built, so it adds no compile.
       - name: Versioned configs bumped vs the PR base
         if: github.event_name == 'pull_request'
-        run: just check-version-bump base=${{ github.event.pull_request.base.sha }}
+        run: just check-version-bump ${{ github.event.pull_request.base.sha }}
 
   # Prove the artifact builds and its tests pass on macOS and Windows (without
   # the coverage threshold, which is enforced on Linux).

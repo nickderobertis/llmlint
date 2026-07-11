@@ -87,10 +87,10 @@ doc:
 # (`assets/config_lint.yml`, which no standard config glob matches, so it is named
 # explicitly). Fails if it changed vs the base without a `version:` bump. Out of
 # `check`: it needs a base ref (default `origin/main`, the PR base) and network to
-# resolve it, so CI runs it against the PR base. Override with `just
-# check-version-bump base=<ref>`.
+# resolve it, so CI runs it against the PR base. The base is a positional arg —
+# override it with `just check-version-bump <ref>`.
 check-version-bump base="origin/main":
-    cargo run --locked --quiet -- check-version-bump assets/config_lint.yml --diff-base {{base}}
+    cargo run --locked --quiet --bin llmlint -- check-version-bump assets/config_lint.yml --diff-base {{base}}
 
 # Advisory + license audit and unused-dependency check. Separate from `check`:
 # `cargo deny` needs a network-fetched advisory DB.
