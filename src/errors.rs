@@ -91,6 +91,13 @@ pub enum Error {
     )]
     IgnoreDirective(String),
 
+    #[error(
+        "versioned config file(s) changed without a version bump:\n{0}\n\
+         bump each file's top-level `version:` so consumers pinning it (e.g. `@1`) \
+         see the change"
+    )]
+    VersionBump(String),
+
     #[error("{0}")]
     ConfigPathNotFound(String),
 
@@ -185,6 +192,12 @@ mod tests {
         assert!(Error::IgnoreDirective("src/a.rs:3: no reason".into())
             .to_string()
             .contains("invalid `llmlint: ignore` directive"));
+        let bump = Error::VersionBump("  config_lint.yml".into()).to_string();
+        assert!(
+            bump.contains("changed without a version bump"),
+            "got: {bump}"
+        );
+        assert!(bump.contains("config_lint.yml"), "got: {bump}");
         assert!(Error::UnknownFilter("no rule named \"x\"".into())
             .to_string()
             .contains("no rule named"));

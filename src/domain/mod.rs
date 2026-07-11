@@ -18,6 +18,7 @@ pub mod schema;
 pub mod template;
 pub mod verdict;
 pub mod version;
+pub mod versionbump;
 pub mod vote;
 
 /// Render a (relative) path with forward slashes so the prompt the judge sees —

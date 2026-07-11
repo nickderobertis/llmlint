@@ -726,6 +726,12 @@ URL is fetched every run.
 The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
 `LLMLINT_CACHE_DIR`). Set `LLMLINT_PLUGIN_REFRESH=1` to force a refetch.
 
+Because a pinned `@1` reuses the cache across versions, **a plugin author must
+bump the config's `version:` whenever its rules change** — otherwise consumers
+silently keep behavior under a stale pin. [`llmlint check-version-bump`](#commands--exit-codes)
+guards exactly this: run it in CI to fail a change to a versioned config that
+didn't also bump its `version:`.
+
 ### Linting your llmlint configs
 
 llmlint ships with a **config-lint** rule set that lints llmlint config files
@@ -844,6 +850,24 @@ source.
   split out for the fast static-check loop: exit `0` when every directive is
   well-formed, exit `2` (located `file:line:`) on a typo'd / reason-less /
   unbalanced one.
+- `llmlint check-version-bump [FILES...]` — verify that every **versioned config**
+  (one declaring a top-level `version:`, i.e. a published [plugin](#plugins-shared-rule-sets)
+  consumers pin with `@`) that changed vs a base **also bumped its `version:`** —
+  **deterministically and with no model call**. Otherwise a consumer pinning `@1`
+  silently picks up new behavior under an unchanged version. It checks the
+  discovered llmlint config files, or the exact `FILES` you name (the way to guard
+  an oddly-named plugin config no standard glob matches). Compares against `HEAD`
+  unless you pass `--diff-base <REF>` (a branch/tag/commit/range, e.g.
+  `--diff-base main` to check what your branch changed) and `--diff <backend>`
+  (default `git`). A config with no `version:` is a clean no-op that never touches
+  git; exit `0` when every versioned config that changed was bumped, exit `2`
+  listing any that weren't.
+- `llmlint validate` — run **every deterministic, model-free check in one pass**:
+  config structure, `llmlint: ignore` directives, and version bumps. The fast
+  static gate for a project — it chains the standalone checks above through the
+  same code, so it never disagrees with running them one by one (`-c/--config`,
+  `--cwd`, `--diff-base`). Exit `0` when all pass, `2` on the first failure (which
+  names the offending check). The LLM-as-judge passes stay in `lint`/`lint-config`.
 - `llmlint lint-config [FILES...]` — lint llmlint config files with the bundled
   [config-lint](#linting-your-llmlint-configs) rules, without adding the plugin to
   your own config. It's the `lint` engine with that plugin forced on: it first

@@ -46,6 +46,20 @@ pub enum Command {
     /// static-check loop next to fmt/clippy.
     #[command(name = "check-ignores")]
     CheckIgnores(CheckIgnoresArgs),
+    /// Check that every versioned config file changed vs a base also bumped its
+    /// top-level `version:` (deterministic, no model call). A config that declares
+    /// a `version:` is a published plugin consumers pin with `@`; changing it
+    /// without a bump silently alters behavior under a fixed pin. Targets the
+    /// discovered llmlint config files, or the FILES you name (e.g. an oddly-named
+    /// plugin config). Compares against `HEAD` unless `--diff-base` is given.
+    #[command(name = "check-version-bump")]
+    CheckVersionBump(CheckVersionBumpArgs),
+    /// Run every deterministic, model-free check in one pass: config structure,
+    /// `llmlint: ignore` directives, and version bumps. The fast static gate for a
+    /// project — chains the standalone checks (`check-ignores`,
+    /// `check-version-bump`) through the same code, so it never disagrees with
+    /// running them one by one. The LLM-as-judge passes stay in `lint`.
+    Validate(ValidateArgs),
     /// Write a starter llmlint config file.
     Init(InitArgs),
     /// Print the effective merged config as JSON (add `--sources` to trace where
@@ -368,6 +382,62 @@ pub struct CheckIgnoresArgs {
     /// Directory to scan from (config discovery + glob root). Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct CheckVersionBumpArgs {
+    /// Versioned config files to check. When given, these exact files are checked
+    /// (each is only checked if it declares a top-level `version:`) — the way to
+    /// guard an oddly-named plugin config no standard glob matches. Omit to check
+    /// every discovered llmlint config file.
+    pub files: Vec<PathBuf>,
+
+    /// Directory to resolve config discovery + the diff from. Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+
+    /// Diff backend used to detect a change. Bare `--diff` (or omitting it) uses
+    /// `git`; pass a backend (`--diff git`) to choose one explicitly.
+    #[arg(
+        long = "diff",
+        value_name = "BACKEND",
+        num_args = 0..=1,
+        default_missing_value = "git",
+    )]
+    pub diff: Option<DiffBackend>,
+
+    /// Base the git backend compares against, instead of `HEAD`. Any git revision —
+    /// a branch, tag, commit, or `A..B`/`A...B` range — so `--diff-base main`
+    /// checks exactly what the current branch changed versus `main`. A plain ref
+    /// uses three-dot / merge-base semantics (like a PR's "Files changed").
+    #[arg(long = "diff-base", value_name = "REF")]
+    pub diff_base: Option<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ValidateArgs {
+    /// llmlint config file(s); repeatable. Replaces nested upward discovery.
+    #[arg(long = "config", short = 'c', value_name = "PATH")]
+    pub config: Vec<PathBuf>,
+
+    /// Directory to resolve config discovery + the diff from. Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+
+    /// Diff backend used by the version-bump check. Bare `--diff` (or omitting it)
+    /// uses `git`; pass a backend (`--diff git`) to choose one explicitly.
+    #[arg(
+        long = "diff",
+        value_name = "BACKEND",
+        num_args = 0..=1,
+        default_missing_value = "git",
+    )]
+    pub diff: Option<DiffBackend>,
+
+    /// Base the version-bump check's git backend compares against, instead of
+    /// `HEAD`. Any git revision — a branch, tag, commit, or `A..B`/`A...B` range.
+    #[arg(long = "diff-base", value_name = "REF")]
+    pub diff_base: Option<String>,
 }
 
 #[derive(Args, Debug, Default)]

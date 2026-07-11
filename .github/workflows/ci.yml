@@ -21,6 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the version-bump check below can diff the PR against
+          # its base (a shallow clone can't resolve the merge-base).
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, llvm-tools
@@ -32,6 +36,15 @@ jobs:
         run: just bootstrap
       - name: Full gate (fmt, clippy, tests + coverage, docs)
         run: just check
+      # Dogfood `check-version-bump` on llmlint's own versioned plugin
+      # (`assets/config_lint.yml`, which no standard config glob matches, so the
+      # recipe names it explicitly): fail the PR if it changed vs the base without a
+      # `version:` bump. Uses the PR base commit as the diff base (reachable in the
+      # full history fetched above); only meaningful on a PR. Reuses the artifacts
+      # `just check` already built, so it adds no compile.
+      - name: Versioned configs bumped vs the PR base
+        if: github.event_name == 'pull_request'
+        run: just check-version-bump ${{ github.event.pull_request.base.sha }}
 
   # Prove the artifact builds and its tests pass on macOS and Windows (without
   # the coverage threshold, which is enforced on Linux).

@@ -10,6 +10,8 @@ pub mod init;
 pub mod lint;
 pub mod lint_config;
 pub mod progress;
+pub mod validate;
+pub mod version_bump;
 pub mod where_;
 
 use crate::cli::{Cli, Command};
@@ -20,6 +22,8 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Lint(args)) => lint::run(args),
         Some(Command::LintConfig(args)) => lint_config::run(args),
         Some(Command::CheckIgnores(args)) => check_ignores::run(args),
+        Some(Command::CheckVersionBump(args)) => version_bump::run(args),
+        Some(Command::Validate(args)) => validate::run(args),
         Some(Command::Init(args)) => init::run(args),
         Some(Command::Config(args)) => config::run(args),
         Some(Command::Where(args)) => where_::run(args),
