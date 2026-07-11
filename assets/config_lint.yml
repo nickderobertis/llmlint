@@ -72,6 +72,22 @@ rules:
       deterministic and spends no judge tokens; `relevance` is reserved for
       conditions on a file's content or changes that a glob cannot express.
 
+  - name: description_omits_already_excluded_situations
+    files: *config_files
+    require_line_attribution: true
+    # Complement to `relevance_scopes_conditional_rules`: that rule catches a
+    # missing `relevance:` (an inline "or not applicable" that should be a
+    # condition); this one catches the inverse — a description restating behavior
+    # for a case the rule's own scope already excludes.
+    description: |
+      A lint rule's `description` specifies behavior only for situations the rule
+      actually evaluates, never stating a property, exception, or caveat for a case
+      its own `relevance:` condition or `files` scope already excludes (for example
+      a rule scoped by `files` to `*.py` adding "for Python files" or "non-Python
+      files are exempt", or one whose `relevance` gates a condition that the
+      description then repeats) — the excluded case never reaches the judge, so the
+      redundant clause only spends tokens and blurs the verdict.
+
   - name: description_and_relevance_are_concise
     files: *config_files
     require_line_attribution: true
