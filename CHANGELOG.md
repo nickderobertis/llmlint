@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.16](https://github.com/nickderobertis/llmlint/compare/v0.3.15...v0.3.16) - 2026-07-11
+
+### Added
+
+- config-lint rule for descriptions restating already-excluded cases ([#140](https://github.com/nickderobertis/llmlint/pull/140))
+
 ## [0.3.15](https://github.com/nickderobertis/llmlint/compare/v0.3.14...v0.3.15) - 2026-07-10
 
 ### Fixed
