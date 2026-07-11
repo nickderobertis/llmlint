@@ -699,6 +699,33 @@ fn config_lint_plugin_flags_relevance_where_files_globs_belong() {
 }
 
 #[test]
+fn config_lint_plugin_flags_description_restating_an_excluded_case() {
+    // The `description_omits_already_excluded_situations` check: a rule whose
+    // `description` re-specifies behavior for a case its own `files`/`relevance`
+    // scope already excludes is flagged.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!("version: 1\nplugins:\n  - {CONFIG_LINT}\n"),
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"description_omits_already_excluded_situations":
+              {"holds": false, "violations": [{"file": "llmlint.yml", "line": 3, "message": "description restates the files scope"}]}}"#,
+    );
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL description_omits_already_excluded_situations",
+        ))
+        .stdout(predicate::str::contains(
+            "description restates the files scope",
+        ));
+}
+
+#[test]
 fn lint_config_lints_a_config_without_the_plugin_declared() {
     // `lint-config` includes the bundled config-lint rules by default, so it
     // catches a bad rule in a config that never declared the plugin itself.

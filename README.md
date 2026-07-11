@@ -325,6 +325,12 @@ directory with no cascade.
 - **Scope a rule to the changes it applies to with `relevance`** (see below)
   instead of bolting "…or not applicable" onto the description — that keeps the
   true/false outcome clean and lets llmlint tell "didn't apply" apart from "true".
+- **Don't restate in the `description` what the scope already excludes.** Once a
+  rule is scoped by `files` or `relevance`, its `description` should speak only to
+  the situations it actually evaluates — a rule scoped to `*.py` needn't say "for
+  Python files", and one gated by `relevance` needn't repeat that condition. The
+  excluded case never reaches the judge, so the extra clause only spends tokens
+  and blurs the verdict. config-lint checks this too.
 - **Keep each `description` and `relevance` concise.** A judge call batches an
   agent's rules into one prompt, so tokens one bloated rule spends dilute every
   other rule in that batch. State the invariant in the fewest words that keep it
