@@ -495,6 +495,12 @@ logic is also covered hermetically via `file://` plugins.
   schema-invalid, missing-structured,
   unparseable, empty-results, and bad-verdict-shape oneharness output are
   surfaced (exit 2).
+- Fallback mode (issue #146): when oneharness runs a fallback chain and the
+  primary harness is skipped as unavailable (listed first in `results`), llmlint
+  reads the winner named in `fallback.ran` — not `results[0]` — so the run passes
+  (`LLMLINT_MOCK_FALLBACK`). When the whole chain failed (nothing ran), the error
+  names every attempted harness rather than one skipped harness's "no structured
+  output" (`LLMLINT_MOCK_FALLBACK` + `LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
 
 ## Live tier (`scripts/live-*.sh`)
 

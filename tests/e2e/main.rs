@@ -3541,6 +3541,38 @@ fn missing_structured_output_is_surfaced() {
 }
 
 #[test]
+fn fallback_run_reads_the_winner_not_the_skipped_first_harness() {
+    // Issue #146: in oneharness fallback mode the primary harness (codex) is
+    // skipped as unavailable and listed first in `results`, while the harness
+    // oneharness fell through to (claude-code) actually ran and answered. llmlint
+    // must read the winner named in `fallback.ran`, not the skipped `results[0]`
+    // — otherwise every fallback run in an environment missing the primary
+    // harness errors deterministically.
+    let p = lint_project();
+    p.lint()
+        .env("LLMLINT_MOCK_FALLBACK", "1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 rules: 1 passed"));
+}
+
+#[test]
+fn fallback_run_whole_chain_failed_reports_the_chain() {
+    // When a fallback run's every harness failed (nothing ran), the error names
+    // the whole chain rather than a single skipped harness's "no structured
+    // output". Here the primary is skipped and the fell-through harness also
+    // produces no structured output.
+    let p = lint_project();
+    p.lint()
+        .env("LLMLINT_MOCK_FALLBACK", "1")
+        .env("LLMLINT_MOCK_NO_STRUCTURED", "1")
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("fallback chain"))
+        .stdout(predicate::str::contains("codex"));
+}
+
+#[test]
 fn unparseable_oneharness_output_is_surfaced() {
     let p = lint_project();
     p.lint()

@@ -3,7 +3,9 @@
 //!
 //! This is the one genuinely-external boundary in llmlint. oneharness enforces
 //! and validates the JSON Schema itself (`--schema`), so the client only has to
-//! pass the schema/system/prompt and read `results[0].structured`.
+//! pass the schema/system/prompt and read the winning result's `structured`
+//! verdict — for a fallback run, the harness named in `fallback.ran`, not
+//! blindly `results[0]` (which may be a harness skipped as unavailable).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -142,10 +144,28 @@ pub struct RunRequest<'a> {
 struct Report {
     #[serde(default)]
     results: Vec<RunResult>,
+    /// Present only when oneharness ran in **fallback** mode: it names the
+    /// harness that actually produced the verdict (`ran`) and lists those that
+    /// fell through before it. In fallback mode `results` holds every *attempted*
+    /// harness in priority order, so `results[0]` may be one skipped as
+    /// unavailable — this block is the authority on which entry is the winner.
+    #[serde(default)]
+    fallback: Option<Fallback>,
+}
+
+#[derive(Deserialize)]
+struct Fallback {
+    /// The harness oneharness fell through to and ran (`None` if the whole chain
+    /// failed and nothing ran).
+    #[serde(default)]
+    ran: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct RunResult {
+    /// The harness this result is for; used to match the fallback winner.
+    #[serde(default)]
+    harness: Option<String>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -156,6 +176,14 @@ struct RunResult {
     schema_error: Option<String>,
     #[serde(default)]
     error: Option<String>,
+}
+
+impl RunResult {
+    /// True when this result produced a non-null structured verdict — i.e. the
+    /// harness actually ran and answered, not skipped/timed-out.
+    fn produced_output(&self) -> bool {
+        self.structured.as_ref().is_some_and(|v| !v.is_null())
+    }
 }
 
 impl Client {
@@ -381,11 +409,25 @@ fn parse_verdicts(capture: &Capture, harness: &str) -> Result<BTreeMap<String, R
         ))
     })?;
 
-    let result = report.results.into_iter().next().ok_or_else(|| {
-        Error::Oneharness(format!(
+    if report.results.is_empty() {
+        return Err(Error::Oneharness(format!(
             "oneharness returned no results for harness {harness}"
-        ))
-    })?;
+        )));
+    }
+
+    // Pick which result carries the verdict. For a single-harness run that is
+    // `results[0]`. In **fallback** mode oneharness runs harnesses in priority
+    // order and names the one that actually ran in `fallback.ran`, while
+    // `results` still lists every *attempted* harness (including any skipped as
+    // unavailable) in that order — so `results[0]` can be a skipped entry, not
+    // the winner (issue #146). Select the named winner; when the whole chain
+    // failed with nothing to select, report the entire chain rather than a
+    // single skipped harness's "no structured output".
+    let winner = select_winner_index(&report);
+    let result = match winner {
+        Some(i) => report.results.into_iter().nth(i).expect("index in range"),
+        None => return Err(fallback_chain_error(&report, harness)),
+    };
 
     if result.schema_valid == Some(false) {
         return Err(Error::Oneharness(format!(
@@ -412,6 +454,54 @@ fn parse_verdicts(capture: &Capture, harness: &str) -> Result<BTreeMap<String, R
     serde_json::from_value(structured).map_err(|e| {
         Error::Oneharness(format!("invalid verdict shape from harness {harness}: {e}"))
     })
+}
+
+/// Choose the index of the `results` entry that carries the run's verdict.
+///
+/// - **Non-fallback run** (no `fallback` block): a single result, so index 0.
+/// - **Fallback run:** oneharness names the harness it fell through to and ran
+///   in `fallback.ran`; select that entry. If the name can't be matched (or is
+///   absent), fall back to the first entry that actually produced structured
+///   output — the equivalent signal. Returns `None` only when a fallback chain
+///   left no successful harness, so the caller can report the whole chain.
+fn select_winner_index(report: &Report) -> Option<usize> {
+    let Some(fallback) = &report.fallback else {
+        // Single-harness run: the sole result is the verdict.
+        return (!report.results.is_empty()).then_some(0);
+    };
+    if let Some(ran) = fallback.ran.as_deref() {
+        if let Some(i) = report
+            .results
+            .iter()
+            .position(|r| r.harness.as_deref() == Some(ran))
+        {
+            return Some(i);
+        }
+    }
+    // No usable `fallback.ran`: the winner is the first harness that answered.
+    report.results.iter().position(RunResult::produced_output)
+}
+
+/// Build the error for a fallback run where no harness produced a verdict,
+/// naming every attempted harness and why it failed (status + error) so the
+/// message reflects the whole chain instead of a single skipped harness.
+fn fallback_chain_error(report: &Report, harness: &str) -> Error {
+    let chain: Vec<String> = report
+        .results
+        .iter()
+        .map(|r| {
+            let name = r.harness.as_deref().unwrap_or("?");
+            let status = r.status.as_deref().unwrap_or("?");
+            match r.error.as_deref() {
+                Some(e) if !e.is_empty() => format!("{name} ({status}: {e})"),
+                _ => format!("{name} ({status})"),
+            }
+        })
+        .collect();
+    Error::Oneharness(format!(
+        "all harnesses in the fallback chain failed for {harness}: {}",
+        chain.join(", ")
+    ))
 }
 
 /// Render `bin` + `args` as a single shell-quoted command line for display.
@@ -567,6 +657,111 @@ mod tests {
             client.check_min_version(),
             Err(Error::OneharnessNotFound(_))
         ));
+    }
+
+    /// Parse a report body and run it through the same extraction `run` uses.
+    fn verdicts_from(body: &Value) -> Result<BTreeMap<String, RuleVerdict>> {
+        let capture = Capture {
+            status: fake_status(0),
+            stdout: serde_json::to_vec(body).unwrap(),
+            stderr: Vec::new(),
+        };
+        parse_verdicts(&capture, "oneharness default")
+    }
+
+    /// A dummy successful exit status (any real process; we only use `.code()`).
+    fn fake_status(_code: i32) -> ExitStatus {
+        // `ExitStatus` has no public constructor; take a trivially-succeeding
+        // command's status. Portable across unix/windows.
+        #[cfg(unix)]
+        {
+            Command::new("true").status().unwrap()
+        }
+        #[cfg(windows)]
+        {
+            Command::new("cmd").args(["/C", "exit 0"]).status().unwrap()
+        }
+    }
+
+    fn ok_result(harness: &str) -> Value {
+        json!({
+            "harness": harness,
+            "status": "ok",
+            "exit_code": 0,
+            "structured": { "some_rule": { "holds": true } },
+            "schema_valid": true,
+        })
+    }
+
+    fn skipped_result(harness: &str) -> Value {
+        json!({
+            "harness": harness,
+            "status": "skipped",
+            "available": false,
+            "exit_code": null,
+            "structured": null,
+            "error": format!("`{harness}` not found on PATH; harness skipped."),
+        })
+    }
+
+    #[test]
+    fn fallback_run_reads_the_ran_winner_not_results_zero() {
+        // Issue #146: codex is skipped (results[0]) and claude-code ran. The
+        // top-level `fallback.ran` names the winner; its verdict must be used,
+        // not the skipped first entry.
+        let body = json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "fallback": { "ran": "claude-code",
+                          "fell_through": [{ "harness": "codex", "reason": "not-installed" }] },
+            "results": [skipped_result("codex"), ok_result("claude-code")],
+        });
+        let verdicts = verdicts_from(&body).expect("winner's verdict is used");
+        assert!(verdicts.contains_key("some_rule"));
+    }
+
+    #[test]
+    fn fallback_run_all_failed_reports_the_whole_chain() {
+        // Every harness fell through: the error names the chain, not a single
+        // skipped harness's "no structured output".
+        let body = json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "fallback": { "ran": null,
+                          "fell_through": [{ "harness": "codex", "reason": "not-installed" }] },
+            "results": [skipped_result("codex"), skipped_result("claude-code")],
+        });
+        let err = verdicts_from(&body).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("fallback chain"), "chain-aware message: {msg}");
+        assert!(
+            msg.contains("codex") && msg.contains("claude-code"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn non_fallback_run_still_uses_results_zero() {
+        // No `fallback` block: the single result is the verdict, unchanged.
+        let body = json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "results": [ok_result("claude-code")],
+        });
+        assert!(verdicts_from(&body).unwrap().contains_key("some_rule"));
+    }
+
+    #[test]
+    fn fallback_without_ran_name_picks_first_harness_that_answered() {
+        // A defensive path: the `ran` name is absent, so the winner is the first
+        // entry that produced structured output.
+        let body = json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "fallback": { "fell_through": [{ "harness": "codex", "reason": "not-installed" }] },
+            "results": [skipped_result("codex"), ok_result("claude-code")],
+        });
+        assert!(verdicts_from(&body).unwrap().contains_key("some_rule"));
     }
 
     #[test]

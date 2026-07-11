@@ -171,6 +171,16 @@ harness reads target files on-demand with its own tools.
   in `src/io/oneharness.rs` (and the mock's default in
   `tests/support/mock_oneharness.rs`) together when the floor moves.
 
+- **Fallback-winner selection (convention):** in oneharness **fallback** mode the
+  `results` array lists every *attempted* harness in priority order — so
+  `results[0]` may be one skipped as unavailable, not the one that ran. llmlint
+  reads the verdict from the harness oneharness names in the top-level
+  `fallback.ran` (falling back to the first `results` entry that produced
+  structured output), never blindly `results[0]` (`select_winner_index` in
+  `src/io/oneharness.rs`). A non-fallback run has one result, so `results[0]` still
+  wins. Only when a whole chain left no successful harness does llmlint error, and
+  then the message names the entire chain (`fallback_chain_error`) rather than a
+  single skipped harness's "no structured output".
 - **Verdict polarity (convention):** rules are authored as positive invariants.
   `holds=true` = property holds (pass); `holds=false` = **violation** (fail).
   llmlint exits non-zero when any rule's final verdict is `false`.

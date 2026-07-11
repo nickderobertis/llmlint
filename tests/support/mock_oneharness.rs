@@ -14,6 +14,10 @@
 //! - `LLMLINT_MOCK_FAIL_SCHEMA=1` — emit `schema_valid=false` (validation fail).
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
+//! - `LLMLINT_MOCK_FALLBACK=1` — emit a **fallback**-shaped report: a skipped
+//!   `codex` entry listed first in `results`, the real verdict from the harness
+//!   fell through to, and a top-level `fallback.ran` naming that winner (the
+//!   issue-#146 scenario — llmlint must read the winner, not `results[0]`).
 //! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
 //!   (default `0.3.12`), so a test can drive llmlint's minimum-version gate.
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
@@ -312,11 +316,49 @@ fn main() {
         })
     };
 
-    let report = json!({
-        "schema_version": "0.1",
-        "oneharness_version": "mock",
-        "results": [result],
-    });
+    // `LLMLINT_MOCK_FALLBACK=1` reproduces oneharness fallback mode (issue #146):
+    // the primary harness (`codex`) is skipped as unavailable and listed *first*
+    // in `results`, while the real verdict comes from the harness oneharness fell
+    // through to (`result`, above). The top-level `fallback.ran` names that
+    // winner. A correct llmlint reads the winner, not the skipped `results[0]`.
+    let report = if flag("LLMLINT_MOCK_FALLBACK") {
+        let winner = arg_value(&args, "--harness").unwrap_or_else(|| "claude-code".into());
+        let skipped = json!({
+            "harness": "codex",
+            "status": "skipped",
+            "available": false,
+            "exit_code": null,
+            "structured": null,
+            "schema_valid": null,
+            "schema_attempts": null,
+            "schema_error": null,
+            "error": "`codex` not found on PATH; harness skipped. Install it: npm install -g @openai/codex",
+        });
+        // `fallback.ran` names a harness only when one actually produced a
+        // verdict; if the fell-through harness also failed (no structured output)
+        // the whole chain failed and nothing ran.
+        let produced_output = result.get("structured").is_some_and(|s| !s.is_null());
+        let ran = if produced_output {
+            Value::String(winner)
+        } else {
+            Value::Null
+        };
+        json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "fallback": {
+                "ran": ran,
+                "fell_through": [{ "harness": "codex", "reason": "not-installed" }],
+            },
+            "results": [skipped, result],
+        })
+    } else {
+        json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "results": [result],
+        })
+    };
     println!("{}", serde_json::to_string(&report).unwrap());
 
     // A real run exits 0 on ok/skipped, 1 otherwise; mirror that loosely.
