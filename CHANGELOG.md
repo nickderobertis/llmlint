@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.17](https://github.com/nickderobertis/llmlint/compare/v0.3.16...v0.3.17) - 2026-07-11
+
+### Added
+
+- add check-version-bump and validate static checks ([#143](https://github.com/nickderobertis/llmlint/pull/143))
+
 ## [0.3.16](https://github.com/nickderobertis/llmlint/compare/v0.3.15...v0.3.16) - 2026-07-11
 
 ### Added
