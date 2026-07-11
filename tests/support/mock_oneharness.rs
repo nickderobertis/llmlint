@@ -18,6 +18,12 @@
 //!   `codex` entry listed first in `results`, the real verdict from the harness
 //!   fell through to, and a top-level `fallback.ran` naming that winner (the
 //!   issue-#146 scenario — llmlint must read the winner, not `results[0]`).
+//!   Combined with `LLMLINT_MOCK_NO_STRUCTURED`, the fell-through harness also
+//!   fails, so `ran` is null (the whole chain failed). Combines with
+//!   `LLMLINT_MOCK_VERDICTS` so the winner's verdict content flows through.
+//! - `LLMLINT_MOCK_FALLBACK_NO_RAN=1` — with `LLMLINT_MOCK_FALLBACK`, omit the
+//!   `fallback.ran` name even on success, so llmlint must fall back to the first
+//!   `results` entry that produced structured output.
 //! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
 //!   (default `0.3.12`), so a test can drive llmlint's minimum-version gate.
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
@@ -336,9 +342,11 @@ fn main() {
         });
         // `fallback.ran` names a harness only when one actually produced a
         // verdict; if the fell-through harness also failed (no structured output)
-        // the whole chain failed and nothing ran.
+        // the whole chain failed and nothing ran. `LLMLINT_MOCK_FALLBACK_NO_RAN`
+        // drops the name even on success, exercising llmlint's defensive
+        // "first result that answered" path.
         let produced_output = result.get("structured").is_some_and(|s| !s.is_null());
-        let ran = if produced_output {
+        let ran = if produced_output && !flag("LLMLINT_MOCK_FALLBACK_NO_RAN") {
             Value::String(winner)
         } else {
             Value::Null
