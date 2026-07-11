@@ -83,6 +83,15 @@ test-e2e:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features {{FEATURES}}
 
+# Dogfood the version-bump check on llmlint's own versioned plugin
+# (`assets/config_lint.yml`, which no standard config glob matches, so it is named
+# explicitly). Fails if it changed vs the base without a `version:` bump. Out of
+# `check`: it needs a base ref (default `origin/main`, the PR base) and network to
+# resolve it, so CI runs it against the PR base. Override with `just
+# check-version-bump base=<ref>`.
+check-version-bump base="origin/main":
+    cargo run --locked --quiet -- check-version-bump assets/config_lint.yml --diff-base {{base}}
+
 # Advisory + license audit and unused-dependency check. Separate from `check`:
 # `cargo deny` needs a network-fetched advisory DB.
 deps-check:

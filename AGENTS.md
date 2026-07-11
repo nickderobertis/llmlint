@@ -73,6 +73,10 @@ Use the `just` recipes; do not hand-roll equivalents.
   `cargo doc`. Must pass before any commit or PR.
 - `just test` / `just test-e2e` / `just lint` / `just format` — individual steps.
 - `just upgrade` — update dependencies, then re-run `just check`.
+- `just check-version-bump [base=origin/main]` — dogfood `check-version-bump` on
+  llmlint's own versioned plugin (`assets/config_lint.yml`), failing if it changed
+  vs the base without a `version:` bump. Out of `check` (it needs a base ref +
+  network to resolve it); CI runs it against the PR base.
 - `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
@@ -478,10 +482,34 @@ harness reads target files on-demand with its own tools.
   is a clean zero-rule run, not a `ConfigNotFound`. `--config` replaces the whole
   walk with no cascade (`load_explicit`, globs rooted at `cwd`).
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
-  `lint-config`, `init`, `config` (`--sources` adds per-item provenance), `where`
-  (locate one config item's source), `doctor`, `history` (inspect logged run
-  results). `commands/ignores.rs` holds the ignore-directive resolution + scan
-  shared by `lint`, `check-ignores`, and `lint-config`.
+  `check-version-bump`, `validate`, `lint-config`, `init`, `config` (`--sources`
+  adds per-item provenance), `where` (locate one config item's source), `doctor`,
+  `history` (inspect logged run results). `commands/ignores.rs` holds the
+  ignore-directive resolution + scan shared by `lint`, `check-ignores`, and
+  `lint-config`.
+- **Deterministic (model-free) checks + `validate`:** llmlint's static checks —
+  config structure (`domain::config::validate`, at load), inline `llmlint: ignore`
+  directive structure (`check-ignores`), and **version bumps**
+  (`check-version-bump`) — each have a standalone command that spends **no** model
+  or oneharness call, and **`llmlint validate`** (`commands/validate.rs`) runs all
+  three in one pass — the fast static gate that sits next to fmt/clippy.
+  `validate` routes each step through the *same* shared function the standalone
+  command uses, so it can never disagree with running them one by one.
+  **`check-version-bump`** (`commands/version_bump.rs` + the pure
+  `domain::versionbump`) enforces that a **versioned config** (one declaring a
+  top-level `version:`, i.e. a published plugin consumers pin with `@`) that
+  changed vs a base **also bumped its `version:`** — otherwise a consumer silently
+  gets new behavior under a fixed pin. It decides from a file's own text (does it
+  declare a version?) and its unified diff (was the top-level `version:` line
+  changed to a different value, or newly added?) alone, reusing the same
+  backend-agnostic `io::diff` provider `lint --diff` uses (default base `HEAD`;
+  `--diff-base <REF>` for a branch/tag/commit/range). Its target set is the
+  discovered llmlint config files, **or** the explicit `FILES` named on the command
+  line — the escape hatch for an oddly-named plugin config no standard glob matches
+  (e.g. this repo's own `assets/config_lint.yml`; guard it with `just
+  check-version-bump`, which diffs it against the PR base). A project with no
+  versioned config never needs a git work tree; a versioned config with no repo is
+  a clear exit-2 `Diff` error, never a silent pass.
 - **Results logging** is a session setting (`history:` — `enabled`/`max_runs`/`dir`,
   default on / last 100 / platform **data** dir). `lint::run_loaded` writes each
   completed run's full results (the pure `Report` JSON plus run metadata) as one

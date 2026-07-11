@@ -79,6 +79,18 @@ logic is also covered hermetically via `file://` plugins.
   by a real run where an override bumps `judges` 1 → 3 and three judges execute.
   A duplicate rule name *without* `override`, and an `override` with no base rule
   to extend, are each clear exit-2 errors.
+- `check-version-bump` (deterministic, model-free) flags a versioned config that
+  changed vs a base without bumping its `version:`: an unchanged config passes; a
+  content edit that keeps the same version is an exit-2 error naming the file; the
+  same edit *with* a version bump passes. A config that declares no `version:` is a
+  clean no-op that never touches git; a versioned config with no git work tree is a
+  clear exit-2 `diff (git)` error. An oddly-named plugin config (no standard glob
+  matches it) is guarded by naming it explicitly and diffing against a base branch,
+  where the default discovery is a no-op for it.
+- `validate` chains the deterministic checks (config structure, ignore directives,
+  version bumps) in one pass: a clean project passes; a malformed ignore directive
+  and an un-bumped versioned config each fail the whole gate (exit 2), routed
+  through the same code as the standalone commands so they can't disagree.
 - YAML anchors, `<<` merge keys, and `x-` stash keys resolve end to end: an
   aliased anchor reaches the rendered prompt and a merged field reaches oneharness.
 - A custom top-level `prompt_template` drives the prompt, and an agent's

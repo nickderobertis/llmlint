@@ -88,6 +88,21 @@ impl Project {
         c.arg("check-ignores");
         c
     }
+    /// `check-version-bump`: the deterministic "changed versioned config must bump
+    /// its `version`" check, wired with no `--oneharness-bin` (it never spawns a
+    /// harness) so a green run proves the check is model-free.
+    fn check_version_bump(&self) -> Command {
+        let mut c = self.bare();
+        c.arg("check-version-bump");
+        c
+    }
+    /// `validate`: run every deterministic, model-free check in one pass. No
+    /// `--oneharness-bin` — it never reaches a harness.
+    fn validate(&self) -> Command {
+        let mut c = self.bare();
+        c.arg("validate");
+        c
+    }
     /// `lint-config`: the `lint` engine with the bundled config-lint plugin forced
     /// on (no project config needed), wired to the mock harness.
     fn lint_config(&self) -> Command {
@@ -2606,6 +2621,171 @@ fn diff_base_from_config_is_inert_without_diff() {
     let system = fs::read_to_string(&dump).unwrap();
     assert!(!system.contains("```diff"), "system:\n{system}");
     assert!(system.contains("- src/a.rs"), "system:\n{system}");
+}
+
+// ---- check-version-bump / validate (deterministic, model-free) ------------
+
+/// A git repo whose committed baseline is a versioned config (`version: 1`) plus
+/// a source file, so a test can edit afterward and diff against `HEAD`. Reuses the
+/// `--diff` helpers (`init_repo`, `git`).
+fn versioned_repo(config: &str) -> Project {
+    let p = Project::new();
+    p.write("llmlint.yml", config);
+    p.write("src/a.rs", "fn a() {}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p
+}
+
+const VERSIONED_CONFIG: &str = "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"true when ok; false otherwise.\"\n";
+
+#[test]
+fn version_bump_ok_when_the_config_is_unchanged() {
+    let p = versioned_repo(VERSIONED_CONFIG);
+    // Nothing changed vs HEAD: the versioned config is fine, and the check never
+    // spends a model call (no `--oneharness-bin` wired).
+    p.check_version_bump()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("versioned configs OK"));
+}
+
+#[test]
+fn version_bump_fails_when_a_versioned_config_changes_without_a_bump() {
+    let p = versioned_repo(VERSIONED_CONFIG);
+    // Change the config's content but leave `version: 1` as-is.
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"a reworded description.\"\n",
+    );
+    p.check_version_bump()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("changed without a version bump"))
+        .stderr(predicate::str::contains("llmlint.yml"));
+}
+
+#[test]
+fn version_bump_passes_when_the_version_is_bumped_alongside_the_change() {
+    let p = versioned_repo(VERSIONED_CONFIG);
+    // Same content edit as the failing case, but this time the version is bumped.
+    p.write(
+        "llmlint.yml",
+        "version: 2\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"a reworded description.\"\n",
+    );
+    p.check_version_bump().assert().success();
+}
+
+#[test]
+fn version_bump_ignores_a_config_that_declares_no_version() {
+    // A config with no `version:` is not a published plugin — there is nothing to
+    // bump, so changing it is fine and the check never needs a git work tree.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "rules:\n  - name: r\n    description: \"true when ok; false otherwise.\"\n",
+    );
+    // No `git init` at all: a no-op check must not fail for lack of a repo.
+    p.check_version_bump()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 file(s) checked"));
+}
+
+#[test]
+fn version_bump_without_a_git_repo_but_with_a_versioned_config_is_a_clear_error() {
+    // A versioned config with no repo can't be diffed, so the check fails up front
+    // (exit 2) rather than silently passing.
+    let p = Project::new();
+    p.write("llmlint.yml", VERSIONED_CONFIG);
+    p.check_version_bump()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("diff (git)"));
+}
+
+#[test]
+fn version_bump_guards_an_oddly_named_plugin_by_explicit_path_against_a_base() {
+    // A plugin config no standard glob matches (`plugin_thing.yml`) is guarded by
+    // naming it explicitly. It exists on `main`, then changes on a branch without a
+    // bump — flagged when diffed against `main`.
+    let p = Project::new();
+    p.write(
+        "plugin_thing.yml",
+        "version: 5\nrules:\n  - name: x\n    description: \"true when ok.\"\n",
+    );
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write(
+        "plugin_thing.yml",
+        "version: 5\nrules:\n  - name: x\n    description: \"changed on the branch.\"\n",
+    );
+    git(p.path(), &["commit", "-qam", "change"]);
+
+    // Default discovery does not match the oddly-named file, so it is a clean no-op.
+    p.check_version_bump()
+        .arg("--diff-base")
+        .arg("main")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 file(s) checked"));
+    // Named explicitly, it is checked and flagged.
+    p.check_version_bump()
+        .arg("plugin_thing.yml")
+        .arg("--diff-base")
+        .arg("main")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("plugin_thing.yml"));
+}
+
+#[test]
+fn validate_chains_the_static_checks_and_passes_a_clean_project() {
+    let p = versioned_repo(VERSIONED_CONFIG);
+    p.validate()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("static checks passed"));
+}
+
+#[test]
+fn validate_fails_on_an_unbumped_versioned_config() {
+    // `validate` routes the version-bump step through the same code as the
+    // standalone command, so an un-bumped change fails the whole gate.
+    let p = versioned_repo(VERSIONED_CONFIG);
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"reworded.\"\n",
+    );
+    p.validate()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("changed without a version bump"));
+}
+
+#[test]
+fn validate_fails_on_a_structurally_invalid_config() {
+    // The structural check is the first link in the chain: a duplicate rule name
+    // (without `override`) fails `validate` before the ignore or version-bump steps.
+    let p = versioned_repo(
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: dup\n    description: \"a.\"\n  - name: dup\n    description: \"b.\"\n",
+    );
+    p.validate().assert().code(2);
+}
+
+#[test]
+fn validate_fails_on_a_malformed_ignore_directive() {
+    // The ignore-structure check is chained too: a reason-less `llmlint: ignore`
+    // fails `validate` (exit 2) before any version-bump concern.
+    let p = versioned_repo(VERSIONED_CONFIG);
+    p.write("src/a.rs", "fn a() {} // llmlint: ignore[r]\n");
+    p.validate()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("llmlint: ignore"));
 }
 
 // ---- filters --------------------------------------------------------------
