@@ -96,7 +96,12 @@ logic is also covered hermetically via `file://` plugins.
   a malformed ignore directive, and an un-bumped versioned config each fail the whole
   gate (exit 2), routed through the same code as the standalone commands so they
   can't disagree. It threads `--diff-base` into the version-bump step and accepts an
-  explicit `-c <config>` (the no-discovery load path).
+  explicit `-c <config>` (the no-discovery load path). Its file selection mirrors the
+  `lint` command: explicit `FILES` narrow every check (the ignore scan skips an
+  un-named file's malformed directive; the version-bump step checks only the named
+  files), and `--diff` restricts the ignore scan to the changed files — a malformed
+  directive in an unchanged file is out of scope and passes, but re-enters scope (and
+  fails) once that file changes.
 - YAML anchors, `<<` merge keys, and `x-` stash keys resolve end to end: an
   aliased anchor reaches the rendered prompt and a merged field reaches oneharness.
 - A custom top-level `prompt_template` drives the prompt, and an agent's

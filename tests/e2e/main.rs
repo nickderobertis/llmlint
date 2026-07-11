@@ -2922,6 +2922,94 @@ fn validate_accepts_an_explicit_config_path() {
         .stdout(predicate::str::contains("static checks passed"));
 }
 
+/// A non-versioned project (config globs `src/**`, one clean source file and one
+/// carrying a reason-less — malformed — `llmlint: ignore` directive). No git is
+/// needed: the non-versioned config makes the version-bump step a clean no-op.
+fn project_with_a_bad_ignore() -> Project {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "files:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"true when ok; false otherwise.\"\n",
+    );
+    p.write("src/good.rs", "fn g() {}\n");
+    p.write("src/bad.rs", "fn b() {} // llmlint: ignore[r]\n");
+    p
+}
+
+#[test]
+fn validate_narrows_the_ignore_scan_to_explicit_files() {
+    // Like a lint run, passing FILES narrows every check. The malformed directive
+    // lives in `src/bad.rs`, so the whole-project gate fails — but narrowing to the
+    // clean file scans only it and passes (the bad file is never looked at).
+    let p = project_with_a_bad_ignore();
+    p.validate()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("llmlint: ignore"));
+    p.validate()
+        .arg("src/good.rs")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("static checks passed"));
+}
+
+#[test]
+fn validate_diff_restricts_the_ignore_scan_to_changed_files() {
+    // `validate --diff` restricts the ignore scan to the changed files, exactly like
+    // `lint --diff`. The malformed directive is committed in an unchanged file, so a
+    // whole-project gate fails but `--diff` (nothing changed vs HEAD) scans nothing
+    // and passes; once that file is changed it re-enters scope and fails again —
+    // proving the restriction is real, not a blanket skip of the check.
+    let p = project_with_a_bad_ignore();
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+
+    // Whole project: the committed bad directive is scanned → fail.
+    p.validate()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("llmlint: ignore"));
+    // Nothing changed vs HEAD: the unchanged bad file is out of scope → clean pass.
+    p.validate()
+        .arg("--diff")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("static checks passed"));
+    // Change the bad file: it re-enters the changed set, so `--diff` scans it → fail.
+    p.write(
+        "src/bad.rs",
+        "fn b() {} // llmlint: ignore[r]\nfn b2() {}\n",
+    );
+    p.validate()
+        .arg("--diff")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("llmlint: ignore"));
+}
+
+#[test]
+fn validate_narrows_the_version_bump_check_to_explicit_files() {
+    // FILES narrow the version-bump step too. The versioned `llmlint.yml` changed
+    // without a bump, so the whole-project gate fails on it — but naming only the
+    // (version-less) source file checks nothing versioned and passes, proving the
+    // step is scoped to the passed files rather than the whole discovered set.
+    let p = versioned_repo(VERSIONED_CONFIG);
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"reworded.\"\n",
+    );
+    p.validate()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("changed without a version bump"));
+    p.validate()
+        .arg("src/a.rs")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("static checks passed"));
+}
+
 // ---- filters --------------------------------------------------------------
 
 #[test]

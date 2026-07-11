@@ -494,7 +494,15 @@ harness reads target files on-demand with its own tools.
   or oneharness call, and **`llmlint validate`** (`commands/validate.rs`) runs all
   three in one pass — the fast static gate that sits next to fmt/clippy.
   `validate` routes each step through the *same* shared function the standalone
-  command uses, so it can never disagree with running them one by one.
+  command uses, so it can never disagree with running them one by one. Its
+  **file-selection surface mirrors `lint`**: explicit `FILES` narrow every check
+  (relevance-gating the subtree cascade the same way — the ignore scan and the
+  version-bump candidate set both see only the passed files), and `--diff` restricts
+  the ignore-directive scan to the changed files (their intersection with the globs),
+  just like `lint --diff`; `--diff-base` (folded with a config `diff_base`, as in
+  `lint`) sets the base for both that restriction and the always-on version-bump
+  diff. Unlike `lint`, `--diff-base` does **not** require `--diff` (the version-bump
+  step diffs regardless).
   **`check-version-bump`** (`commands/version_bump.rs` + the pure
   `domain::versionbump`) enforces that a **versioned config** (one declaring a
   top-level `version:`, i.e. a published plugin consumers pin with `@`) that

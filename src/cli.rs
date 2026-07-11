@@ -416,6 +416,13 @@ pub struct CheckVersionBumpArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct ValidateArgs {
+    /// Files to validate. When given, narrows every check to these files (exactly
+    /// as a lint run does): the ignore-directive scan sees only them, and the
+    /// version-bump check treats them as its candidate set (the escape hatch for an
+    /// oddly-named plugin config no standard glob matches). Omitted: the whole
+    /// discovered project.
+    pub files: Vec<PathBuf>,
+
     /// llmlint config file(s); repeatable. Replaces nested upward discovery.
     #[arg(long = "config", short = 'c', value_name = "PATH")]
     pub config: Vec<PathBuf>,
@@ -424,8 +431,13 @@ pub struct ValidateArgs {
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
 
-    /// Diff backend used by the version-bump check. Bare `--diff` (or omitting it)
-    /// uses `git`; pass a backend (`--diff git`) to choose one explicitly.
+    /// Restrict the checks to the changed files, exactly as `lint --diff` does: the
+    /// ignore-directive scan covers only files that changed vs the base (their
+    /// intersection with the configured globs and any explicit FILES), so an empty
+    /// intersection is a clean pass. The version-bump check always diffs (that is
+    /// what it checks); this flag selects its backend too. Bare `--diff` (or
+    /// omitting it) uses `git`; pass a backend (`--diff git`) to choose one
+    /// explicitly.
     #[arg(
         long = "diff",
         value_name = "BACKEND",
@@ -434,8 +446,11 @@ pub struct ValidateArgs {
     )]
     pub diff: Option<DiffBackend>,
 
-    /// Base the version-bump check's git backend compares against, instead of
-    /// `HEAD`. Any git revision — a branch, tag, commit, or `A..B`/`A...B` range.
+    /// Base the diff is compared against, instead of `HEAD`. Any git revision — a
+    /// branch, tag, commit, or `A..B`/`A...B` range. Applies to both the `--diff`
+    /// ignore-scan restriction and the version-bump check; overrides a config
+    /// `diff_base`. Unlike `lint`, it does not require `--diff` (the version-bump
+    /// check diffs regardless).
     #[arg(long = "diff-base", value_name = "REF")]
     pub diff_base: Option<String>,
 }
