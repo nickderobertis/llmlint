@@ -2788,6 +2788,140 @@ fn validate_fails_on_a_malformed_ignore_directive() {
         .stderr(predicate::str::contains("llmlint: ignore"));
 }
 
+/// Two versioned plugin configs (both matched by the config-lint globs, so default
+/// discovery finds them), committed as the baseline so a test can edit and diff.
+fn two_versioned_configs() -> Project {
+    let p = Project::new();
+    p.write(
+        "a.llmlint.yml",
+        "version: 1\nrules:\n  - name: a\n    description: \"true when ok.\"\n",
+    );
+    p.write(
+        "b.llmlint.yml",
+        "version: 1\nrules:\n  - name: b\n    description: \"true when ok.\"\n",
+    );
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    p
+}
+
+#[test]
+fn version_bump_flags_only_the_changed_unbumped_config_among_several() {
+    // Default discovery finds both configs; only the one changed-without-a-bump is
+    // an offender — the bumped one is not named, proving per-file discrimination.
+    let p = two_versioned_configs();
+    p.write(
+        "a.llmlint.yml",
+        "version: 2\nrules:\n  - name: a\n    description: \"reworded.\"\n",
+    ); // bumped
+    p.write(
+        "b.llmlint.yml",
+        "version: 1\nrules:\n  - name: b\n    description: \"reworded.\"\n",
+    ); // not bumped
+    p.check_version_bump()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("b.llmlint.yml"))
+        .stderr(predicate::str::contains("a.llmlint.yml").not());
+}
+
+#[test]
+fn version_bump_lists_every_unbumped_config_in_one_error() {
+    // Both changed without a bump: the error batches both files, so one run surfaces
+    // every fix rather than failing on the first.
+    let p = two_versioned_configs();
+    p.write(
+        "a.llmlint.yml",
+        "version: 1\nrules:\n  - name: a\n    description: \"reworded a.\"\n",
+    );
+    p.write(
+        "b.llmlint.yml",
+        "version: 1\nrules:\n  - name: b\n    description: \"reworded b.\"\n",
+    );
+    p.check_version_bump()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("a.llmlint.yml"))
+        .stderr(predicate::str::contains("b.llmlint.yml"));
+}
+
+#[test]
+fn version_bump_passes_a_newly_added_versioned_config_against_a_base() {
+    // A brand-new versioned config (added on a branch, absent on `main`) is all
+    // additions vs the base — it introduces its version, so it is not "unbumped".
+    let p = Project::new();
+    p.write(
+        "root.llmlint.yml",
+        "version: 1\nrules:\n  - name: r\n    description: \"true when ok.\"\n",
+    );
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write(
+        "added.llmlint.yml",
+        "version: 1\nrules:\n  - name: n\n    description: \"true when ok.\"\n",
+    );
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "add plugin"]);
+    // The new file passes; the unchanged one passes; 2 versioned configs checked.
+    p.check_version_bump()
+        .arg("--diff-base")
+        .arg("main")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 file(s) checked"));
+}
+
+#[test]
+fn version_bump_skips_an_explicit_file_that_declares_no_version() {
+    // Naming a file with no `version:` explicitly is a clean no-op (nothing to
+    // bump) — it never becomes a false offender and never needs git.
+    let p = Project::new();
+    p.write(
+        "plain.yml",
+        "rules:\n  - name: r\n    description: \"true when ok.\"\n",
+    );
+    p.check_version_bump()
+        .arg("plain.yml")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 file(s) checked"));
+}
+
+#[test]
+fn validate_threads_diff_base_into_the_version_bump_step() {
+    // `validate`'s version-bump step honors `--diff-base`: a config changed on the
+    // branch without a bump fails when compared against `main`.
+    let p = versioned_repo(VERSIONED_CONFIG);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"changed on branch.\"\n",
+    );
+    git(p.path(), &["commit", "-qam", "change"]);
+    p.validate()
+        .arg("--diff-base")
+        .arg("main")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("changed without a version bump"));
+}
+
+#[test]
+fn validate_accepts_an_explicit_config_path() {
+    // `validate -c <path>` uses the explicit-config load path (no discovery) for the
+    // structural + ignore checks; a clean committed project passes.
+    let p = versioned_repo(VERSIONED_CONFIG);
+    p.validate()
+        .arg("-c")
+        .arg("llmlint.yml")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("static checks passed"));
+}
+
 // ---- filters --------------------------------------------------------------
 
 #[test]
