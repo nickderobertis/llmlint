@@ -77,8 +77,11 @@ logic is also covered hermetically via `file://` plugins.
   field it leaves unset (including `description`) and replacing only those it
   sets — asserted via the merged `config` dump, and proven to reach the planner
   by a real run where an override bumps `judges` 1 → 3 and three judges execute.
-  A duplicate rule name *without* `override`, and an `override` with no base rule
-  to extend, are each clear exit-2 errors.
+  An override with `relevance: false` **disables** an inherited plugin rule — it
+  is reported not relevant with no harness call, and a rule the plugin would
+  otherwise fail no longer reddens the build. A duplicate rule name *without*
+  `override`, and an `override` with no base rule to extend, are each clear exit-2
+  errors.
 - `check-version-bump` (deterministic, model-free) flags a versioned config that
   changed vs a base without bumping its `version:`: an unchanged config passes; a
   content edit that keeps the same version is an exit-2 error naming the file; the
