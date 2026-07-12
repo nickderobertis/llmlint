@@ -969,6 +969,39 @@ fn override_changes_the_actual_lint_run() {
 }
 
 #[test]
+fn override_with_relevance_false_disables_a_plugin_rule() {
+    // The documented way to turn a plugin's rule off: override it with
+    // `relevance: false`. The rule is disabled deterministically — reported not
+    // relevant with no harness call — even though the plugin would otherwise
+    // have it fail the build.
+    let p = Project::new();
+    p.write(
+        "team.yml",
+        &format!("rules:\n  - {{ name: unwanted_rule, description: \"{RULE}\" }}\n"),
+    );
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - ./team.yml\nrules:\n  \
+         - { name: unwanted_rule, override: true, relevance: false }\n",
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Were it evaluated, the plugin rule would fail — proving the pass comes
+    // from the override disabling it, not from a lucky verdict.
+    let verdicts = p.write_verdicts(r#"{"unwanted_rule": false}"#);
+    let runlog = p.path().join("runlog");
+
+    p.lint_v()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N/A unwanted_rule (not relevant)"))
+        .stdout(predicate::str::contains("1 not relevant"));
+    // The disabled rule never reached oneharness.
+    assert!(!runlog.exists() || fs::read_dir(&runlog).unwrap().count() == 0);
+}
+
+#[test]
 fn duplicate_rule_name_without_override_is_an_error() {
     let p = Project::new();
     p.write(

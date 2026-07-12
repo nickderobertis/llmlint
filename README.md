@@ -711,6 +711,18 @@ one base rule (the same name declared *without* `override`) for it to extend —
 do nothing. When several configs override the same base, the nearest-root
 override wins each field.
 
+To **disable** a plugin rule entirely, override it with `relevance: false` — it's
+then never evaluated (reported not relevant, no judge call) and can't fail the
+build:
+
+```yaml
+rules:
+  # Turn off a rule the plugin ships without editing the plugin.
+  - name: no_inline_sql
+    override: true
+    relevance: false
+```
+
 URL fetching is built in (a pure-Rust HTTPS client — no `curl` or other external
 tools, no system OpenSSL) and honors the standard `HTTP(S)_PROXY` / `NO_PROXY`
 env vars. The bundled config-lint plugin ships inside the binary and resolves
