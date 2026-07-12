@@ -359,10 +359,18 @@ harness reads target files on-demand with its own tools.
   one directory's config. A var name is the setting path uppercased, `.`→`_`,
   prefixed `LLMLINT_`; bools are `1/true/yes` vs `0/false/no` (case-insensitive); a
   malformed value is an exit-2 `Error::Env` **located to the variable**, never a
-  silent skip (validate at the boundary). `version` and the structured `files` set
-  are deliberately config-only. Reached by every command that reads the settings —
-  `lint`/`lint-config` (via `run_loaded`), `config`, `where`, `validate`; `history`
-  and `doctor` read the relevant env var directly. **Back-compat:** the canonical
+  silent skip (validate at the boundary). Only `version` is config-only. The
+  structured `files` setting is reported (and env-overridden) at **sub-field**
+  granularity — `files.include` / `files.exclude` are their own `SETTING_KEYS`
+  entries (like `oneharness.*` / `history.*`), so `where files.exclude` resolves and
+  each has its own `LLMLINT_FILES_*` var (a `PATH`-separated glob list). Their merge
+  differs by kind: **include replaces** (highest layer that sets it wins — positional
+  CLI files > env > config), **exclude accumulates** (config ∪ env ∪ `--exclude`), so
+  a per-run exclude never drops a config safety exclude. The `--exclude` flag exists
+  on `lint`/`lint-config` **and `validate`** (so the static ignore-scan sees the same
+  target set). Reached by every command that reads the settings — `lint`/`lint-config`
+  (via `run_loaded`), `config`, `where`, `validate`; `history` and `doctor` read the
+  relevant env var directly. **Back-compat:** the canonical
   `LLMLINT_HISTORY_ENABLED` supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch
   (honored in `history::resolve` only when the canonical var is unset);
   `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into

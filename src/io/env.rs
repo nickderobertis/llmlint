@@ -33,6 +33,8 @@ use crate::errors::{io_err, Error, Result};
 /// and `files` are intentionally absent — a published version and a structured
 /// include/exclude set are config-only (see issue #152).
 pub const ENV_SETTINGS: &[(&str, &str)] = &[
+    ("files.include", "LLMLINT_FILES_INCLUDE"),
+    ("files.exclude", "LLMLINT_FILES_EXCLUDE"),
     ("oneharness.config", "LLMLINT_ONEHARNESS_CONFIG"),
     ("oneharness.bin", "LLMLINT_ONEHARNESS_BIN"),
     ("oneharness.model", "LLMLINT_ONEHARNESS_MODEL"),
@@ -51,9 +53,20 @@ pub const ENV_SETTINGS: &[(&str, &str)] = &[
 
 /// Settings that are deliberately **not** env-overridable, kept as an explicit
 /// list so the drift test can assert the split is intentional rather than an
-/// omission.
+/// omission. Only `version` remains — a published plugin version is meaningful
+/// only in the file itself, never as a per-run env tweak.
 #[cfg(test)]
-const CONFIG_ONLY_SETTINGS: &[&str] = &["version", "files"];
+const CONFIG_ONLY_SETTINGS: &[&str] = &["version"];
+
+/// The separator for the list-valued `LLMLINT_FILES_*` env vars: the platform
+/// `PATH`-list separator (`:` on Unix, `;` on Windows), the convention users
+/// already know for multi-path env vars. Globs are forward-slash relative
+/// patterns, so they never contain it (unlike a comma, which brace-expansion
+/// `{a,b}` globs do).
+#[cfg(windows)]
+const LIST_SEP: char = ';';
+#[cfg(not(windows))]
+const LIST_SEP: char = ':';
 
 /// Apply the `LLMLINT_*` env overrides to `config`, discarding provenance. Used
 /// by the `lint`/`lint-config` engine, which reads only the effective config.
@@ -79,6 +92,23 @@ fn apply_from(
     prov: &mut Provenance,
     get: impl Fn(&str) -> Option<String>,
 ) -> Result<()> {
+    if let Some(v) = get("LLMLINT_FILES_INCLUDE") {
+        // The include set is a *selection*: the env layer replaces the config's
+        // globs (env wins over config), mirroring how explicit CLI files replace
+        // them. An empty (all-separators) value is rejected rather than silently
+        // selecting nothing.
+        let globs = parse_list("LLMLINT_FILES_INCLUDE", &v)?;
+        config.files.include = globs;
+        note(prov, "files.include", "LLMLINT_FILES_INCLUDE");
+    }
+    if let Some(v) = get("LLMLINT_FILES_EXCLUDE") {
+        // The exclude set is a *denylist*: layers accumulate (config ∪ env ∪ CLI)
+        // so an env exclude never silently drops a config safety exclude — the same
+        // additive, always-wins semantics as the `--exclude` flag.
+        let globs = parse_list("LLMLINT_FILES_EXCLUDE", &v)?;
+        config.files.exclude.extend(globs);
+        note(prov, "files.exclude", "LLMLINT_FILES_EXCLUDE");
+    }
     if let Some(v) = get("LLMLINT_ONEHARNESS_CONFIG") {
         // A single path, matching the single-file `--oneharness-config` / config
         // `oneharness.config` semantics (`resolve_oneharness_config` still warns
@@ -167,6 +197,26 @@ fn parse_int(var: &str, val: &str, min: u64) -> Result<u64> {
         });
     }
     Ok(n)
+}
+
+/// Split a `LIST_SEP`-separated glob list, trimming whitespace and dropping empty
+/// entries. Erroring (located to `var`) when nothing usable remains, so a
+/// set-but-empty `LLMLINT_FILES_*` is a clear boundary fault rather than a
+/// silent "select/exclude nothing".
+fn parse_list(var: &str, val: &str) -> Result<Vec<String>> {
+    let globs: Vec<String> = val
+        .split(LIST_SEP)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if globs.is_empty() {
+        return Err(Error::Env {
+            var: var.to_string(),
+            message: format!("expected one or more {LIST_SEP:?}-separated globs, got {val:?}"),
+        });
+    }
+    Ok(globs)
 }
 
 /// Parse a boolean using the documented grammar (`1`/`true`/`yes` vs
@@ -269,6 +319,47 @@ mod tests {
             prov.settings["history.max_runs"],
             "env:LLMLINT_HISTORY_MAX_RUNS"
         );
+    }
+
+    #[test]
+    fn files_include_replaces_and_exclude_unions() {
+        let sep = LIST_SEP;
+        let mut config = Config {
+            files: crate::domain::config::FileFilter {
+                include: vec!["config/**".to_string()],
+                exclude: vec!["**/config-ex.rs".to_string()],
+            },
+            ..Config::default()
+        };
+        let mut prov = Provenance::default();
+        apply(
+            &mut config,
+            &mut prov,
+            &[
+                ("LLMLINT_FILES_INCLUDE", &format!("a/**{sep}b/**")),
+                ("LLMLINT_FILES_EXCLUDE", "**/env-ex.rs"),
+            ],
+        )
+        .unwrap();
+        // include replaces the config globs; exclude unions onto them.
+        assert_eq!(config.files.include, vec!["a/**", "b/**"]);
+        assert_eq!(
+            config.files.exclude,
+            vec!["**/config-ex.rs", "**/env-ex.rs"]
+        );
+        assert_eq!(prov.settings["files.include"], "env:LLMLINT_FILES_INCLUDE");
+        assert_eq!(prov.settings["files.exclude"], "env:LLMLINT_FILES_EXCLUDE");
+    }
+
+    #[test]
+    fn empty_files_list_is_a_boundary_error() {
+        let mut config = Config::default();
+        let mut prov = Provenance::default();
+        let err = apply(&mut config, &mut prov, &[("LLMLINT_FILES_INCLUDE", "   ")]).unwrap_err();
+        match err {
+            Error::Env { var, .. } => assert_eq!(var, "LLMLINT_FILES_INCLUDE"),
+            other => panic!("expected Error::Env, got {other:?}"),
+        }
     }
 
     #[test]

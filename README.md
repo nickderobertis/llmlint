@@ -275,6 +275,8 @@ unset.
 
 | Setting | Env var | CLI flag | Notes |
 |---|---|---|---|
+| `files.include` | `LLMLINT_FILES_INCLUDE` | positional `FILES` | `PATH`-separated globs (`:`/`;`); **replaces** the config include set |
+| `files.exclude` | `LLMLINT_FILES_EXCLUDE` | `--exclude` (repeatable) | `PATH`-separated globs; **adds to** the config exclude denylist (never replaces it) |
 | `oneharness.model` | `LLMLINT_ONEHARNESS_MODEL` | `--model` | default judge model |
 | `oneharness.timeout` | `LLMLINT_ONEHARNESS_TIMEOUT` | `--timeout` | seconds, ≥ 1 |
 | `oneharness.schema_max_retries` | `LLMLINT_ONEHARNESS_SCHEMA_MAX_RETRIES` | `--schema-max-retries` | |
@@ -288,11 +290,15 @@ unset.
 | `history.dir` | `LLMLINT_HISTORY_DIR` | — | path |
 
 The env layer applies **process-wide**, after the nearest-wins config merge — it
-tunes the effective run, not any one directory's config. `version` and the
-structured `files` include/exclude set stay config-only. A value that came from an
-env var is reported as `env:<VAR>` by [`llmlint config --sources` and `llmlint
-where`](#finding-where-something-is-defined), so "where does this come from" stays
-honest.
+tunes the effective run, not any one directory's config. Two list-valued settings
+merge rather than replace wholesale: `files.include` is a **selection** (the
+highest layer that sets it wins — positional CLI files, else the env globs, else
+the config), while `files.exclude` is a **denylist** whose layers **accumulate**
+(config ∪ env ∪ `--exclude`) so a per-run override never silently drops a config
+safety exclude. Only `version` stays config-only. A value that came from an env var
+is reported as `env:<VAR>` by [`llmlint config --sources` and `llmlint
+where`](#finding-where-something-is-defined) (query the sub-fields precisely, e.g.
+`llmlint where files.exclude`), so "where does this come from" stays honest.
 
 ### Nested & per-directory configs
 

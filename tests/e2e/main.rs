@@ -6878,6 +6878,351 @@ fn env_history_enabled_true_supersedes_legacy_no_history() {
 }
 
 #[test]
+fn env_every_setting_is_folded_in_and_traced_to_its_variable() {
+    // One pass over the whole scheme: set every LLMLINT_* variable and assert the
+    // effective config carries each value (parsing + wiring) and `config --sources`
+    // attributes each to `env:<VAR>` (provenance). This is the per-setting
+    // value+provenance backbone; the targeted tests below prove the run wiring.
+    let p = Project::new();
+    // A config that sets values env should *override*, so the win is visible.
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: true\ndiff_base: config-base\n\
+             files:\n  include: [\"config/**\"]\n  exclude: [\"**/config-ex.rs\"]\n\
+             oneharness:\n  model: config-model\n  timeout: 11\n\
+             history:\n  enabled: false\n  max_runs: 3\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "tmpl.md",
+        "ENV_TMPL_MARKER {% for r in rules %}{{ r.name }}{% endfor %}",
+    );
+    let tmpl = p.path().join("tmpl.md");
+    let hist = p.path().join("env-hist");
+
+    let out = p
+        .bare()
+        .args(["config", "--sources"])
+        .env("LLMLINT_FILES_INCLUDE", "envinc/**")
+        .env("LLMLINT_FILES_EXCLUDE", "**/envexc.rs")
+        .env("LLMLINT_ONEHARNESS_CONFIG", "oh.toml")
+        .env("LLMLINT_ONEHARNESS_BIN", "/opt/oneharness")
+        .env("LLMLINT_ONEHARNESS_MODEL", "env-model")
+        .env("LLMLINT_ONEHARNESS_TIMEOUT", "321")
+        .env("LLMLINT_ONEHARNESS_SCHEMA_MAX_RETRIES", "4")
+        .env("LLMLINT_PROMPT_TEMPLATE", &tmpl)
+        .env("LLMLINT_RATIONALES", "no")
+        .env("LLMLINT_DIFF_BASE", "env-base")
+        .env("LLMLINT_HISTORY_ENABLED", "true")
+        .env("LLMLINT_HISTORY_MAX_RUNS", "9")
+        .env("LLMLINT_HISTORY_DIR", &hist)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let s = &v["sources"]["settings"];
+    let c = &v["config"];
+
+    // Provenance: every setting traces to its variable.
+    let expect_src = [
+        ("files.include", "env:LLMLINT_FILES_INCLUDE"),
+        ("files.exclude", "env:LLMLINT_FILES_EXCLUDE"),
+        ("oneharness.config", "env:LLMLINT_ONEHARNESS_CONFIG"),
+        ("oneharness.bin", "env:LLMLINT_ONEHARNESS_BIN"),
+        ("oneharness.model", "env:LLMLINT_ONEHARNESS_MODEL"),
+        ("oneharness.timeout", "env:LLMLINT_ONEHARNESS_TIMEOUT"),
+        (
+            "oneharness.schema_max_retries",
+            "env:LLMLINT_ONEHARNESS_SCHEMA_MAX_RETRIES",
+        ),
+        ("prompt_template", "env:LLMLINT_PROMPT_TEMPLATE"),
+        ("rationales", "env:LLMLINT_RATIONALES"),
+        ("diff_base", "env:LLMLINT_DIFF_BASE"),
+        ("history.enabled", "env:LLMLINT_HISTORY_ENABLED"),
+        ("history.max_runs", "env:LLMLINT_HISTORY_MAX_RUNS"),
+        ("history.dir", "env:LLMLINT_HISTORY_DIR"),
+    ];
+    for (key, src) in expect_src {
+        assert_eq!(s[key], src, "provenance for {key}");
+    }
+
+    // Value: the effective config carries each env value (env won over config).
+    assert_eq!(c["files"]["include"], serde_json::json!(["envinc/**"]));
+    // exclude accumulates: the config exclude is kept and the env one added.
+    assert_eq!(
+        c["files"]["exclude"],
+        serde_json::json!(["**/config-ex.rs", "**/envexc.rs"])
+    );
+    assert_eq!(c["oneharness"]["config"], serde_json::json!(["oh.toml"]));
+    assert_eq!(c["oneharness"]["bin"], "/opt/oneharness");
+    assert_eq!(c["oneharness"]["model"], "env-model");
+    assert_eq!(c["oneharness"]["timeout"], 321);
+    assert_eq!(c["oneharness"]["schema_max_retries"], 4);
+    assert!(
+        c["prompt_template"]
+            .as_str()
+            .unwrap()
+            .contains("ENV_TMPL_MARKER"),
+        "prompt_template should be the file contents"
+    );
+    assert_eq!(c["rationales"], false);
+    assert_eq!(c["diff_base"], "env-base");
+    assert_eq!(c["history"]["enabled"], true);
+    assert_eq!(c["history"]["max_runs"], 9);
+    assert!(c["history"]["dir"].as_str().unwrap().ends_with("env-hist"));
+
+    // `where` agrees on a sub-field query (the dotted files key resolves).
+    let out = p
+        .bare()
+        .args(["where", "files.exclude"])
+        .env("LLMLINT_FILES_EXCLUDE", "**/envexc.rs")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        "env:LLMLINT_FILES_EXCLUDE"
+    );
+}
+
+#[test]
+fn env_files_include_replaces_and_exclude_unions_in_the_target_set() {
+    // `LLMLINT_FILES_INCLUDE` replaces the config's include globs; `..._EXCLUDE`
+    // adds to the denylist. Both accept a PATH-separated list.
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/old.rs", "// replaced-away\n");
+    p.write("area/keep.rs", "// kept\n");
+    p.write("area/skip.rs", "// env-excluded\n");
+    p.write("extra/also.rs", "// second include\n");
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_FILES_INCLUDE", format!("area/**{sep}extra/**"))
+        .env("LLMLINT_FILES_EXCLUDE", "**/skip.rs")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("area/keep.rs"), "system:\n{system}");
+    assert!(
+        system.contains("extra/also.rs"),
+        "second include glob:\n{system}"
+    );
+    assert!(
+        !system.contains("old.rs"),
+        "config include should be replaced:\n{system}"
+    );
+    assert!(
+        !system.contains("skip.rs"),
+        "env exclude should drop it:\n{system}"
+    );
+}
+
+#[test]
+fn env_files_include_retargets_cwd_rules_but_not_a_subtree_rule() {
+    // `LLMLINT_FILES_INCLUDE` is a session-level override: it replaces the include
+    // for the cwd config's rules, but a subtree config's rule keeps its own
+    // directory-scoped globs (the override does not reach into the subtree).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"root/**\"]\nrules:\n  \
+             - {{ name: root_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "sub/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"*.txt\"]\nrules:\n  \
+             - {{ name: sub_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("root/a.rs", "// replaced away by the env include\n");
+    p.write("area/c.rs", "// the new cwd include target\n");
+    p.write("sub/b.txt", "text\n");
+    let verdicts = p.write_verdicts(r#"{"root_rule": true, "sub_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_FILES_INCLUDE", "area/**")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("area/c.rs"),
+        "cwd rule should target the env include:\n{system}"
+    );
+    assert!(
+        system.contains("sub/b.txt"),
+        "subtree rule keeps its own scope:\n{system}"
+    );
+    assert!(
+        !system.contains("root/a.rs"),
+        "the cwd config include should be replaced:\n{system}"
+    );
+}
+
+#[test]
+fn env_schema_max_retries_and_oneharness_config_are_forwarded() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+    let dump = p.path().join("args.txt");
+
+    p.lint()
+        .env("LLMLINT_ONEHARNESS_SCHEMA_MAX_RETRIES", "7")
+        .env("LLMLINT_ONEHARNESS_CONFIG", "oh.toml")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+
+    let args = fs::read_to_string(&dump).unwrap();
+    assert_eq!(
+        args.lines()
+            .skip_while(|l| *l != "--schema-max-retries")
+            .nth(1),
+        Some("7")
+    );
+    let cfg = args
+        .lines()
+        .skip_while(|l| *l != "--config")
+        .nth(1)
+        .expect("--config forwarded");
+    assert!(cfg.ends_with("oh.toml"), "got {cfg:?}");
+}
+
+#[test]
+fn env_prompt_template_file_is_used_for_the_system_prompt() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: templated, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "env-template.md",
+        "ENV_TEMPLATE_MARKER\n{% for r in rules %}rule={{ r.name }}\n{% endfor %}",
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"templated": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .env("LLMLINT_PROMPT_TEMPLATE", p.path().join("env-template.md"))
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("ENV_TEMPLATE_MARKER"), "system:\n{system}");
+    assert!(system.contains("rule=templated"), "system:\n{system}");
+}
+
+#[test]
+fn env_prompt_template_missing_file_is_exit_2_located_to_the_variable() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+    p.lint()
+        .env("LLMLINT_PROMPT_TEMPLATE", "/no/such/template.md")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_PROMPT_TEMPLATE"));
+}
+
+#[test]
+fn validate_honors_the_exclude_flag() {
+    // `validate --exclude <glob>` drops files from the ignore-directive scan, the
+    // same way a `lint --exclude` would — so the same config args reach validate.
+    let p = Project::new();
+    // No `version:` so the version-bump step stays git-free (validate is exercised
+    // here for its ignore scan, not the bump check).
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "files:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/ok.rs", "// clean\n");
+    // A reason-less directive is malformed → validate flags it (exit 2)...
+    p.write("src/bad.rs", "fn a() {} // llmlint: ignore[r]\n");
+    p.validate()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("llmlint: ignore"));
+    // ...unless the offending file is excluded from the scan.
+    p.validate()
+        .args(["--exclude", "**/bad.rs"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn validate_honors_env_files_exclude() {
+    // The env layer reaches validate too: `LLMLINT_FILES_EXCLUDE` narrows the
+    // ignore scan just like `--exclude`.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "files:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/bad.rs", "fn a() {} // llmlint: ignore[r]\n");
+    p.validate()
+        .env("LLMLINT_FILES_EXCLUDE", "**/bad.rs")
+        .assert()
+        .success();
+}
+
+#[test]
 fn plugin_top_level_scalars_resolve_nearest_root_wins() {
     let p = Project::new();
     // root -> mid -> leaf. The nearest config to set a scalar wins; a deeper

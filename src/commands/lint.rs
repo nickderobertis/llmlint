@@ -61,7 +61,7 @@ pub(crate) fn run_loaded(
     args: LintArgs,
     command: &str,
 ) -> Result<i32> {
-    let scopes = loaded.scopes;
+    let mut scopes = loaded.scopes;
     let sources = loaded.sources;
     let mut config = loaded.config;
     validate(&config)?;
@@ -70,12 +70,19 @@ pub(crate) fn run_loaded(
     // overlay, so the uniform precedence is CLI > env > config > default. A
     // malformed env value (e.g. a non-numeric timeout) is a boundary error here,
     // never a silent skip.
+    let pre_files = config.files.clone();
     env::apply_overrides(&mut config)?;
     // Overlay CLI overrides onto the merged config so every top-level arg can be
     // set on the command line, with the CLI winning over the config (which in
     // turn won over its plugins). After this, downstream (planning, schema,
     // template) reads the single effective config.
     apply_cli_overrides(&mut config, &args)?;
+    // An env/CLI override of the session `files` filter must reach the per-rule
+    // scopes captured at load, or a `files.include` override would change the
+    // reported config but not what session-level rules target.
+    if config.files != pre_files {
+        ignores::retarget_session_scopes(&mut scopes, &cwd, &config.files);
+    }
     let session_rationales = config.rationales_default();
 
     let selected = select_rules(&config, &args);

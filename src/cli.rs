@@ -426,6 +426,12 @@ pub struct ValidateArgs {
     #[arg(long = "config", short = 'c', value_name = "PATH")]
     pub config: Vec<PathBuf>,
 
+    /// Glob(s) to exclude from the files scanned for ignore directives;
+    /// repeatable. Adds to the config's `files.exclude`, so `validate` scans the
+    /// same set a `lint` with the same `--exclude` would.
+    #[arg(long = "exclude", value_name = "GLOB")]
+    pub exclude: Vec<String>,
+
     /// Directory to resolve config discovery + the diff from. Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
