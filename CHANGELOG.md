@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.20](https://github.com/nickderobertis/llmlint/compare/v0.3.19...v0.3.20) - 2026-07-12
+
+### Added
+
+- consistent CLI &gt; env var &gt; config precedence for top-level settings (LLMLINT_) ([#153](https://github.com/nickderobertis/llmlint/pull/153))
+
 ## [0.3.19](https://github.com/nickderobertis/llmlint/compare/v0.3.18...v0.3.19) - 2026-07-12
 
 ### Documentation
