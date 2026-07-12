@@ -366,7 +366,14 @@ harness reads target files on-demand with its own tools.
   each has its own `LLMLINT_FILES_*` var (a `PATH`-separated glob list). Their merge
   differs by kind: **include replaces** (highest layer that sets it wins — positional
   CLI files > env > config), **exclude accumulates** (config ∪ env ∪ `--exclude`), so
-  a per-run exclude never drops a config safety exclude. The `--exclude` flag exists
+  a per-run exclude never drops a config safety exclude. The exclude denylist wins
+  even over an **explicitly-passed** file — a named file matching any exclude is
+  dropped (`files::drop_excluded` in the `resolve_files` CLI-files branch), the same
+  "an include never resurrects an excluded path" rule (issue #128) the glob path
+  follows. A session-level `files` override reaches the per-rule scopes captured at
+  load via `ignores::retarget_session_scopes` (cwd-rooted scopes only), so a
+  `files.include` env/CLI override actually changes what session rules target, not
+  just the reported config. The `--exclude` flag exists
   on `lint`/`lint-config` **and `validate`** (so the static ignore-scan sees the same
   target set). Reached by every command that reads the settings — `lint`/`lint-config`
   (via `run_loaded`), `config`, `where`, `validate`; `history` and `doctor` read the

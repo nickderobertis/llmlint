@@ -122,6 +122,52 @@ pub fn resolve_scoped_excluding(
     Ok(out)
 }
 
+/// Drop explicitly-passed files that either exclude denylist matches. Explicit
+/// CLI files bypass glob *inclusion* (the user named them), but `exclude` is a
+/// hard "never lint this" denylist that still wins — the same rule the
+/// glob-selected set follows (issue #128) — so a config / env / `--exclude` glob
+/// drops a passed path too. `scoped_exclude` is matched against the
+/// `glob_root`-relative path, `global_exclude` against the `out_root`
+/// (cwd)-relative path, exactly as in [`resolve_scoped_excluding`]. With no
+/// exclude globs this is the identity.
+pub fn drop_excluded(
+    glob_root: &Path,
+    out_root: &Path,
+    files: &[PathBuf],
+    scoped_exclude: &[String],
+    global_exclude: &[String],
+) -> Result<Vec<PathBuf>> {
+    let scoped_ex = build_set(scoped_exclude)?;
+    let global_ex = build_set(global_exclude)?;
+    if scoped_ex.is_none() && global_ex.is_none() {
+        return Ok(files.to_vec());
+    }
+    let mut out = Vec::new();
+    for f in files {
+        // The passed path is `out_root`-relative (or absolute). Normalize to an
+        // absolute path, then match each denylist against its own rooting; a path
+        // outside a root simply can't match that set.
+        let abs = if f.is_absolute() {
+            f.clone()
+        } else {
+            out_root.join(f)
+        };
+        let abs = crate::io::configfs::normalize(&abs);
+        let scoped_hit = abs
+            .strip_prefix(glob_root)
+            .ok()
+            .is_some_and(|r| scoped_ex.as_ref().is_some_and(|e| e.is_match(r)));
+        let global_hit = abs
+            .strip_prefix(out_root)
+            .ok()
+            .is_some_and(|r| global_ex.as_ref().is_some_and(|e| e.is_match(r)));
+        if !scoped_hit && !global_hit {
+            out.push(f.clone());
+        }
+    }
+    Ok(out)
+}
+
 /// Read a target file (given relative to `root`) as UTF-8 text, for scanning
 /// inline `llmlint: ignore` directives. Returns `Ok(None)` for a non-UTF-8
 /// (binary) file — it can't carry a text directive, so it is skipped rather than
@@ -164,6 +210,20 @@ mod tests {
         let p = root.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, "x").unwrap();
+    }
+
+    #[test]
+    fn drop_excluded_filters_explicit_paths() {
+        let cwd = Path::new("/proj");
+        let files = vec![PathBuf::from("src/gen.rs"), PathBuf::from("src/keep.rs")];
+        // A cwd-rooted (global) exclude drops the matching passed path...
+        let kept = drop_excluded(cwd, cwd, &files, &[], &["**/gen.rs".into()]).unwrap();
+        assert_eq!(kept, vec![PathBuf::from("src/keep.rs")]);
+        // ...a scoped (glob-root-relative) exclude does too...
+        let kept = drop_excluded(cwd, cwd, &files, &["**/gen.rs".into()], &[]).unwrap();
+        assert_eq!(kept, vec![PathBuf::from("src/keep.rs")]);
+        // ...and with no exclude globs it is the identity.
+        assert_eq!(drop_excluded(cwd, cwd, &files, &[], &[]).unwrap(), files);
     }
 
     #[test]

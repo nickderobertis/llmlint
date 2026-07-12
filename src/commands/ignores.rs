@@ -117,13 +117,23 @@ pub fn resolve_files(
         );
     }
     if !cli_files.is_empty() {
-        // Explicit CLI files override the rule's globs, but they are still bounded
-        // to the rule's directory scope: a subtree config's rule must not be judged
-        // against a passed file outside its directory. Keep only the files under
-        // `scope.dir` (reported cwd-relative, as given); a rule with no passed file
-        // under its scope resolves to nothing and is skipped — the same
+        // Explicit CLI files override the rule's *include* globs, but they are
+        // still bounded to the rule's directory scope: a subtree config's rule must
+        // not be judged against a passed file outside its directory. Keep only the
+        // files under `scope.dir` (reported cwd-relative, as given); a rule with no
+        // passed file under its scope resolves to nothing and is skipped — the same
         // "consolidated up from each leaf" trimming a discovery run does.
-        return Ok(scope_cli_files(cwd, &scope.dir, cli_files));
+        let scoped = scope_cli_files(cwd, &scope.dir, cli_files);
+        // The `exclude` denylist still wins even over an explicitly-named file
+        // (config `files.exclude`, an env exclude, or `--exclude`), so a passed
+        // path that matches it is dropped — an include never resurrects it.
+        return files::drop_excluded(
+            &scope.dir,
+            cwd,
+            &scoped,
+            &scope.files.exclude,
+            global_exclude,
+        );
     }
     // The rule falls back to its config's `files` (whose own `exclude` is already
     // in the filter); still layer the session-level global `exclude` on top so a

@@ -7223,6 +7223,135 @@ fn validate_honors_env_files_exclude() {
 }
 
 #[test]
+fn env_diff_base_sets_the_default_review_base() {
+    // `LLMLINT_DIFF_BASE` sets the base bare `--diff` compares against (no config
+    // `diff_base`, no `--diff-base` flag). The worktree is clean vs HEAD, so only
+    // the env base makes the committed branch change visible — proving it took
+    // effect at runtime, not just in the reported config.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "fn a() {}\n");
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", "fn a() { from_env(); }\n");
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_DIFF_BASE", "main")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("+fn a() { from_env(); }"),
+        "the env diff base should make the branch change visible:\n{system}"
+    );
+}
+
+#[test]
+fn env_history_max_runs_prunes_across_runs() {
+    // `LLMLINT_HISTORY_MAX_RUNS=2` keeps only the two most recent records — the
+    // runtime pruning effect of the env value, not just its reported provenance.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: a_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"a_rule": true}"#);
+    for _ in 0..3 {
+        p.lint()
+            .env("LLMLINT_HISTORY_MAX_RUNS", "2")
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .assert()
+            .success();
+    }
+    assert_eq!(
+        history_record_count(&p),
+        2,
+        "env max_runs should prune to 2"
+    );
+}
+
+#[test]
+fn lint_config_honors_env_overrides() {
+    // The `lint-config` engine shares `run_loaded`, so the env layer reaches it too:
+    // `LLMLINT_ONEHARNESS_MODEL` is forwarded to oneharness for a config-lint run.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: public_items_are_documented, description: \"{RULE}\" }}\n"
+        ),
+    );
+    let args_dump = p.path().join("args.txt");
+    p.lint_config()
+        .env("LLMLINT_ONEHARNESS_MODEL", "env-model")
+        .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+        .output()
+        .unwrap();
+    let args = fs::read_to_string(&args_dump).unwrap();
+    assert_eq!(
+        args.lines().skip_while(|l| *l != "--model").nth(1),
+        Some("env-model"),
+        "lint-config should forward the env model"
+    );
+}
+
+#[test]
+fn exclude_drops_an_explicitly_passed_file() {
+    // The `exclude` denylist wins even over a file named on the command line:
+    // passing a file plus a `--exclude` that matches it drops it, while a sibling
+    // passed file is still linted. (Config `files.exclude` / env exclude flow
+    // through the same path.)
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/gen.rs", "// generated\n");
+    p.write("src/keep.rs", "// keep\n");
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .args(["src/gen.rs", "src/keep.rs", "--exclude", "**/gen.rs"])
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("src/keep.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("gen.rs"),
+        "an explicitly-passed but excluded file must be dropped:\n{system}"
+    );
+}
+
+#[test]
 fn plugin_top_level_scalars_resolve_nearest_root_wins() {
     let p = Project::new();
     // root -> mid -> leaf. The nearest config to set a scalar wins; a deeper
