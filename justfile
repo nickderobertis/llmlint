@@ -244,9 +244,19 @@ setup-llmlint:
 lint-llm *paths:
     llmlint {{paths}}
 
-# Deterministic llmlint config/ignore/version-bump validation.
+# Files whose only inline ignore-directive occurrences are *examples* — placeholder
+# rule names in the docs, prompt template, ignore parser, and its tests — not real
+# suppressions. llmlint *defines* the ignore-directive syntax, so check-ignores
+# can't tell an example from the real thing and flags them all. Keep this list
+# current as those examples move between files.
+ignore-scan-exclude := "README.md:AGENTS.md:tests/AGENTS.md:assets/default_template.md:scripts/setup-llmlint.sh:src/domain/ignore.rs:src/io/files.rs:src/commands/check_ignores.rs:src/errors.rs:src/domain/plan.rs:tests/e2e/main.rs"
+
+# Deterministic llmlint config/ignore/version-bump validation. The exclude above is
+# applied via the LLMLINT_FILES_EXCLUDE env layer (issue #152: CLI > env > config;
+# env adds to the config's `files.exclude` denylist) and scoped to this recipe
+# only, so the LLM lint (`lint-llm-diff`) keeps full file coverage.
 lint-llm-validate *args:
-    PATH="$HOME/.local/bin:$PATH" llmlint validate {{args}}
+    PATH="$HOME/.local/bin:$PATH" LLMLINT_FILES_EXCLUDE="{{ignore-scan-exclude}}" llmlint validate {{args}}
 
 # llmlint scoped to changed files since the merge-base with main.
 lint-llm-diff base="origin/main" *args:
