@@ -82,8 +82,12 @@ Use the `just` recipes; do not hand-roll equivalents.
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the **live e2e tier**: builds a release binary, then drives
   the real `llmlint` → real `oneharness` → the real claude-code harness through
-  `scripts/live-claude.sh`, asserting a clean file passes (exit 0) and a planted
-  `TODO` is flagged (exit 1). It runs on PRs in its own workflow
+  `scripts/live-claude.sh`, asserting a clean file passes (exit 0), a planted
+  `TODO` is flagged (exit 1), and a **fallback** run (issue #146 — an absent
+  primary harness ahead of the canonical one via a `oneharness.toml`
+  `run_mode = "fallback"`) still passes, proving llmlint reads the real
+  `fallback.ran` winner and not the skipped `results[0]`. It runs on PRs in its own
+  workflow
   (`.github/workflows/live.yml`) across **Linux, macOS, and Windows** — the point
   is to prove the built binary + oneharness + a real harness work on each OS.
   Harness *breadth* is oneharness's test surface (every harness is the same
