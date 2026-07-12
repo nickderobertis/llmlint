@@ -85,6 +85,12 @@ pub struct LintArgs {
     /// and per-agent `files` still take precedence).
     pub files: Vec<PathBuf>,
 
+    /// Glob(s) to exclude from the target files; repeatable. Adds to the config's
+    /// `files.exclude` — a cwd-rooted denylist that always wins (it narrows the
+    /// selected set and can never re-include a path).
+    #[arg(long = "exclude", value_name = "GLOB")]
+    pub exclude: Vec<String>,
+
     /// llmlint config file(s); repeatable. Replaces nested upward discovery.
     #[arg(long = "config", short = 'c', value_name = "PATH")]
     pub config: Vec<PathBuf>,
@@ -446,6 +452,11 @@ pub struct LintConfigArgs {
     /// (which otherwise discover every llmlint config in the tree).
     pub files: Vec<PathBuf>,
 
+    /// Glob(s) to exclude from the target files; repeatable. Adds to the config's
+    /// `files.exclude` (a cwd-rooted denylist that always wins).
+    #[arg(long = "exclude", value_name = "GLOB")]
+    pub exclude: Vec<String>,
+
     /// oneharness config file to forward via `--config` (single-file; extras warn).
     #[arg(long = "oneharness-config", value_name = "PATH")]
     pub oneharness_config: Vec<PathBuf>,
@@ -531,6 +542,7 @@ impl LintConfigArgs {
     pub fn into_lint_args(self) -> LintArgs {
         LintArgs {
             files: self.files,
+            exclude: self.exclude,
             oneharness_config: self.oneharness_config,
             oneharness_bin: self.oneharness_bin,
             model: self.model,

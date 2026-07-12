@@ -1127,6 +1127,76 @@ fn include_exclude_globs_select_the_right_files() {
 }
 
 #[test]
+fn cli_exclude_flag_drops_files_from_the_target_set() {
+    // `--exclude <glob>` layers a cwd-rooted denylist onto the config's file
+    // selection: the globbed file it matches never reaches a judge, and the flag
+    // is repeatable.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**/*.rs\"]\nrules:\n  \
+             - {{ name: scoped_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("src/gen.rs", "// generated\n");
+    p.write("src/vendor.rs", "// vendored\n");
+    let verdicts = p.write_verdicts(r#"{"scoped_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .args(["--exclude", "**/gen.rs", "--exclude", "**/vendor.rs"])
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("src/a.rs"), "system:\n{system}");
+    assert!(
+        !system.contains("gen.rs"),
+        "cli-excluded file leaked:\n{system}"
+    );
+    assert!(
+        !system.contains("vendor.rs"),
+        "second cli-excluded file leaked:\n{system}"
+    );
+}
+
+#[test]
+fn cli_exclude_adds_to_the_config_exclude_denylist() {
+    // The CLI exclude unions with (does not replace) `files.exclude`: both the
+    // config-excluded and the CLI-excluded file are dropped.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**/*.rs\"]\n  exclude: [\"**/gen.rs\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("src/gen.rs", "// generated (config-excluded)\n");
+    p.write("src/local.rs", "// cli-excluded\n");
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+
+    let out = p
+        .lint()
+        .args(["--exclude", "**/local.rs", "--plan-only"])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let plan = String::from_utf8_lossy(&out.stdout);
+    assert!(plan.contains("src/a.rs"), "plan:\n{plan}");
+    assert!(!plan.contains("gen.rs"), "config exclude ignored:\n{plan}");
+    assert!(!plan.contains("local.rs"), "cli exclude ignored:\n{plan}");
+}
+
+#[test]
 fn rule_include_cannot_resurrect_a_top_level_excluded_path() {
     // Issue #128: a top-level `files.exclude` is a hard denylist — a rule's own
     // `files.include` narrows *within* the allowed set and can never bring back an

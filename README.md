@@ -205,7 +205,8 @@ version: 1                     # this config's published version (used when it i
 # `include` empty) to lint every file in the tree from the current directory;
 # `exclude` and `.gitignore` still apply. `exclude` is a hard denylist that always
 # wins: a path it matches is never linted, and a per-rule `files.include` (below)
-# narrows *within* the allowed set — it can't bring back an excluded path.
+# narrows *within* the allowed set — it can't bring back an excluded path. The
+# `--exclude <glob>` CLI flag (repeatable) adds to this denylist for one run.
 files:
   include: ["src/**/*.rs"]
   exclude: ["**/generated/**"]

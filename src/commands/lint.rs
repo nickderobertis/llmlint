@@ -616,6 +616,11 @@ fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
     if args.diff_base.is_some() {
         config.diff_base = args.diff_base.clone();
     }
+    // `--exclude` layers onto the session-wide `files.exclude` denylist: the CLI
+    // adds cwd-rooted globs to skip on top of whatever the config excludes. Like
+    // config `files.exclude`, it always wins over includes and never re-includes a
+    // path; it flows through the same `global_exclude` file-resolution path.
+    config.files.exclude.extend(args.exclude.iter().cloned());
     Ok(())
 }
 
