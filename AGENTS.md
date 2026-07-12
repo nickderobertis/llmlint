@@ -347,6 +347,26 @@ harness reads target files on-demand with its own tools.
   it, and the effective `config.diff_base` is what reaches `provider`. It only
   tunes the base — `--diff` is still the on switch — so `diff_base` without
   `--diff` is inert.
+- **Uniform settings precedence (convention):** every top-level (session) setting
+  resolves through one chain — **CLI flag > `LLMLINT_` env var > config file >
+  built-in default** — mirroring oneharness's `ONEHARNESS_` env convention. The env
+  layer is `io::env::apply_overrides` (`ENV_SETTINGS` is the key↔var table; a test
+  pins it against `SETTING_KEYS` so a new setting can't silently miss env support).
+  It runs **after** the nearest-wins config merge and **before** `apply_cli_overrides`
+  (so CLI still wins), folding each set `LLMLINT_*` var into the merged config and
+  recording its provenance as `env:<VAR>` (so `config --sources` / `where` stay
+  honest). Env is **process-wide**, not cwd-and-up — it tunes the effective run, not
+  one directory's config. A var name is the setting path uppercased, `.`→`_`,
+  prefixed `LLMLINT_`; bools are `1/true/yes` vs `0/false/no` (case-insensitive); a
+  malformed value is an exit-2 `Error::Env` **located to the variable**, never a
+  silent skip (validate at the boundary). `version` and the structured `files` set
+  are deliberately config-only. Reached by every command that reads the settings —
+  `lint`/`lint-config` (via `run_loaded`), `config`, `where`, `validate`; `history`
+  and `doctor` read the relevant env var directly. **Back-compat:** the canonical
+  `LLMLINT_HISTORY_ENABLED` supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch
+  (honored in `history::resolve` only when the canonical var is unset);
+  `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into
+  the same scheme. When a new session setting lands, add its `LLMLINT_` var here.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

@@ -20,7 +20,7 @@ use crate::cli::ValidateArgs;
 use crate::commands::{ignores, lint, version_bump};
 use crate::domain::config::validate;
 use crate::errors::Result;
-use crate::io::configfs;
+use crate::io::{configfs, env};
 
 pub fn run(args: ValidateArgs) -> Result<i32> {
     let cwd = lint::resolve_cwd(&args.cwd)?;
@@ -28,12 +28,17 @@ pub fn run(args: ValidateArgs) -> Result<i32> {
     // 1. Config structure. This also yields the target files (and their subtree
     // scopes) for step 2, so the ignore scan sees exactly what a lint run would.
     let loaded = configfs::load(&args.config, &cwd)?;
-    validate(&loaded.config)?;
+    let mut config = loaded.config;
+    // Fold the `LLMLINT_*` env overrides in as part of the static gate: a
+    // malformed env value (a non-numeric timeout, a bad bool) is a boundary
+    // error caught here alongside the config-structure checks.
+    env::apply_overrides(&mut config)?;
+    validate(&config)?;
 
     // 2. Ignore-directive structure over every target file (no CLI narrowing:
     // `validate` is a whole-project gate).
-    let targets = ignores::target_files(&cwd, &loaded.config, &loaded.scopes, &[])?;
-    let known = ignores::known_rules(&loaded.config);
+    let targets = ignores::target_files(&cwd, &config, &loaded.scopes, &[])?;
+    let known = ignores::known_rules(&config);
     ignores::check(&cwd, &targets, &known)?;
 
     // 3. Version bumps for the discovered versioned config files (an empty CLI file

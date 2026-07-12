@@ -39,16 +39,20 @@ pub struct Settings {
 /// Resolve the effective results-logging settings from the merged `config` and
 /// the environment. `force_off` (a `--no-history` flag) hard-disables logging.
 ///
-/// Precedence — **enabled:** `force_off` or `LLMLINT_NO_HISTORY` turn it off,
-/// else the config `history.enabled` (default on). **dir:**
+/// Precedence — **enabled:** `force_off` wins, then the env layer. The canonical
+/// `LLMLINT_HISTORY_ENABLED` is already folded into `config.history.enabled` by
+/// [`crate::io::env::apply_overrides`] (so it reaches here through the config);
+/// the legacy `LLMLINT_NO_HISTORY=1` is honored as an off-switch **only when the
+/// canonical variable is unset**, so `LLMLINT_HISTORY_ENABLED` supersedes it.
+/// Otherwise the config `history.enabled` (default on) decides. **dir:**
 /// `LLMLINT_HISTORY_DIR` wins over a config `history.dir`, which wins over the
 /// platform default data dir.
 pub fn resolve(config: &Config, force_off: bool) -> Settings {
-    let enabled = resolve_enabled(
-        force_off,
-        env_flag("LLMLINT_NO_HISTORY"),
-        config.history_enabled(),
-    );
+    // The legacy off-switch defers to the canonical `LLMLINT_HISTORY_ENABLED`
+    // when that is set (whichever way), so the new scheme takes the same slot.
+    let legacy_off =
+        env_flag("LLMLINT_NO_HISTORY") && std::env::var_os("LLMLINT_HISTORY_ENABLED").is_none();
+    let enabled = resolve_enabled(force_off, legacy_off, config.history_enabled());
     let env_dir = std::env::var_os("LLMLINT_HISTORY_DIR")
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);

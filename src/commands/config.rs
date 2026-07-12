@@ -7,7 +7,7 @@
 use crate::cli::ConfigArgs;
 use crate::domain::config::validate;
 use crate::errors::{Error, Result};
-use crate::io::configfs;
+use crate::io::{configfs, env};
 
 pub fn run(args: ConfigArgs) -> Result<i32> {
     let cwd = match &args.cwd {
@@ -15,7 +15,13 @@ pub fn run(args: ConfigArgs) -> Result<i32> {
         None => std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?,
     };
     let loaded = configfs::load(&args.config, &cwd)?;
-    validate(&loaded.config)?;
+    let mut config = loaded.config;
+    let mut provenance = loaded.provenance;
+    // Fold the `LLMLINT_*` env overrides in so the reported config and its
+    // `--sources` provenance reflect the effective values (env wins over the
+    // file, so an overridden setting traces to `env:<VAR>`).
+    env::apply_overrides_prov(&mut config, &mut provenance)?;
+    validate(&config)?;
     // Insertion order is preserved (serde_json `preserve_order`), so `sources`
     // sits between the file list and the config, where it reads naturally.
     let mut obj = serde_json::Map::new();
@@ -26,12 +32,12 @@ pub fn run(args: ConfigArgs) -> Result<i32> {
     if args.sources {
         obj.insert(
             "sources".into(),
-            serde_json::to_value(&loaded.provenance).map_err(|e| Error::Io(e.to_string()))?,
+            serde_json::to_value(&provenance).map_err(|e| Error::Io(e.to_string()))?,
         );
     }
     obj.insert(
         "config".into(),
-        serde_json::to_value(&loaded.config).map_err(|e| Error::Io(e.to_string()))?,
+        serde_json::to_value(&config).map_err(|e| Error::Io(e.to_string()))?,
     );
     println!(
         "{}",

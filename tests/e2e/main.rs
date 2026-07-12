@@ -6557,6 +6557,256 @@ fn cli_prompt_template_file_overrides_config_template() {
     assert!(system.contains("rule=templated_rule"), "system:\n{system}");
 }
 
+// ---- env overrides of top-level settings (LLMLINT_*) ---------------------
+
+#[test]
+fn env_model_overrides_config_and_cli_wins_over_env() {
+    // The uniform precedence for a string session setting: CLI > env > config.
+    // The config value is used when neither is set; LLMLINT_ONEHARNESS_MODEL
+    // beats the config; and --model beats the env var.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  model: config-model\n\
+             rules:\n  - {{ name: m_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"m_rule": true}"#);
+    let model_forwarded = |args: &str| -> String {
+        args.lines()
+            .skip_while(|l| *l != "--model")
+            .nth(1)
+            .expect("--model should be forwarded")
+            .to_string()
+    };
+
+    // Neither set → the config value flows through.
+    let dump = p.path().join("config-args.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(
+        model_forwarded(&fs::read_to_string(&dump).unwrap()),
+        "config-model"
+    );
+
+    // env > config.
+    let dump = p.path().join("env-args.txt");
+    p.lint()
+        .env("LLMLINT_ONEHARNESS_MODEL", "env-model")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(
+        model_forwarded(&fs::read_to_string(&dump).unwrap()),
+        "env-model"
+    );
+
+    // CLI > env.
+    let dump = p.path().join("cli-args.txt");
+    p.lint()
+        .arg("--model")
+        .arg("cli-model")
+        .env("LLMLINT_ONEHARNESS_MODEL", "env-model")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(
+        model_forwarded(&fs::read_to_string(&dump).unwrap()),
+        "cli-model"
+    );
+}
+
+#[test]
+fn env_timeout_overrides_config_numeric_setting() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  timeout: 111\n\
+             rules:\n  - {{ name: t_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"t_rule": true}"#);
+    let dump = p.path().join("args.txt");
+    p.lint()
+        .env("LLMLINT_ONEHARNESS_TIMEOUT", "222")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    let args = fs::read_to_string(&dump).unwrap();
+    assert_eq!(
+        args.lines().skip_while(|l| *l != "--timeout").nth(1),
+        Some("222"),
+        "env timeout should be forwarded"
+    );
+}
+
+#[test]
+fn env_malformed_number_is_exit_2_located_to_the_variable() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: n_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"n_rule": true}"#);
+    // A non-numeric value is a boundary error, named to its variable.
+    p.lint()
+        .env("LLMLINT_ONEHARNESS_TIMEOUT", "not-a-number")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_ONEHARNESS_TIMEOUT"));
+    // A below-minimum count is likewise rejected at the variable.
+    p.lint()
+        .env("LLMLINT_HISTORY_MAX_RUNS", "0")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_HISTORY_MAX_RUNS"));
+}
+
+#[test]
+fn env_malformed_bool_is_exit_2_in_lint_and_validate() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: b_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"b_rule": true}"#);
+    // A bad boolean fails the lint before any judge call.
+    p.lint()
+        .env("LLMLINT_RATIONALES", "maybe")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_RATIONALES"))
+        .stderr(predicate::str::contains("boolean"));
+    // And the model-free `validate` gate catches it too — env resolution reaches
+    // every command that reads the settings, not just `lint`.
+    p.bare()
+        .arg("validate")
+        .env("LLMLINT_RATIONALES", "maybe")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_RATIONALES"));
+}
+
+#[test]
+fn env_rationales_false_overrides_config_true() {
+    // A boolean session setting: config turns rationales on, the env var turns
+    // them off, and the generated schema reflects the env value.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: true\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r_env, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r_env": true}"#);
+    let schema_dump = p.path().join("schema.json");
+    p.lint()
+        .env("LLMLINT_RATIONALES", "0")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_SCHEMA", &schema_dump)
+        .assert()
+        .success();
+    let schema: Value = serde_json::from_str(&fs::read_to_string(&schema_dump).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["r_env"]["required"],
+        serde_json::json!(["name", "holds"]),
+        "env-disabled rationale must drop it from the schema"
+    );
+}
+
+#[test]
+fn env_settings_are_traced_to_the_variable_by_config_and_where() {
+    // `config --sources` and `where` attribute an env-overridden setting to its
+    // variable (`env:<VAR>`), and the reported effective value is the env one —
+    // so the "where does this come from" story stays honest under env overrides.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\noneharness:\n  model: config-model\nrules:\n  \
+             - {{ name: p_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+
+    let out = p
+        .bare()
+        .args(["config", "--sources"])
+        .env("LLMLINT_ONEHARNESS_MODEL", "env-model")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["sources"]["settings"]["oneharness.model"],
+        "env:LLMLINT_ONEHARNESS_MODEL"
+    );
+    // The effective config carries the env value, not the file's.
+    assert_eq!(v["config"]["oneharness"]["model"], "env-model");
+
+    let out = p
+        .bare()
+        .args(["where", "oneharness.model"])
+        .env("LLMLINT_ONEHARNESS_MODEL", "env-model")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        "env:LLMLINT_ONEHARNESS_MODEL"
+    );
+}
+
+#[test]
+fn env_history_enabled_false_disables_logging() {
+    // LLMLINT_HISTORY_ENABLED=false turns results logging off — the canonical
+    // form of the legacy LLMLINT_NO_HISTORY off-switch.
+    let (p, verdicts) = history_project();
+    p.lint()
+        .env("LLMLINT_HISTORY_ENABLED", "false")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("llmlint history").not());
+    assert_eq!(history_record_count(&p), 0);
+}
+
+#[test]
+fn env_history_enabled_true_supersedes_legacy_no_history() {
+    // The canonical LLMLINT_HISTORY_ENABLED wins over the legacy
+    // LLMLINT_NO_HISTORY: enabled=true keeps logging on despite NO_HISTORY=1.
+    let (p, verdicts) = history_project();
+    p.lint()
+        .env("LLMLINT_HISTORY_ENABLED", "true")
+        .env("LLMLINT_NO_HISTORY", "1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1);
+    assert_eq!(history_record_count(&p), 1);
+}
+
 #[test]
 fn plugin_top_level_scalars_resolve_nearest_root_wins() {
     let p = Project::new();
