@@ -527,8 +527,16 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
 - **Journeys** (`live_run_journeys` in `scripts/live-lib.sh`): scaffold a throwaway
   project with one crisp invariant (`no_todo_comments`) pinned to the harness, then
   (1) a clean `src/lib.rs` must pass → exit 0, rule `pass`; (2) a file with a
-  planted `TODO` must be flagged → exit 1, rule `fail`. Exit 2 (the live stack
-  could not complete) is also a failure.
+  planted `TODO` must be flagged → exit 1, rule `fail`; (3) a **fallback** journey
+  (issue #146): a project that pins *no* harness plus a `oneharness.toml` with
+  `run_mode = "fallback"` and an **absent primary** (`codex`, never installed on the
+  runner) ahead of the canonical harness — oneharness skips the primary and runs the
+  canonical one, naming it in `fallback.ran` while the skipped primary is
+  `results[0]`. A clean file must still pass → exit 0. This is the real-stack
+  regression guard: the pre-fix llmlint read the skipped `results[0]` and errored
+  the run, so it validates llmlint consumes the *real* oneharness fallback JSON
+  shape the hermetic mock only approximates. Exit 2 (the live stack could not
+  complete) is also a failure.
 - **Harness CLI + auth** (required; absent → fail): `claude-code` needs the
   `claude` CLI and `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`). To drive a
   different harness ad hoc, call `live_run_journeys <id>` with that harness's CLI

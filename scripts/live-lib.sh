@@ -122,6 +122,47 @@ make_project() {
     printf '%s' "$proj"
 }
 
+# A supported harness reliably ABSENT on the live runners (they install only the
+# canonical harness + oneharness), distinct from the winner, to head a fallback
+# chain so oneharness must fall through past it. `codex` is the issue-#146 case;
+# fall back to `opencode` on the off chance the winner itself is codex.
+_fallback_primary() {
+    if [ "$1" = codex ]; then printf 'opencode'; else printf 'codex'; fi
+}
+
+# Like make_project but for oneharness FALLBACK mode (issue #146). The llmlint
+# config pins NO harness (so llmlint omits `--harness` and oneharness selects from
+# its own config), and a project `oneharness.toml` places an absent primary ahead
+# of `$harness` in a fallback chain. oneharness skips the missing primary and runs
+# `$harness`, naming it in the top-level `fallback.ran`; `results[0]` is the
+# skipped primary. A correct llmlint reads the winner, not `results[0]`.
+make_fallback_project() {
+    local harness="$1" primary proj
+    primary="$(_fallback_primary "$harness")"
+    proj="$(mktemp -d)"
+    LL_PROJECTS+=("$proj")
+    mkdir -p "$proj/src"
+    {
+        echo "version: 1"
+        echo "files:"
+        echo '  include: ["src/**"]'
+        echo "oneharness:"
+        echo "  timeout: ${LL_TIMEOUT:-120}"
+        [ -n "${LL_MODEL:-}" ] && echo "  model: ${LL_MODEL}"
+        echo "rules:"
+        echo "  - name: no_todo_comments"
+        echo "    description: >-"
+        echo "      Every source file under src/ is free of TODO and FIXME comments."
+        echo "      The property HOLDS when no source file contains a TODO or FIXME"
+        echo "      marker, and is VIOLATED by any file that contains one."
+    } >"$proj/llmlint.yml"
+    {
+        echo 'run_mode = "fallback"'
+        echo "harnesses = [\"${primary}\", \"${harness}\"]"
+    } >"$proj/oneharness.toml"
+    printf '%s' "$proj"
+}
+
 # --- run + assert ------------------------------------------------------------
 
 LL_REPORT=""
@@ -219,7 +260,24 @@ ll_live_fail() {
     assert_fail
 }
 
-# The full live run for one harness: a pass journey and a violation journey.
+# Fallback selection (issue #146). oneharness runs a fallback chain whose primary
+# (`codex`) is absent on the runner, so it falls through and runs `$harness`,
+# naming it in `fallback.ran` while the skipped primary is `results[0]`. A clean
+# file must still pass (exit 0) — the real-stack regression guard: the pre-fix
+# llmlint read the skipped `results[0]` and errored the run (exit 2), which
+# `assert_pass` (a hard fail on exit 2) catches. Proves llmlint consumes the
+# real oneharness fallback JSON shape, which the mock only approximates.
+ll_live_fallback() {
+    local harness="$1" proj
+    proj="$(make_fallback_project "$harness")"
+    printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs"
+    note "  journey: fallback chain skips an absent primary and runs $harness -> exit 0"
+    ll_run "$proj"
+    assert_pass
+}
+
+# The full live run for one harness: a pass journey, a violation journey, and a
+# fallback-selection journey.
 live_run_journeys() {
     local harness="$1"
     need jq
@@ -227,5 +285,6 @@ live_run_journeys() {
     note "== llmlint live e2e: $harness =="
     ll_live_pass "$harness"
     ll_live_fail "$harness"
+    ll_live_fallback "$harness"
     note "PASS: $harness llmlint live e2e"
 }
