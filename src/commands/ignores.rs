@@ -15,11 +15,31 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::domain::config::{Config, RelevanceMode, Rule};
+use crate::domain::config::{Config, FileFilter, RelevanceMode, Rule};
 use crate::domain::ignore;
 use crate::errors::{Error, Result};
 use crate::io::configfs::{self, RuleScope};
 use crate::io::files;
+
+/// After the session `files` filter is overridden post-load (by the env layer or
+/// a CLI flag), re-point the **cwd-rooted** rule scopes at the new filter. Rule
+/// scopes capture their config's `files` at load time and are the fallback filter
+/// for a rule with no per-rule `files`, so without this a session-level
+/// `files.include` (or `--exclude`) override would change the reported config but
+/// not what those rules actually target. Only scopes rooted at `cwd` (the session
+/// config's own rules) are re-pointed — a subtree or ancestor rule keeps its own
+/// directory-scoped filter, which the session-level override does not govern.
+pub fn retarget_session_scopes(
+    scopes: &mut BTreeMap<String, RuleScope>,
+    cwd: &Path,
+    after: &FileFilter,
+) {
+    for scope in scopes.values_mut() {
+        if scope.dir == cwd {
+            scope.files = after.clone();
+        }
+    }
+}
 
 /// The configured rule names — the set a directive may legitimately reference.
 /// A directive may name any configured rule, not just the ones a given run
@@ -97,13 +117,23 @@ pub fn resolve_files(
         );
     }
     if !cli_files.is_empty() {
-        // Explicit CLI files override the rule's globs, but they are still bounded
-        // to the rule's directory scope: a subtree config's rule must not be judged
-        // against a passed file outside its directory. Keep only the files under
-        // `scope.dir` (reported cwd-relative, as given); a rule with no passed file
-        // under its scope resolves to nothing and is skipped — the same
+        // Explicit CLI files override the rule's *include* globs, but they are
+        // still bounded to the rule's directory scope: a subtree config's rule must
+        // not be judged against a passed file outside its directory. Keep only the
+        // files under `scope.dir` (reported cwd-relative, as given); a rule with no
+        // passed file under its scope resolves to nothing and is skipped — the same
         // "consolidated up from each leaf" trimming a discovery run does.
-        return Ok(scope_cli_files(cwd, &scope.dir, cli_files));
+        let scoped = scope_cli_files(cwd, &scope.dir, cli_files);
+        // The `exclude` denylist still wins even over an explicitly-named file
+        // (config `files.exclude`, an env exclude, or `--exclude`), so a passed
+        // path that matches it is dropped — an include never resurrects it.
+        return files::drop_excluded(
+            &scope.dir,
+            cwd,
+            &scoped,
+            &scope.files.exclude,
+            global_exclude,
+        );
     }
     // The rule falls back to its config's `files` (whose own `exclude` is already
     // in the filter); still layer the session-level global `exclude` on top so a

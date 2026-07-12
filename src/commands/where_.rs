@@ -6,7 +6,7 @@
 use crate::cli::WhereArgs;
 use crate::domain::config::{resolve_source, validate};
 use crate::errors::{Error, Result};
-use crate::io::configfs;
+use crate::io::{configfs, env};
 
 pub fn run(args: WhereArgs) -> Result<i32> {
     let cwd = match &args.cwd {
@@ -14,8 +14,13 @@ pub fn run(args: WhereArgs) -> Result<i32> {
         None => std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?,
     };
     let loaded = configfs::load(&args.config, &cwd)?;
-    validate(&loaded.config)?;
-    match resolve_source(&loaded.provenance, &args.path) {
+    let mut config = loaded.config;
+    let mut provenance = loaded.provenance;
+    // Fold env overrides in so `where <setting>` can report a value that came
+    // from an `LLMLINT_*` variable as `env:<VAR>`, matching `config --sources`.
+    env::apply_overrides_prov(&mut config, &mut provenance)?;
+    validate(&config)?;
+    match resolve_source(&provenance, &args.path) {
         Ok(source) => {
             println!("{source}");
             Ok(0)

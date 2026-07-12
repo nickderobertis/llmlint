@@ -205,7 +205,8 @@ version: 1                     # this config's published version (used when it i
 # `include` empty) to lint every file in the tree from the current directory;
 # `exclude` and `.gitignore` still apply. `exclude` is a hard denylist that always
 # wins: a path it matches is never linted, and a per-rule `files.include` (below)
-# narrows *within* the allowed set — it can't bring back an excluded path.
+# narrows *within* the allowed set — it can't bring back an excluded path. The
+# `--exclude <glob>` CLI flag (repeatable) adds to this denylist for one run.
 files:
   include: ["src/**/*.rs"]
   exclude: ["**/generated/**"]
@@ -253,6 +254,51 @@ rules:
       include: ["src/api/**"]  #   selects *within* the allowed set; the top-level
                                #   `files.exclude` still wins (can't re-include it)
 ```
+
+### Settings precedence & environment variables
+
+Every top-level (session) setting resolves through one uniform chain — highest
+wins:
+
+```
+CLI flag  >  LLMLINT_ env var  >  config file  >  built-in default
+```
+
+The env layer mirrors [oneharness](https://github.com/nickderobertis/oneharness)'s
+`ONEHARNESS_` convention, so the two tools configure the same way — handy in CI and
+containers where env vars are the natural knob. An env var name is its **setting
+path uppercased**, with `.` → `_`, prefixed `LLMLINT_`. Booleans accept
+`1`/`true`/`yes` or `0`/`false`/`no` (case-insensitive); a malformed value (a
+non-numeric timeout, `history.max_runs=0`, a bad bool) is a clear exit-2 error named
+to its variable, never a silent skip. An exported-but-empty variable counts as
+unset.
+
+| Setting | Env var | CLI flag | Notes |
+|---|---|---|---|
+| `files.include` | `LLMLINT_FILES_INCLUDE` | positional `FILES` | `PATH`-separated globs (`:`/`;`); **replaces** the config include set |
+| `files.exclude` | `LLMLINT_FILES_EXCLUDE` | `--exclude` (repeatable) | `PATH`-separated globs; **adds to** the config exclude denylist (never replaces it) |
+| `oneharness.model` | `LLMLINT_ONEHARNESS_MODEL` | `--model` | default judge model |
+| `oneharness.timeout` | `LLMLINT_ONEHARNESS_TIMEOUT` | `--timeout` | seconds, ≥ 1 |
+| `oneharness.schema_max_retries` | `LLMLINT_ONEHARNESS_SCHEMA_MAX_RETRIES` | `--schema-max-retries` | |
+| `oneharness.config` | `LLMLINT_ONEHARNESS_CONFIG` | `--oneharness-config` | path (single file) |
+| `oneharness.bin` | `LLMLINT_ONEHARNESS_BIN` | `--oneharness-bin` | path |
+| `prompt_template` | `LLMLINT_PROMPT_TEMPLATE` | `--prompt-template` | path to a template file |
+| `rationales` | `LLMLINT_RATIONALES` | `--rationales` / `--no-rationales` | bool |
+| `diff_base` | `LLMLINT_DIFF_BASE` | `--diff-base` | any git revision/range |
+| `history.enabled` | `LLMLINT_HISTORY_ENABLED` | `--no-history` (force off) | bool; supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch |
+| `history.max_runs` | `LLMLINT_HISTORY_MAX_RUNS` | — | ≥ 1 |
+| `history.dir` | `LLMLINT_HISTORY_DIR` | — | path |
+
+The env layer applies **process-wide**, after the nearest-wins config merge — it
+tunes the effective run, not any one directory's config. Two list-valued settings
+merge rather than replace wholesale: `files.include` is a **selection** (the
+highest layer that sets it wins — positional CLI files, else the env globs, else
+the config), while `files.exclude` is a **denylist** whose layers **accumulate**
+(config ∪ env ∪ `--exclude`) so a per-run override never silently drops a config
+safety exclude. Only `version` stays config-only. A value that came from an env var
+is reported as `env:<VAR>` by [`llmlint config --sources` and `llmlint
+where`](#finding-where-something-is-defined) (query the sub-fields precisely, e.g.
+`llmlint where files.exclude`), so "where does this come from" stays honest.
 
 ### Nested & per-directory configs
 
@@ -655,11 +701,13 @@ history:
   dir: .llmlint/history  # where records go (relative to nothing in particular; an absolute path is clearer)
 ```
 
-The `LLMLINT_HISTORY_DIR` environment variable overrides `dir`, and `--no-history`
-(or `LLMLINT_NO_HISTORY=1`) disables logging for a single run. Like the other
-top-level settings, `history` is a cwd-and-up **session setting** (a subtree
-config never retunes it) and traces through `llmlint config --sources` / `llmlint
-where history.dir`.
+Each field also follows the uniform [env override](#settings-precedence--environment-variables)
+chain: `LLMLINT_HISTORY_DIR` sets `dir`, `LLMLINT_HISTORY_ENABLED` sets `enabled`
+(superseding the legacy `LLMLINT_NO_HISTORY=1` off-switch), and
+`LLMLINT_HISTORY_MAX_RUNS` sets `max_runs`; `--no-history` force-disables logging
+for a single run. Like the other top-level settings, `history` is a cwd-and-up
+**session setting** (a subtree config never retunes it) and traces through `llmlint
+config --sources` / `llmlint where history.dir`.
 
 ### oneharness passthrough
 

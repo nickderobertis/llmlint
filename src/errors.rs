@@ -103,6 +103,9 @@ pub enum Error {
 
     #[error("{0}")]
     History(String),
+
+    #[error("invalid environment variable {var}: {message}")]
+    Env { var: String, message: String },
 }
 
 impl Error {
@@ -209,6 +212,12 @@ mod tests {
         assert!(Error::History("no run with id \"x\"".into())
             .to_string()
             .contains("no run with id"));
+        assert!(Error::Env {
+            var: "LLMLINT_ONEHARNESS_TIMEOUT".into(),
+            message: "expected a whole number".into()
+        }
+        .to_string()
+        .contains("invalid environment variable LLMLINT_ONEHARNESS_TIMEOUT"));
         assert!(Error::ConfigParse {
             path: "f".into(),
             message: "m".into()

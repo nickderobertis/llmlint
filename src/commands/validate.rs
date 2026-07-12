@@ -20,7 +20,7 @@ use crate::cli::ValidateArgs;
 use crate::commands::{ignores, lint, version_bump};
 use crate::domain::config::validate;
 use crate::errors::Result;
-use crate::io::configfs;
+use crate::io::{configfs, env};
 
 pub fn run(args: ValidateArgs) -> Result<i32> {
     let cwd = lint::resolve_cwd(&args.cwd)?;
@@ -28,12 +28,29 @@ pub fn run(args: ValidateArgs) -> Result<i32> {
     // 1. Config structure. This also yields the target files (and their subtree
     // scopes) for step 2, so the ignore scan sees exactly what a lint run would.
     let loaded = configfs::load(&args.config, &cwd)?;
-    validate(&loaded.config)?;
+    let mut config = loaded.config;
+    let mut scopes = loaded.scopes;
+    // Fold the `LLMLINT_*` env overrides in as part of the static gate: a
+    // malformed env value (a non-numeric timeout, a bad bool) is a boundary
+    // error caught here alongside the config-structure checks.
+    let pre_files = config.files.clone();
+    env::apply_overrides(&mut config)?;
+    // `--exclude` layers onto the session `files.exclude` denylist so the
+    // ignore-directive scan (step 2) sees the same target set a `lint` with the
+    // same `--exclude` would — CLI wins over config, on top of the env layer.
+    config.files.exclude.extend(args.exclude.iter().cloned());
+    // Re-point session-level rule scopes at the overridden filter (see `lint`), so
+    // an env/CLI `files` override narrows the ignore scan the same way it narrows a
+    // lint run.
+    if config.files != pre_files {
+        ignores::retarget_session_scopes(&mut scopes, &cwd, &config.files);
+    }
+    validate(&config)?;
 
     // 2. Ignore-directive structure over every target file (no CLI narrowing:
     // `validate` is a whole-project gate).
-    let targets = ignores::target_files(&cwd, &loaded.config, &loaded.scopes, &[])?;
-    let known = ignores::known_rules(&loaded.config);
+    let targets = ignores::target_files(&cwd, &config, &scopes, &[])?;
+    let known = ignores::known_rules(&config);
     ignores::check(&cwd, &targets, &known)?;
 
     // 3. Version bumps for the discovered versioned config files (an empty CLI file

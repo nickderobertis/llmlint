@@ -20,7 +20,7 @@ use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
 use crate::domain::{applicability, attribution, diffmodel, ignore, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
-use crate::io::{assets, configfs, diff, files, history, oneharness};
+use crate::io::{assets, configfs, diff, env, files, history, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const DEFAULT_TIMEOUT: u64 = 600;
@@ -61,16 +61,28 @@ pub(crate) fn run_loaded(
     args: LintArgs,
     command: &str,
 ) -> Result<i32> {
-    let scopes = loaded.scopes;
+    let mut scopes = loaded.scopes;
     let sources = loaded.sources;
     let mut config = loaded.config;
     validate(&config)?;
     validate_filters(&config, &args)?;
+    // Fold the `LLMLINT_*` env overrides into the merged config *before* the CLI
+    // overlay, so the uniform precedence is CLI > env > config > default. A
+    // malformed env value (e.g. a non-numeric timeout) is a boundary error here,
+    // never a silent skip.
+    let pre_files = config.files.clone();
+    env::apply_overrides(&mut config)?;
     // Overlay CLI overrides onto the merged config so every top-level arg can be
     // set on the command line, with the CLI winning over the config (which in
     // turn won over its plugins). After this, downstream (planning, schema,
     // template) reads the single effective config.
     apply_cli_overrides(&mut config, &args)?;
+    // An env/CLI override of the session `files` filter must reach the per-rule
+    // scopes captured at load, or a `files.include` override would change the
+    // reported config but not what session-level rules target.
+    if config.files != pre_files {
+        ignores::retarget_session_scopes(&mut scopes, &cwd, &config.files);
+    }
     let session_rationales = config.rationales_default();
 
     let selected = select_rules(&config, &args);
@@ -251,14 +263,13 @@ pub(crate) fn run_loaded(
         return Ok(0);
     }
 
+    // `--oneharness-bin` wins over `config.oneharness.bin`, into which
+    // `env::apply_overrides` already folded `LLMLINT_ONEHARNESS_BIN` — so the
+    // effective precedence stays CLI > env > config, single-sourced through the
+    // config. `Client::new` handles the PATH / sibling fallback when none is set.
     let bin = args
         .oneharness_bin
         .clone()
-        .or_else(|| {
-            std::env::var("LLMLINT_ONEHARNESS_BIN")
-                .ok()
-                .filter(|s| !s.is_empty())
-        })
         .or_else(|| config.oneharness.bin.clone());
     let client = oneharness::Client::new(bin.as_deref());
     // Pre-flight: read-only mode (so the harness never edits target files)
@@ -612,6 +623,11 @@ fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
     if args.diff_base.is_some() {
         config.diff_base = args.diff_base.clone();
     }
+    // `--exclude` layers onto the session-wide `files.exclude` denylist: the CLI
+    // adds cwd-rooted globs to skip on top of whatever the config excludes. Like
+    // config `files.exclude`, it always wins over includes and never re-includes a
+    // path; it flows through the same `global_exclude` file-resolution path.
+    config.files.exclude.extend(args.exclude.iter().cloned());
     Ok(())
 }
 

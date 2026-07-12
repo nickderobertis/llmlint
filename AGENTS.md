@@ -347,6 +347,41 @@ harness reads target files on-demand with its own tools.
   it, and the effective `config.diff_base` is what reaches `provider`. It only
   tunes the base — `--diff` is still the on switch — so `diff_base` without
   `--diff` is inert.
+- **Uniform settings precedence (convention):** every top-level (session) setting
+  resolves through one chain — **CLI flag > `LLMLINT_` env var > config file >
+  built-in default** — mirroring oneharness's `ONEHARNESS_` env convention. The env
+  layer is `io::env::apply_overrides` (`ENV_SETTINGS` is the key↔var table; a test
+  pins it against `SETTING_KEYS` so a new setting can't silently miss env support).
+  It runs **after** the nearest-wins config merge and **before** `apply_cli_overrides`
+  (so CLI still wins), folding each set `LLMLINT_*` var into the merged config and
+  recording its provenance as `env:<VAR>` (so `config --sources` / `where` stay
+  honest). Env is **process-wide**, not cwd-and-up — it tunes the effective run, not
+  one directory's config. A var name is the setting path uppercased, `.`→`_`,
+  prefixed `LLMLINT_`; bools are `1/true/yes` vs `0/false/no` (case-insensitive); a
+  malformed value is an exit-2 `Error::Env` **located to the variable**, never a
+  silent skip (validate at the boundary). Only `version` is config-only. The
+  structured `files` setting is reported (and env-overridden) at **sub-field**
+  granularity — `files.include` / `files.exclude` are their own `SETTING_KEYS`
+  entries (like `oneharness.*` / `history.*`), so `where files.exclude` resolves and
+  each has its own `LLMLINT_FILES_*` var (a `PATH`-separated glob list). Their merge
+  differs by kind: **include replaces** (highest layer that sets it wins — positional
+  CLI files > env > config), **exclude accumulates** (config ∪ env ∪ `--exclude`), so
+  a per-run exclude never drops a config safety exclude. The exclude denylist wins
+  even over an **explicitly-passed** file — a named file matching any exclude is
+  dropped (`files::drop_excluded` in the `resolve_files` CLI-files branch), the same
+  "an include never resurrects an excluded path" rule (issue #128) the glob path
+  follows. A session-level `files` override reaches the per-rule scopes captured at
+  load via `ignores::retarget_session_scopes` (cwd-rooted scopes only), so a
+  `files.include` env/CLI override actually changes what session rules target, not
+  just the reported config. The `--exclude` flag exists
+  on `lint`/`lint-config` **and `validate`** (so the static ignore-scan sees the same
+  target set). Reached by every command that reads the settings — `lint`/`lint-config`
+  (via `run_loaded`), `config`, `where`, `validate`; `history` and `doctor` read the
+  relevant env var directly. **Back-compat:** the canonical
+  `LLMLINT_HISTORY_ENABLED` supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch
+  (honored in `history::resolve` only when the canonical var is unset);
+  `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into
+  the same scheme. When a new session setting lands, add its `LLMLINT_` var here.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

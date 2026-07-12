@@ -406,7 +406,8 @@ pub struct Provenance {
 pub const SETTING_KEYS: &[&str] = &[
     "version",
     "prompt_template",
-    "files",
+    "files.include",
+    "files.exclude",
     "oneharness.config",
     "oneharness.bin",
     "oneharness.model",
@@ -498,7 +499,11 @@ impl ProvenanceBuilder {
         let settings: &[(&str, bool)] = &[
             ("version", cfg.version.is_some()),
             ("prompt_template", cfg.prompt_template.is_some()),
-            ("files", !cfg.files.is_empty()),
+            // `files` is reported at sub-field granularity (like `oneharness.*` /
+            // `history.*`), so an env override of one list traces precisely and a
+            // `where files.exclude` query resolves.
+            ("files.include", !cfg.files.include.is_empty()),
+            ("files.exclude", !cfg.files.exclude.is_empty()),
             ("oneharness.config", !cfg.oneharness.config.is_empty()),
             ("oneharness.bin", cfg.oneharness.bin.is_some()),
             ("oneharness.model", cfg.oneharness.model.is_some()),
@@ -1374,7 +1379,9 @@ mod tests {
         // Settings + agents: first (nearest-root) writer wins.
         assert_eq!(prov.settings["version"], "near.yml");
         assert_eq!(prov.settings["rationales"], "near.yml");
-        assert_eq!(prov.settings["files"], "near.yml");
+        assert_eq!(prov.settings["files.include"], "near.yml");
+        // Only `include` was set on `near`; `exclude` was empty, so it is absent.
+        assert!(!prov.settings.contains_key("files.exclude"));
         assert_eq!(prov.settings["oneharness.model"], "near.yml");
         assert_eq!(prov.settings["oneharness.config"], "near.yml");
         assert_eq!(prov.settings["prompt_template"], "far.yml");
@@ -1417,7 +1424,7 @@ mod tests {
             },
             files: FileFilter {
                 include: vec!["x".into()],
-                exclude: vec![],
+                exclude: vec!["y".into()],
             },
             ..Default::default()
         };
