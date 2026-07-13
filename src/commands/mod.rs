@@ -27,7 +27,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Init(args)) => init::run(args),
         Some(Command::Config(args)) => config::run(args),
         Some(Command::Where(args)) => where_::run(args),
-        Some(Command::Doctor) => doctor::run(),
+        Some(Command::Doctor(args)) => doctor::run(args),
         Some(Command::History(args)) => history::run(args),
         None => lint::run(cli.lint),
     }

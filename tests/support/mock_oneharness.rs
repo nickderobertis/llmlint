@@ -14,6 +14,11 @@
 //! - `LLMLINT_MOCK_FAIL_SCHEMA=1` — emit `schema_valid=false` (validation fail).
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
+//! - `LLMLINT_MOCK_DEFERRED=1` — emit a `failure_kind="tool_deferred"` result
+//!   with an actionable `error` and null `structured` (the shape oneharness
+//!   0.3.21+ returns when a bridged/managed harness defers a builtin tool
+//!   instead of executing it — issue #142). Drives llmlint's specific
+//!   `ToolDeferred` diagnostic and the `doctor --probe` deferred path.
 //! - `LLMLINT_MOCK_FALLBACK=1` — emit a **fallback**-shaped report: a skipped
 //!   `codex` entry listed first in `results`, the real verdict from the harness
 //!   fell through to, and a top-level `fallback.ran` naming that winner (the
@@ -199,7 +204,7 @@ fn main() {
     // --version`. Default to a version that satisfies llmlint's minimum;
     // `LLMLINT_MOCK_VERSION` overrides it so a test can drive the too-old path.
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.12".into());
+        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.21".into());
         println!("oneharness {version} (mock)");
         return;
     }
@@ -288,6 +293,22 @@ fn main() {
             "schema_error": "mock: forced schema-validation failure",
             "error": null,
         })
+    } else if flag("LLMLINT_MOCK_DEFERRED") {
+        // oneharness >= 0.3.21: the harness exited cleanly but only deferred a
+        // builtin tool, so `status` is ok yet there is no verdict and
+        // `failure_kind` names the deferral. oneharness fails the run non-zero.
+        json!({
+            "harness": harness,
+            "status": "ok",
+            "exit_code": 0,
+            "structured": null,
+            "schema_valid": null,
+            "schema_attempts": null,
+            "schema_error": null,
+            "failure_kind": "tool_deferred",
+            "failure_kind_source": "claude-code",
+            "error": "harness claude-code deferred a tool call (`Read`) instead of executing it; you appear to be in a bridged/managed deployment where builtin tools are deferred.",
+        })
     } else if flag("LLMLINT_MOCK_NO_STRUCTURED") {
         json!({
             "harness": harness,
@@ -370,6 +391,8 @@ fn main() {
     println!("{}", serde_json::to_string(&report).unwrap());
 
     // A real run exits 0 on ok/skipped, 1 otherwise; mirror that loosely.
-    let ok = !(flag("LLMLINT_MOCK_FAIL_SCHEMA") || flag("LLMLINT_MOCK_NO_STRUCTURED"));
+    let ok = !(flag("LLMLINT_MOCK_FAIL_SCHEMA")
+        || flag("LLMLINT_MOCK_NO_STRUCTURED")
+        || flag("LLMLINT_MOCK_DEFERRED"));
     std::process::exit(if ok { 0 } else { 1 });
 }

@@ -16,7 +16,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use wait_timeout::ChildExt;
 
 use crate::domain::verdict::RuleVerdict;
@@ -29,9 +29,12 @@ pub const DEFAULT_BIN: &str = "oneharness";
 /// `--system-file` — which lets llmlint pass its (potentially large) rendered
 /// system prompt by file path instead of as an argv string that could trip the
 /// OS `Argument list too long` limit — landed in oneharness 0.3.12. (Read-only
-/// mode, `--mode read-only`, has been required since 0.3.0.) An older binary
-/// lacks the flag, so it is rejected up front.
-pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 12);
+/// mode, `--mode read-only`, has been required since 0.3.0.) The named
+/// `failure_kind: "tool_deferred"` that lets llmlint give a specific diagnostic
+/// when a bridged/managed harness defers a builtin tool instead of running it
+/// (issue #142) landed in 0.3.21 — the current floor. An older binary lacks
+/// these, so it is rejected up front.
+pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 21);
 
 /// Render a `(major, minor, patch)` version as `major.minor.patch`.
 fn format_version((major, minor, patch): (u64, u64, u64)) -> String {
@@ -174,6 +177,13 @@ struct RunResult {
     schema_valid: Option<bool>,
     #[serde(default)]
     schema_error: Option<String>,
+    /// A coarse, named reason a run failed (oneharness >= 0.3.21). The one kind
+    /// llmlint acts on is `tool_deferred`: the harness exited cleanly but only
+    /// *proposed* a builtin tool (Read/Bash/…) for a controller to run instead
+    /// of executing it, so it produced no verdict — the bridged/managed-session
+    /// trap (issue #142).
+    #[serde(default)]
+    failure_kind: Option<String>,
     #[serde(default)]
     error: Option<String>,
 }
@@ -396,6 +406,83 @@ impl Client {
         let verdicts = parse_verdicts(&capture, harness);
         (trace, verdicts)
     }
+
+    /// Confirm the harness actually *executes* tools, not merely that its binary
+    /// answers — the gap `doctor`'s version check can't see (issue #142). Writes
+    /// a marker to a temp file and asks the harness to read it back with its
+    /// file-reading tool; a deployment that runs tools inline returns a verdict
+    /// ([`ProbeOutcome::Executed`]), while a bridged/managed one *defers* the
+    /// Read to a controller and oneharness reports `tool_deferred`
+    /// ([`ProbeOutcome::Deferred`]). Read is chosen because it is permitted in
+    /// read-only mode and mirrors how the judge reads the files it reviews.
+    ///
+    /// Makes a real, billed model call, so it is opt-in (`doctor --probe`) and
+    /// never on llmlint's default paths. Any error other than a deferral (auth,
+    /// missing harness, timeout) propagates so the probe can't mask it.
+    pub fn probe(
+        &self,
+        harness: Option<&str>,
+        model: Option<&str>,
+        timeout_secs: u64,
+    ) -> Result<ProbeOutcome> {
+        // A marker the harness can only report by actually reading the file, so
+        // a deferring deployment is forced to defer the Read rather than guess.
+        const MARKER: &str = "LLMLINT_PROBE_OK";
+        let mut probe_file = tempfile::Builder::new()
+            .prefix("llmlint-probe-")
+            .suffix(".txt")
+            .tempfile()
+            .map_err(|e| io_err("creating probe temp file", e))?;
+        probe_file
+            .write_all(MARKER.as_bytes())
+            .and_then(|_| probe_file.flush())
+            .map_err(|e| io_err("writing probe temp file", e))?;
+        let path = probe_file.path();
+        let cwd = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        let prompt = format!(
+            "Use your file-reading tool to read the file at {} and report whether \
+             its entire contents are exactly `{MARKER}`.",
+            path.display()
+        );
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "read_ok": { "type": "boolean" } },
+            "required": ["read_ok"],
+        });
+        let req = RunRequest {
+            harness,
+            model,
+            system: "You are a probe. Use your tools to answer; never guess.",
+            prompt: &prompt,
+            schema: &schema,
+            schema_max_retries: None,
+            cwd: &cwd,
+            timeout_secs,
+            oneharness_config: None,
+            no_config: false,
+        };
+        match self.run(&req) {
+            Ok(_) => Ok(ProbeOutcome::Executed),
+            Err(Error::ToolDeferred { detail, .. }) => Ok(ProbeOutcome::Deferred(detail)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// The outcome of [`Client::probe`]: whether the harness runs tools inline.
+#[derive(Debug)]
+pub enum ProbeOutcome {
+    /// The harness executed a tool and answered — tool-using runs work here.
+    Executed,
+    /// The harness deferred the tool instead of running it (a bridged/managed
+    /// deployment). The string is oneharness's actionable detail (it names the
+    /// deferred tool).
+    Deferred(String),
 }
 
 /// Parse one captured oneharness run into its per-rule verdicts (the verdict
@@ -428,6 +515,25 @@ fn parse_verdicts(capture: &Capture, harness: &str) -> Result<BTreeMap<String, R
         Some(i) => report.results.into_iter().nth(i).expect("index in range"),
         None => return Err(fallback_chain_error(&report, harness)),
     };
+
+    // A deferred builtin tool is a *named* failure (oneharness >= 0.3.21), not a
+    // schema/output error: the harness proposed a tool (Read/Bash/…) for an
+    // external controller to run and stopped, so there is no verdict. Check it
+    // first — without this it would fall through to the schema-invalid or
+    // no-structured-output branch below and read like a config bug, which is the
+    // whole wall issue #142 describes. Surface oneharness's actionable `error`
+    // (it names the tool) inside a specific, pointed diagnostic.
+    if result.failure_kind.as_deref() == Some("tool_deferred") {
+        return Err(Error::ToolDeferred {
+            harness: harness.to_string(),
+            detail: result
+                .error
+                .filter(|e| !e.trim().is_empty())
+                .unwrap_or_else(|| {
+                    "The harness deferred a builtin tool call to a controller.".into()
+                }),
+        });
+    }
 
     if result.schema_valid == Some(false) {
         return Err(Error::Oneharness(format!(
@@ -643,10 +749,10 @@ mod tests {
     #[test]
     fn min_version_comparison_uses_tuple_order() {
         // Sanity-check the ordering the `check_min_version` gate relies on.
-        assert!((0, 3, 12) >= MIN_VERSION);
+        assert!((0, 3, 21) >= MIN_VERSION);
         assert!((0, 4, 0) >= MIN_VERSION);
         assert!((1, 0, 0) >= MIN_VERSION);
-        assert!((0, 3, 11) < MIN_VERSION);
+        assert!((0, 3, 20) < MIN_VERSION);
         assert!((0, 3, 0) < MIN_VERSION);
     }
 
@@ -749,6 +855,54 @@ mod tests {
             "results": [ok_result("claude-code")],
         });
         assert!(verdicts_from(&body).unwrap().contains_key("some_rule"));
+    }
+
+    #[test]
+    fn deferred_tool_is_a_specific_error_not_a_schema_error() {
+        // Issue #142: oneharness >= 0.3.21 reports `failure_kind: "tool_deferred"`
+        // (status ok, null structured). llmlint must map it to the pointed
+        // `ToolDeferred` diagnostic surfacing oneharness's `error`, never the
+        // generic no-structured/schema-invalid message.
+        let body = json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "results": [{
+                "harness": "claude-code",
+                "status": "ok",
+                "exit_code": 0,
+                "structured": null,
+                "schema_valid": null,
+                "failure_kind": "tool_deferred",
+                "error": "harness claude-code deferred a tool call (`Read`).",
+            }],
+        });
+        let err = verdicts_from(&body).unwrap_err();
+        assert!(
+            matches!(err, Error::ToolDeferred { .. }),
+            "expected ToolDeferred, got {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("deferred a tool call"), "{msg}");
+        // oneharness's detail (naming the tool) is carried through.
+        assert!(msg.contains("`Read`"), "{msg}");
+    }
+
+    #[test]
+    fn deferred_tool_without_detail_still_diagnoses() {
+        // Even if oneharness omits the `error` detail, the diagnostic stands on
+        // its own (a default detail) rather than falling through.
+        let body = json!({
+            "schema_version": "0.1",
+            "oneharness_version": "mock",
+            "results": [{
+                "harness": "claude-code",
+                "status": "ok",
+                "structured": null,
+                "failure_kind": "tool_deferred",
+            }],
+        });
+        let err = verdicts_from(&body).unwrap_err();
+        assert!(matches!(err, Error::ToolDeferred { .. }), "{err:?}");
     }
 
     #[test]

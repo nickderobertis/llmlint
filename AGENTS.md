@@ -167,13 +167,33 @@ harness reads target files on-demand with its own tools.
   never an editor, so every `run` passes `--mode read-only` — the harness may
   read target files but can't edit them or run commands (needs oneharness >=
   0.3.0). It also passes the rendered system prompt by file (`--system-file`, so
-  a large briefing never trips the OS argv limit — needs oneharness >= 0.3.12), so
-  the floor is **oneharness >= 0.3.12** (`oneharness::MIN_VERSION`). Both `lint`
-  (pre-flight, once per run) and `doctor` parse `oneharness --version` and fail
-  with a clear exit-2 error when the binary is older (or its version can't be
-  parsed) rather than letting a missing flag blow up mid-run. Bump `MIN_VERSION`
-  in `src/io/oneharness.rs` (and the mock's default in
-  `tests/support/mock_oneharness.rs`) together when the floor moves.
+  a large briefing never trips the OS argv limit — needs oneharness >= 0.3.12).
+  The floor is **oneharness >= 0.3.21** (`oneharness::MIN_VERSION`): that release
+  reports a deferred builtin tool as a named `failure_kind: "tool_deferred"`,
+  which is what lets llmlint give the specific deferred-tool diagnostic (below)
+  instead of an opaque schema error. Both `lint` (pre-flight, once per run) and
+  `doctor` parse `oneharness --version` and fail with a clear exit-2 error when
+  the binary is older (or its version can't be parsed) rather than letting a
+  missing flag blow up mid-run. Bump `MIN_VERSION` in `src/io/oneharness.rs`, the
+  mock's default in `tests/support/mock_oneharness.rs`, and the `oneharness-cli`
+  floor in `pyproject.toml` together when the floor moves.
+
+- **Deferred-tool diagnostic (convention, issue #142):** the judge *inherently*
+  uses tools — it reads the code it judges — so a harness deployment that
+  **defers** builtin tools to an external controller instead of executing them
+  inline (a bridged/managed Claude Code session, empty
+  `tengu_non_deferrable_builtins`) makes every judge call dead-end with no
+  verdict. oneharness (>= 0.3.21) names this as `failure_kind: "tool_deferred"`
+  on the result (status may be `ok`; `structured` null) with an actionable
+  `error`. `parse_verdicts` (`src/io/oneharness.rs`) checks that **before** the
+  schema/no-structured branches and raises `Error::ToolDeferred`, surfacing
+  oneharness's detail inside a pointed message (run from a standalone shell / CI),
+  never the generic "failed schema validation / no JSON value could be extracted"
+  the issue chased. `llmlint doctor --probe` catches it up front: an opt-in,
+  billed probe that asks the harness to read a temp file and confirms the tool
+  *executed* (`Client::probe` → `ProbeOutcome`), rather than only that the binary
+  answered. The requirement (harness must execute tools inline) is documented in
+  the README.
 
 - **Fallback-winner selection (convention):** in oneharness **fallback** mode the
   `results` array lists every *attempted* harness in priority order — so

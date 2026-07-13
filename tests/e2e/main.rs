@@ -3453,16 +3453,17 @@ fn doctor_fails_clearly_when_oneharness_is_missing() {
 
 #[test]
 fn doctor_fails_clearly_when_oneharness_is_too_old() {
-    // A pre-0.3.12 oneharness lacks `--system-file`, so doctor rejects it.
+    // A pre-0.3.21 oneharness lacks the `tool_deferred` failure_kind (and, older
+    // still, `--system-file`), so doctor rejects it below the floor.
     let p = Project::new();
     p.bare()
         .arg("doctor")
         .env("LLMLINT_ONEHARNESS_BIN", mock_path())
-        .env("LLMLINT_MOCK_VERSION", "0.3.11")
+        .env("LLMLINT_MOCK_VERSION", "0.3.20")
         .assert()
         .code(2)
         .stderr(predicate::str::contains("too old"))
-        .stderr(predicate::str::contains("0.3.12"));
+        .stderr(predicate::str::contains("0.3.21"));
 }
 
 #[test]
@@ -3477,7 +3478,49 @@ fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("could not determine"))
-        .stderr(predicate::str::contains("0.3.12"));
+        .stderr(predicate::str::contains("0.3.21"));
+}
+
+#[test]
+fn doctor_without_probe_makes_no_harness_call() {
+    // The default (free) path only checks the version — it never runs the
+    // harness, so no tool-execution line appears.
+    let p = Project::new();
+    p.bare()
+        .arg("doctor")
+        .env("LLMLINT_ONEHARNESS_BIN", mock_path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tool execution").not());
+}
+
+#[test]
+fn doctor_probe_reports_ok_when_the_harness_runs_tools() {
+    // `--probe` runs the harness against a trivial tool-using prompt; the mock
+    // answers with a verdict (tool executed inline), so the probe passes.
+    let p = Project::new();
+    p.bare()
+        .args(["doctor", "--probe"])
+        .env("LLMLINT_ONEHARNESS_BIN", mock_path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tool execution: ok"));
+}
+
+#[test]
+fn doctor_probe_detects_a_deferred_tool() {
+    // Issue #142: the probe's whole point — catch a bridged/managed deployment
+    // that defers tools up front, before a full billed run. A `tool_deferred`
+    // result surfaces the same actionable diagnostic (exit 2).
+    let p = Project::new();
+    p.bare()
+        .args(["doctor", "--probe"])
+        .env("LLMLINT_ONEHARNESS_BIN", mock_path())
+        .env("LLMLINT_MOCK_DEFERRED", "1")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("deferred a tool call"))
+        .stderr(predicate::str::contains("standalone shell or in CI"));
 }
 
 // ---- sibling oneharness resolution -----------------------------------------
@@ -3641,6 +3684,25 @@ fn missing_structured_output_is_surfaced() {
         .assert()
         .code(2)
         .stdout(predicate::str::contains("no structured output"));
+}
+
+#[test]
+fn deferred_tool_is_surfaced_with_a_specific_diagnostic() {
+    // Issue #142: when the harness defers a builtin tool instead of executing it
+    // (a bridged/managed session), oneharness >= 0.3.21 reports
+    // `failure_kind: "tool_deferred"`. llmlint must turn that into a specific,
+    // actionable error naming the deferral — NOT the generic "failed schema
+    // validation / no JSON value could be extracted" wall the issue describes.
+    let p = lint_project();
+    p.lint()
+        .env("LLMLINT_MOCK_DEFERRED", "1")
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("deferred a tool call"))
+        .stdout(predicate::str::contains("standalone shell or in CI"))
+        // The misleading generic messages must NOT be what the user sees.
+        .stdout(predicate::str::contains("failed schema validation").not())
+        .stdout(predicate::str::contains("no structured output").not());
 }
 
 #[test]

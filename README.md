@@ -121,6 +121,18 @@ with PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) and
 carry [PEP 740](https://peps.python.org/pep-0740/) attestations — the same
 Sigstore build provenance as the GitHub release assets.
 
+**Tool execution must be inline.** llmlint's judge reads the files it reviews
+through the harness's own tools (Read/Bash), so it needs a harness deployment
+that **executes tools inline**. In a bridged/managed session — e.g. one where
+Claude Code defers every builtin tool to an external controller (an empty
+`tengu_non_deferrable_builtins`) — the harness only *proposes* the tool and
+stops, so the judge never gets a verdict. llmlint detects this and says so,
+naming the deferred tool and pointing you to a standalone shell or CI, instead
+of the opaque "no JSON value could be extracted" you'd otherwise chase. Confirm
+a deployment up front with `llmlint doctor --probe`: it makes one trivial
+tool-using call and checks the harness actually ran it. (This needs oneharness
+≥ 0.3.21, which reports the deferral as a named `tool_deferred` failure.)
+
 **Behind a mirror.** In a network that can reach a release-proxy mirror but not
 `github.com`, point the archive download at it:
 
