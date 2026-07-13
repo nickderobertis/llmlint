@@ -219,6 +219,16 @@ pub struct LintArgs {
     /// calls.
     #[arg(long = "plan-only", action = clap::ArgAction::SetTrue)]
     pub plan_only: bool,
+
+    /// Skip the deterministic `llmlint: ignore` **structure** check (the same one
+    /// `check-ignores`/`validate` run), going straight to the judge. Well-formed
+    /// directives are still honored — only the up-front structural validation is
+    /// skipped. For a pipeline that already runs `validate` (with its own
+    /// excludes) as a separate step, so the judge pass needn't re-check — and can
+    /// therefore review files that legitimately contain *example* directives
+    /// without tripping on them.
+    #[arg(long = "no-ignore-check", action = clap::ArgAction::SetTrue)]
+    pub no_ignore_check: bool,
 }
 
 impl LintArgs {

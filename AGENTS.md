@@ -257,6 +257,13 @@ harness reads target files on-demand with its own tools.
   and the standalone, model-free `check-ignores` command (`commands/check_ignores.rs`),
   so the fast static check and the full run can never disagree about what's valid.
   Keep that one shared path — don't reimplement the scan in a command.
+  `lint --no-ignore-check` skips **only** this structural pre-flight (honoring below
+  is untouched), for a pipeline that already runs the structural check as its own
+  step: our `lint-llm-diff` recipe passes it so the LLM judge can review files that
+  legitimately hold *example* directives (docs, the parser, `tests/e2e/main.rs`)
+  without the gate tripping, while `lint-llm-validate` still runs the structural
+  check with the `ignore-scan-exclude` denylist. The gate is skipped, not weakened —
+  `check-ignores`/`validate` remain the enforcing path.
   **Honoring** them is now llmlint's own job, deterministic and layered by scope:
   `ignore::suppressions` parses each well-formed directive into per-rule line spans
   (`ignore-file` → whole file; `ignore` → its line and the one below;
