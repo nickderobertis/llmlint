@@ -258,6 +258,10 @@ ignore-scan-exclude := "README.md:AGENTS.md:tests/AGENTS.md:assets/default_templ
 lint-llm-validate *args:
     PATH="$HOME/.local/bin:$PATH" LLMLINT_FILES_EXCLUDE="{{ignore-scan-exclude}}" llmlint validate {{args}}
 
-# llmlint scoped to changed files since the merge-base with main.
+# llmlint scoped to changed files since the merge-base with main. `--no-ignore-check`
+# skips the deterministic ignore-directive *structure* gate here (the LLM judge still
+# runs on every changed file, example-directive files included): `lint-llm-validate`
+# above already runs that structural check with the `ignore-scan-exclude` denylist, so
+# re-checking here would only re-trip on the excluded example-directive files.
 lint-llm-diff base="origin/main" *args:
-    llmlint --diff --diff-base "{{base}}" {{args}}
+    llmlint --diff --diff-base "{{base}}" --no-ignore-check {{args}}

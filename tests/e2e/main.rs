@@ -5782,6 +5782,32 @@ fn ignore_directive_without_reason_is_rejected() {
 }
 
 #[test]
+fn no_ignore_check_skips_the_structural_gate_but_still_judges() {
+    // A file carrying a structurally-invalid directive — an *example* rule name
+    // that isn't configured — trips the deterministic pre-flight. That is exactly
+    // what makes the judge pass choke on files full of directive *examples* (docs,
+    // the ignore parser, the e2e suite). `--no-ignore-check` skips only that gate,
+    // so the judge still reviews the file; the structural check stays available via
+    // `check-ignores` / `validate` as a separate step.
+    let p = ignore_project("// llmlint: ignore[example_rule] docs sample, not real\n");
+    let verdicts = p.write_verdicts(r#"{"no_todo": true}"#);
+
+    // Default: the structural gate rejects the unknown-rule directive up front.
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown rule"));
+
+    // With the flag: the gate is skipped and the judge runs to a clean pass.
+    p.lint()
+        .arg("--no-ignore-check")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success();
+}
+
+#[test]
 fn default_prompt_documents_line_and_block_ignore_directives() {
     // llmlint now enforces ignores deterministically after the judge answers, so
     // the prompt keeps only the line/block guidance (as a backstop) — the

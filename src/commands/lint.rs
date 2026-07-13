@@ -192,13 +192,18 @@ pub(crate) fn run_loaded(
     // their *structure* is enforced here so a typo'd or reason-less ignore fails
     // loudly instead of silently doing nothing. This is the same check
     // `llmlint check-ignores` runs standalone, so the fast static loop and the
-    // full run never disagree.
+    // full run never disagree. `--no-ignore-check` skips *only* this structural
+    // gate (honoring below is untouched): a pipeline that already runs `validate`
+    // as its own step needn't re-check here, and can then judge files that
+    // legitimately hold *example* directives without the gate tripping on them.
     let targets: BTreeSet<PathBuf> = resolved
         .iter()
         .flat_map(|r| r.files.iter().cloned())
         .collect();
     let known = ignores::known_rules(&config);
-    ignores::check(&cwd, &targets, &known)?;
+    if !args.no_ignore_check {
+        ignores::check(&cwd, &targets, &known)?;
+    }
 
     // Parse each target file's well-formed inline ignores into line-span
     // suppressions, keyed by the file's slash path. After a judge answers, any
