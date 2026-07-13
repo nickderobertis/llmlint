@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.21](https://github.com/nickderobertis/llmlint/compare/v0.3.20...v0.3.21) - 2026-07-13
+
+### Added
+
+- diagnose a deferred-tool harness instead of an opaque schema error ([#157](https://github.com/nickderobertis/llmlint/pull/157))
+
 ## [0.3.20](https://github.com/nickderobertis/llmlint/compare/v0.3.19...v0.3.20) - 2026-07-12
 
 ### Added
