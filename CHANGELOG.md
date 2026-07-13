@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.22](https://github.com/nickderobertis/llmlint/compare/v0.3.21...v0.3.22) - 2026-07-13
+
+### Added
+
+- add `lint --no-ignore-check` to skip the ignore-directive structure gate ([#159](https://github.com/nickderobertis/llmlint/pull/159))
+
 ## [0.3.21](https://github.com/nickderobertis/llmlint/compare/v0.3.20...v0.3.21) - 2026-07-13
 
 ### Added
