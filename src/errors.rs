@@ -75,6 +75,16 @@ pub enum Error {
     #[error("oneharness run failed: {0}")]
     Oneharness(String),
 
+    #[error(
+        "harness {harness} deferred a tool call instead of executing it, so it \
+         produced no verdict.\n{detail}\n\
+         llmlint's judge reads the files it reviews, so it needs a harness that \
+         executes tools inline. Run llmlint from a standalone shell or in CI, not \
+         inside a bridged/managed session where builtin tools are deferred to a \
+         controller. Verify with `llmlint doctor --probe`."
+    )]
+    ToolDeferred { harness: String, detail: String },
+
     #[error("diff ({backend}): {message}")]
     Diff { backend: String, message: String },
 
@@ -155,6 +165,17 @@ mod tests {
         assert!(too_old.contains("too old"), "got: {too_old}");
         assert!(too_old.contains("0.3.0"), "got: {too_old}");
         assert!(too_old.contains("read-only mode"), "got: {too_old}");
+        let deferred = Error::ToolDeferred {
+            harness: "claude-code".into(),
+            detail: "deferred `Read`".into(),
+        }
+        .to_string();
+        assert!(deferred.contains("deferred a tool call"), "got: {deferred}");
+        assert!(deferred.contains("deferred `Read`"), "got: {deferred}");
+        assert!(
+            deferred.contains("standalone shell or in CI"),
+            "got: {deferred}"
+        );
         assert!(Error::ConfigNotFound {
             names: "llmlint.yml".into(),
             dir: "/x".into()

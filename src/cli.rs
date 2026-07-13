@@ -70,8 +70,11 @@ pub enum Command {
     /// `rules.<name>`, or `rules.<name>.<field>`; prints the source and nothing
     /// else, for scripting. The broad view is `config --sources`.
     Where(WhereArgs),
-    /// Check that oneharness is installed and reachable.
-    Doctor,
+    /// Check that oneharness is installed and reachable. With `--probe`, also
+    /// make a real (billed) harness call that confirms the harness *executes*
+    /// tools inline rather than deferring them to a controller — the
+    /// bridged/managed-session trap where llmlint's judge silently dead-ends.
+    Doctor(DoctorArgs),
     /// Inspect logged run results. With no id, list recent runs; with an id (or
     /// `latest`), show that run's full results — the complete per-rule detail the
     /// terminal report omits. Drill in with `--status`/`--rule` filters, print the
@@ -604,6 +607,34 @@ pub struct WhereArgs {
     /// Directory to resolve config discovery from. Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct DoctorArgs {
+    /// Also run a tool-execution probe: a real, billed harness call that reads a
+    /// temp file and reports it, confirming the harness *executes* tools inline
+    /// rather than deferring them to a controller. Off by default (the version
+    /// check is free; the probe costs a model call).
+    #[arg(long = "probe")]
+    pub probe: bool,
+
+    /// Harness id to probe (else oneharness's configured default). Only used
+    /// with `--probe`.
+    #[arg(long = "harness", value_name = "ID")]
+    pub harness: Option<String>,
+
+    /// Model for the probe, forwarded to oneharness. Only used with `--probe`.
+    #[arg(long = "model", value_name = "MODEL")]
+    pub model: Option<String>,
+
+    /// Probe timeout in seconds (default 120). Only used with `--probe`.
+    #[arg(long = "timeout", value_name = "SECS", default_value_t = 120)]
+    pub timeout: u64,
+
+    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN`, PATH, or
+    /// a `oneharness` beside the llmlint executable).
+    #[arg(long = "oneharness-bin", value_name = "PATH")]
+    pub oneharness_bin: Option<String>,
 }
 
 #[derive(Args, Debug, Default)]

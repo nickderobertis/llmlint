@@ -358,8 +358,9 @@ logic is also covered hermetically via `file://` plugins.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
 - Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
-  via the dumped arg vector. The minimum-oneharness-version gate (>= 0.3.12,
-  needed for read-only mode and `--system-file`) is exercised both ways: `doctor`
+  via the dumped arg vector. The minimum-oneharness-version gate (>= 0.3.21,
+  needed for read-only mode, `--system-file`, and the `tool_deferred`
+  failure_kind) is exercised both ways: `doctor`
   and `lint` reject a too-old oneharness with a clear exit-2 "too old" error (the
   mock's reported version is driven by `LLMLINT_MOCK_VERSION`), a version string
   with no parseable number is a distinct exit-2 "could not determine" error, and
@@ -460,7 +461,15 @@ logic is also covered hermetically via `file://` plugins.
   pinned to `domain::config_schema::build()` so it can't drift from the model).
 - `config` prints the merged config + sources and rejects an invalid config;
   `doctor` reports the oneharness version and fails clearly when it is missing or
-  older than the minimum required for read-only mode.
+  older than the minimum required for read-only mode. `doctor --probe` makes a
+  real tool-using harness call (driven by the mock) and reports **ok** when the
+  tool executed inline; the default `doctor` (no `--probe`) makes no harness call.
+- Deferred-tool diagnostic (issue #142): when the harness defers a builtin tool
+  instead of executing it, oneharness (>= 0.3.21) reports
+  `failure_kind: "tool_deferred"` (mock: `LLMLINT_MOCK_DEFERRED=1`). Both `lint`
+  and `doctor --probe` surface a **specific** actionable error naming the
+  deferral and pointing to a standalone shell / CI — never the generic "failed
+  schema validation" / "no structured output" the issue describes.
 - Sibling oneharness resolution (the uv-tool/pipx layout: both binaries copied
   into one venv-style `bin/`, only llmlint reachable): with no override and no
   oneharness on PATH, `doctor` resolves and names the binary beside the llmlint
