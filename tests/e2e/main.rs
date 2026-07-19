@@ -741,6 +741,109 @@ fn config_lint_plugin_flags_description_restating_an_excluded_case() {
 }
 
 #[test]
+fn config_lint_plugin_requires_attribution_for_line_localizable_rules() {
+    // These are the actual create-repo base fragment rules. Both violations can
+    // point directly at the offending literal/directive, so omitting
+    // `require_line_attribution: true` is itself a config-lint violation.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        r#"version: 1
+rules:
+  - name: suppressions_justified
+    description: |
+      when every linter or type-checker suppression directive in the target files
+      (`# noqa`, `eslint-disable`, `#[allow(...)]`, `# type: ignore`, `@ts-ignore`)
+      carries a brief reason for the suppression.
+    relevance: the target files contain a linter or type-checker suppression directive
+
+  - name: no_hardcoded_secrets
+    description: |
+      when every secret the target files rely on — a credential, API key, access token,
+      connection string, or private key — is read from an environment variable or a
+      secret store by name rather than embedded as an inline literal.
+    relevance: the target files handle credentials, connect to a service, or hold configuration
+"#,
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"line_localizable_rules_require_attribution":
+              {"holds": false, "violations": [
+                {"file": "llmlint.yml", "line": 3, "message": "suppressions_justified omits required line attribution"},
+                {"file": "llmlint.yml", "line": 10, "message": "no_hardcoded_secrets omits required line attribution"}
+              ]}}"#,
+    );
+
+    p.lint_config()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL line_localizable_rules_require_attribution",
+        ))
+        .stdout(predicate::str::contains(
+            "suppressions_justified omits required line attribution",
+        ))
+        .stdout(predicate::str::contains(
+            "no_hardcoded_secrets omits required line attribution",
+        ));
+}
+
+#[test]
+fn config_lint_plugin_accepts_correct_attribution_choices() {
+    // These are the actual create-repo base fragment rules. The e2e rule opts in
+    // because a missing test is attributable to the changed behavior's line; the
+    // contract rule correctly omits the field because drift spans declarations.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        r#"version: 1
+rules:
+  - name: changed_behavior_has_e2e
+    description: |
+      true when EVERY distinct user-facing behavior these changes ADD or MODIFY is
+      exercised by a real end-to-end or integration test — each new or altered code
+      path, output, exit status, and failure/recovery path, not one happy-path test
+      standing in for the whole change. Coverage scales with the change: a large
+      addition that introduces several journeys needs each of them exercised, while a
+      one-line change needs only its own path. Judge only the behavior the diff
+      introduces or alters: locate the e2e/integration tests that drive this entry
+      point or module — read the repo's test tree as needed — and confirm each such
+      behavior is covered, whether an existing test already exercises it or a new test
+      was added alongside the change. false when any observable behavior the change
+      introduces or alters is left without an end-to-end or integration test. This
+      rule does NOT require backfilling the feature's pre-existing, untouched
+      behavior — only the paths this change adds or modifies.
+    relevance: |
+      the target files add or alter observable product behavior — a new or modified
+      code path, output, exit status, or handled error. Skip test files themselves,
+      and skip behavior-preserving edits (refactors, formatting, comments, docs,
+      configuration, or type-only changes) that no user could observe.
+    require_line_attribution: true
+
+  - name: contracts_have_one_source_or_a_drift_gate
+    description: |
+      A fact that must agree across a boundary — a version, a type or schema on
+      both sides of an API/DB/IPC seam, an enum or constant list mirrored in
+      another file or language — is kept in sync by one authoritative source the
+      others reference, by generated copies derived from it (codegen, with the
+      output checked in and its freshness gated), or by a reconciling check in
+      the quality gate that fails on drift. Restating the fact in several places
+      with nothing keeping them aligned is the violation.
+    relevance: |
+      the target files restate a value, type, schema, enum, or contract that must
+      match a declaration living elsewhere in the repo or across a boundary
+"#,
+    );
+    let verdicts = p.write_verdicts(r#"{"line_localizable_rules_require_attribution": true}"#);
+
+    p.lint_config()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed"));
+}
+
+#[test]
 fn lint_config_lints_a_config_without_the_plugin_declared() {
     // `lint-config` includes the bundled config-lint rules by default, so it
     // catches a bad rule in a config that never declared the plugin itself.
