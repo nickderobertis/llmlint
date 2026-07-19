@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.23](https://github.com/nickderobertis/llmlint/compare/v0.3.22...v0.3.23) - 2026-07-19
+
+### Added
+
+- lint line attribution configuration ([#161](https://github.com/nickderobertis/llmlint/pull/161))
+
 ## [0.3.22](https://github.com/nickderobertis/llmlint/compare/v0.3.21...v0.3.22) - 2026-07-13
 
 ### Added
