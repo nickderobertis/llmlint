@@ -20,6 +20,8 @@ reporting). Add a journey here when a user-facing behavior lands.
   — force oneharness failure shapes.
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
+- `LLMLINT_MOCK_DUMP_HISTORY_LABELS=<dir>` — record the history-label environment
+  seen by `--version` and `run` separately, to assert session-only label injection.
 - `LLMLINT_MOCK_DUMP_SCHEMA=<file>` — copy the generated `--schema` JSON, to
   assert its shape (e.g. each rule's `name`/`rationale`/`holds` ordering).
 - `LLMLINT_MOCK_RUNLOG=<dir>` — one file per invocation listing the rules it
