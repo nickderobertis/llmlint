@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.24](https://github.com/nickderobertis/llmlint/compare/v0.3.23...v0.3.24) - 2026-07-21
+
+### Fixed
+
+- present compact scope beside each rule ([#164](https://github.com/nickderobertis/llmlint/pull/164))
+
 ## [0.3.23](https://github.com/nickderobertis/llmlint/compare/v0.3.22...v0.3.23) - 2026-07-19
 
 ### Added
