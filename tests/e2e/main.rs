@@ -4272,7 +4272,7 @@ fn oneharness_sessions_are_labeled_as_llmlint_without_labeling_version_checks() 
         .env("LLMLINT_MOCK_DUMP_HISTORY_LABELS", &dump_dir)
         .env(
             "ONEHARNESS_HISTORY_LABELS",
-            "node=worker-7,role=worker,round=2",
+            "node=worker-7,malformed,role=worker,round=2",
         )
         .assert()
         .success();
@@ -4281,7 +4281,7 @@ fn oneharness_sessions_are_labeled_as_llmlint_without_labeling_version_checks() 
     // stamps the history-producing `run` command.
     assert_eq!(
         fs::read_to_string(dump_dir.join("version")).unwrap(),
-        "node=worker-7,role=worker,round=2"
+        "node=worker-7,malformed,role=worker,round=2"
     );
     assert_eq!(
         fs::read_to_string(dump_dir.join("run")).unwrap(),

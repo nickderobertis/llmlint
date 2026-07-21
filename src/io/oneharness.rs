@@ -55,7 +55,7 @@ fn llmlint_history_labels(inherited: Option<String>) -> String {
             !label.is_empty()
                 && label
                     .split_once('=')
-                    .is_none_or(|(key, _)| key.trim() != "role")
+                    .is_some_and(|(key, _)| !key.trim().is_empty() && key.trim() != "role")
         })
         .collect();
     labels.push("role=llmlint");
