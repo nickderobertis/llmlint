@@ -2,7 +2,8 @@
 //!
 //! Templates are [minijinja] (Jinja2-style). The context exposes `rules` (each
 //! with `name`, `description`, and `rationale` — whether that rule wants a
-//! justification), `files` (the target paths), `file_rules` (per-file which
+//! justification — plus its compact `scope_mode` and `scope_files`), `files`
+//! (the target paths), `file_rules` (per-file which
 //! rules apply — the apply- or skip-list, whichever is shorter), `diffs`
 //! (per-file changed-line diffs, present only under `--diff`), and `rationales`
 //! (whether any rule in this batch wants one, to gate the rationale guidance
@@ -59,14 +60,24 @@ struct FileEntry<'a> {
     diff: Option<&'a str>,
 }
 
+/// A rule plus its compact, computed scope presentation. Flattening preserves
+/// the existing `r.name`, `r.files`, etc. custom-template interface.
+#[derive(Serialize)]
+struct RuleEntry<'a> {
+    #[serde(flatten)]
+    rule: &'a RuleSpec,
+    scope_mode: applicability::Mode,
+    scope_files: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct Context<'a> {
-    rules: &'a [RuleSpec],
+    rules: &'a [RuleEntry<'a>],
     files: &'a [String],
-    /// Per-file presentation: for each target file, the rules that apply (or,
-    /// when shorter, the rules to skip) and its inlined `diff` when changed. Lets
-    /// the template tell the judge which rules to evaluate against each file and
-    /// show the change right there.
+    /// Per-file presentation retained for custom templates and the correction
+    /// prompt, with each changed file's inlined `diff`. The default template uses
+    /// only the file and diff here; its applicability source is the compact scope
+    /// computed beside each rule.
     file_rules: &'a [FileEntry<'a>],
     /// Per-file diffs (only files with changes), present under `--diff` and empty
     /// otherwise. Kept for custom templates; the default template inlines them
@@ -85,8 +96,9 @@ struct Context<'a> {
 
 /// Render `template` with the given rules, target file paths, and per-file
 /// `diffs` (empty unless `--diff` is set). The per-file applicability
-/// (`file_rules`) is derived from each rule's `files`. `rationales` gates the
-/// rationale guidance (true when any rule in this batch wants one), `relevance`
+/// (`file_rules`) and compact per-rule scope are derived from each rule's
+/// `files`. `rationales` gates the rationale guidance (true when any rule in this
+/// batch wants one), `relevance`
 /// gates the relevance guidance (true when any rule is conditional), and
 /// `line_attribution` gates the line-attribution guidance (true when any rule
 /// requires every violation to cite a file + line).
@@ -99,13 +111,25 @@ pub fn render(
     relevance: bool,
     line_attribution: bool,
 ) -> Result<String> {
+    let rule_entries: Vec<RuleEntry> = rules
+        .iter()
+        .map(|rule| {
+            let scope = applicability::per_rule(&rule.files, files);
+            RuleEntry {
+                rule,
+                scope_mode: scope.mode,
+                scope_files: scope.files,
+            }
+        })
+        .collect();
     let pairs: Vec<(String, Vec<String>)> = rules
         .iter()
         .map(|r| (r.name.clone(), r.files.clone()))
         .collect();
     let applic = applicability::per_file(&pairs, files);
-    // Pair each file's applicability with its diff (changed files only) so the
-    // template can inline a changed file's rules and diff together.
+    // Pair each file's applicability with its diff (changed files only). Custom
+    // templates retain the applicability fields; the default renders just the
+    // file and its review material from this entry.
     let file_rules: Vec<FileEntry> = applic
         .iter()
         .map(|fr| FileEntry {
@@ -121,7 +145,7 @@ pub fn render(
     let mut env = minijinja::Environment::new();
     env.set_keep_trailing_newline(true);
     let ctx = Context {
-        rules,
+        rules: &rule_entries,
         files,
         file_rules: &file_rules,
         diffs,
