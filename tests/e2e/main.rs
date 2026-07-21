@@ -4253,6 +4253,43 @@ fn oneharness_runs_in_read_only_mode() {
 }
 
 #[test]
+fn oneharness_sessions_are_labeled_as_llmlint_without_labeling_version_checks() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: labeled_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"labeled_rule": true}"#);
+    let dump_dir = p.path().join("label-env");
+    fs::create_dir(&dump_dir).unwrap();
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_HISTORY_LABELS", &dump_dir)
+        .env(
+            "ONEHARNESS_HISTORY_LABELS",
+            "node=worker-7,malformed,role=worker,round=2",
+        )
+        .assert()
+        .success();
+
+    // The capability check is a plain inherited environment: llmlint only
+    // stamps the history-producing `run` command.
+    assert_eq!(
+        fs::read_to_string(dump_dir.join("version")).unwrap(),
+        "node=worker-7,malformed,role=worker,round=2"
+    );
+    assert_eq!(
+        fs::read_to_string(dump_dir.join("run")).unwrap(),
+        "node=worker-7,round=2,role=llmlint"
+    );
+}
+
+#[test]
 fn system_prompt_is_delivered_by_file_not_inline() {
     // Contract: the (potentially large) system prompt is passed via
     // `--system-file <path>`, never inline as `--system <TEXT>` — that is what

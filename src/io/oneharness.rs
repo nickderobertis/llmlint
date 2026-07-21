@@ -36,6 +36,32 @@ pub const DEFAULT_BIN: &str = "oneharness";
 /// these, so it is rejected up front.
 pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 21);
 
+const HISTORY_LABELS_ENV: &str = "ONEHARNESS_HISTORY_LABELS";
+
+/// Add llmlint's role to oneharness's comma-separated `key=value` environment
+/// format, replacing an inherited role while retaining every other label.
+///
+/// Contract source (oneharness README and parser at commit 23393fe):
+/// <https://github.com/nickderobertis/oneharness/blob/23393fefc7873c57d09c4fa0f05ee50b8e250583/README.md#L1226-L1236>
+/// and
+/// <https://github.com/nickderobertis/oneharness/blob/23393fefc7873c57d09c4fa0f05ee50b8e250583/crates/oneharness-core/src/domain/config.rs#L339-L341>.
+fn llmlint_history_labels(inherited: Option<String>) -> String {
+    let mut labels: Vec<&str> = inherited
+        .as_deref()
+        .into_iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|label| {
+            !label.is_empty()
+                && label
+                    .split_once('=')
+                    .is_some_and(|(key, _)| !key.trim().is_empty() && key.trim() != "role")
+        })
+        .collect();
+    labels.push("role=llmlint");
+    labels.join(",")
+}
+
 /// Render a `(major, minor, patch)` version as `major.minor.patch`.
 fn format_version((major, minor, patch): (u64, u64, u64)) -> String {
     format!("{major}.{minor}.{patch}")
@@ -367,6 +393,10 @@ impl Client {
 
         let mut cmd = Command::new(&self.bin);
         cmd.args(&args)
+            .env(
+                HISTORY_LABELS_ENV,
+                llmlint_history_labels(std::env::var(HISTORY_LABELS_ENV).ok()),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

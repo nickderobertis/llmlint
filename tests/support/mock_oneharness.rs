@@ -204,12 +204,21 @@ fn main() {
     // --version`. Default to a version that satisfies llmlint's minimum;
     // `LLMLINT_MOCK_VERSION` overrides it so a test can drive the too-old path.
     if args.iter().any(|a| a == "--version" || a == "-V") {
+        if let Some(dir) = env::var_os("LLMLINT_MOCK_DUMP_HISTORY_LABELS") {
+            let value = env::var("ONEHARNESS_HISTORY_LABELS").unwrap_or_default();
+            let _ = fs::write(PathBuf::from(dir).join("version"), value);
+        }
         let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.21".into());
         println!("oneharness {version} (mock)");
         return;
     }
 
     let harness = arg_value(&args, "--harness").unwrap_or_else(|| "claude-code".into());
+
+    if let Some(dir) = env::var_os("LLMLINT_MOCK_DUMP_HISTORY_LABELS") {
+        let value = env::var("ONEHARNESS_HISTORY_LABELS").unwrap_or_default();
+        let _ = fs::write(PathBuf::from(dir).join("run"), value);
+    }
 
     // Optionally record the raw arg vector so a test can assert which flags
     // llmlint passed (e.g. that `--harness` is omitted when not configured).
