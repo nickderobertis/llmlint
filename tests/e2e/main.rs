@@ -8184,11 +8184,11 @@ fn an_unlocalized_violation_for_a_require_line_attribution_rule_is_an_error() {
 // ---- per-file applicability, scope validation + deterministic ignores ------
 
 #[test]
-fn agent_rules_with_distinct_files_merge_into_one_call_with_per_file_context() {
+fn agent_rules_with_distinct_files_merge_into_one_call_with_per_rule_scope() {
     // Two default-agent rules scoped to different directories now share ONE
     // oneharness call over the union of their files (fewer invocations), and the
-    // prompt tells the judge, per file, which rules apply — picking the shorter of
-    // an apply-list or a skip-list so the context stays token-cheap.
+    // prompt tells the judge beside each rule which files it covers — picking the
+    // shorter of a direct list or an all-files-except list.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -8225,15 +8225,21 @@ fn agent_rules_with_distinct_files_merge_into_one_call_with_per_file_context() {
         "{calls:?}"
     );
 
-    // Per-file context: src/a.rs lists the shorter apply-list (only rule_src);
-    // docs/b.md lists the shorter skip-list (all apply except rule_src).
+    // Per-rule scope: rule_src's shorter spelling is its direct file; rule_docs'
+    // shorter spelling excludes the slightly shorter src/a.rs path.
     let system = fs::read_to_string(&dump).unwrap();
     assert!(
-        system.contains("src/a.rs — only these rules apply: rule_src"),
+        system.contains(&format!("### rule_src\n\n{RULE}\nScope: src/a.rs\n")),
         "system:\n{system}"
     );
     assert!(
-        system.contains("docs/b.md — all rules apply except: rule_src"),
+        system.contains(&format!(
+            "### rule_docs\n\n{RULE}\nScope: all target files except: src/a.rs\n"
+        )),
+        "system:\n{system}"
+    );
+    assert!(
+        !system.contains("only these rules apply"),
         "system:\n{system}"
     );
 }
@@ -8247,9 +8253,10 @@ fn wrong_file_violation_triggers_a_rework_then_passes() {
     p.write(
         "llmlint.yml",
         &format!(
-            "version: 1\nrules:\n  \
+            "version: 1\nfiles:\n  include: [\"src/**\", \"docs/**\"]\nrules:\n  \
              - {{ name: rule_src, description: \"{RULE}\", files: {{ include: [\"src/**\"] }} }}\n  \
-             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n"
+             - {{ name: rule_docs, description: \"{RULE}\", files: {{ include: [\"docs/**\"] }} }}\n  \
+             - {{ name: rule_all, description: \"{RULE}\" }}\n"
         ),
     );
     p.write("src/a.rs", "// code\n");
@@ -8259,10 +8266,12 @@ fn wrong_file_violation_triggers_a_rework_then_passes() {
     let verdicts = p.write_verdicts(
         r#"{"rule_src": [{"holds": false, "violations": [
                 {"file": "docs/b.md", "line": 1, "message": "wrong file"}]}, true],
-            "rule_docs": true}"#,
+            "rule_docs": true,
+            "rule_all": true}"#,
     );
     let state = p.path().join("state");
     let runlog = p.path().join("runlog");
+    let dump = p.path().join("system.txt");
 
     p.lint()
         .arg("--max-parallel")
@@ -8270,6 +8279,7 @@ fn wrong_file_violation_triggers_a_rework_then_passes() {
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .env("LLMLINT_MOCK_STATE", &state)
         .env("LLMLINT_MOCK_RUNLOG", &runlog)
+        .env("LLMLINT_MOCK_DUMP", &dump)
         .assert()
         .success()
         .stdout(predicate::str::contains("wrong file").not());
@@ -8279,6 +8289,31 @@ fn wrong_file_violation_triggers_a_rework_then_passes() {
         calls.len(),
         2,
         "the wrong-file verdict is reworked once: {calls:?}"
+    );
+
+    // The original system prompt presents scope once, adjacent to each rule.
+    // Narrow scope uses the positive list; broad scopes avoid enumerating their
+    // covered files, including the O(1) full-union form.
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains(&format!("### rule_src\n\n{RULE}\nScope: src/a.rs\n")),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains(&format!(
+            "### rule_docs\n\n{RULE}\nScope: all target files except: src/a.rs\n"
+        )),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains(&format!(
+            "### rule_all\n\n{RULE}\nScope: all target files\n"
+        )),
+        "system:\n{system}"
+    );
+    assert!(
+        !system.contains("only these rules apply"),
+        "system:\n{system}"
     );
 }
 
@@ -8678,11 +8713,10 @@ fn block_scoped_ignore_suppresses_violations_inside_the_block() {
 }
 
 #[test]
-fn per_file_applicability_and_diff_compose_in_one_prompt() {
-    // The per-file applicability context and the `--diff` changed-lines block are
-    // independent sections that must coexist: a merged call over two distinct
-    // file scopes shows both the per-file rule lists and each changed file's diff
-    // inlined under its own applicability line. Both files change here, so both
+fn per_rule_scope_and_diff_compose_in_one_prompt() {
+    // The per-rule scope context and the `--diff` changed-lines block must
+    // coexist: a merged call over two distinct file scopes shows both compact
+    // rule scopes and each changed file's inlined diff. Both files change, so both
     // survive the changed-file narrowing and land in one prompt.
     let p = Project::new();
     p.write(
@@ -8714,16 +8748,20 @@ fn per_file_applicability_and_diff_compose_in_one_prompt() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    // Per-file applicability is present for both files.
+    // Per-rule scope is present for both rules, while target-file entries carry
+    // review material without duplicating applicability.
+    assert!(system.contains("Scope: src/a.rs"), "system:\n{system}");
     assert!(
-        system.contains("src/a.rs — only these rules apply: rule_src"),
+        system.contains("Scope: all target files except: src/a.rs"),
         "system:\n{system}"
     );
+    assert!(system.contains("- src/a.rs\n"), "system:\n{system}");
+    assert!(system.contains("- docs/b.md\n"), "system:\n{system}");
     assert!(
-        system.contains("docs/b.md — all rules apply except: rule_src"),
+        !system.contains("only these rules apply"),
         "system:\n{system}"
     );
-    // Each changed file's diff is inlined under its own applicability line.
+    // Each changed file's diff is still inlined under its file entry.
     assert!(system.contains("```diff"), "system:\n{system}");
     assert!(
         system.contains("diff --git a/src/a.rs"),
@@ -8826,9 +8864,9 @@ fn cross_cutting_violation_without_a_file_survives_scope_filtering() {
 }
 
 #[test]
-fn per_file_context_says_all_rules_apply_when_every_rule_covers_a_file() {
-    // When every rule in the call covers a file, the skip-list is empty and the
-    // cheapest spelling is the bare "all rules apply" (the exclude-empty branch).
+fn per_rule_scope_says_all_target_files_when_every_file_is_covered() {
+    // When a rule covers every file in the call, the exclusion list is empty and
+    // the cheapest spelling is the constant-size "all target files" form.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -8852,9 +8890,11 @@ fn per_file_context_says_all_rules_apply_when_every_rule_covers_a_file() {
 
     let system = fs::read_to_string(&dump).unwrap();
     assert!(
-        system.contains("src/lib.rs — all rules apply\n"),
+        system.matches("Scope: all target files\n").count() == 2,
         "system:\n{system}"
     );
+    assert!(system.contains("- src/lib.rs\n"), "system:\n{system}");
+    assert!(!system.contains("all rules apply"), "system:\n{system}");
 }
 
 // ---- results logging + `history` command ---------------------------------

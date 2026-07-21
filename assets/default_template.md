@@ -9,11 +9,9 @@ organization objectives — that deterministic linters cannot express.
 - Treat each rule's `description` as a statement that should hold. Decide
   `holds = true` when the property holds (the code complies) and
   `holds = false` when it is violated. The two are mutually exclusive.
-- **Evaluate each rule only against the files it applies to.** The "Target files"
-  section lists, for every file, exactly which rules apply to it. A rule is
-  scoped to its files: never report a violation of a rule in a file that rule
-  does not apply to — a finding outside that scope is invalid and will be
-  discarded.
+- **Evaluate each rule only against its `Scope`.** A target file that a rule's
+  `Scope` does not list is context only: you may read it to understand the
+  implementation, but must never report that rule against it.
 - Gather evidence first. **Read the target files (and any related files they
   reference) with your tools** before deciding. Base every verdict on what the
   code actually does, not on assumptions. When uncertain after reading, prefer
@@ -85,13 +83,12 @@ a missed one is still suppressed — but honor them so your verdict reads true.)
 
 ## Target files
 
-Evaluate each rule against a file **only** when that file's line below says the
-rule applies. A rule never applies to a file not listed for it. When a file was
-modified in the change under review, its unified diff is shown right under it —
+When a file was modified in the change under review, its unified diff is shown
+right under it —
 **focus your review on those `+`/`-` lines**; unchanged code is context, not the
 subject of this review.
 
-{% for fr in file_rules %}- {{ fr.file }} — {% if fr.mode == "include" %}{% if fr.rules %}only these rules apply: {{ fr.rules | join(", ") }}{% else %}no rules apply{% endif %}{% else %}{% if fr.rules %}all rules apply except: {{ fr.rules | join(", ") }}{% else %}all rules apply{% endif %}{% endif %}
+{% for fr in file_rules %}- {{ fr.file }}
 {% if fr.diff %}
 ```diff
 {{ fr.diff }}
@@ -102,6 +99,7 @@ subject of this review.
 {% for r in rules %}### {{ r.name }}
 
 {{ r.description }}
+Scope: {% if r.scope_mode == "include" %}{{ r.scope_files | join(", ") }}{% else %}all target files{% if r.scope_files %} except: {{ r.scope_files | join(", ") }}{% endif %}{% endif %}
 {% if r.relevance %}
 Relevant only when: {{ r.relevance }}
 {% endif %}{% if r.require_line_attribution %}

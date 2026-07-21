@@ -1,12 +1,12 @@
-//! Per-file rule applicability: which rules a judge should evaluate against each
+//! Rule/file applicability: which rules a judge should evaluate against each
 //! target file, the most token-efficient way to say so in the prompt, and the
 //! validation that rejects (and repairs) a verdict that strays outside a rule's
 //! files.
 //!
 //! With nested/cascading configs and per-rule/agent `files`, one judge call can
 //! cover a union of files where different rules apply to different files. This
-//! module is the pure core that (1) tells the judge, per file, exactly which
-//! rules apply — picking the shorter of an apply-list or a skip-list so the
+//! module is the pure core that (1) tells the judge exactly which files each rule
+//! covers — picking the shorter of an apply-list or a skip-list so the
 //! context stays cheap — and (2) after the judge answers, finds violations
 //! pinned to a file outside the offending rule's scope (the "wrong rule in wrong
 //! file" case) so the caller can ask for a rework and, failing that, drop them.
@@ -33,6 +33,14 @@ pub struct FileRules {
     pub file: String,
     pub mode: Mode,
     pub rules: Vec<String>,
+}
+
+/// One rule's applicability line for the prompt: whether `files` is the direct
+/// scope or the files excluded from an otherwise batch-wide scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuleFiles {
+    pub mode: Mode,
+    pub files: Vec<String>,
 }
 
 /// A wrong-file report: the judge flagged `rule` in `file`, but the rule's scope
@@ -63,6 +71,36 @@ fn joined_len(names: &[String]) -> usize {
     }
 }
 
+fn shorter_mode(included: &[String], excluded: &[String]) -> Mode {
+    if joined_len(included) <= joined_len(excluded) {
+        Mode::Include
+    } else {
+        Mode::Exclude
+    }
+}
+
+/// Compute the compact scope spelling for one rule within a judge call's file
+/// union. The direct file list is used when shorter; otherwise the scope is all
+/// target files except the returned list. Paths are normalized for matching,
+/// while the call's displayed path spelling and order are preserved.
+pub fn per_rule(rule_files: &[String], files: &[String]) -> RuleFiles {
+    let scope: BTreeSet<String> = rule_files.iter().map(|f| norm(f)).collect();
+    let (included, excluded): (Vec<_>, Vec<_>) = files
+        .iter()
+        .cloned()
+        .partition(|f| scope.contains(&norm(f)));
+    match shorter_mode(&included, &excluded) {
+        Mode::Include => RuleFiles {
+            mode: Mode::Include,
+            files: included,
+        },
+        Mode::Exclude => RuleFiles {
+            mode: Mode::Exclude,
+            files: excluded,
+        },
+    }
+}
+
 /// Compute the per-file applicability lines for a judge call. `rules` pairs each
 /// rule name (in the batch's order) with the slash-relative files it applies to;
 /// `files` is the call's full file union. For each file, the applicable rules are
@@ -83,7 +121,7 @@ pub fn per_file(rules: &[(String, Vec<String>)], files: &[String]) -> Vec<FileRu
                     excluded.push(name.clone());
                 }
             }
-            if joined_len(&applies) <= joined_len(&excluded) {
+            if shorter_mode(&applies, &excluded) == Mode::Include {
                 FileRules {
                     file: f.clone(),
                     mode: Mode::Include,
@@ -259,6 +297,19 @@ mod tests {
         assert_eq!(out[0].rules, vec!["a"]);
         assert_eq!(out[1].mode, Mode::Exclude);
         assert!(out[1].rules.is_empty());
+    }
+
+    #[test]
+    fn per_rule_picks_the_shorter_file_list_and_collapses_full_scope() {
+        let files = vec!["a".into(), "long/path/b.rs".into(), "long/path/c.rs".into()];
+
+        let narrow = per_rule(&["a".into()], &files);
+        assert_eq!(narrow.mode, Mode::Include);
+        assert_eq!(narrow.files, vec!["a"]);
+
+        let broad = per_rule(&files, &files);
+        assert_eq!(broad.mode, Mode::Exclude);
+        assert!(broad.files.is_empty());
     }
 
     #[test]

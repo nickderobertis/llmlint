@@ -300,7 +300,7 @@ impl Client {
         }
 
         // The rendered system prompt carries the whole judge briefing — rules,
-        // per-file applicability, and every changed file's inlined diff — so it
+        // compact per-rule scope, and every changed file's inlined diff — so it
         // can be large. Passed inline as `--system <TEXT>` it trips the OS
         // single-argument limit and fails at spawn with `Argument list too long`
         // (E2BIG). Write it to a temp file and hand oneharness `--system-file`
