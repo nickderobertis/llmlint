@@ -389,6 +389,14 @@ directory with no cascade.
   Python files", and one gated by `relevance` needn't repeat that condition. The
   excluded case never reaches the judge, so the extra clause only spends tokens
   and blurs the verdict. config-lint checks this too.
+- **Let `relevance` say *when* to judge, never *how it comes out*.** A relevance
+  condition narrow enough to decide the outcome has become the check: gate
+  `every function has a docstring` on `the file defines a function with no
+  docstring` and every file the rule reaches fails, while gating it on `the file
+  defines only documented functions` makes it always pass. Either way the judge
+  has nothing left to decide and the rule reports nothing you didn't already
+  encode. Keep the property in the `description` and leave `relevance` a scope
+  that admits both passing and failing files. config-lint checks this too.
 - **Keep each `description` and `relevance` concise.** A judge call batches an
   agent's rules into one prompt, so tokens one bloated rule spends dilute every
   other rule in that batch. State the invariant in the fewest words that keep it
@@ -810,8 +818,9 @@ llmlint ships with a **config-lint** rule set that lints llmlint config files
 themselves — that every rule's `description` yields a clear, unambiguous verdict,
 its `name` is descriptive (non-placeholder) and matches what the description
 checks, a conditional rule uses `relevance` instead of bolting "…or not
-applicable" onto the description, and a rule scoped to a file type or location
-uses `files` globs rather than `relevance`. It's the [Writing good rules](#writing-good-rules)
+applicable" onto the description, a rule scoped to a file type or location
+uses `files` globs rather than `relevance`, and a `relevance` condition scopes the
+rule without deciding its verdict. It's the [Writing good rules](#writing-good-rules)
 guidance, enforced (and each rule is phrased to pass its own checks). Each finding
 cites the config file + the offending rule's line (`require_line_attribution`).
 There are two ways to use it:

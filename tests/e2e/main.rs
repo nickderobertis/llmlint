@@ -741,6 +741,39 @@ fn config_lint_plugin_flags_description_restating_an_excluded_case() {
 }
 
 #[test]
+fn config_lint_plugin_flags_relevance_that_decides_the_verdict() {
+    // The `relevance_scopes_without_deciding_the_verdict` check: a `relevance`
+    // that already asserts the violating case leaves the `description` with no
+    // verdict to reach — every file it admits fails by construction.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        r#"version: 1
+rules:
+  - name: functions_have_docstrings
+    description: every function has a docstring
+    relevance: the file defines a function with no docstring
+    require_line_attribution: true
+"#,
+    );
+    let verdicts = p.write_verdicts(
+        r#"{"relevance_scopes_without_deciding_the_verdict":
+              {"holds": false, "violations": [{"file": "llmlint.yml", "line": 5, "message": "relevance already asserts the violation"}]}}"#,
+    );
+
+    p.lint_config()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "FAIL relevance_scopes_without_deciding_the_verdict",
+        ))
+        .stdout(predicate::str::contains(
+            "relevance already asserts the violation",
+        ));
+}
+
+#[test]
 fn config_lint_plugin_requires_attribution_for_line_localizable_rules() {
     // These are the actual create-repo base fragment rules. Both violations can
     // point directly at the offending literal/directive, so omitting
