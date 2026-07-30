@@ -605,7 +605,8 @@ harness reads target files on-demand with its own tools.
   description, a descriptive name that matches what the rule checks, `relevance`
   over inline "not applicable", `files` globs over `relevance` for a rule scoped
   to a file type or location, a description that doesn't restate what its own
-  scope already excludes; each rule is phrased to pass its own checks): the
+  scope already excludes, a `relevance` that scopes the rule without deciding its
+  verdict; each rule is phrased to pass its own checks): the
   README's "Writing good rules" guidance, enforced. It is
   **structural checks' complement** — unique names, valid identifiers, resolvable
   agents stay deterministic in `validate` and are deliberately not re-checked

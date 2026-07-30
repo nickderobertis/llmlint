@@ -20,7 +20,7 @@
 # A minor bump (new rule, backward-compatible) still satisfies an existing `@1`
 # pin, so consumers pick it up with no pin change; bump the major only on an
 # incompatible change (see AGENTS.md).
-version: 1.2
+version: 1.3
 
 # Every check localizes its findings to the offending rule (require_line_attribution:
 # true) — a config-lint violation always points at a concrete file + line, which is
@@ -90,6 +90,22 @@ rules:
       files are exempt", or one whose `relevance` gates a condition that the
       description then repeats) — the excluded case never reaches the judge, so the
       redundant clause only spends tokens and blurs the verdict.
+
+  - name: relevance_scopes_without_deciding_the_verdict
+    files: *config_files
+    require_line_attribution: true
+    # Complement to `description_omits_already_excluded_situations`: there the
+    # `relevance` is right and the `description` merely restates it; here the
+    # `relevance` has swallowed the check itself, so the verdict is settled before
+    # the judge reads the file and the rule can never report anything.
+    description: |
+      A lint rule's `relevance` condition decides when the rule is judged, not how
+      it comes out: among the files it admits, the `description` can still land
+      either true or false. A `relevance` that asserts the checked property itself
+      (so every admitted file passes) or that names exactly the violating case (so
+      every admitted file fails) has taken over the description's job — for example
+      `relevance: the file defines a function with no docstring` under
+      `description: every function has a docstring`.
 
   - name: description_and_relevance_are_concise
     files: *config_files
