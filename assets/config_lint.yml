@@ -20,7 +20,7 @@
 # A minor bump (new rule, backward-compatible) still satisfies an existing `@1`
 # pin, so consumers pick it up with no pin change; bump the major only on an
 # incompatible change (see AGENTS.md).
-version: 1.3
+version: 1.4
 
 # Every check localizes its findings to the offending rule (require_line_attribution:
 # true) — a config-lint violation always points at a concrete file + line, which is
@@ -42,9 +42,13 @@ rules:
     description: |
       Every lint rule's `description` states one unambiguous property whose truth
       is the verdict — written as a plain invariant naming just the condition for
-      the property to hold, or, only when the violating case adds detail the
-      positive statement leaves unclear (such as concrete examples), as mutually
-      exclusive holding and violating conditions.
+      the property to hold, and spelling out the violating case only when it adds
+      detail the positive statement leaves unclear (such as concrete examples).
+      False when a description leaves the judge to infer which verdict a clause
+      maps to, naming the failing case in prose ("is a violation", "is not
+      allowed", "should be avoided", "is discouraged") instead of the direct
+      `false when <condition>`, or when its holding and violating conditions
+      overlap.
 
   - name: name_describes_what_the_rule_checks
     files: *config_files
@@ -101,9 +105,9 @@ rules:
     description: |
       A lint rule's `relevance` condition decides when the rule is judged, not how
       it comes out: among the files it admits, the `description` can still land
-      either true or false. A `relevance` that asserts the checked property itself
-      (so every admitted file passes) or that names exactly the violating case (so
-      every admitted file fails) has taken over the description's job — for example
+      either true or false. False when a `relevance` asserts the checked property
+      itself (so every admitted file passes) or names exactly the violating case
+      (so every admitted file fails) — for example
       `relevance: the file defines a function with no docstring` under
       `description: every function has a docstring`.
 
