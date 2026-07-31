@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.26](https://github.com/nickderobertis/llmlint/compare/v0.3.25...v0.3.26) - 2026-07-30
+
+### Added
+
+- flag a relevance that decides its own rule's verdict ([#168](https://github.com/nickderobertis/llmlint/pull/168))
+
 ## [0.3.25](https://github.com/nickderobertis/llmlint/compare/v0.3.24...v0.3.25) - 2026-07-21
 
 ### Fixed
