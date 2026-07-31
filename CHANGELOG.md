@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.27](https://github.com/nickderobertis/llmlint/compare/v0.3.26...v0.3.27) - 2026-07-31
+
+### Fixed
+
+- make config-lint demand `false when` over prose failure qualifiers ([#170](https://github.com/nickderobertis/llmlint/pull/170))
+
 ## [0.3.26](https://github.com/nickderobertis/llmlint/compare/v0.3.25...v0.3.26) - 2026-07-30
 
 ### Added
