@@ -368,8 +368,11 @@ directory with no cascade.
   by negation, what fails; there's no need to bolt on a "false when…" clause that
   only restates the inverse. Spell out the violating case *only* when it carries
   meaningful detail — concrete examples, easily-confused edge cases — that the
-  positive statement leaves unclear. When you do state both, keep them mutually
-  exclusive. The bundled config-lint plugin (the `config_lint.yml` URL above)
+  positive statement leaves unclear. When you do, say `false when <condition>`:
+  the judge is choosing between `true` and `false`, so naming the failing case in
+  prose ("…is a violation", "…is not allowed", "…should be avoided") makes it
+  infer which side of that choice your clause lands on. Keep the two conditions
+  mutually exclusive. The bundled config-lint plugin (the `config_lint.yml` URL above)
   lints your config for exactly this, plus descriptive (non-placeholder) names
   that match what each rule checks.
 - **Names** are unique, terse, and descriptive (`^[A-Za-z][A-Za-z0-9_]*$`); they
