@@ -85,7 +85,9 @@ pub enum Command {
 #[derive(Args, Debug, Default)]
 pub struct LintArgs {
     /// Files to lint. When given, overrides the config's file globs (per-rule
-    /// and per-agent `files` still take precedence).
+    /// and per-agent `files` still take precedence). A path llmlint can't read
+    /// as a file (absent, or a directory) is an error, not a smaller run (under
+    /// `--diff`, a path deleted from the work tree is still accepted).
     pub files: Vec<PathBuf>,
 
     /// Glob(s) to exclude from the target files; repeatable. Adds to the config's
@@ -468,7 +470,8 @@ pub struct ValidateArgs {
 #[derive(Args, Debug, Default)]
 pub struct LintConfigArgs {
     /// Config files to lint. When given, overrides the bundled config-lint globs
-    /// (which otherwise discover every llmlint config in the tree).
+    /// (which otherwise discover every llmlint config in the tree). A path
+    /// llmlint can't read as a file is an error, not a smaller run.
     pub files: Vec<PathBuf>,
 
     /// Glob(s) to exclude from the target files; repeatable. Adds to the config's

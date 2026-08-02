@@ -26,6 +26,12 @@ reporting). Add a journey here when a user-facing behavior lands.
   assert its shape (e.g. each rule's `name`/`rationale`/`holds` ordering).
 - `LLMLINT_MOCK_RUNLOG=<dir>` — one file per invocation listing the rules it
   judged, to count oneharness calls and assert how rules were batched.
+- `LLMLINT_MOCK_SPAWNLOG=<dir>` — one file per **process spawn** (the arg vector),
+  written before any subcommand branching so it covers the `--version` pre-flight
+  too. `RUNLOG`/`DUMP` only prove no *judge* ran; an empty spawn log proves the
+  binary was never executed — what a guard that must cost nothing needs to show.
+  Pair it with a resolving control invocation, so an empty log can't mean "never
+  wired".
 - `LLMLINT_MOCK_BARRIER=<dir>` (+ `_N`, `_MS`) — a rendezvous that releases only
   when `N` invocations are present at once, to prove `--max-parallel` overlapped
   them (a serial wave times out instead).
@@ -130,6 +136,40 @@ logic is also covered hermetically via `file://` plugins.
   line.
 - `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
   a serial wave fails to rendezvous, the negative control.
+- An explicit `FILES` entry llmlint **cannot read as a file** is a usage error
+  (exit 2, naming the path in `check-ignores`' own `reading <path>: …` wording),
+  never a silently smaller run — the mistake being guarded is `llmlint lint
+  --diff origin/master`, which used to accept a *ref* as a path, judge only the
+  rules whose own globs still matched, and exit 0. Covered for an **absent** path
+  in plain mode
+  (`explicit_cli_file_that_does_not_resolve_is_rejected_before_any_judge_call`),
+  under `--diff` bare and with `--diff-base`
+  (`diff_explicit_cli_file_that_does_not_resolve_is_rejected_before_any_judge_call`),
+  and for `lint-config` (`lint_config_rejects_an_explicit_file_that_does_not_resolve`);
+  and for a **directory** — present but unreadable — with and without `--diff`
+  (`explicit_cli_directory_is_rejected_like_any_unreadable_path`,
+  `diff_explicit_cli_directory_is_rejected_even_though_it_has_changes`, the latter
+  pinning that the `--diff` deleted-file exemption is held to *absence*: git
+  reports a whole subtree's diff for a directory pathspec, so keying it on "the
+  backend saw changes" alone would wave it through). Each asserts an empty
+  `LLMLINT_MOCK_SPAWNLOG`, so a bad invocation costs no *process spawn*, let alone
+  a model call; the plain-mode test runs a resolving invocation first as the
+  positive control, so an empty log means "never executed", not "never wired".
+  `check-ignores` and `lint` emit the **identical**
+  diagnostic for the same input (`check_ignores_rejects_an_unresolvable_file_the_same_way_lint_does`).
+  Only *unusable* is an error: a path that resolves but selects nothing stays
+  a clean empty selection
+  (`diff_explicit_cli_file_with_no_overlap_is_still_a_clean_empty_selection`), a
+  tracked path deleted from the work tree is still accepted under `--diff`
+  (`diff_drops_a_deleted_path_without_erroring`), and a resolving path is judged
+  exactly as before
+  (`explicit_cli_files_that_resolve_are_unaffected_by_the_resolvability_check`).
+  A **glob** that matches nothing is deliberately *not* an error and gets no
+  warning either (see AGENTS.md for the argument); the decision is pinned by
+  `a_config_glob_that_matches_nothing_is_reported_not_rejected`, which asserts
+  exit 0 *and* that the narrowing is reported on all three surfaces — the default
+  summary's skip count, `-v`'s `SKIP <rule> (no files matched)`, and
+  `--plan-only`'s "not judged" list.
 - include/exclude globbing selects the right files; explicit CLI files override
   the config globs; per-rule `files` override the global globs. A config with
   rules but **no `files` block** lints every file in the tree from `cwd` (the
@@ -263,7 +303,9 @@ logic is also covered hermetically via `file://` plugins.
   intersect) exits 0; a `--rule`/`--agent` name that matches nothing in the
   config is a clear exit-2 error listing the available names — even when mixed
   with a valid name — so a typo isn't a silent false green; rules with no
-  matching files are skipped.
+  matching files are skipped. The two unknown-name journeys assert an empty
+  `LLMLINT_MOCK_SPAWNLOG` against a resolving control, so a typo demonstrably
+  costs no *process spawn* — not even the `--version` pre-flight.
 - `--timeout` is forwarded to oneharness; a config `oneharness.timeout` is
   forwarded when no CLI flag is given; `schema_max_retries` is forwarded as
   `--schema-max-retries`; the oneharness `model` is forwarded, with a per-agent
@@ -434,7 +476,9 @@ logic is also covered hermetically via `file://` plugins.
   is explained, not a mystery (`plan_only_under_diff_states_the_lint_set_and_names_excluded_files`).
   `--plan-only` prints it and exits with **no harness call and
   no history write** (proven by running via `bare`, without `--oneharness-bin`,
-  and asserting zero records) — a zero-cost way to debug batching. At `-v` the same
+  and asserting zero records — then, wired to the mock, by an empty
+  `LLMLINT_MOCK_SPAWNLOG` against the identical command *without* `--plan-only`
+  as the control) — a zero-cost way to debug batching. At `-v` the same
   explanation is **narrated up front — before the judges run** (to stdout, then the
   results follow, asserted by `verbose_run_narrates_the_plan_before_the_results`),
   not appended after the report; it is embedded in `--format json`
