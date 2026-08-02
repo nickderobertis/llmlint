@@ -903,7 +903,15 @@ source.
 - `llmlint [FILES...]` — lint (the default). `--format human|json`, `--agent`,
   `--rule`, `--max-parallel`, `--timeout`, `--cwd`. Target individual rules with
   `--rule NAME` (repeatable) or a whole group with `--agent NAME`; an unknown
-  rule/agent name is an exit-2 error that lists the available names. Every
+  rule/agent name is an exit-2 error that lists the available names. A `FILES`
+  entry llmlint can't read as a file — absent, or a directory — is an exit-2
+  error too (before any model call), never a quietly smaller run, so `llmlint
+  --diff origin/master`, a *ref* mistaken for a path, fails loudly instead of
+  judging whichever rules their own globs still matched and reporting a pass. (A
+  path that resolves but selects nothing — no `--diff` overlap, say — is still a
+  clean exit 0; under `--diff` a path deleted from the work tree is accepted; and
+  a configured **glob** that matches nothing is normal, reported as a skipped
+  rule rather than an error.) Every
   top-level setting also has a flag that wins over the config:
   `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
   `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`. Pass

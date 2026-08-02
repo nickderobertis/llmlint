@@ -39,6 +39,11 @@
 //! - `LLMLINT_MOCK_RUNLOG=<dir>` — record one file per invocation listing the
 //!   rule names it judged (comma-joined), so a test can count invocations and
 //!   assert how rules were batched into oneharness calls.
+//! - `LLMLINT_MOCK_SPAWNLOG=<dir>` — record one file per **process spawn** (the
+//!   arg vector), written before anything else so it covers the `--version`
+//!   pre-flight too. `RUNLOG`/`DUMP` only prove no *judge* ran; an empty spawn
+//!   log proves llmlint never executed the harness binary at all — what a guard
+//!   that must cost nothing needs to show.
 //! - `LLMLINT_MOCK_BARRIER=<dir>` (+ `LLMLINT_MOCK_BARRIER_N`, default 1, and
 //!   `LLMLINT_MOCK_BARRIER_MS`, default 2000) — a rendezvous: each invocation
 //!   registers itself and blocks until `N` peers are present, or fails like a
@@ -199,6 +204,14 @@ fn next_count(rule: &str) -> usize {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    // Record the spawn itself, before any subcommand branching, so a test can
+    // prove the binary was never executed — including the `--version` pre-flight,
+    // which the run/judge-shaped recorders below never see.
+    if let Some(dir) = env::var_os("LLMLINT_MOCK_SPAWNLOG") {
+        let path = claim_indexed(&PathBuf::from(dir), "spawn");
+        let _ = fs::write(&path, args[1..].join("\n"));
+    }
 
     // `llmlint doctor` (and lint's pre-flight version gate) call `<bin>
     // --version`. Default to a version that satisfies llmlint's minimum;

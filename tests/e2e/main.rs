@@ -113,6 +113,14 @@ impl Project {
     }
 }
 
+/// How many times the mock harness binary was **executed**, from a
+/// `LLMLINT_MOCK_SPAWNLOG` directory (one file per process spawn, the
+/// `--version` pre-flight included). A prompt dump proves no *judge* ran; this
+/// proves the executable itself was never invoked.
+fn harness_spawns(dir: &Path) -> usize {
+    fs::read_dir(dir).map(Iterator::count).unwrap_or(0)
+}
+
 const RULE: &str = "true when ok; false otherwise.";
 
 /// The bundled config-lint plugin, referenced by URL + version pin (resolved
@@ -951,6 +959,35 @@ fn lint_config_with_no_config_files_is_a_clean_skip() {
 }
 
 #[test]
+fn lint_config_rejects_an_explicit_file_that_does_not_resolve() {
+    // `lint-config` shares `lint`'s FILES handling, so it rejects an unresolvable
+    // path the same way — before any judge call. Without the guard the bundled
+    // rules' own globs would take over and the run would report a green pass over
+    // config files the user never named.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: public_items_are_documented, description: \"{RULE}\" }}\n"
+        ),
+    );
+    let spawns = p.path().join("spawns");
+
+    p.lint_config()
+        .arg("nope.yml")
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("nope.yml"));
+
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
+}
+
+#[test]
 fn plugin_from_a_file_url_merges_its_rules() {
     let p = Project::new();
     let plugin = p.path().join("shared.yml");
@@ -1501,6 +1538,234 @@ fn explicit_cli_files_override_config_globs() {
     );
 }
 
+#[test]
+fn explicit_cli_file_that_does_not_resolve_is_rejected_before_any_judge_call() {
+    // A passed FILES entry that names no readable file is a usage error, not a
+    // silently-narrowed run: the judged set would otherwise shrink (here, to the
+    // rule's own globs — a per-rule `files` filter wins over CLI files) and the
+    // report would look like an authoritative pass over what the user named.
+    // The rejection lands before any oneharness call, so a typo costs nothing.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: scoped_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    let verdicts = p.write_verdicts(r#"{"scoped_rule": true}"#);
+
+    // Control: the same invocation with a path that *does* resolve spawns the
+    // harness, so the empty spawn log below means "never executed", not "the
+    // recorder was never wired".
+    let control = p.path().join("spawns-ok");
+    p.lint()
+        .arg("src/a.rs")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &control)
+        .assert()
+        .success();
+    assert!(
+        harness_spawns(&control) > 0,
+        "the spawn log records nothing"
+    );
+
+    let spawns = p.path().join("spawns-bad");
+    p.lint()
+        .arg("origin/master") // a ref, not a file — the mistake this guards
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("origin/master"));
+
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
+}
+
+#[test]
+fn explicit_cli_directory_is_rejected_like_any_unreadable_path() {
+    // A directory *exists* but is not a file the judge could read, so it is the
+    // same false green: with the rule owning its own `files` scope, the CLI entry
+    // is ignored, the rule runs on its globs, and the report reads as a pass over
+    // what the user named. Existence is not the bar — being readable is.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: scoped_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    let verdicts = p.write_verdicts(r#"{"scoped_rule": true}"#);
+    let spawns = p.path().join("spawns");
+
+    p.lint()
+        .arg("src") // an existing directory, not a file
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        // `src:` (not bare `src`) so the temp root's own path can't satisfy it —
+        // the diagnostic must name the directory that was passed.
+        .stderr(predicate::str::contains("reading "))
+        .stderr(predicate::str::contains("src:"));
+
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
+}
+
+#[test]
+fn explicit_cli_files_that_resolve_are_unaffected_by_the_resolvability_check() {
+    // The guard is strictly about a path that doesn't resolve: a passed file that
+    // exists is judged exactly as before, alongside a sibling that exists too.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: cli_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("README.md", "# readme\n");
+    let verdicts = p.write_verdicts(r#"{"cli_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("README.md")
+        .arg("src/a.rs")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("README.md"), "system:\n{system}");
+    assert!(system.contains("src/a.rs"), "system:\n{system}");
+}
+
+#[test]
+fn check_ignores_rejects_an_unresolvable_file_the_same_way_lint_does() {
+    // The two commands must read as one tool: `check-ignores` already hard-fails
+    // on a FILES entry that names no readable path, and `lint` now says the same
+    // thing about the same input. This pins that parity (and that `check-ignores`
+    // is unchanged).
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+
+    let ignores = p
+        .check_ignores()
+        .arg("origin/master")
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let ignores = String::from_utf8(ignores).unwrap();
+
+    let verdicts = p.write_verdicts(r#"{"r": true}"#);
+    let lint = p
+        .lint()
+        .arg("origin/master")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let lint = String::from_utf8(lint).unwrap();
+
+    for out in [&ignores, &lint] {
+        assert!(
+            out.contains("origin/master") && out.contains("reading"),
+            "expected a `reading <path>: …` diagnostic, got:\n{out}"
+        );
+    }
+    assert_eq!(ignores, lint, "the two diagnostics must read the same");
+}
+
+#[test]
+fn a_config_glob_that_matches_nothing_is_reported_not_rejected() {
+    // The deliberate other half of the FILES guard. A configured glob is a
+    // declarative pattern whose empty match is a normal state here (a subtree in
+    // the cascade, a `--diff` intersection, a repo-wide config shared across
+    // areas), so it is not an error — but the narrowing it causes must never be
+    // silent, which is what made the FILES case a false green. Three surfaces
+    // say so, and this pins all three: the default summary *counts* the skip
+    // without any flag, `-v` names the rule and the reason, and `--plan-only`
+    // lists it under "not judged".
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: real_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: typo_rule, description: \"{RULE}\", \
+             files: {{ include: [\"srcc/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    let verdicts = p.write_verdicts(r#"{"real_rule": true}"#);
+
+    // Default verbosity: a clean exit 0, and the skipped rule is still counted —
+    // the run never claims to have judged more than it did.
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "2 rules: 1 passed, 0 failed, 1 skipped",
+        ));
+
+    // `-v` names it and why.
+    p.lint_v()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "SKIP typo_rule (no files matched)",
+        ));
+
+    // ...and the plan explanation lists it as unjudged, with the same reason.
+    p.lint()
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("not judged:"))
+        .stdout(predicate::str::contains("typo_rule — no files matched"));
+}
+
 // ---- --diff (changed-line context in the prompt) --------------------------
 
 /// Run `git` in `dir`, asserting success. `std::process::Command` is spelled out
@@ -1979,6 +2244,126 @@ fn diff_drops_a_deleted_path_without_erroring() {
     assert!(
         system.contains("diff --git a/src/b.rs"),
         "system:\n{system}"
+    );
+}
+
+#[test]
+fn diff_explicit_cli_file_that_does_not_resolve_is_rejected_before_any_judge_call() {
+    // The reported bug: `lint --diff origin/master` accepted a *ref* as a FILES
+    // entry, dropped it as "unchanged", judged only the rules whose own globs
+    // still matched, and exited 0 — a green report about a fraction of the rules.
+    // A path that resolves to nothing is now a usage error, before any harness
+    // call, in both bare and `--diff-base` form.
+    let rules = format!(
+        "  - {{ name: scoped_rule, description: \"{RULE}\", \
+         files: {{ include: [\"src/**\"] }} }}\n"
+    );
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.write("src/a.rs", "fn a() { changed(); }\n");
+    let verdicts = p.write_verdicts(r#"{"scoped_rule": true}"#);
+    let spawns = p.path().join("spawns");
+
+    // `--diff git` (explicit backend) so the positional FILES isn't swallowed as
+    // the flag's optional backend value.
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .arg("origin/master")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("origin/master"));
+
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("origin/master")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("origin/master"));
+
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
+}
+
+#[test]
+fn diff_explicit_cli_directory_is_rejected_even_though_it_has_changes() {
+    // The `--diff` exemption is for a path that is **absent** — a tracked file
+    // deleted from the work tree. A directory is present but unreadable, and git
+    // happily reports a diff for it as a pathspec, so keying the exemption on
+    // "the backend saw changes" alone would wave it through and hand back the
+    // same false green. Only absence may be exempted.
+    let rules = format!(
+        "  - {{ name: scoped_rule, description: \"{RULE}\", \
+         files: {{ include: [\"src/**\"] }} }}\n"
+    );
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.write("src/a.rs", "fn a() { changed(); }\n"); // a real change under `src`
+    let verdicts = p.write_verdicts(r#"{"scoped_rule": true}"#);
+    let spawns = p.path().join("spawns");
+
+    p.lint()
+        .arg("--diff")
+        .arg("git")
+        .arg("src") // an existing directory with changes inside it
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        // `src:` (not bare `src`) so the temp root's own path can't satisfy it —
+        // the diagnostic must name the directory that was passed.
+        .stderr(predicate::str::contains("reading "))
+        .stderr(predicate::str::contains("src:"));
+
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
+}
+
+#[test]
+fn diff_explicit_cli_file_with_no_overlap_is_still_a_clean_empty_selection() {
+    // The load-bearing distinction: a FILES entry that *resolves* but simply has
+    // no diff overlap is a legitimate empty selection, not an error. "Nothing to
+    // judge" must never become a failure — the rule is skipped, no harness call
+    // is made, and the run exits 0.
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(
+        &rules,
+        &[("src/a.rs", "fn a() {}\n"), ("src/b.rs", "fn b() {}\n")],
+    );
+    p.write("src/a.rs", "fn a() { changed(); }\n"); // a.rs changed, b.rs not
+    let dump = p.path().join("system.txt");
+
+    p.lint_v()
+        .arg("--diff")
+        .arg("git")
+        .arg("src/b.rs") // exists, but unchanged vs the base
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SKIP r"));
+
+    assert!(
+        !dump.exists(),
+        "harness was invoked but should not have been"
     );
 }
 

@@ -179,6 +179,56 @@ pub fn read_text(root: &Path, rel: &Path) -> Result<Option<String>> {
     Ok(String::from_utf8(bytes).ok())
 }
 
+/// An explicit CLI file that llmlint could not read as a target file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unresolved {
+    /// The path in the caller's own spelling, so it can be matched against
+    /// another view of the same target (e.g. a diff map keyed the same way).
+    pub path: PathBuf,
+    /// The diagnostic, in [`read_text`]'s `reading <path>: <os error>` shape over
+    /// the `root`-joined path.
+    pub message: String,
+    /// Whether the path is simply **absent**. Only an absent path can be a
+    /// tracked file deleted from the work tree, so only this kind is eligible for
+    /// the `--diff` deleted-file exemption; a path that is present but unreadable
+    /// (a directory, a permission fault) is never waved through.
+    pub missing: bool,
+}
+
+/// The explicit CLI files llmlint cannot read as targets — each with the
+/// diagnostic that says why, in the same shape [`read_text`] uses, so every
+/// command's "that path isn't usable" reads as one tool.
+///
+/// Readability is checked by **attempting `read_text`'s own read**, not by
+/// stat-ing: existence is not the bar the judge has to clear, being readable is.
+/// A directory exists yet cannot be read as a file, and letting it through
+/// reproduces exactly the false green this guards (the entry is ignored, per-rule
+/// globs take over, and the run reports a pass over what the user never named).
+/// Doing the identical read is what keeps this from ever disagreeing with the
+/// scan that follows; the bytes are decoded only there, so a **binary file stays
+/// a valid target** here. The read is bounded by the command line — the same
+/// files the ignore scan reads moments later.
+///
+/// A passed path is a per-invocation assertion that *this file* is there to be
+/// judged, unlike a glob, which legitimately matches nothing — so callers turn a
+/// non-empty result into a hard error rather than a quietly smaller run.
+pub fn unresolved(root: &Path, files: &[PathBuf]) -> Vec<Unresolved> {
+    let mut out = Vec::new();
+    for f in files {
+        // `join` with an absolute path yields that path, so this handles an
+        // absolute CLI file exactly as `read_text` does.
+        let path = root.join(f);
+        if let Err(e) = std::fs::read(&path) {
+            out.push(Unresolved {
+                path: f.clone(),
+                message: format!("reading {}: {e}", path.display()),
+                missing: e.kind() == std::io::ErrorKind::NotFound,
+            });
+        }
+    }
+    out
+}
+
 /// Render a (relative) path with forward slashes; see [`crate::domain::to_slash`].
 /// Re-exported here next to the other path helpers so `commands`/`io` share one
 /// spelling with the planner's per-rule file lists.
@@ -448,6 +498,56 @@ mod tests {
             read_text(dir.path(), Path::new("nope.rs")),
             Err(Error::Io(_))
         ));
+    }
+
+    #[test]
+    fn unresolved_names_only_the_paths_that_are_not_readable_files() {
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "src/a.rs");
+        let files = vec![
+            PathBuf::from("src/a.rs"),      // a readable file -> not reported
+            PathBuf::from("src"),           // a directory: present, unreadable -> reported
+            PathBuf::from("origin/master"), // a ref, not a file -> reported
+            dir.path().join("nope.rs"),     // absolute + absent -> reported
+        ];
+        let out = unresolved(dir.path(), &files);
+        let names: Vec<&PathBuf> = out.iter().map(|u| &u.path).collect();
+        assert_eq!(names, vec![&files[1], &files[2], &files[3]]);
+        // Only the absent paths are eligible for the `--diff` deleted-file
+        // exemption; the directory is present, so it never is.
+        let missing: Vec<bool> = out.iter().map(|u| u.missing).collect();
+        assert_eq!(missing, vec![false, true, true]);
+        // The diagnostic is `read_text`'s shape, over the root-joined path.
+        assert!(
+            out[1].message.starts_with(&format!(
+                "reading {}",
+                dir.path().join("origin/master").display()
+            )),
+            "got {:?}",
+            out[1].message
+        );
+        // ...and matches what `read_text` itself would say about the same path,
+        // for a present-but-unreadable path as much as an absent one.
+        for (rel, u) in [("src", &out[0]), ("origin/master", &out[1])] {
+            let via_read = read_text(dir.path(), Path::new(rel)).unwrap_err();
+            assert_eq!(via_read.to_string(), u.message);
+        }
+    }
+
+    #[test]
+    fn unresolved_is_empty_when_every_path_is_a_readable_file() {
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "a.rs");
+        // A non-UTF-8 file is still a valid target — `read_text` decodes it to
+        // `None` (no directives to find), it does not fail the run — so the
+        // readability check must not reject it either.
+        fs::write(dir.path().join("logo.bin"), [0xff, 0xfe, 0x00]).unwrap();
+        assert!(read_text(dir.path(), Path::new("logo.bin"))
+            .unwrap()
+            .is_none());
+        let files = vec![PathBuf::from("a.rs"), PathBuf::from("logo.bin")];
+        assert!(unresolved(dir.path(), &files).is_empty());
+        assert!(unresolved(dir.path(), &[]).is_empty());
     }
 
     #[test]

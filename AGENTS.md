@@ -328,6 +328,46 @@ harness reads target files on-demand with its own tools.
   when their harness/model/template are identical and merging would save tokens —
   an agent split is user intent (isolating rules that interfere when judged
   together), asserted in `plan.rs` tests.
+- **Explicit `FILES` must be readable (convention):** a positional `FILES` entry
+  is a per-invocation assertion that *this file is there to be judged*, so one
+  llmlint cannot read as a file is an exit-2 usage error (`check_cli_files` in
+  `commands/lint.rs`, over `files::unresolved`) — reported in `read_text`'s own
+  `reading <path>: <os error>` wording so `lint` and `check-ignores` read as one
+  tool, and raised before rule selection, planning, or any judge call, so a bad
+  invocation costs nothing. Silently accepting one narrows what is judged without
+  saying so (a rule with its own `files` ignores CLI files and keeps running on
+  its globs; a rule without one resolves to nothing and is skipped), and the run
+  then reports a confident pass over a fraction of the ruleset — the same false
+  green `validate_filters` guards for `--rule`/`--agent`. It lives in the shared
+  `lint::run_loaded`, so `lint` and `lint-config` get it from one place.
+  **Existence is not the bar — readability is:** `unresolved` decides by
+  attempting `read_text`'s own read rather than stat-ing, so a *directory*
+  (present, yet not a file any judge could read) is rejected like an absent path,
+  while a **binary file stays a valid target** (`read_text` decodes it to `None`;
+  only the decode, not the read, distinguishes it). Doing the identical read is
+  what keeps this from ever disagreeing with the ignore scan moments later.
+  Two deliberate non-errors: a path that **resolves but selects nothing** (no
+  `--diff` overlap, an `exclude`, a scope it falls outside) is a legitimate empty
+  selection, and under `--diff` a tracked file **deleted** from the work tree is
+  accepted (it is what a `git diff --name-only` wrapper passes, and
+  `restrict_to_changed` already drops it). That exemption is held to *absence*
+  (`Unresolved::missing`) — only an absent path can be a deleted file, so the
+  backend is asked only about those, and a present-but-unreadable path is never
+  waved through even when the backend reports changes for it (git answers a
+  directory pathspec with its whole subtree's diff). A **glob** that matches
+  nothing is *not* an error either — the decision is that a glob and a passed
+  path are different speech acts. A glob is a declarative pattern whose empty
+  match is a normal state here (a subtree in the cascade, a `--diff`
+  intersection, an `exclude`, a repo-wide config shared across areas), and —
+  unlike the `FILES` case — the narrowing is **already reported on three
+  surfaces**: the default summary counts the skip with no flag, `-v` names the
+  rule with `no files matched`, and the plan explanation lists it under "not
+  judged" (so `--format json` and history carry it too). What made the `FILES`
+  bug a false green was invisibility, not narrowing, and that is absent here. A
+  bare warning is rejected for the same reason the repo has no warnings-only
+  mode: it would fire on every legitimate empty match and train readers to
+  ignore it. Pinned by
+  `a_config_glob_that_matches_nothing_is_reported_not_rejected`.
 - **Diff context + changed-file filter (convention):** `--diff [<backend>]`
   **restricts the run to the changed files** and adds each one's diff to the judge
   prompt so it reviews only the changed lines (bare `--diff` defaults to `git`,

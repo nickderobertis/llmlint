@@ -85,6 +85,11 @@ pub(crate) fn run_loaded(
     }
     let session_rationales = config.rationales_default();
 
+    // Explicit `FILES` are validated first — before rule selection, planning, or
+    // any (paid) judge call — so a path that names nothing costs nothing.
+    let cli_files = files::from_cli(&cwd, &args.files);
+    check_cli_files(&cwd, &cli_files, &args, &config)?;
+
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
         let report = Report::new(Vec::new(), Vec::new());
@@ -95,7 +100,6 @@ pub(crate) fn run_loaded(
         .prompt_template
         .clone()
         .unwrap_or_else(|| assets::DEFAULT_TEMPLATE.to_string());
-    let cli_files = files::from_cli(&cwd, &args.files);
 
     let mut resolved = Vec::new();
     // Rules declared statically not relevant (`relevance: false`) never reach a
@@ -581,6 +585,62 @@ fn join_or_none(names: &[&str]) -> String {
     } else {
         names.join(", ")
     }
+}
+
+/// Reject an explicit `FILES` argument that names no file llmlint can read — the
+/// same false green [`validate_filters`] guards against, one layer down. Without
+/// this a mistyped path (or a *ref* mistaken for one, `llmlint lint --diff
+/// origin/master`) silently shrinks what is judged: rules with their own `files`
+/// filter ignore CLI files and keep running on their globs, rules without one
+/// resolve to nothing and are skipped, and the run reports a confident pass over
+/// a fraction of the ruleset. Checked here — before rule selection, planning, or
+/// any judge call — so a bad invocation costs no model tokens.
+///
+/// Only *unusable as a target file* is an error. A path that resolves but selects
+/// nothing (no `--diff` overlap, an `exclude`, a rule scope it falls outside)
+/// stays a legitimate empty selection and still exits 0.
+///
+/// One exemption, under `--diff` only: a tracked file **deleted** from the work
+/// tree is gone from disk, yet it is exactly what a `git diff --name-only`
+/// wrapper passes and what `restrict_to_changed` already drops. The exemption is
+/// held to that case — only an *absent* path can be a deleted file, so a path
+/// that is present but unreadable (a directory, a permission fault) is never
+/// waved through even when the backend reports changes for it (git answers a
+/// directory pathspec with its whole subtree's diff). The backend is asked only
+/// about the absent paths, so a well-formed invocation costs no extra work.
+fn check_cli_files(
+    cwd: &Path,
+    cli_files: &[PathBuf],
+    args: &LintArgs,
+    config: &Config,
+) -> Result<()> {
+    let mut unresolved = files::unresolved(cwd, cli_files);
+    if unresolved.is_empty() {
+        return Ok(());
+    }
+    if let Some(backend) = args.diff {
+        let absent: Vec<PathBuf> = unresolved
+            .iter()
+            .filter(|u| u.missing)
+            .map(|u| u.path.clone())
+            .collect();
+        if !absent.is_empty() {
+            let changed = diff::provider(backend, config.diff_base.clone()).diffs(cwd, &absent)?;
+            unresolved.retain(|u| !(u.missing && changed.contains_key(&u.path)));
+        }
+    }
+    if unresolved.is_empty() {
+        return Ok(());
+    }
+    // One error listing every bad path, in `read_text`'s wording, so `lint` and
+    // `check-ignores` say the same thing about the same input.
+    Err(Error::Io(
+        unresolved
+            .into_iter()
+            .map(|u| u.message)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
 }
 
 fn select_rules<'a>(config: &'a Config, args: &LintArgs) -> Vec<&'a Rule> {
