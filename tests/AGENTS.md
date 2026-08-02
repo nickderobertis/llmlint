@@ -303,7 +303,9 @@ logic is also covered hermetically via `file://` plugins.
   intersect) exits 0; a `--rule`/`--agent` name that matches nothing in the
   config is a clear exit-2 error listing the available names — even when mixed
   with a valid name — so a typo isn't a silent false green; rules with no
-  matching files are skipped.
+  matching files are skipped. The two unknown-name journeys assert an empty
+  `LLMLINT_MOCK_SPAWNLOG` against a resolving control, so a typo demonstrably
+  costs no *process spawn* — not even the `--version` pre-flight.
 - `--timeout` is forwarded to oneharness; a config `oneharness.timeout` is
   forwarded when no CLI flag is given; `schema_max_retries` is forwarded as
   `--schema-max-retries`; the oneharness `model` is forwarded, with a per-agent
@@ -474,7 +476,9 @@ logic is also covered hermetically via `file://` plugins.
   is explained, not a mystery (`plan_only_under_diff_states_the_lint_set_and_names_excluded_files`).
   `--plan-only` prints it and exits with **no harness call and
   no history write** (proven by running via `bare`, without `--oneharness-bin`,
-  and asserting zero records) — a zero-cost way to debug batching. At `-v` the same
+  and asserting zero records — then, wired to the mock, by an empty
+  `LLMLINT_MOCK_SPAWNLOG` against the identical command *without* `--plan-only`
+  as the control) — a zero-cost way to debug batching. At `-v` the same
   explanation is **narrated up front — before the judges run** (to stdout, then the
   results follow, asserted by `verbose_run_narrates_the_plan_before_the_results`),
   not appended after the report; it is embedded in `--format json`

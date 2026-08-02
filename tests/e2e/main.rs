@@ -4411,13 +4411,40 @@ fn unknown_rule_name_is_an_error() {
         ),
     );
     p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"only_rule": true}"#);
+
+    // Control: the same filter naming a real rule spawns the harness, so the empty
+    // spawn log below means "never executed", not "the recorder was never wired".
+    let control = p.path().join("spawns-ok");
+    p.lint()
+        .args(["--rule", "only_rule", "--max-parallel", "1"])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &control)
+        .assert()
+        .success();
+    assert!(
+        harness_spawns(&control) > 0,
+        "the spawn log records nothing"
+    );
+
+    let spawns = p.path().join("spawns-bad");
     p.lint()
         .arg("--rule")
         .arg("nonexistent")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
         .assert()
         .code(2)
         .stderr(predicate::str::contains("no rule named nonexistent"))
         .stderr(predicate::str::contains("available rules: only_rule"));
+
+    // The typo is caught before the oneharness client exists, so it costs no
+    // process spawn — not even the `--version` pre-flight.
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
 }
 
 #[test]
@@ -4432,15 +4459,40 @@ fn unknown_agent_name_is_an_error() {
         ),
     );
     p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"only_rule": true}"#);
+
+    // Control: the same filter naming a real agent spawns the harness, so the
+    // empty spawn log below means "never executed", not "never wired".
+    let control = p.path().join("spawns-ok");
+    p.lint()
+        .args(["--agent", "default", "--max-parallel", "1"])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &control)
+        .assert()
+        .success();
+    assert!(
+        harness_spawns(&control) > 0,
+        "the spawn log records nothing"
+    );
+
+    let spawns = p.path().join("spawns-bad");
     p.lint()
         .arg("--agent")
         .arg("typo")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
         .assert()
         .code(2)
         .stderr(predicate::str::contains("no agent named typo"))
         .stderr(predicate::str::contains(
             "available agents: default, special",
         ));
+
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
 }
 
 #[test]
@@ -8914,6 +8966,36 @@ fn plan_only_prints_the_batching_and_makes_no_judge_call() {
         .stdout(predicate::str::contains("src/lib.rs"));
     // A dry inspection logs nothing.
     assert_eq!(history_record_count(&p), 0);
+
+    // Wired to the mock harness, the same run still executes nothing: the plan is
+    // printed and llmlint exits before the oneharness client is built. The control
+    // (the identical command without `--plan-only`) does spawn it, so the empty log
+    // means "never executed", not "never wired".
+    let verdicts = p.write_verdicts(r#"{"rule_a": true, "rule_b": true}"#);
+    let spawns = p.path().join("spawns-plan");
+    p.lint()
+        .args(["--plan-only", "--max-parallel", "1"])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .success();
+    assert_eq!(
+        harness_spawns(&spawns),
+        0,
+        "the harness executable was spawned but should not have been"
+    );
+
+    let control = p.path().join("spawns-ok");
+    p.lint()
+        .args(["--max-parallel", "1"])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &control)
+        .assert()
+        .success();
+    assert!(
+        harness_spawns(&control) > 0,
+        "the spawn log records nothing"
+    );
 }
 
 #[test]
