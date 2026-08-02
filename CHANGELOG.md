@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.28](https://github.com/nickderobertis/llmlint/compare/v0.3.27...v0.3.28) - 2026-08-02
+
+### Fixed
+
+- reject a FILES arg that names no readable file ([#172](https://github.com/nickderobertis/llmlint/pull/172))
+
 ## [0.3.27](https://github.com/nickderobertis/llmlint/compare/v0.3.26...v0.3.27) - 2026-07-31
 
 ### Fixed
