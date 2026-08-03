@@ -7159,6 +7159,62 @@ fn no_rationales_flag_drops_rationale_from_schema_and_report() {
 }
 
 #[test]
+fn rationale_guidance_splits_the_holding_verdict_from_the_violating_one() {
+    // The rationale is emitted before the verdict, so a violating rule is told to
+    // enumerate its sites first and only then conclude; a holding one stays as
+    // terse as ever.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r_one, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"r_one": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--rationales")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("## Rationale"), "system:\n{system}");
+    assert!(
+        system.contains("When the property holds, keep it terse"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("account for **every** site you found"),
+        "system:\n{system}"
+    );
+
+    // With rationales off there is no rationale guidance at all.
+    let p2 = Project::new();
+    p2.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrationales: false\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: r_one, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p2.write("src/lib.rs", "// code\n");
+    let v2 = p2.write_verdicts(r#"{"r_one": true}"#);
+    let dump2 = p2.path().join("system.txt");
+    p2.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &v2)
+        .env("LLMLINT_MOCK_DUMP", &dump2)
+        .assert()
+        .success();
+    let off = fs::read_to_string(&dump2).unwrap();
+    assert!(!off.contains("## Rationale"), "system:\n{off}");
+}
+
+#[test]
 fn cli_rationales_flag_overrides_config_false() {
     let p = Project::new();
     // Config disables rationales; the CLI flag turns them back on (CLI wins).
@@ -8598,6 +8654,16 @@ fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
     assert!(system.contains("## Line attribution"), "system:\n{system}");
     assert!(
         system.contains("Every violation must cite a `file` and `line`."),
+        "system:\n{system}"
+    );
+    // The section governs citation, not completeness: an unmarked rule is let off
+    // the file+line requirement alone, and still owes a complete list.
+    assert!(
+        system.contains("exempt from the citation requirement only"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("list must still be complete"),
         "system:\n{system}"
     );
 

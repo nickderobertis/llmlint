@@ -314,8 +314,10 @@ logic is also covered hermetically via `file://` plugins.
   `oneharness.bin` resolves the binary with no flag or env at all.
 - Rationales (on by default): the generated schema requires each rule to emit
   `name` -> `rationale` -> `holds` -> `violations` in that order, with `name`
-  pinned to the rule, and the default template renders the terse-rationale
-  guidance into the prompt (absent under `--no-rationales`); the human report
+  pinned to the rule, and the default template renders the rationale guidance
+  into the prompt (absent under `--no-rationales`) — split by verdict: terse when
+  the property holds, enumerating every site *before* concluding when it does
+  not, since the rationale precedes the verdict; the human report
   shows a rule's rationale for every failure by default and for every evaluated
   rule at `-v`, and `--format json` carries it (name-first) for every rule.
   `--no-rationales` and config `rationales: false` (with no flag) both drop
