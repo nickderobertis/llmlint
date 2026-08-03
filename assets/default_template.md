@@ -16,13 +16,18 @@ organization objectives — that deterministic linters cannot express.
   reference) with your tools** before deciding. Base every verdict on what the
   code actually does, not on assumptions. When uncertain after reading, prefer
   the reading that a careful reviewer would defend.
-- When `holds = false`, report the concrete violations. Each violation may
-  include the `file` and `line` (and `end_line`) where it occurs and a short
-  `message`. Report each violation only in a file the rule applies to. Include a
-  violation per distinct problem; there can be multiple per file and across
-  files. If a violation genuinely cannot be tied to an exact source location,
-  omit `file`/`line` and just give a `message`.
+- When `holds = false`, report **every** distinct violation of that rule in this
+  same response — one per distinct problem, however many per file and across
+  files. A single exemplar is not enough, and nothing may be deferred to a later
+  turn: re-read each file the rule applies to until the list is complete. Each
+  violation carries a short `message` and the `file` and `line` (and `end_line`)
+  where it occurs; omit `file`/`line` only when a finding genuinely cannot be
+  tied to an exact source location. Report each violation only in a file the
+  rule applies to.
 - When `holds = true`, return an empty `violations` list.
+- **Judge each rule independently.** One location may violate several rules in
+  this batch; report it under every rule it violates, even when you have already
+  reported it under another.
 {% if relevance %}
 ## Relevance
 
@@ -40,11 +45,16 @@ relevance *first*, before the verdict:
 {% endif %}{% if rationales %}
 ## Rationale
 
-Some rules require a `rationale`: one short justification for the verdict, given
-*before* `holds` so the conclusion follows from the evidence. Keep it terse and
-pithy — the fewest tokens that still cite the specific evidence (the file,
-symbol, or pattern) a reviewer needs to confirm the verdict at a glance. No
-restating the rule, no hedging, no preamble. One sentence is plenty.
+Some rules require a `rationale`: the justification for the verdict, given
+*before* `holds` so the conclusion follows from the evidence. No restating the
+rule, no hedging, no preamble.
+
+- When the property holds, keep it terse and pithy — the fewest tokens that
+  still cite the specific evidence (the file, symbol, or pattern) a reviewer
+  needs to confirm the verdict at a glance. One sentence is plenty.
+- When you are about to report violations, account for **every** site you found
+  before concluding: name each one compactly (file and line, a clause each),
+  then state the verdict. The `violations` list must match that account.
 {% endif %}{% if line_attribution %}
 ## Line attribution
 
@@ -52,11 +62,11 @@ Some rules **require line attribution** (marked "Every violation must cite a
 `file` and `line`." under the rule). For such a rule, every violation you report
 must include both the `file` and the concrete `line` (use `end_line` for a span)
 where it occurs — a `message` alone is not enough. Read the files and pin each
-violation to its exact source location, and report every one of them in this same
-response (do not defer any to a later turn). If you cannot localize what would
+violation to its exact source location; if you cannot localize what would
 otherwise be a violation, re-read the file until you can. A rule without this
-marker is unaffected: its violations may omit `file`/`line` when a finding
-genuinely cannot be tied to one source line.
+marker is exempt from the citation requirement only — its violations may omit
+`file`/`line` when a finding genuinely cannot be tied to one source line, but its
+list must still be complete.
 {% endif %}
 ## Inline ignore directives
 

@@ -312,6 +312,76 @@ mod tests {
     }
 
     #[test]
+    fn the_default_template_demands_completeness_for_every_flag_combination() {
+        // Reporting every violation governs *every* rule, so the instruction must
+        // render with each conditional block off — notably `line_attribution`,
+        // whose section used to be the only place it appeared (so a batch with no
+        // opted-in rule was told nothing about completeness).
+        for rationales in [false, true] {
+            for relevance in [false, true] {
+                for line_attribution in [false, true] {
+                    let mut rs = rules();
+                    rs[0].rationale = rationales;
+                    rs[0].relevance = relevance.then(|| "the change touches SQL".into());
+                    rs[0].require_line_attribution = line_attribution;
+                    let out = render(
+                        crate::io::assets::DEFAULT_TEMPLATE,
+                        &rs,
+                        &["src/a.rs".into(), "src/b.rs".into()],
+                        &[],
+                        rationales,
+                        relevance,
+                        line_attribution,
+                    )
+                    .unwrap_or_else(|e| {
+                        panic!("default template failed to render ({rationales}/{relevance}/{line_attribution}): {e}")
+                    });
+                    assert!(
+                        out.contains("report **every** distinct violation"),
+                        "no completeness instruction ({rationales}/{relevance}/{line_attribution}):\n{out}"
+                    );
+                    assert!(
+                        out.contains("**Judge each rule independently.**"),
+                        "no rule-independence instruction:\n{out}"
+                    );
+                    // The gated sections still track their flags.
+                    assert_eq!(out.contains("## Line attribution"), line_attribution);
+                    assert_eq!(out.contains("## Rationale"), rationales);
+                    assert_eq!(out.contains("## Relevance"), relevance);
+
+                    // The rationale precedes the verdict, so a violating rule is
+                    // told to enumerate its sites before concluding; a holding one
+                    // stays as terse as it ever was.
+                    assert_eq!(
+                        out.contains("When the property holds, keep it terse"),
+                        rationales
+                    );
+                    assert_eq!(
+                        out.contains("account for **every** site you found"),
+                        rationales
+                    );
+
+                    // Line attribution governs citation, not completeness: an
+                    // unmarked rule is let off the file+line requirement alone and
+                    // still owes a complete list.
+                    assert_eq!(
+                        out.contains("Every violation must cite a `file` and `line`."),
+                        line_attribution
+                    );
+                    assert_eq!(
+                        out.contains("exempt from the citation requirement only"),
+                        line_attribution
+                    );
+                    assert_eq!(
+                        out.contains("list must still be complete"),
+                        line_attribution
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn file_rules_expose_per_file_applicability() {
         // Two rules with different file scopes: a.rs gets only_a, b.rs gets only_b.
         let rs = vec![
