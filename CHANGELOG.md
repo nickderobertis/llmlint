@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.29](https://github.com/nickderobertis/llmlint/compare/v0.3.28...v0.3.29) - 2026-08-03
+
+### Fixed
+
+- make the judge prompt enumerate every violation ([#174](https://github.com/nickderobertis/llmlint/pull/174))
+
 ## [0.3.28](https://github.com/nickderobertis/llmlint/compare/v0.3.27...v0.3.28) - 2026-08-02
 
 ### Fixed
