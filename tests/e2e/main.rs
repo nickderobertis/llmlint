@@ -8623,6 +8623,41 @@ fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
 }
 
 #[test]
+fn the_prompt_demands_every_violation_even_with_no_line_attribution_rule() {
+    // Completeness is not a line-attribution concern: a batch where no rule opts
+    // in (so the "## Line attribution" section is absent) must still be told to
+    // report every violation it finds, in this response.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: plain_rule, description: \"{RULE}\", require_line_attribution: false }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"plain_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(!system.contains("## Line attribution"), "system:\n{system}");
+    assert!(
+        system.contains("report **every** distinct violation"),
+        "system:\n{system}"
+    );
+    // ...and that one location may violate several rules at once.
+    assert!(
+        system.contains("**Judge each rule independently.**"),
+        "system:\n{system}"
+    );
+}
+
+#[test]
 fn a_localized_violation_passes_through_for_a_require_line_attribution_rule() {
     let p = Project::new();
     p.write(

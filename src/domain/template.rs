@@ -312,6 +312,48 @@ mod tests {
     }
 
     #[test]
+    fn the_default_template_demands_completeness_for_every_flag_combination() {
+        // Reporting every violation governs *every* rule, so the instruction must
+        // render with each conditional block off — notably `line_attribution`,
+        // whose section used to be the only place it appeared (so a batch with no
+        // opted-in rule was told nothing about completeness).
+        for rationales in [false, true] {
+            for relevance in [false, true] {
+                for line_attribution in [false, true] {
+                    let mut rs = rules();
+                    rs[0].rationale = rationales;
+                    rs[0].relevance = relevance.then(|| "the change touches SQL".into());
+                    rs[0].require_line_attribution = line_attribution;
+                    let out = render(
+                        crate::io::assets::DEFAULT_TEMPLATE,
+                        &rs,
+                        &["src/a.rs".into(), "src/b.rs".into()],
+                        &[],
+                        rationales,
+                        relevance,
+                        line_attribution,
+                    )
+                    .unwrap_or_else(|e| {
+                        panic!("default template failed to render ({rationales}/{relevance}/{line_attribution}): {e}")
+                    });
+                    assert!(
+                        out.contains("report **every** distinct violation"),
+                        "no completeness instruction ({rationales}/{relevance}/{line_attribution}):\n{out}"
+                    );
+                    assert!(
+                        out.contains("**Judge each rule independently.**"),
+                        "no rule-independence instruction:\n{out}"
+                    );
+                    // The gated sections still track their flags.
+                    assert_eq!(out.contains("## Line attribution"), line_attribution);
+                    assert_eq!(out.contains("## Rationale"), rationales);
+                    assert_eq!(out.contains("## Relevance"), relevance);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn file_rules_expose_per_file_applicability() {
         // Two rules with different file scopes: a.rs gets only_a, b.rs gets only_b.
         let rs = vec![

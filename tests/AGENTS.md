@@ -355,7 +355,11 @@ logic is also covered hermetically via `file://` plugins.
   the `--format json` `errors` array — so an unlocalized violation is never a
   silently-imprecise pass-through. The pure backstop (which failing/opted-in
   violations are unlocalized, with the batched message) is unit-tested in
-  `domain::attribution`.
+  `domain::attribution`. The **completeness** requirement (report every distinct
+  violation in this response) is *not* part of that guidance — it governs every
+  rule, so a batch where no rule opts in still carries it, asserted on the dumped
+  prompt; `domain::template` pins it across every on/off combination of the
+  template's three conditional blocks.
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their
