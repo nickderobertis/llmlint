@@ -3633,6 +3633,28 @@ fn init_with_template_embeds_the_prompt_template() {
     let cfg = fs::read_to_string(p.path().join("llmlint.yml")).unwrap();
     assert!(cfg.contains("prompt_template: |"));
     assert!(cfg.contains("{% for r in rules %}"));
+
+    // The judge instructions a user starts from demand a *complete* violation
+    // list, not one exemplar. Completeness and rule independence sit outside
+    // every conditional block, so they are in the emitted template verbatim.
+    assert!(
+        cfg.contains("report **every** distinct violation"),
+        "cfg:\n{cfg}"
+    );
+    assert!(
+        cfg.contains("**Judge each rule independently.**"),
+        "cfg:\n{cfg}"
+    );
+    // The rationale is written before the verdict, so a violating rule enumerates
+    // its sites before concluding; line attribution scopes to citation alone.
+    assert!(
+        cfg.contains("account for **every** site you found"),
+        "cfg:\n{cfg}"
+    );
+    assert!(
+        cfg.contains("exempt from the citation requirement only"),
+        "cfg:\n{cfg}"
+    );
 }
 
 #[test]
@@ -7159,64 +7181,6 @@ fn no_rationales_flag_drops_rationale_from_schema_and_report() {
 }
 
 #[test]
-fn rationale_guidance_splits_the_holding_verdict_from_the_violating_one() {
-    // The rationale is emitted before the verdict, so a violating rule is told to
-    // enumerate its sites first and only then conclude; a holding one stays as
-    // terse as ever.
-    // llmlint: ignore-block[tests_mirror_real_usage, e2e_not_mocked] the dump is the prompt the real binary sent across the one boundary the suite deliberately doubles (`oneharness --system-file`, per tests/AGENTS.md); the prompt has no other observable surface
-    let p = Project::new();
-    p.write(
-        "llmlint.yml",
-        &format!(
-            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
-             - {{ name: r_one, description: \"{RULE}\" }}\n"
-        ),
-    );
-    p.write("src/lib.rs", "// code\n");
-    let verdicts = p.write_verdicts(r#"{"r_one": true}"#);
-    let dump = p.path().join("system.txt");
-
-    p.lint()
-        .arg("--rationales")
-        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
-        .env("LLMLINT_MOCK_DUMP", &dump)
-        .assert()
-        .success();
-
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("## Rationale"), "system:\n{system}");
-    assert!(
-        system.contains("When the property holds, keep it terse"),
-        "system:\n{system}"
-    );
-    assert!(
-        system.contains("account for **every** site you found"),
-        "system:\n{system}"
-    );
-
-    // With rationales off there is no rationale guidance at all.
-    let p2 = Project::new();
-    p2.write(
-        "llmlint.yml",
-        &format!(
-            "version: 1\nrationales: false\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
-             - {{ name: r_one, description: \"{RULE}\" }}\n"
-        ),
-    );
-    p2.write("src/lib.rs", "// code\n");
-    let v2 = p2.write_verdicts(r#"{"r_one": true}"#);
-    let dump2 = p2.path().join("system.txt");
-    p2.lint()
-        .env("LLMLINT_MOCK_VERDICTS", &v2)
-        .env("LLMLINT_MOCK_DUMP", &dump2)
-        .assert()
-        .success();
-    let off = fs::read_to_string(&dump2).unwrap();
-    assert!(!off.contains("## Rationale"), "system:\n{off}");
-    // llmlint: ignore-end[tests_mirror_real_usage, e2e_not_mocked]
-}
-
-#[test]
 fn cli_rationales_flag_overrides_config_false() {
     let p = Project::new();
     // Config disables rationales; the CLI flag turns them back on (CLI wins).
@@ -8635,7 +8599,6 @@ fn require_line_attribution_marks_file_and_line_required_in_the_schema() {
 
 #[test]
 fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
-    // llmlint: ignore-block[tests_mirror_real_usage, e2e_not_mocked] the dump is the prompt the real binary sent across the one boundary the suite deliberately doubles (`oneharness --system-file`, per tests/AGENTS.md); the prompt has no other observable surface
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -8659,16 +8622,6 @@ fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
         system.contains("Every violation must cite a `file` and `line`."),
         "system:\n{system}"
     );
-    // The section governs citation, not completeness: an unmarked rule is let off
-    // the file+line requirement alone, and still owes a complete list.
-    assert!(
-        system.contains("exempt from the citation requirement only"),
-        "system:\n{system}"
-    );
-    assert!(
-        system.contains("list must still be complete"),
-        "system:\n{system}"
-    );
 
     // A config with no opted-in rule renders no line-attribution guidance.
     let p2 = Project::new();
@@ -8689,43 +8642,6 @@ fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
         .success();
     let off = fs::read_to_string(&dump2).unwrap();
     assert!(!off.contains("## Line attribution"), "system:\n{off}");
-    // llmlint: ignore-end[tests_mirror_real_usage, e2e_not_mocked]
-}
-
-#[test]
-fn the_prompt_demands_every_violation_even_with_no_line_attribution_rule() {
-    // Completeness is not a line-attribution concern: a batch where no rule opts
-    // in (so the "## Line attribution" section is absent) must still be told to
-    // report every violation it finds, in this response.
-    // llmlint: ignore-block[tests_mirror_real_usage, e2e_not_mocked] the dump is the prompt the real binary sent across the one boundary the suite deliberately doubles (`oneharness --system-file`, per tests/AGENTS.md); the prompt has no other observable surface
-    let p = Project::new();
-    p.write(
-        "llmlint.yml",
-        &format!(
-            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
-             - {{ name: plain_rule, description: \"{RULE}\", require_line_attribution: false }}\n"
-        ),
-    );
-    p.write("src/lib.rs", "// code\n");
-    let verdicts = p.write_verdicts(r#"{"plain_rule": true}"#);
-    let dump = p.path().join("system.txt");
-
-    p.lint()
-        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
-        .env("LLMLINT_MOCK_DUMP", &dump)
-        .assert()
-        .success();
-    let system = fs::read_to_string(&dump).unwrap();
-    assert!(!system.contains("## Line attribution"), "system:\n{system}");
-    assert!(
-        system.contains("report **every** distinct violation"),
-        "system:\n{system}"
-    );
-    assert!(
-        system.contains("**Judge each rule independently.**"),
-        "system:\n{system}"
-    );
-    // llmlint: ignore-end[tests_mirror_real_usage, e2e_not_mocked]
 }
 
 #[test]

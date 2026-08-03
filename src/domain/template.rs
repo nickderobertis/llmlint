@@ -348,6 +348,34 @@ mod tests {
                     assert_eq!(out.contains("## Line attribution"), line_attribution);
                     assert_eq!(out.contains("## Rationale"), rationales);
                     assert_eq!(out.contains("## Relevance"), relevance);
+
+                    // The rationale precedes the verdict, so a violating rule is
+                    // told to enumerate its sites before concluding; a holding one
+                    // stays as terse as it ever was.
+                    assert_eq!(
+                        out.contains("When the property holds, keep it terse"),
+                        rationales
+                    );
+                    assert_eq!(
+                        out.contains("account for **every** site you found"),
+                        rationales
+                    );
+
+                    // Line attribution governs citation, not completeness: an
+                    // unmarked rule is let off the file+line requirement alone and
+                    // still owes a complete list.
+                    assert_eq!(
+                        out.contains("Every violation must cite a `file` and `line`."),
+                        line_attribution
+                    );
+                    assert_eq!(
+                        out.contains("exempt from the citation requirement only"),
+                        line_attribution
+                    );
+                    assert_eq!(
+                        out.contains("list must still be complete"),
+                        line_attribution
+                    );
                 }
             }
         }

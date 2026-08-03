@@ -315,9 +315,7 @@ logic is also covered hermetically via `file://` plugins.
 - Rationales (on by default): the generated schema requires each rule to emit
   `name` -> `rationale` -> `holds` -> `violations` in that order, with `name`
   pinned to the rule, and the default template renders the rationale guidance
-  into the prompt (absent under `--no-rationales`) — split by verdict: terse when
-  the property holds, enumerating every site *before* concluding when it does
-  not, since the rationale precedes the verdict; the human report
+  into the prompt (absent under `--no-rationales`); the human report
   shows a rule's rationale for every failure by default and for every evaluated
   rule at `-v`, and `--format json` carries it (name-first) for every rule.
   `--no-rationales` and config `rationales: false` (with no flag) both drop
@@ -357,11 +355,16 @@ logic is also covered hermetically via `file://` plugins.
   the `--format json` `errors` array — so an unlocalized violation is never a
   silently-imprecise pass-through. The pure backstop (which failing/opted-in
   violations are unlocalized, with the batched message) is unit-tested in
-  `domain::attribution`. The **completeness** requirement (report every distinct
-  violation in this response) is *not* part of that guidance — it governs every
-  rule, so a batch where no rule opts in still carries it, asserted on the dumped
-  prompt; `domain::template` pins it across every on/off combination of the
-  template's three conditional blocks.
+  `domain::attribution`. What the *prompt* says is a property of the shipped
+  template, not of a run, so it is pinned in `domain::template` against the real
+  embedded asset across every on/off combination of its three conditional blocks:
+  the **completeness** requirement (report every distinct violation in this
+  response) governs every rule, so it must render even when no rule opts into
+  line attribution; the line-attribution section is scoped to citation alone; and
+  the rationale guidance splits by verdict. The end-to-end half of that is the
+  `init --with-template` journey above, which reads the same instructions out of
+  the config the CLI writes — no oneharness, so neither half has to inspect a
+  mocked boundary.
 - Every top-level setting also has a CLI override that wins over the config:
   `--model`, `--schema-max-retries`, and `--prompt-template` (a file whose
   contents replace the config's template) are each asserted to override their
@@ -508,7 +511,12 @@ logic is also covered hermetically via `file://` plugins.
   header) are unit-tested in `domain::diffmodel`.
 - `init` scaffolds a config (and `--with-template`, `--output`, `--global` via
   XDG or the HOME fallback), refuses to clobber without `--force`; `init` then
-  self-lint is clean. The scaffold leads with a `# yaml-language-server: $schema=…`
+  self-lint is clean. `--with-template` is also where the shipped judge
+  instructions are asserted end to end — the emitted config is the one
+  user-facing surface that carries the prompt verbatim, so it pins that the
+  starting template demands a *complete* violation list, judges rules
+  independently, enumerates in a violating rationale, and scopes line
+  attribution to citation alone. The scaffold leads with a `# yaml-language-server: $schema=…`
   modeline pointing at the published config schema (`assets/llmlint.schema.json`,
   pinned to `domain::config_schema::build()` so it can't drift from the model).
 - `config` prints the merged config + sources and rejects an invalid config;
