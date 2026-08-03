@@ -45,6 +45,11 @@ logic is also covered hermetically via `file://` plugins.
 
 - All rules hold -> exit 0 (default output is just the `N rules: …` summary);
   a violation -> exit 1.
+- A failing rule reports **every** violation the judge returned, across files —
+  not the first one found — and a location that breaks more than one rule is
+  reported under each. That is the user-visible payoff of the completeness and
+  rule-independence instructions in the shipped prompt (whose wording is pinned
+  in `domain::template` and, end to end, by `init --with-template` below).
 - Output by default lists failing rules with `file:line: message` plus the
   summary; passed/skipped rules are only counted. `-v` additionally itemizes
   every passed/skipped rule on stdout and prints the oneharness debug view

@@ -213,19 +213,28 @@ fn all_rules_pass_exits_zero() {
 }
 
 #[test]
-fn violation_fails_with_file_and_line() {
+fn every_violation_of_a_failing_rule_reports_with_file_and_line() {
+    // A failing rule reports each site the judge returned, across files, and a
+    // line breaking two rules is reported under both -- the user-visible payoff
+    // of the prompt's completeness and rule-independence instructions.
     let p = Project::new();
     p.write(
         "llmlint.yml",
         &format!(
             "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
-             - {{ name: no_inline_sql, description: \"{RULE}\" }}\n"
+             - {{ name: no_inline_sql, description: \"{RULE}\" }}\n  \
+             - {{ name: layered, description: \"{RULE}\" }}\n"
         ),
     );
     p.write("src/db.rs", "// code\n");
+    p.write("src/api.rs", "// code\n");
     let verdicts = p.write_verdicts(
         r#"{"no_inline_sql": {"holds": false, "violations": [
-            {"file": "src/db.rs", "line": 12, "message": "inline SQL"}]}}"#,
+            {"file": "src/db.rs", "line": 12, "message": "inline SQL in load"},
+            {"file": "src/db.rs", "line": 31, "message": "inline SQL in save"},
+            {"file": "src/api.rs", "line": 7, "message": "inline SQL in handler"}]},
+          "layered": {"holds": false, "violations": [
+            {"file": "src/db.rs", "line": 12, "message": "query built in the handler layer"}]}}"#,
     );
 
     p.lint()
@@ -233,7 +242,15 @@ fn violation_fails_with_file_and_line() {
         .assert()
         .code(1)
         .stdout(predicate::str::contains("FAIL no_inline_sql"))
-        .stdout(predicate::str::contains("src/db.rs:12: inline SQL"));
+        .stdout(predicate::str::contains("src/db.rs:12: inline SQL in load"))
+        // ...and every other site, not just the first one found.
+        .stdout(predicate::str::contains("src/db.rs:31: inline SQL in save"))
+        .stdout(predicate::str::contains(
+            "src/api.rs:7: inline SQL in handler",
+        ))
+        .stdout(predicate::str::contains(
+            "src/db.rs:12: query built in the handler layer",
+        ));
 }
 
 #[test]
