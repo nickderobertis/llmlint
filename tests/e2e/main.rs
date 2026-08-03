@@ -7163,6 +7163,7 @@ fn rationale_guidance_splits_the_holding_verdict_from_the_violating_one() {
     // The rationale is emitted before the verdict, so a violating rule is told to
     // enumerate its sites first and only then conclude; a holding one stays as
     // terse as ever.
+    // llmlint: ignore-block[tests_mirror_real_usage, e2e_not_mocked] the dump is the prompt the real binary sent across the one boundary the suite deliberately doubles (`oneharness --system-file`, per tests/AGENTS.md); the prompt has no other observable surface
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -7212,6 +7213,7 @@ fn rationale_guidance_splits_the_holding_verdict_from_the_violating_one() {
         .success();
     let off = fs::read_to_string(&dump2).unwrap();
     assert!(!off.contains("## Rationale"), "system:\n{off}");
+    // llmlint: ignore-end[tests_mirror_real_usage, e2e_not_mocked]
 }
 
 #[test]
@@ -8633,6 +8635,7 @@ fn require_line_attribution_marks_file_and_line_required_in_the_schema() {
 
 #[test]
 fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
+    // llmlint: ignore-block[tests_mirror_real_usage, e2e_not_mocked] the dump is the prompt the real binary sent across the one boundary the suite deliberately doubles (`oneharness --system-file`, per tests/AGENTS.md); the prompt has no other observable surface
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -8686,6 +8689,7 @@ fn line_attribution_guidance_and_marker_reach_the_prompt_only_when_required() {
         .success();
     let off = fs::read_to_string(&dump2).unwrap();
     assert!(!off.contains("## Line attribution"), "system:\n{off}");
+    // llmlint: ignore-end[tests_mirror_real_usage, e2e_not_mocked]
 }
 
 #[test]
@@ -8693,6 +8697,7 @@ fn the_prompt_demands_every_violation_even_with_no_line_attribution_rule() {
     // Completeness is not a line-attribution concern: a batch where no rule opts
     // in (so the "## Line attribution" section is absent) must still be told to
     // report every violation it finds, in this response.
+    // llmlint: ignore-block[tests_mirror_real_usage, e2e_not_mocked] the dump is the prompt the real binary sent across the one boundary the suite deliberately doubles (`oneharness --system-file`, per tests/AGENTS.md); the prompt has no other observable surface
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -8716,11 +8721,11 @@ fn the_prompt_demands_every_violation_even_with_no_line_attribution_rule() {
         system.contains("report **every** distinct violation"),
         "system:\n{system}"
     );
-    // ...and that one location may violate several rules at once.
     assert!(
         system.contains("**Judge each rule independently.**"),
         "system:\n{system}"
     );
+    // llmlint: ignore-end[tests_mirror_real_usage, e2e_not_mocked]
 }
 
 #[test]
