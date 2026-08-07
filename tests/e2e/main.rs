@@ -1917,33 +1917,71 @@ fn diff_from_inside_a_git_hook_reads_the_repository_it_was_given() {
     let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
     p.write("src/a.rs", CHANGED);
 
-    let verdicts = p.write_verdicts(r#"{"hook_rule": true}"#);
-    let dump = p.path().join("system.txt");
-
-    p.lint()
+    // The report itself is the evidence: the project's own changed file is what
+    // gets linted and judged. Reading the hook's repository instead reports
+    // `linting 0 file(s)` and skips the rule — the false clean, in the output a
+    // user actually sees.
+    p.lint_v()
         .arg("--diff")
         .arg("--max-parallel")
         .arg("1")
-        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
-        .env("LLMLINT_MOCK_DUMP", &dump)
         // Exactly what git exports to a `pre-push` hook firing in `elsewhere`.
         .env("GIT_DIR", elsewhere.join(".git"))
         .env("GIT_INDEX_FILE", elsewhere.join(".git/index"))
         .env("GIT_PREFIX", "")
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("linting 1 file(s)"))
+        .stdout(predicate::str::contains("src/a.rs"))
+        .stdout(predicate::str::contains("PASS hook_rule"))
+        .stdout(predicate::str::contains("SKIP hook_rule").not());
+}
 
-    let system = fs::read_to_string(&dump).unwrap_or_else(|e| {
-        panic!("the judge never ran — the hook's repository answered instead: {e}")
-    });
-    assert!(
-        system.contains("diff --git a/src/a.rs"),
-        "system:\n{system}"
+#[test]
+fn diff_base_from_inside_a_git_hook_resolves_the_ref_in_the_repository_it_was_given() {
+    // The same hook hazard on the `--diff-base` path, which reaches git through a
+    // different spawn: resolving the merge base of the named ref and `HEAD`. With
+    // `GIT_DIR` inherited, both would resolve in the *hook's* repository, so the
+    // base a review is taken from comes from a history nobody asked about.
+    //
+    // The hook's repository carries a `main` of its own whose content matches the
+    // project's edited file, so answering from it yields an empty diff — the same
+    // false clean, reached by the explicit-base route.
+    const CHANGED: &str = "fn a() { let x = 1; }\n";
+    let hook_repo = TempDir::new().unwrap();
+    let elsewhere = hook_repo.path();
+    init_repo(elsewhere);
+    fs::create_dir_all(elsewhere.join("src")).unwrap();
+    fs::write(elsewhere.join("src/a.rs"), CHANGED).unwrap();
+    git(elsewhere, &["add", "."]);
+    git(
+        elsewhere,
+        &["commit", "-q", "-m", "a repository this run must not read"],
     );
-    assert!(
-        system.contains("+fn a() { let x = 1; }"),
-        "system:\n{system}"
-    );
+
+    // Project: the change is *committed* on a feature branch, so the work tree is
+    // clean vs HEAD and only the `main` base surfaces it.
+    let rules = format!("  - {{ name: base_rule, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    p.write("src/a.rs", CHANGED);
+    git(p.path(), &["commit", "-q", "-am", "feature change"]);
+
+    p.lint_v()
+        .arg("--diff")
+        .arg("--diff-base")
+        .arg("main")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("GIT_DIR", elsewhere.join(".git"))
+        .env("GIT_INDEX_FILE", elsewhere.join(".git/index"))
+        .env("GIT_PREFIX", "")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("linting 1 file(s)"))
+        .stdout(predicate::str::contains("src/a.rs"))
+        .stdout(predicate::str::contains("PASS base_rule"))
+        .stdout(predicate::str::contains("SKIP base_rule").not());
 }
 
 #[test]

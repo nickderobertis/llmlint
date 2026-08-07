@@ -222,9 +222,16 @@ logic is also covered hermetically via `file://` plugins.
   not the one the hook fired in: with `GIT_DIR`/`GIT_INDEX_FILE` exported on the
   child exactly as git exports them to `pre-push` — and pointed at a *different*
   real repo that already has the project's edited content committed — the change
-  still reaches the judge, where inheriting them would have reported a false
-  clean (`diff_from_inside_a_git_hook_reads_the_repository_it_was_given`). The
-  suite's own git scaffolding goes through the same `io::diff::git_command`
+  is still linted and judged (`linting 1 file(s)` + `PASS`), where inheriting
+  them reports the false clean in the output a user sees — `linting 0 file(s)`
+  and a skipped rule
+  (`diff_from_inside_a_git_hook_reads_the_repository_it_was_given`). Both git
+  spawn paths are covered: the default `HEAD` base, and the **`--diff-base` ref**
+  whose merge base is resolved by its own spawn — there the project's change is
+  *committed on a feature branch* (a clean work tree vs `HEAD`), so only a base
+  resolved in the right repository surfaces it
+  (`diff_base_from_inside_a_git_hook_resolves_the_ref_in_the_repository_it_was_given`).
+  The suite's own git scaffolding goes through the same `io::diff::git_command`
   helper, so a scratch repo can't be built against an ambient `GIT_DIR` either.
   Without `--diff` no diff renders even in a git repo with pending changes. Diffs are
   **scoped to
