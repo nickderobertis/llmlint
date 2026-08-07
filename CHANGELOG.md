@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.3.30](https://github.com/nickderobertis/llmlint/compare/v0.3.29...v0.3.30) - 2026-08-07
+
+### Fixed
+
+- keep --diff on the repository it was given inside git hooks ([#176](https://github.com/nickderobertis/llmlint/pull/176))
+
 ## [0.3.29](https://github.com/nickderobertis/llmlint/compare/v0.3.28...v0.3.29) - 2026-08-03
 
 ### Fixed
