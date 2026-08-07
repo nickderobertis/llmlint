@@ -14,6 +14,7 @@ use std::thread;
 
 use assert_cmd::cargo::cargo_bin;
 use assert_cmd::Command;
+use llmlint::io::diff::git_command;
 use predicates::prelude::*;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -1785,12 +1786,12 @@ fn a_config_glob_that_matches_nothing_is_reported_not_rejected() {
 
 // ---- --diff (changed-line context in the prompt) --------------------------
 
-/// Run `git` in `dir`, asserting success. `std::process::Command` is spelled out
-/// because `assert_cmd::Command` is imported as `Command` in this file.
+/// Run `git` in `dir`, asserting success. Through llmlint's own [`git_command`]
+/// for the same reason the production path is: this suite's own gate runs inside
+/// a `pre-push` hook, and a scratch repo built with the hook's ambient `GIT_DIR`
+/// inherited is not a scratch repo at all.
 fn git(dir: &Path, args: &[&str]) {
-    let ok = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let ok = git_command("git", dir)
         .args(args)
         .output()
         .unwrap()
@@ -1802,12 +1803,7 @@ fn git(dir: &Path, args: &[&str]) {
 /// Like `git`, but returns trimmed stdout — for capturing a commit SHA to use
 /// as an explicit `--diff-base`.
 fn git_out(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
+    let out = git_command("git", dir).args(args).output().unwrap();
     assert!(out.status.success(), "git {args:?} failed");
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
@@ -1892,6 +1888,62 @@ fn diff_flag_adds_changed_lines_to_the_prompt() {
         "system:\n{system}"
     );
     assert!(!system.contains("- src/b.rs"), "system:\n{system}");
+}
+
+#[test]
+fn diff_from_inside_a_git_hook_reads_the_repository_it_was_given() {
+    // llmlint's flagship deployment is a `pre-push` hook, and every hook runs
+    // with `GIT_DIR` exported for the repository it fired in (`pre-push` adds
+    // `GIT_INDEX_FILE`). Those outrank the `-C <root>` llmlint passes, so
+    // inherited they would make `--diff` diff the *hook's* repository instead of
+    // the project it was pointed at — a false clean with a green exit code.
+    //
+    // The hook's repository already has the project's edited content committed,
+    // so a run that reads it sees nothing changed at all: pre-fix the file is
+    // dropped from the target set and no judge ever sees the change.
+    const CHANGED: &str = "fn a() { let x = 1; }\n";
+    let hook_repo = TempDir::new().unwrap();
+    let elsewhere = hook_repo.path();
+    init_repo(elsewhere);
+    fs::create_dir_all(elsewhere.join("src")).unwrap();
+    fs::write(elsewhere.join("src/a.rs"), CHANGED).unwrap();
+    git(elsewhere, &["add", "."]);
+    git(
+        elsewhere,
+        &["commit", "-q", "-m", "a repository this run must not read"],
+    );
+
+    let rules = format!("  - {{ name: hook_rule, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", "fn a() {}\n")]);
+    p.write("src/a.rs", CHANGED);
+
+    let verdicts = p.write_verdicts(r#"{"hook_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--diff")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        // Exactly what git exports to a `pre-push` hook firing in `elsewhere`.
+        .env("GIT_DIR", elsewhere.join(".git"))
+        .env("GIT_INDEX_FILE", elsewhere.join(".git/index"))
+        .env("GIT_PREFIX", "")
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap_or_else(|e| {
+        panic!("the judge never ran — the hook's repository answered instead: {e}")
+    });
+    assert!(
+        system.contains("diff --git a/src/a.rs"),
+        "system:\n{system}"
+    );
+    assert!(
+        system.contains("+fn a() { let x = 1; }"),
+        "system:\n{system}"
+    );
 }
 
 #[test]

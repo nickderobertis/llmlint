@@ -401,7 +401,18 @@ harness reads target files on-demand with its own tools.
   block still works. An untracked never-added file has no `git diff` output, so it
   counts as unchanged and is skipped (stage or commit it to review it). A
   `--diff git` run outside a git work tree is a clear exit-2 `Error::Diff`, never
-  a silent empty diff. **Base selection:** `--diff-base <REF>` (clap `requires`
+  a silent empty diff. **Hook-proof spawns (convention):** git's
+  repository-selection variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`,
+  `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+  `GIT_NAMESPACE`) **outrank `-C`**, and every git hook exports `GIT_DIR` for the
+  repository it fired in (`pre-push` adds `GIT_INDEX_FILE`) — so an inherited
+  environment would make `--diff` silently judge the hook's repository instead of
+  the root it was given, a false clean with a green exit code. llmlint's flagship
+  deployment *is* a pre-push hook, so every git spawn goes through one helper,
+  `diff::git_command`, which clears them and leaves `-C` as the only repository
+  selector. Add no bare `Command::new(git_bin)` — including in tests, where a
+  scratch repo built with an ambient `GIT_DIR` is not a scratch repo at all.
+  **Base selection:** `--diff-base <REF>` (clap `requires`
   `--diff`) sets `GitDiff.base` to any git revision or range — a branch, tag,
   commit, or `A..B`/`A...B` — so `--diff --diff-base main` reviews what the
   current branch changed versus `main`. The default (`base: None`) keeps the
