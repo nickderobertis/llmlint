@@ -218,6 +218,14 @@ logic is also covered hermetically via `file://` plugins.
   narrowing is **per rule, not all-or-nothing**: with two rules each scoped to
   their own file and only one changed, the changed rule is judged while the other
   is skipped in the same run (`diff_narrowing_is_per_rule_not_all_or_nothing`).
+  A run from **inside a git hook** still reads the repository it was pointed at,
+  not the one the hook fired in: with `GIT_DIR`/`GIT_INDEX_FILE` exported on the
+  child exactly as git exports them to `pre-push` — and pointed at a *different*
+  real repo that already has the project's edited content committed — the change
+  still reaches the judge, where inheriting them would have reported a false
+  clean (`diff_from_inside_a_git_hook_reads_the_repository_it_was_given`). The
+  suite's own git scaffolding goes through the same `io::diff::git_command`
+  helper, so a scratch repo can't be built against an ambient `GIT_DIR` either.
   Without `--diff` no diff renders even in a git repo with pending changes. Diffs are
   **scoped to
   each judge run's files** — a rule scoped to `src/a.rs` sees only `a.rs`'s diff,

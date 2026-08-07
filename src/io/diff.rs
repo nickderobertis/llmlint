@@ -35,6 +35,41 @@ impl DiffBackend {
     }
 }
 
+/// The environment variables that tell git which repository to operate on, and
+/// which `-C <dir>` does **not** outrank.
+///
+/// Every git hook runs with `GIT_DIR` exported for the repository it fired in,
+/// and `pre-push` also exports `GIT_INDEX_FILE`. Inherited, they decide which
+/// repository answers — so a `--diff` run from inside a hook would silently
+/// diff *that* repository instead of the root it was given, reporting a false
+/// clean (or findings from a tree nobody asked about) with no error signal. A
+/// pre-push gate is exactly where llmlint is meant to run, so every git spawn
+/// clears them.
+pub const AMBIENT_REPOSITORY_VARS: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+];
+
+/// A `git` invocation rooted at `dir` and nowhere else.
+///
+/// Clearing [`AMBIENT_REPOSITORY_VARS`] leaves `-C` as the only thing that
+/// decides which repository answers. Every git spawn in llmlint goes through
+/// here — including test scaffolding, since a scratch repo built with an
+/// ambient `GIT_DIR` inherited is not a scratch repo at all.
+pub fn git_command(program: &str, dir: &Path) -> Command {
+    let mut command = Command::new(program);
+    command.arg("-C").arg(dir);
+    for name in AMBIENT_REPOSITORY_VARS {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// Source of per-file diffs. Implementations live behind this trait so the rest
 /// of llmlint (planning, prompt render) is independent of any one VCS.
 pub trait DiffProvider {
@@ -98,9 +133,7 @@ impl GitDiff {
     /// Run `git` in `root` with `args`, mapping a missing binary or a non-zero
     /// exit to a clear [`Error::Diff`]. Returns captured stdout on success.
     fn git(&self, root: &Path, args: &[&str]) -> Result<String> {
-        let output = Command::new(&self.git_bin)
-            .arg("-C")
-            .arg(root)
+        let output = git_command(&self.git_bin, root)
             .args(args)
             .output()
             .map_err(|e| {
@@ -133,9 +166,7 @@ impl GitDiff {
     /// `--cached` diff (the index against the empty tree) there instead of
     /// erroring, so staged new files still show as additions.
     fn rev_exists(&self, root: &Path, rev: &str) -> bool {
-        Command::new(&self.git_bin)
-            .arg("-C")
-            .arg(root)
+        git_command(&self.git_bin, root)
             .args(["rev-parse", "--verify", "--quiet", rev])
             .output()
             .map(|o| o.status.success())
@@ -152,9 +183,7 @@ impl GitDiff {
     /// so an unrelated base stays diffable and a bad ref still surfaces its error
     /// at the `git diff` step rather than being swallowed here.
     fn merge_base(&self, root: &Path, rev: &str) -> Option<String> {
-        let output = Command::new(&self.git_bin)
-            .arg("-C")
-            .arg(root)
+        let output = git_command(&self.git_bin, root)
             .args(["merge-base", rev, "HEAD"])
             .output()
             .ok()?;
@@ -217,13 +246,14 @@ impl DiffProvider for GitDiff {
 mod tests {
     use super::*;
     use std::fs;
-    use std::process::Command;
     use tempfile::tempdir;
 
+    /// Run git in `dir`, asserting success. Through [`git_command`] for the same
+    /// reason the production path is: the gate runs inside a `pre-push` hook, and
+    /// a scratch repo built with an ambient `GIT_DIR` inherited is not a scratch
+    /// repo at all.
     fn git(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
-            .arg("-C")
-            .arg(dir)
+        let ok = git_command("git", dir)
             .args(args)
             .output()
             .unwrap()
