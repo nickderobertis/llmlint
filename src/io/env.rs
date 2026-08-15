@@ -94,9 +94,10 @@ fn apply_from(
 ) -> Result<()> {
     if let Some(v) = get("LLMLINT_FILES_INCLUDE") {
         // The include set is a *selection*: the env layer replaces the config's
-        // globs (env wins over config), mirroring how explicit CLI files replace
-        // them. An empty (all-separators) value is rejected rather than silently
-        // selecting nothing.
+        // globs (env wins over config). Explicit CLI files are not a layer of it —
+        // they *intersect* whichever set wins (see `ignores::resolve_files`). An
+        // empty (all-separators) value is rejected rather than silently selecting
+        // nothing.
         let globs = parse_list("LLMLINT_FILES_INCLUDE", &v)?;
         config.files.include = globs;
         note(prov, "files.include", "LLMLINT_FILES_INCLUDE");

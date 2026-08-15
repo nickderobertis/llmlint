@@ -66,6 +66,12 @@ SVG is pure layout math. We pin both inputs:
   fetches one over the network (which also makes capture offline and fast). The
   font is embedded into each SVG as base64, so the file renders the same on
   GitHub and crates.io with nothing external to load.
+- **The environment is cleared**: `screenshots.sh` unsets every ambient
+  `LLMLINT_*` / `ONEHARNESS_*` variable before it captures. The scenes render the
+  real binary, which reads those settings ahead of most other layers, so an
+  exported one prints straight into a shot — `LLMLINT_ONEHARNESS_BIN` shows up
+  verbatim in the `config` scene's effective config — and drifts the hash against
+  a baseline CI captured with a clean shell.
 
 The result: identical bytes on every machine and runner, so a single `x86_64`
 lane and baseline cover everyone — the SVG only changes when the report's

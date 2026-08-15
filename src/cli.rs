@@ -84,10 +84,12 @@ pub enum Command {
 
 #[derive(Args, Debug, Default)]
 pub struct LintArgs {
-    /// Files to lint. When given, overrides the config's file globs (per-rule
-    /// and per-agent `files` still take precedence). A path llmlint can't read
-    /// as a file (absent, or a directory) is an error, not a smaller run (under
-    /// `--diff`, a path deleted from the work tree is still accepted).
+    /// Files to lint. When given, they are **intersected** with the file globs
+    /// (the config's, and any per-rule `files`): a rule judges a file only when
+    /// its own globs match it too, and a rule left with none is skipped for this
+    /// run. `--exclude` stays a denylist that wins over both. A path llmlint
+    /// can't read as a file (absent, or a directory) is an error, not a smaller
+    /// run (under `--diff`, a path deleted from the work tree is still accepted).
     pub files: Vec<PathBuf>,
 
     /// Glob(s) to exclude from the target files; repeatable. Adds to the config's
@@ -391,9 +393,9 @@ pub struct InitArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct CheckIgnoresArgs {
-    /// Files to scan. When given, overrides the config's file globs (per-rule
-    /// and per-agent `files` still take precedence) — pass the changed files to
-    /// scope the check in a pre-commit hook.
+    /// Files to scan. When given, they are **intersected** with the file globs
+    /// (the config's, and any per-rule `files`), exactly as for `lint` — pass the
+    /// changed files to scope the check in a pre-commit hook.
     pub files: Vec<PathBuf>,
 
     /// llmlint config file(s); repeatable. Replaces upward config discovery.
@@ -469,9 +471,11 @@ pub struct ValidateArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct LintConfigArgs {
-    /// Config files to lint. When given, overrides the bundled config-lint globs
-    /// (which otherwise discover every llmlint config in the tree). A path
-    /// llmlint can't read as a file is an error, not a smaller run.
+    /// Config files to lint. When given, they are **intersected** with the
+    /// bundled config-lint globs (which otherwise discover every llmlint config
+    /// in the tree), so only the configs you name are judged — and a path those
+    /// globs don't recognize as an llmlint config leaves its rules skipped. A
+    /// path llmlint can't read as a file is an error, not a smaller run.
     pub files: Vec<PathBuf>,
 
     /// Glob(s) to exclude from the target files; repeatable. Adds to the config's

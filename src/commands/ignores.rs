@@ -48,11 +48,36 @@ pub fn known_rules(config: &Config) -> BTreeSet<&str> {
     config.rules.iter().map(|r| r.name.as_str()).collect()
 }
 
+/// Turn the explicit `FILES` llmlint cannot read as target files into one exit-2
+/// error listing every bad path, in [`files::read_text`]'s own
+/// `reading <path>: <os error>` wording, so every command says the same thing
+/// about the same input. An empty list is clean.
+///
+/// A passed path is a per-invocation assertion that *this file* is there to be
+/// judged (or scanned), so a path that names nothing is a usage error rather than
+/// a quietly smaller run — the file globs would otherwise take over and the run
+/// would report a confident pass over a set the caller never named. This matters
+/// most now that CLI files **intersect** the globs (see [`resolve_files`]): a
+/// mistyped path simply falls out of every intersection, so nothing downstream
+/// would ever try to read it.
+pub fn reject_unresolved(unresolved: Vec<files::Unresolved>) -> Result<()> {
+    if unresolved.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Io(
+        unresolved
+            .into_iter()
+            .map(|u| u.message)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
+}
+
 /// Resolve the union of every evaluated rule's target files (relative to `cwd`),
 /// de-duplicated and ordered. This mirrors what `lint` would scan: rules
 /// disabled with `relevance: false` never run, so their files are not scanned
-/// here either. `cli_files`, when non-empty, overrides the config globs exactly
-/// as it does for a lint run (per-rule / per-agent `files` still win). `scopes`
+/// here either. `cli_files`, when non-empty, intersects each rule's globs exactly
+/// as it does for a lint run (see [`resolve_files`]). `scopes`
 /// are the per-rule directory scopes from [`crate::io::configfs::Loaded`], so a
 /// nested config's globs root at its own directory exactly as they do for a lint
 /// run — the two never disagree about which files carry directives.
@@ -85,17 +110,28 @@ pub fn target_files(
     Ok(out)
 }
 
-/// The target files for a single rule, applying the same precedence a lint run
-/// uses: a per-rule `files` filter wins, then explicit CLI files, then the rule's
-/// [`RuleScope`] fallback filter. Glob filters root at the rule's config directory
-/// (`scope.dir`) so a nested config's globs mean "relative to me", while resolved
-/// paths stay relative to `cwd`.
+/// The target files for a single rule, applying the same resolution a lint run
+/// uses. A rule's **effective filter** is its own `files` when it declares one,
+/// else its [`RuleScope`] fallback (the filter of the config that defined it).
+/// Glob filters root at the rule's config directory (`scope.dir`) so a nested
+/// config's globs mean "relative to me", while resolved paths stay relative to
+/// `cwd`.
+///
+/// Explicit CLI files **intersect** that filter rather than replacing it: a rule's
+/// globs say which files the *rule* is about, the passed files say which files
+/// *this run* is about, and a file must satisfy both to be judged. Naming a subset
+/// therefore narrows every rule — including a glob-scoped one, which used to
+/// discard the passed set and pull its whole glob match back in — and a rule whose
+/// globs match nothing in the subset resolves to no files, so it is reported
+/// skipped for this run rather than judged or errored. An empty `include` set
+/// still means "every file", so a config with no `files` block judges exactly what
+/// was passed.
 ///
 /// `global_exclude` is the session-level top-level `files.exclude` (cwd-rooted). It
-/// is applied as a **hard denylist in every glob mode**: a per-rule `files.include`
+/// is applied as a **hard denylist in every mode**: a per-rule `files.include`
 /// narrows *within* the allowed set — it can never resurrect a path the top-level
-/// (or the rule's own config-level) `exclude` denied (issue #128). Explicit CLI
-/// files stay a direct request and are not filtered by it.
+/// (or the rule's own config-level) `exclude` denied (issue #128) — and neither can
+/// naming a path on the command line.
 pub fn resolve_files(
     cwd: &Path,
     rule: &Rule,
@@ -103,42 +139,41 @@ pub fn resolve_files(
     scope: &RuleScope,
     global_exclude: &[String],
 ) -> Result<Vec<PathBuf>> {
-    if let Some(f) = &rule.files {
-        // A per-rule `files.include` selects *within* the allowed set. Layer both
-        // the rule's own config-level `exclude` (`scope.files.exclude`, co-rooted
-        // at `scope.dir`) and the session-level global `exclude` on top, so neither
-        // can be overridden by the rule's include.
+    let filter = rule.files.as_ref().unwrap_or(&scope.files);
+    // A per-rule filter selects *within* its config's allowed set, so that config's
+    // `exclude` (co-rooted at `scope.dir`) is layered on top of it; the fallback
+    // filter is that config's own, so its excludes are already inside `filter`.
+    let scoped_exclude: &[String] = if rule.files.is_some() {
+        &scope.files.exclude
+    } else {
+        &[]
+    };
+
+    if cli_files.is_empty() {
         return files::resolve_scoped_excluding(
             &scope.dir,
             cwd,
-            f,
-            &scope.files.exclude,
+            filter,
+            scoped_exclude,
             global_exclude,
         );
     }
-    if !cli_files.is_empty() {
-        // Explicit CLI files override the rule's *include* globs, but they are
-        // still bounded to the rule's directory scope: a subtree config's rule must
-        // not be judged against a passed file outside its directory. Keep only the
-        // files under `scope.dir` (reported cwd-relative, as given); a rule with no
-        // passed file under its scope resolves to nothing and is skipped — the same
-        // "consolidated up from each leaf" trimming a discovery run does.
-        let scoped = scope_cli_files(cwd, &scope.dir, cli_files);
-        // The `exclude` denylist still wins even over an explicitly-named file
-        // (config `files.exclude`, an env exclude, or `--exclude`), so a passed
-        // path that matches it is dropped — an include never resurrects it.
-        return files::drop_excluded(
-            &scope.dir,
-            cwd,
-            &scoped,
-            &scope.files.exclude,
-            global_exclude,
-        );
-    }
-    // The rule falls back to its config's `files` (whose own `exclude` is already
-    // in the filter); still layer the session-level global `exclude` on top so a
-    // subtree rule honors an ancestor's top-level exclude too.
-    files::resolve_scoped_excluding(&scope.dir, cwd, &scope.files, &[], global_exclude)
+
+    // Explicit CLI files are bounded to the rule's directory scope first: a subtree
+    // config's rule must not be judged against a passed file outside its directory.
+    // Keep only the files under `scope.dir` (reported cwd-relative, as given); a
+    // rule with no passed file under its scope resolves to nothing and is skipped —
+    // the same "consolidated up from each leaf" trimming a discovery run does.
+    let scoped = scope_cli_files(cwd, &scope.dir, cli_files);
+    // Then intersect with the rule's own `include` globs, so a passed file is judged
+    // only by the rules that are about it.
+    let included = files::keep_included(&scope.dir, cwd, &scoped, &filter.include)?;
+    // The `exclude` denylist still wins even over an explicitly-named file (config
+    // `files.exclude`, an env exclude, or `--exclude`), so a passed path that matches
+    // it is dropped — an include never resurrects it.
+    let mut scoped_denies = filter.exclude.clone();
+    scoped_denies.extend(scoped_exclude.iter().cloned());
+    files::drop_excluded(&scope.dir, cwd, &included, &scoped_denies, global_exclude)
 }
 
 /// Keep the explicit CLI files that fall under `dir` (a rule's directory scope),
@@ -277,6 +312,119 @@ mod tests {
             },
         };
         let files = resolve_files(cwd, &rule, &[], &scope, &["vendored/**".into()]).unwrap();
+        assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
+    }
+
+    #[test]
+    fn cli_files_intersect_a_rules_own_globs() {
+        // A glob-scoped rule judges only the files in *both* sets: the passed
+        // subset narrows it (it no longer pulls `src/b.rs` back in), and a passed
+        // file its globs aren't about (`docs/x.md`) is not judged by it.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        touch(cwd, "src/a.rs");
+        touch(cwd, "src/b.rs");
+        touch(cwd, "docs/x.md");
+        let rule = rule_named(
+            "rust_rule",
+            Some(FileFilter {
+                include: vec!["src/**".into()],
+                exclude: vec![],
+            }),
+        );
+        let scope = RuleScope {
+            dir: cwd.to_path_buf(),
+            files: FileFilter::default(),
+        };
+        let cli = vec![PathBuf::from("src/a.rs"), PathBuf::from("docs/x.md")];
+        let files = resolve_files(cwd, &rule, &cli, &scope, &[]).unwrap();
+        assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
+    }
+
+    #[test]
+    fn cli_files_with_no_glob_overlap_resolve_to_nothing() {
+        // An empty intersection is an empty file set — the planner reports the rule
+        // skipped for this run; it is never an error and never a judged file.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        touch(cwd, "docs/x.md");
+        // A file the rule's globs *do* match exists — it is out of the passed set,
+        // so the rule still resolves to nothing rather than judging it.
+        touch(cwd, "src/a.rs");
+        let rule = rule_named(
+            "rust_rule",
+            Some(FileFilter {
+                include: vec!["src/**".into()],
+                exclude: vec![],
+            }),
+        );
+        let scope = RuleScope {
+            dir: cwd.to_path_buf(),
+            files: FileFilter::default(),
+        };
+        let files = resolve_files(cwd, &rule, &[PathBuf::from("docs/x.md")], &scope, &[]).unwrap();
+        assert!(files.is_empty(), "expected no files, got {files:?}");
+    }
+
+    #[test]
+    fn cli_files_intersect_the_configs_globs_for_a_rule_without_its_own() {
+        // A rule with no `files` is scoped by its config's globs, so the same
+        // intersection applies — a passed file outside them is not judged.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        touch(cwd, "src/a.rs");
+        touch(cwd, "README.md");
+        let rule = rule_named("r", None);
+        let scope = RuleScope {
+            dir: cwd.to_path_buf(),
+            files: FileFilter {
+                include: vec!["src/**".into()],
+                exclude: vec![],
+            },
+        };
+        let cli = vec![PathBuf::from("README.md"), PathBuf::from("src/a.rs")];
+        let files = resolve_files(cwd, &rule, &cli, &scope, &[]).unwrap();
+        assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
+    }
+
+    #[test]
+    fn cli_files_are_kept_whole_when_no_include_globs_are_configured() {
+        // An empty `include` means "every file", so a config with no `files` block
+        // judges exactly what was passed — today's behavior, unchanged.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        touch(cwd, "README.md");
+        let rule = rule_named("r", None);
+        let scope = RuleScope {
+            dir: cwd.to_path_buf(),
+            files: FileFilter::default(),
+        };
+        let cli = vec![PathBuf::from("README.md")];
+        let files = resolve_files(cwd, &rule, &cli, &scope, &[]).unwrap();
+        assert_eq!(files, cli);
+    }
+
+    #[test]
+    fn a_rules_own_exclude_drops_a_passed_file_it_denies() {
+        // The rule's own `exclude` is a denylist over the intersection too, so
+        // naming a file it denies never resurrects it.
+        let tmp = tempdir().unwrap();
+        let cwd = tmp.path();
+        touch(cwd, "src/a.rs");
+        touch(cwd, "src/gen.rs");
+        let rule = rule_named(
+            "rust_rule",
+            Some(FileFilter {
+                include: vec!["src/**".into()],
+                exclude: vec!["**/gen.rs".into()],
+            }),
+        );
+        let scope = RuleScope {
+            dir: cwd.to_path_buf(),
+            files: FileFilter::default(),
+        };
+        let cli = vec![PathBuf::from("src/a.rs"), PathBuf::from("src/gen.rs")];
+        let files = resolve_files(cwd, &rule, &cli, &scope, &[]).unwrap();
         assert_eq!(files, vec![PathBuf::from("src/a.rs")]);
     }
 

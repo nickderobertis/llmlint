@@ -12,8 +12,10 @@
 //! 2. **Config lint** — the LLM-as-judge pass over each config's rules, reusing the
 //!    full lint engine (`lint::run_loaded`).
 //!
-//! The config-lint agent scopes its rules to config-file globs, so the run always
-//! targets configuration rather than source.
+//! The config-lint rules scope themselves to config-file globs, so the run always
+//! targets configuration rather than source. Explicit `FILES` intersect those
+//! globs like any other rule scope: naming configs narrows the run to them, and a
+//! path the globs don't recognize as an llmlint config leaves its rules skipped.
 
 use crate::cli::LintConfigArgs;
 use crate::commands::{ignores, lint};
@@ -30,8 +32,9 @@ pub fn run(args: LintConfigArgs) -> Result<i32> {
     validate(&loaded.config)?;
 
     // Phase 1 — the comment check. Resolve the config-lint target files exactly as
-    // the lint run will (its agent globs pick the llmlint config files, unless the
-    // CLI passed explicit ones) and reject any malformed ignore directive before
+    // the lint run will (its rules' globs pick the llmlint config files, narrowed
+    // to any explicit CLI files they match) and reject any malformed ignore
+    // directive before
     // spending a judge call. `lint::run_loaded` re-runs this same check as its
     // pre-flight, so the fast static phase and the full run can never disagree.
     let cli_files = files::from_cli(&cwd, &args.files);

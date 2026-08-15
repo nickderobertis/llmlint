@@ -213,12 +213,14 @@ config to opt in.
 ```yaml
 version: 1                     # this config's published version (used when it is consumed as a plugin)
 
-# Files linted when none are passed on the CLI. Omit the whole block (or leave
-# `include` empty) to lint every file in the tree from the current directory;
-# `exclude` and `.gitignore` still apply. `exclude` is a hard denylist that always
-# wins: a path it matches is never linted, and a per-rule `files.include` (below)
-# narrows *within* the allowed set — it can't bring back an excluded path. The
+# Files this config's rules are about. Omit the whole block (or leave `include`
+# empty) to lint every file in the tree from the current directory; `exclude` and
+# `.gitignore` still apply. `exclude` is a hard denylist that always wins: a path
+# it matches is never linted, and a per-rule `files.include` (below) narrows
+# *within* the allowed set — it can't bring back an excluded path. The
 # `--exclude <glob>` CLI flag (repeatable) adds to this denylist for one run.
+# Files passed on the CLI are **intersected** with these globs (and each rule's
+# own `files`): a file is judged by a rule only when both say so.
 files:
   include: ["src/**/*.rs"]
   exclude: ["**/generated/**"]
@@ -287,7 +289,7 @@ unset.
 
 | Setting | Env var | CLI flag | Notes |
 |---|---|---|---|
-| `files.include` | `LLMLINT_FILES_INCLUDE` | positional `FILES` | `PATH`-separated globs (`:`/`;`); **replaces** the config include set |
+| `files.include` | `LLMLINT_FILES_INCLUDE` | — | `PATH`-separated globs (`:`/`;`); **replaces** the config include set (positional `FILES` are not a layer here — they **intersect** the winning set, see below) |
 | `files.exclude` | `LLMLINT_FILES_EXCLUDE` | `--exclude` (repeatable) | `PATH`-separated globs; **adds to** the config exclude denylist (never replaces it) |
 | `oneharness.model` | `LLMLINT_ONEHARNESS_MODEL` | `--model` | default judge model |
 | `oneharness.timeout` | `LLMLINT_ONEHARNESS_TIMEOUT` | `--timeout` | seconds, ≥ 1 |
@@ -304,10 +306,12 @@ unset.
 The env layer applies **process-wide**, after the nearest-wins config merge — it
 tunes the effective run, not any one directory's config. Two list-valued settings
 merge rather than replace wholesale: `files.include` is a **selection** (the
-highest layer that sets it wins — positional CLI files, else the env globs, else
-the config), while `files.exclude` is a **denylist** whose layers **accumulate**
+highest layer that sets it wins — the env globs, else the config), while
+`files.exclude` is a **denylist** whose layers **accumulate**
 (config ∪ env ∪ `--exclude`) so a per-run override never silently drops a config
-safety exclude. Only `version` stays config-only. A value that came from an env var
+safety exclude. Positional `FILES` sit outside this chain: they **intersect**
+whichever include set wins, and each rule's own `files` too (see
+[Commands & exit codes](#commands--exit-codes)). Only `version` stays config-only. A value that came from an env var
 is reported as `env:<VAR>` by [`llmlint config --sources` and `llmlint
 where`](#finding-where-something-is-defined) (query the sub-fields precisely, e.g.
 `llmlint where files.exclude`), so "where does this come from" stays honest.
@@ -844,9 +848,10 @@ There are two ways to use it:
   plugin included by default, so you don't have to add it to your config. It
   first runs the deterministic ignore-directive (comment) check over the config
   files, then judges each config's rules. Point it at specific files
-  (`llmlint lint-config path/to/llmlint.yml`) or let it discover every llmlint
-  config in the tree. Handy in CI as a standalone "is my config well-authored?"
-  gate.
+  (`llmlint lint-config path/to/llmlint.yml` judges just that config — the names
+  you pass are intersected with the plugin's config-file globs) or let it
+  discover every llmlint config in the tree. Handy in CI as a standalone "is my
+  config well-authored?" gate.
 
 ### Finding where something is defined
 
@@ -901,7 +906,15 @@ source.
 ## Commands & exit codes
 
 - `llmlint [FILES...]` — lint (the default). `--format human|json`, `--agent`,
-  `--rule`, `--max-parallel`, `--timeout`, `--cwd`. Target individual rules with
+  `--rule`, `--max-parallel`, `--timeout`, `--cwd`. Naming `FILES` says which
+  files *this run* is about, and they are **intersected** with the configured
+  globs — the top-level `files.include` and each rule's own `files`, which say
+  which files that *rule* is about. A file is judged by a rule only when both
+  match it, so `llmlint src/api/handlers.rs` judges exactly that file with
+  exactly the rules scoped to it; a rule whose globs match nothing you named is
+  reported **skipped** for the run (never failed, never a pass over files it
+  didn't see). `--exclude` stays a denylist that wins over both. With no `FILES`,
+  every rule lints its full glob set as usual. Target individual rules with
   `--rule NAME` (repeatable) or a whole group with `--agent NAME`; an unknown
   rule/agent name is an exit-2 error that lists the available names. A `FILES`
   entry llmlint can't read as a file — absent, or a directory — is an exit-2
@@ -965,8 +978,10 @@ source.
   your own config. It's the `lint` engine with that plugin forced on: it first
   runs the deterministic comment (ignore-directive) check, then judges each
   config's rules. Shares `lint`'s flags (`--format`, `--model`, `--timeout`,
-  `--cwd`, `--diff`, …); the config source is fixed, so `--config`/`--agent`/
-  `--rule` aren't taken. Same exit codes as `lint`.
+  `--cwd`, `--diff`, …) and its `FILES` handling, so naming configs narrows the
+  run to them (intersected with the plugin's config-file globs, which is what
+  leaves an oddly-named file's rules skipped); the config source is fixed, so
+  `--config`/`--agent`/`--rule` aren't taken. Same exit codes as `lint`.
 - `llmlint init` — write a starter config (`--with-template`, `--global`, `--force`).
 
   ![llmlint init writing a starter llmlint.yml](docs/screenshots/init.svg)

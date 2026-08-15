@@ -41,6 +41,26 @@ and the one `http://` journey drives the real built-in HTTPS client (`ureq`)
 against a localhost `HttpServer` (with the proxy env cleared). The version/cache
 logic is also covered hermetically via `file://` plugins.
 
+## Environment isolation (a test states its whole environment)
+
+Every llmlint command is built through `Project::bare` / `Project::bare_external`
+(the one wiring point), which **clears every ambient `LLMLINT_*` and `ONEHARNESS_*`
+variable** before the test sets the ones it means to exercise. Build commands that
+way — never a bare `Command::cargo_bin("llmlint")`.
+
+The suite runs the real binary as a child process, so it otherwise inherits the
+developer's or runner's shell, and llmlint reads env *ahead of* most other layers:
+an exported `LLMLINT_ONEHARNESS_BIN` outranks both PATH and the sibling fallback,
+so the resolution journeys would silently assert against a binary they never laid
+out (this really happened — the tests passed locally and failed on a host that
+exports it). The rest of `io::env::ENV_SETTINGS` is the same hazard
+(`LLMLINT_FILES_EXCLUDE` shrinks a lint set, `LLMLINT_DIFF_BASE` moves a `--diff`
+base), as are `ONEHARNESS_HISTORY_LABELS` and the mock's own `LLMLINT_MOCK_*`.
+The sweep is by **prefix**, not a list of variables, so a new setting is covered
+the day it lands. `an_ambient_oneharness_override_never_reaches_a_test_command`
+pins it: it exports a bogus override and proves a command built here still
+resolves the oneharness the test put on PATH.
+
 ## Journeys covered
 
 - All rules hold -> exit 0 (default output is just the `N rules: …` summary);
@@ -141,6 +161,21 @@ logic is also covered hermetically via `file://` plugins.
   line.
 - `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
   a serial wave fails to rendezvous, the negative control.
+- Explicit `FILES` **intersect** the configured globs rather than replacing them:
+  a rule judges a named file only when its own globs (or its config's, for a rule
+  without `files`) match it too. A glob-scoped rule against a named subset judges
+  only the intersection — it can no longer pull its whole glob match back in
+  (`a_glob_scoped_rule_judges_only_the_named_subset_it_matches`) — and a passed
+  file outside the config globs is not judged
+  (`explicit_cli_files_intersect_config_globs`). A rule whose globs match nothing
+  in the subset is **skipped for this run**, reported on all three surfaces (the
+  summary count, `-v`'s `SKIP <rule> (no files matched)`, and `--plan-only`'s
+  "not judged") and never errored or counted as a pass over files it never saw
+  (`a_rule_whose_glob_misses_the_named_subset_is_skipped_not_errored`). With no
+  `FILES`, every rule resolves its globs exactly as before
+  (`without_positional_files_a_glob_scoped_rule_still_judges_its_whole_glob`).
+  `--exclude` stays a denylist over the intersection
+  (`exclude_drops_an_explicitly_passed_file`).
 - An explicit `FILES` entry llmlint **cannot read as a file** is a usage error
   (exit 2, naming the path in `check-ignores`' own `reading <path>: …` wording),
   never a silently smaller run — the mistake being guarded is `llmlint lint

@@ -23,6 +23,38 @@ fn mock_path() -> PathBuf {
     cargo_bin("llmlint-mock-oneharness")
 }
 
+/// Environment-variable prefixes that steer the binary under test: `LLMLINT_*`
+/// (the [`llmlint::io::env::ENV_SETTINGS`] table, the legacy history switches,
+/// the plugin cache, and the mock's own `LLMLINT_MOCK_*` knobs) and
+/// `ONEHARNESS_*` (what llmlint forwards to the harness it spawns).
+const STEERING_PREFIXES: [&str; 2] = ["LLMLINT_", "ONEHARNESS_"];
+
+/// Clear every steering variable inherited from the ambient shell, so a command
+/// built here carries **only** the environment its test states.
+///
+/// These tests drive the real binary as a child process, so without this they
+/// inherit whatever the developer or CI runner exports — and llmlint reads env
+/// *ahead of* PATH and its sibling fallback, so an exported
+/// `LLMLINT_ONEHARNESS_BIN` silently retargets the whole resolution family at a
+/// binary the test never laid out (its premise "PATH has no oneharness" then
+/// simply isn't what runs). Every setting in the table is the same hazard:
+/// `LLMLINT_FILES_EXCLUDE` would shrink a lint set, `LLMLINT_DIFF_BASE` would
+/// move a `--diff` base, `ONEHARNESS_HISTORY_LABELS` would rewrite the labels a
+/// test asserts on.
+///
+/// Sweeping by prefix rather than listing the variables is deliberate: a new
+/// setting is covered the day it lands, with no second list to drift. Tests set
+/// what they *do* mean to exercise after building the command, so their own
+/// `.env(...)` calls still win.
+fn clear_steering_env(cmd: &mut Command) {
+    for (name, _) in std::env::vars_os() {
+        let key = name.to_string_lossy();
+        if STEERING_PREFIXES.iter().any(|p| key.starts_with(p)) {
+            cmd.env_remove(&name);
+        }
+    }
+}
+
 /// A throwaway project directory with helpers to write configs/fixtures and
 /// build llmlint invocations pointed at the mock.
 struct Project {
@@ -59,11 +91,23 @@ impl Project {
     /// A bare llmlint command (cwd = project), no oneharness wiring — for
     /// subcommands like `init`/`config` that take no `--oneharness-bin`.
     fn bare(&self) -> Command {
-        let mut c = Command::cargo_bin("llmlint").unwrap();
+        self.wire(Command::cargo_bin("llmlint").unwrap())
+    }
+    /// A bare command running an llmlint binary from *outside* the cargo target
+    /// dir — the resolution tests copy one into a temp `bin/` beside a mock named
+    /// `oneharness` — wired exactly like [`Project::bare`], so those journeys get
+    /// the same isolated environment as every other test.
+    fn bare_external(&self, exe: &Path) -> Command {
+        self.wire(Command::from_std(std::process::Command::new(exe)))
+    }
+    /// The wiring every llmlint command in this suite shares: cwd = the project,
+    /// no ambient steering variables (see [`clear_steering_env`]), and results
+    /// logging isolated to the project so tests never write to (or read from) the
+    /// real platform data dir. A `history` subcommand built here reads the same
+    /// isolated store a preceding `lint` wrote.
+    fn wire(&self, mut c: Command) -> Command {
         c.current_dir(self.path());
-        // Isolate results logging to the project so tests never write to (or read
-        // from) the real platform data dir. A `history` subcommand built here
-        // reads the same isolated store a preceding `lint` wrote.
+        clear_steering_env(&mut c);
         c.env("LLMLINT_HISTORY_DIR", self.history_dir());
         c
     }
@@ -977,6 +1021,43 @@ fn lint_config_with_no_config_files_is_a_clean_skip() {
 }
 
 #[test]
+fn lint_config_narrows_to_the_named_config_files() {
+    // `lint-config` shares `lint`'s FILES handling, so naming a config intersects
+    // the bundled plugin's config-file globs: only that config is judged, while a
+    // sibling config the user didn't name stays out of the prompt.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: public_items_are_documented, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "sub/llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: errors_name_their_cause, description: \"{RULE}\" }}\n"
+        ),
+    );
+    let dump = p.path().join("system.txt");
+
+    // No verdicts file: the mock defaults every config-lint rule to holds=true.
+    p.lint_config()
+        .arg("sub/llmlint.yml")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("sub/llmlint.yml"), "system:\n{system}");
+    assert!(
+        !system.lines().any(|l| l.contains("- llmlint.yml")),
+        "the unnamed sibling config must not be judged:\n{system}"
+    );
+}
+
+#[test]
 fn lint_config_rejects_an_explicit_file_that_does_not_resolve() {
     // `lint-config` shares `lint`'s FILES handling, so it rejects an unresolvable
     // path the same way — before any judge call. Without the guard the bundled
@@ -1525,7 +1606,11 @@ fn no_files_block_still_respects_gitignore_and_exclude() {
 }
 
 #[test]
-fn explicit_cli_files_override_config_globs() {
+fn explicit_cli_files_intersect_config_globs() {
+    // The positional files say which files *this run* is about; the config globs
+    // say which files the *rules* are about — a file must satisfy both. Naming a
+    // subset therefore narrows the run to `src/a.rs`, and never widens it to a
+    // passed file (`README.md`) the globs don't cover.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -1535,12 +1620,13 @@ fn explicit_cli_files_override_config_globs() {
         ),
     );
     p.write("src/a.rs", "// a\n");
+    p.write("src/b.rs", "// b\n");
     p.write("README.md", "# readme\n");
     let verdicts = p.write_verdicts(r#"{"cli_rule": true}"#);
     let dump = p.path().join("system.txt");
 
     p.lint()
-        .arg("README.md")
+        .args(["src/a.rs", "README.md"])
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
@@ -1549,10 +1635,157 @@ fn explicit_cli_files_override_config_globs() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("README.md"), "system:\n{system}");
+    assert!(system.contains("src/a.rs"), "system:\n{system}");
     assert!(
-        !system.contains("src/a.rs"),
-        "config glob should be overridden"
+        !system.contains("src/b.rs"),
+        "the named subset must narrow the config globs:\n{system}"
+    );
+    assert!(
+        !system.contains("README.md"),
+        "a passed file outside the config globs is not judged:\n{system}"
+    );
+}
+
+#[test]
+fn a_glob_scoped_rule_judges_only_the_named_subset_it_matches() {
+    // The headline of the intersection semantics: a rule with its own `files`
+    // used to discard the passed set and pull its whole glob match back in, so
+    // naming a subset couldn't shrink the judge call. Now `rust_rule` sees only
+    // the named `src/a.rs` (not its sibling `src/b.rs`), and `docs_rule` sees only
+    // the named `docs/x.md` — each passed file reaches exactly the rules that are
+    // about it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rust_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: docs_rule, description: \"{RULE}\", \
+             files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("src/b.rs", "// b\n");
+    p.write("docs/x.md", "# x\n");
+    p.write("docs/y.md", "# y\n");
+    let verdicts = p.write_verdicts(r#"{"rust_rule": true, "docs_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .args(["src/a.rs", "docs/x.md"])
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "2 rules: 2 passed, 0 failed, 0 skipped",
+        ));
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("src/a.rs"), "system:\n{system}");
+    assert!(system.contains("docs/x.md"), "system:\n{system}");
+    assert!(
+        !system.contains("src/b.rs") && !system.contains("docs/y.md"),
+        "a glob-scoped rule must not pull back files outside the named subset:\n{system}"
+    );
+}
+
+#[test]
+fn a_rule_whose_glob_misses_the_named_subset_is_skipped_not_errored() {
+    // An empty intersection is a legitimate empty selection: `docs_rule` is
+    // reported skipped for this run — counted in the summary, named at `-v`, and
+    // listed as unjudged in the plan — never an error, and never counted as a
+    // rule that passed over files it never saw.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rust_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: docs_rule, description: \"{RULE}\", \
+             files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("docs/x.md", "# x\n");
+    let verdicts = p.write_verdicts(r#"{"rust_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("src/a.rs")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "2 rules: 1 passed, 0 failed, 1 skipped",
+        ));
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        !system.contains("docs/x.md"),
+        "the skipped rule's files must not reach the judge:\n{system}"
+    );
+
+    p.lint_v()
+        .arg("src/a.rs")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "SKIP docs_rule (no files matched)",
+        ));
+
+    p.lint()
+        .arg("src/a.rs")
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("not judged:"))
+        .stdout(predicate::str::contains("docs_rule — no files matched"));
+}
+
+#[test]
+fn without_positional_files_a_glob_scoped_rule_still_judges_its_whole_glob() {
+    // The intersection only applies when files are named: with none, every rule
+    // resolves its globs exactly as before — the same run, unchanged.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: rust_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("src/b.rs", "// b\n");
+    let verdicts = p.write_verdicts(r#"{"rust_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "1 rules: 1 passed, 0 failed, 0 skipped",
+        ));
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("src/a.rs") && system.contains("src/b.rs"),
+        "with no named files the whole glob set is judged:\n{system}"
     );
 }
 
@@ -1662,12 +1895,12 @@ fn explicit_cli_files_that_resolve_are_unaffected_by_the_resolvability_check() {
         ),
     );
     p.write("src/a.rs", "// a\n");
-    p.write("README.md", "# readme\n");
+    p.write("src/b.rs", "// b\n");
     let verdicts = p.write_verdicts(r#"{"cli_rule": true}"#);
     let dump = p.path().join("system.txt");
 
     p.lint()
-        .arg("README.md")
+        .arg("src/b.rs")
         .arg("src/a.rs")
         .arg("--max-parallel")
         .arg("1")
@@ -1677,7 +1910,7 @@ fn explicit_cli_files_that_resolve_are_unaffected_by_the_resolvability_check() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("README.md"), "system:\n{system}");
+    assert!(system.contains("src/b.rs"), "system:\n{system}");
     assert!(system.contains("src/a.rs"), "system:\n{system}");
 }
 
@@ -4198,9 +4431,11 @@ fn doctor_finds_a_sibling_oneharness_when_path_has_none() {
     // /var -> /private/var), so the printed sibling path is the canonical one.
     let canonical_bin = bin.path().canonicalize().unwrap();
     let p = Project::new();
-    Command::from_std(std::process::Command::new(&llmlint))
+    // The environment is fully stated: no `--oneharness-bin`, no ambient
+    // `LLMLINT_ONEHARNESS_BIN` (cleared for every command here), and a PATH with
+    // no oneharness in it — so only the sibling can answer.
+    p.bare_external(&llmlint)
         .arg("doctor")
-        .current_dir(p.path())
         .env("PATH", p.path()) // a real dir, but no oneharness in it
         .assert()
         .success()
@@ -4224,8 +4459,7 @@ fn lint_uses_a_sibling_oneharness_when_path_has_none() {
     );
     p.write("src/lib.rs", "// code\n");
     let verdicts = p.write_verdicts(r#"{"sibling_rule": true}"#);
-    Command::from_std(std::process::Command::new(&llmlint))
-        .current_dir(p.path())
+    p.bare_external(&llmlint)
         .env("PATH", p.path())
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
@@ -4243,9 +4477,32 @@ fn path_oneharness_wins_over_the_sibling() {
     let exe = std::env::consts::EXE_SUFFIX;
     fs::copy(mock_path(), pathdir.path().join(format!("oneharness{exe}"))).unwrap();
     let p = Project::new();
-    Command::from_std(std::process::Command::new(&llmlint))
+    p.bare_external(&llmlint)
         .arg("doctor")
-        .current_dir(p.path())
+        .env("PATH", pathdir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(oneharness)"));
+}
+
+#[test]
+fn an_ambient_oneharness_override_never_reaches_a_test_command() {
+    // The isolation guard for this whole family. llmlint reads
+    // `LLMLINT_ONEHARNESS_BIN` *ahead of* PATH and the sibling fallback, so a
+    // shell (a developer's, a CI runner's) that exports it would decide every
+    // resolution journey above — their premise "nothing overrides the lookup"
+    // would quietly stop holding and they would assert against a binary the test
+    // never laid out. Simulate that shell: nextest runs each test in its own
+    // process, so the mutation is local to this one.
+    std::env::set_var("LLMLINT_ONEHARNESS_BIN", "/nonexistent/ambient-oneharness");
+    let pathdir = TempDir::new().unwrap();
+    let exe = std::env::consts::EXE_SUFFIX;
+    fs::copy(mock_path(), pathdir.path().join(format!("oneharness{exe}"))).unwrap();
+    let p = Project::new();
+    // Resolution still lands on the oneharness this test put on PATH — with the
+    // ambient override in force it would instead be `oneharness not found`.
+    p.bare()
+        .arg("doctor")
         .env("PATH", pathdir.path())
         .assert()
         .success()

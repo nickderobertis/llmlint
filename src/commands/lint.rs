@@ -629,18 +629,10 @@ fn check_cli_files(
             unresolved.retain(|u| !(u.missing && changed.contains_key(&u.path)));
         }
     }
-    if unresolved.is_empty() {
-        return Ok(());
-    }
     // One error listing every bad path, in `read_text`'s wording, so `lint` and
-    // `check-ignores` say the same thing about the same input.
-    Err(Error::Io(
-        unresolved
-            .into_iter()
-            .map(|u| u.message)
-            .collect::<Vec<_>>()
-            .join("\n"),
-    ))
+    // `check-ignores` say the same thing about the same input — both through the
+    // one shared `reject_unresolved`.
+    ignores::reject_unresolved(unresolved)
 }
 
 fn select_rules<'a>(config: &'a Config, args: &LintArgs) -> Vec<&'a Rule> {
