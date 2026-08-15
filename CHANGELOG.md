@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nickderobertis/llmlint/compare/v0.3.30...v0.4.0) - 2026-08-15
+
+### Added
+
+- [**breaking**] intersect positional FILES with the configured file globs ([#181](https://github.com/nickderobertis/llmlint/pull/181))
+
 ## [0.3.30](https://github.com/nickderobertis/llmlint/compare/v0.3.29...v0.3.30) - 2026-08-07
 
 ### Fixed
