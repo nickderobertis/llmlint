@@ -39,6 +39,20 @@
 # Requires `freeze` on PATH (install the pinned version with `just screenshots-tools`).
 set -euo pipefail
 
+# Byte-determinism starts with the environment: the scenes render the REAL
+# binary's output, and llmlint reads `LLMLINT_*` settings ahead of most other
+# layers — so a shell that exports one prints it into a scene (`config` renders
+# the effective config verbatim, `LLMLINT_ONEHARNESS_BIN` and all) and the shot
+# drifts against a baseline CI captured with a clean environment. Clear every
+# steering variable (and `ONEHARNESS_*`, which llmlint forwards to the harness)
+# before setting the ones this capture itself needs.
+for _var in $(compgen -e); do
+  case "$_var" in
+  LLMLINT_* | ONEHARNESS_*) unset "$_var" ;;
+  esac
+done
+unset _var
+
 # Deterministic, side-effect-free capture: results logging is on by default and
 # would (a) write a record to the real user data dir on every fixture run and
 # (b) print a run id — nondeterministic — to stderr, which the `debug` scene
