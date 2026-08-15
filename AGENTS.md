@@ -328,18 +328,38 @@ harness reads target files on-demand with its own tools.
   when their harness/model/template are identical and merging would save tokens —
   an agent split is user intent (isolating rules that interfere when judged
   together), asserted in `plan.rs` tests.
+- **Explicit `FILES` intersect the globs (convention):** a rule's globs say which
+  files the *rule* is about; the positional `FILES` say which files *this run* is
+  about; a file must satisfy **both** to be judged (`ignores::resolve_files`, over
+  `files::keep_included`). Naming a subset therefore narrows every rule, including
+  one with its own `files` — which used to win outright, discarding the passed set
+  and pulling its whole glob match back in, so "judge exactly these files" was
+  unexpressible and the only way to bound a run was to `--exclude` the complement.
+  A rule's *effective* filter is its own `files` when it declares one, else its
+  config's (the `RuleScope` fallback), and the intersection applies to both, so a
+  passed file no rule is about is judged by none of them rather than by the
+  subset that happen to lack a `files` block. An **empty `include`** still means
+  every file, so a config with no `files` block judges exactly what was passed
+  (the common case, unchanged). An empty intersection leaves the rule with no
+  files: it is **skipped for this run** — counted in the summary, named at `-v`,
+  listed under "not judged" in the plan — never an error and never a pass over
+  files it never saw. `exclude` stays a denylist over the result, winning even
+  over an explicitly-named file. With no `FILES` at all, resolution is exactly
+  what it was.
 - **Explicit `FILES` must be readable (convention):** a positional `FILES` entry
   is a per-invocation assertion that *this file is there to be judged*, so one
   llmlint cannot read as a file is an exit-2 usage error (`check_cli_files` in
   `commands/lint.rs`, over `files::unresolved`) — reported in `read_text`'s own
   `reading <path>: <os error>` wording so `lint` and `check-ignores` read as one
-  tool, and raised before rule selection, planning, or any judge call, so a bad
-  invocation costs nothing. Silently accepting one narrows what is judged without
-  saying so (a rule with its own `files` ignores CLI files and keeps running on
-  its globs; a rule without one resolves to nothing and is skipped), and the run
-  then reports a confident pass over a fraction of the ruleset — the same false
-  green `validate_filters` guards for `--rule`/`--agent`. It lives in the shared
-  `lint::run_loaded`, so `lint` and `lint-config` get it from one place.
+  tool (both raise it through `ignores::reject_unresolved`), and raised before rule
+  selection, planning, or any judge call, so a bad invocation costs nothing.
+  Silently accepting one narrows what is judged without saying so — under
+  intersection semantics a mistyped path simply falls out of every rule's set, so
+  nothing downstream would ever try to read it — and the run then reports a
+  confident pass over a fraction of the ruleset — the same false green
+  `validate_filters` guards for `--rule`/`--agent`. It lives in the shared
+  `lint::run_loaded`, so `lint` and `lint-config` get it from one place, and in
+  `check_ignores::run` for the standalone scan.
   **Existence is not the bar — readability is:** `unresolved` decides by
   attempting `read_text`'s own read rather than stat-ing, so a *directory*
   (present, yet not a file any judge could read) is rejected like an absent path,
@@ -442,11 +462,14 @@ harness reads target files on-demand with its own tools.
   granularity — `files.include` / `files.exclude` are their own `SETTING_KEYS`
   entries (like `oneharness.*` / `history.*`), so `where files.exclude` resolves and
   each has its own `LLMLINT_FILES_*` var (a `PATH`-separated glob list). Their merge
-  differs by kind: **include replaces** (highest layer that sets it wins — positional
-  CLI files > env > config), **exclude accumulates** (config ∪ env ∪ `--exclude`), so
-  a per-run exclude never drops a config safety exclude. The exclude denylist wins
-  even over an **explicitly-passed** file — a named file matching any exclude is
-  dropped (`files::drop_excluded` in the `resolve_files` CLI-files branch), the same
+  differs by kind: **include replaces** (highest layer that sets it wins — env >
+  config), **exclude accumulates** (config ∪ env ∪ `--exclude`), so a per-run
+  exclude never drops a config safety exclude. Positional CLI files are *not* a
+  layer of `files.include`: they **intersect** whatever include set wins (and each
+  rule's own `files`), per the explicit-`FILES` convention above. The exclude
+  denylist wins even over an **explicitly-passed** file — a named file matching any
+  exclude is dropped (`files::drop_excluded` in the `resolve_files` CLI-files
+  branch), the same
   "an include never resurrects an excluded path" rule (issue #128) the glob path
   follows. A session-level `files` override reaches the per-rule scopes captured at
   load via `ignores::retarget_session_scopes` (cwd-rooted scopes only), so a

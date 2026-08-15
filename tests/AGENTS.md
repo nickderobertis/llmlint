@@ -141,6 +141,21 @@ logic is also covered hermetically via `file://` plugins.
   line.
 - `--max-parallel` overlaps judges in a wave (proven via a rendezvous barrier);
   a serial wave fails to rendezvous, the negative control.
+- Explicit `FILES` **intersect** the configured globs rather than replacing them:
+  a rule judges a named file only when its own globs (or its config's, for a rule
+  without `files`) match it too. A glob-scoped rule against a named subset judges
+  only the intersection — it can no longer pull its whole glob match back in
+  (`a_glob_scoped_rule_judges_only_the_named_subset_it_matches`) — and a passed
+  file outside the config globs is not judged
+  (`explicit_cli_files_intersect_config_globs`). A rule whose globs match nothing
+  in the subset is **skipped for this run**, reported on all three surfaces (the
+  summary count, `-v`'s `SKIP <rule> (no files matched)`, and `--plan-only`'s
+  "not judged") and never errored or counted as a pass over files it never saw
+  (`a_rule_whose_glob_misses_the_named_subset_is_skipped_not_errored`). With no
+  `FILES`, every rule resolves its globs exactly as before
+  (`without_positional_files_a_glob_scoped_rule_still_judges_its_whole_glob`).
+  `--exclude` stays a denylist over the intersection
+  (`exclude_drops_an_explicitly_passed_file`).
 - An explicit `FILES` entry llmlint **cannot read as a file** is a usage error
   (exit 2, naming the path in `check-ignores`' own `reading <path>: …` wording),
   never a silently smaller run — the mistake being guarded is `llmlint lint

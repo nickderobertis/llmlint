@@ -24,6 +24,11 @@ pub fn run(args: CheckIgnoresArgs) -> Result<i32> {
     validate(&config)?;
 
     let cli_files = files::from_cli(&cwd, &args.files);
+    // A passed path llmlint can't read is a usage error, the same one `lint`
+    // raises: CLI files intersect the configured globs, so a mistyped path (or a
+    // *ref* mistaken for one) would otherwise fall out of every rule's set and the
+    // command would report a clean scan of files the caller never named.
+    ignores::reject_unresolved(files::unresolved(&cwd, &cli_files))?;
     let targets = ignores::target_files(&cwd, &config, &scopes, &cli_files)?;
     let known = ignores::known_rules(&config);
 

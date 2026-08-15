@@ -977,6 +977,43 @@ fn lint_config_with_no_config_files_is_a_clean_skip() {
 }
 
 #[test]
+fn lint_config_narrows_to_the_named_config_files() {
+    // `lint-config` shares `lint`'s FILES handling, so naming a config intersects
+    // the bundled plugin's config-file globs: only that config is judged, while a
+    // sibling config the user didn't name stays out of the prompt.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: public_items_are_documented, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "sub/llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  - {{ name: errors_name_their_cause, description: \"{RULE}\" }}\n"
+        ),
+    );
+    let dump = p.path().join("system.txt");
+
+    // No verdicts file: the mock defaults every config-lint rule to holds=true.
+    p.lint_config()
+        .arg("sub/llmlint.yml")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("sub/llmlint.yml"), "system:\n{system}");
+    assert!(
+        !system.lines().any(|l| l.contains("- llmlint.yml")),
+        "the unnamed sibling config must not be judged:\n{system}"
+    );
+}
+
+#[test]
 fn lint_config_rejects_an_explicit_file_that_does_not_resolve() {
     // `lint-config` shares `lint`'s FILES handling, so it rejects an unresolvable
     // path the same way — before any judge call. Without the guard the bundled
@@ -1525,7 +1562,11 @@ fn no_files_block_still_respects_gitignore_and_exclude() {
 }
 
 #[test]
-fn explicit_cli_files_override_config_globs() {
+fn explicit_cli_files_intersect_config_globs() {
+    // The positional files say which files *this run* is about; the config globs
+    // say which files the *rules* are about — a file must satisfy both. Naming a
+    // subset therefore narrows the run to `src/a.rs`, and never widens it to a
+    // passed file (`README.md`) the globs don't cover.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -1535,12 +1576,13 @@ fn explicit_cli_files_override_config_globs() {
         ),
     );
     p.write("src/a.rs", "// a\n");
+    p.write("src/b.rs", "// b\n");
     p.write("README.md", "# readme\n");
     let verdicts = p.write_verdicts(r#"{"cli_rule": true}"#);
     let dump = p.path().join("system.txt");
 
     p.lint()
-        .arg("README.md")
+        .args(["src/a.rs", "README.md"])
         .arg("--max-parallel")
         .arg("1")
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
@@ -1549,10 +1591,157 @@ fn explicit_cli_files_override_config_globs() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("README.md"), "system:\n{system}");
+    assert!(system.contains("src/a.rs"), "system:\n{system}");
     assert!(
-        !system.contains("src/a.rs"),
-        "config glob should be overridden"
+        !system.contains("src/b.rs"),
+        "the named subset must narrow the config globs:\n{system}"
+    );
+    assert!(
+        !system.contains("README.md"),
+        "a passed file outside the config globs is not judged:\n{system}"
+    );
+}
+
+#[test]
+fn a_glob_scoped_rule_judges_only_the_named_subset_it_matches() {
+    // The headline of the intersection semantics: a rule with its own `files`
+    // used to discard the passed set and pull its whole glob match back in, so
+    // naming a subset couldn't shrink the judge call. Now `rust_rule` sees only
+    // the named `src/a.rs` (not its sibling `src/b.rs`), and `docs_rule` sees only
+    // the named `docs/x.md` — each passed file reaches exactly the rules that are
+    // about it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rust_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: docs_rule, description: \"{RULE}\", \
+             files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("src/b.rs", "// b\n");
+    p.write("docs/x.md", "# x\n");
+    p.write("docs/y.md", "# y\n");
+    let verdicts = p.write_verdicts(r#"{"rust_rule": true, "docs_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .args(["src/a.rs", "docs/x.md"])
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "2 rules: 2 passed, 0 failed, 0 skipped",
+        ));
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(system.contains("src/a.rs"), "system:\n{system}");
+    assert!(system.contains("docs/x.md"), "system:\n{system}");
+    assert!(
+        !system.contains("src/b.rs") && !system.contains("docs/y.md"),
+        "a glob-scoped rule must not pull back files outside the named subset:\n{system}"
+    );
+}
+
+#[test]
+fn a_rule_whose_glob_misses_the_named_subset_is_skipped_not_errored() {
+    // An empty intersection is a legitimate empty selection: `docs_rule` is
+    // reported skipped for this run — counted in the summary, named at `-v`, and
+    // listed as unjudged in the plan — never an error, and never counted as a
+    // rule that passed over files it never saw.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nrules:\n  \
+             - {{ name: rust_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n  \
+             - {{ name: docs_rule, description: \"{RULE}\", \
+             files: {{ include: [\"docs/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("docs/x.md", "# x\n");
+    let verdicts = p.write_verdicts(r#"{"rust_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("src/a.rs")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "2 rules: 1 passed, 0 failed, 1 skipped",
+        ));
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        !system.contains("docs/x.md"),
+        "the skipped rule's files must not reach the judge:\n{system}"
+    );
+
+    p.lint_v()
+        .arg("src/a.rs")
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "SKIP docs_rule (no files matched)",
+        ));
+
+    p.lint()
+        .arg("src/a.rs")
+        .arg("--plan-only")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("not judged:"))
+        .stdout(predicate::str::contains("docs_rule — no files matched"));
+}
+
+#[test]
+fn without_positional_files_a_glob_scoped_rule_still_judges_its_whole_glob() {
+    // The intersection only applies when files are named: with none, every rule
+    // resolves its globs exactly as before — the same run, unchanged.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: rust_rule, description: \"{RULE}\", \
+             files: {{ include: [\"src/**\"] }} }}\n"
+        ),
+    );
+    p.write("src/a.rs", "// a\n");
+    p.write("src/b.rs", "// b\n");
+    let verdicts = p.write_verdicts(r#"{"rust_rule": true}"#);
+    let dump = p.path().join("system.txt");
+
+    p.lint()
+        .arg("--max-parallel")
+        .arg("1")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "1 rules: 1 passed, 0 failed, 0 skipped",
+        ));
+
+    let system = fs::read_to_string(&dump).unwrap();
+    assert!(
+        system.contains("src/a.rs") && system.contains("src/b.rs"),
+        "with no named files the whole glob set is judged:\n{system}"
     );
 }
 
@@ -1662,12 +1851,12 @@ fn explicit_cli_files_that_resolve_are_unaffected_by_the_resolvability_check() {
         ),
     );
     p.write("src/a.rs", "// a\n");
-    p.write("README.md", "# readme\n");
+    p.write("src/b.rs", "// b\n");
     let verdicts = p.write_verdicts(r#"{"cli_rule": true}"#);
     let dump = p.path().join("system.txt");
 
     p.lint()
-        .arg("README.md")
+        .arg("src/b.rs")
         .arg("src/a.rs")
         .arg("--max-parallel")
         .arg("1")
@@ -1677,7 +1866,7 @@ fn explicit_cli_files_that_resolve_are_unaffected_by_the_resolvability_check() {
         .success();
 
     let system = fs::read_to_string(&dump).unwrap();
-    assert!(system.contains("README.md"), "system:\n{system}");
+    assert!(system.contains("src/b.rs"), "system:\n{system}");
     assert!(system.contains("src/a.rs"), "system:\n{system}");
 }
 

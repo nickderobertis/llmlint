@@ -122,9 +122,52 @@ pub fn resolve_scoped_excluding(
     Ok(out)
 }
 
-/// Drop explicitly-passed files that either exclude denylist matches. Explicit
-/// CLI files bypass glob *inclusion* (the user named them), but `exclude` is a
-/// hard "never lint this" denylist that still wins — the same rule the
+/// Keep the explicitly-passed files an `include` glob set matches — the
+/// **intersection** of "the files this run is about" (what the caller named) with
+/// "the files this rule is about" (its globs). Globs are matched against the
+/// `glob_root`-relative path exactly as in [`resolve_scoped_excluding`], while the
+/// kept paths keep their given (`out_root`-relative or absolute) spelling.
+///
+/// An **empty** `include` set means "every file" (the repo-wide default a config
+/// with no `files` block gets), so this is the identity for it — the same
+/// match-all reading [`resolve_scoped_excluding`] gives an empty set. A passed
+/// path outside `glob_root` can't be what those globs are about, so it is dropped.
+///
+/// Unlike the glob walk this never *adds* files: a named file is matched, not
+/// discovered, so an explicitly-passed path that a `.gitignore` would have hidden
+/// from the walk still counts when the rule's globs match it.
+pub fn keep_included(
+    glob_root: &Path,
+    out_root: &Path,
+    files: &[PathBuf],
+    include: &[String],
+) -> Result<Vec<PathBuf>> {
+    let Some(include) = build_set(include)? else {
+        return Ok(files.to_vec());
+    };
+    let mut out = Vec::new();
+    for f in files {
+        // The passed path is `out_root`-relative (or absolute); normalize to an
+        // absolute path, then match the globs against their own rooting.
+        let abs = if f.is_absolute() {
+            f.clone()
+        } else {
+            out_root.join(f)
+        };
+        let abs = crate::io::configfs::normalize(&abs);
+        if abs
+            .strip_prefix(glob_root)
+            .is_ok_and(|rel| include.is_match(rel))
+        {
+            out.push(f.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Drop explicitly-passed files that either exclude denylist matches. `exclude` is
+/// a hard "never lint this" denylist that wins over every include — the same rule
+/// the
 /// glob-selected set follows (issue #128) — so a config / env / `--exclude` glob
 /// drops a passed path too. `scoped_exclude` is matched against the
 /// `glob_root`-relative path, `global_exclude` against the `out_root`
@@ -274,6 +317,32 @@ mod tests {
         assert_eq!(kept, vec![PathBuf::from("src/keep.rs")]);
         // ...and with no exclude globs it is the identity.
         assert_eq!(drop_excluded(cwd, cwd, &files, &[], &[]).unwrap(), files);
+    }
+
+    #[test]
+    fn keep_included_intersects_explicit_paths_with_the_globs() {
+        let cwd = Path::new("/proj");
+        let files = vec![
+            PathBuf::from("src/a.rs"),
+            PathBuf::from("docs/x.md"),
+            // Absolute and outside the glob root: not what those globs are about.
+            PathBuf::from("/elsewhere/b.rs"),
+        ];
+        let kept = keep_included(cwd, cwd, &files, &["src/**".into()]).unwrap();
+        assert_eq!(kept, vec![PathBuf::from("src/a.rs")]);
+        // An empty include set means "every file", so it is the identity.
+        assert_eq!(keep_included(cwd, cwd, &files, &[]).unwrap(), files);
+    }
+
+    #[test]
+    fn keep_included_matches_globs_against_the_glob_root() {
+        // A subtree config's globs mean "relative to me": `*.rs` under
+        // `/proj/backend` matches `backend/svc.rs`, never a same-named file above.
+        let cwd = Path::new("/proj");
+        let glob_root = Path::new("/proj/backend");
+        let files = vec![PathBuf::from("backend/svc.rs"), PathBuf::from("svc.rs")];
+        let kept = keep_included(glob_root, cwd, &files, &["*.rs".into()]).unwrap();
+        assert_eq!(kept, vec![PathBuf::from("backend/svc.rs")]);
     }
 
     #[test]
