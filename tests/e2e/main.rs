@@ -23,6 +23,38 @@ fn mock_path() -> PathBuf {
     cargo_bin("llmlint-mock-oneharness")
 }
 
+/// Environment-variable prefixes that steer the binary under test: `LLMLINT_*`
+/// (the [`llmlint::io::env::ENV_SETTINGS`] table, the legacy history switches,
+/// the plugin cache, and the mock's own `LLMLINT_MOCK_*` knobs) and
+/// `ONEHARNESS_*` (what llmlint forwards to the harness it spawns).
+const STEERING_PREFIXES: [&str; 2] = ["LLMLINT_", "ONEHARNESS_"];
+
+/// Clear every steering variable inherited from the ambient shell, so a command
+/// built here carries **only** the environment its test states.
+///
+/// These tests drive the real binary as a child process, so without this they
+/// inherit whatever the developer or CI runner exports — and llmlint reads env
+/// *ahead of* PATH and its sibling fallback, so an exported
+/// `LLMLINT_ONEHARNESS_BIN` silently retargets the whole resolution family at a
+/// binary the test never laid out (its premise "PATH has no oneharness" then
+/// simply isn't what runs). Every setting in the table is the same hazard:
+/// `LLMLINT_FILES_EXCLUDE` would shrink a lint set, `LLMLINT_DIFF_BASE` would
+/// move a `--diff` base, `ONEHARNESS_HISTORY_LABELS` would rewrite the labels a
+/// test asserts on.
+///
+/// Sweeping by prefix rather than listing the variables is deliberate: a new
+/// setting is covered the day it lands, with no second list to drift. Tests set
+/// what they *do* mean to exercise after building the command, so their own
+/// `.env(...)` calls still win.
+fn clear_steering_env(cmd: &mut Command) {
+    for (name, _) in std::env::vars_os() {
+        let key = name.to_string_lossy();
+        if STEERING_PREFIXES.iter().any(|p| key.starts_with(p)) {
+            cmd.env_remove(&name);
+        }
+    }
+}
+
 /// A throwaway project directory with helpers to write configs/fixtures and
 /// build llmlint invocations pointed at the mock.
 struct Project {
@@ -59,11 +91,23 @@ impl Project {
     /// A bare llmlint command (cwd = project), no oneharness wiring — for
     /// subcommands like `init`/`config` that take no `--oneharness-bin`.
     fn bare(&self) -> Command {
-        let mut c = Command::cargo_bin("llmlint").unwrap();
+        self.wire(Command::cargo_bin("llmlint").unwrap())
+    }
+    /// A bare command running an llmlint binary from *outside* the cargo target
+    /// dir — the resolution tests copy one into a temp `bin/` beside a mock named
+    /// `oneharness` — wired exactly like [`Project::bare`], so those journeys get
+    /// the same isolated environment as every other test.
+    fn bare_external(&self, exe: &Path) -> Command {
+        self.wire(Command::from_std(std::process::Command::new(exe)))
+    }
+    /// The wiring every llmlint command in this suite shares: cwd = the project,
+    /// no ambient steering variables (see [`clear_steering_env`]), and results
+    /// logging isolated to the project so tests never write to (or read from) the
+    /// real platform data dir. A `history` subcommand built here reads the same
+    /// isolated store a preceding `lint` wrote.
+    fn wire(&self, mut c: Command) -> Command {
         c.current_dir(self.path());
-        // Isolate results logging to the project so tests never write to (or read
-        // from) the real platform data dir. A `history` subcommand built here
-        // reads the same isolated store a preceding `lint` wrote.
+        clear_steering_env(&mut c);
         c.env("LLMLINT_HISTORY_DIR", self.history_dir());
         c
     }
@@ -4387,9 +4431,11 @@ fn doctor_finds_a_sibling_oneharness_when_path_has_none() {
     // /var -> /private/var), so the printed sibling path is the canonical one.
     let canonical_bin = bin.path().canonicalize().unwrap();
     let p = Project::new();
-    Command::from_std(std::process::Command::new(&llmlint))
+    // The environment is fully stated: no `--oneharness-bin`, no ambient
+    // `LLMLINT_ONEHARNESS_BIN` (cleared for every command here), and a PATH with
+    // no oneharness in it — so only the sibling can answer.
+    p.bare_external(&llmlint)
         .arg("doctor")
-        .current_dir(p.path())
         .env("PATH", p.path()) // a real dir, but no oneharness in it
         .assert()
         .success()
@@ -4413,8 +4459,7 @@ fn lint_uses_a_sibling_oneharness_when_path_has_none() {
     );
     p.write("src/lib.rs", "// code\n");
     let verdicts = p.write_verdicts(r#"{"sibling_rule": true}"#);
-    Command::from_std(std::process::Command::new(&llmlint))
-        .current_dir(p.path())
+    p.bare_external(&llmlint)
         .env("PATH", p.path())
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
         .assert()
@@ -4432,9 +4477,32 @@ fn path_oneharness_wins_over_the_sibling() {
     let exe = std::env::consts::EXE_SUFFIX;
     fs::copy(mock_path(), pathdir.path().join(format!("oneharness{exe}"))).unwrap();
     let p = Project::new();
-    Command::from_std(std::process::Command::new(&llmlint))
+    p.bare_external(&llmlint)
         .arg("doctor")
-        .current_dir(p.path())
+        .env("PATH", pathdir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(oneharness)"));
+}
+
+#[test]
+fn an_ambient_oneharness_override_never_reaches_a_test_command() {
+    // The isolation guard for this whole family. llmlint reads
+    // `LLMLINT_ONEHARNESS_BIN` *ahead of* PATH and the sibling fallback, so a
+    // shell (a developer's, a CI runner's) that exports it would decide every
+    // resolution journey above — their premise "nothing overrides the lookup"
+    // would quietly stop holding and they would assert against a binary the test
+    // never laid out. Simulate that shell: nextest runs each test in its own
+    // process, so the mutation is local to this one.
+    std::env::set_var("LLMLINT_ONEHARNESS_BIN", "/nonexistent/ambient-oneharness");
+    let pathdir = TempDir::new().unwrap();
+    let exe = std::env::consts::EXE_SUFFIX;
+    fs::copy(mock_path(), pathdir.path().join(format!("oneharness{exe}"))).unwrap();
+    let p = Project::new();
+    // Resolution still lands on the oneharness this test put on PATH — with the
+    // ambient override in force it would instead be `oneharness not found`.
+    p.bare()
+        .arg("doctor")
         .env("PATH", pathdir.path())
         .assert()
         .success()
