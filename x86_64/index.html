@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visual docs</title>
+<style>body{font-family:system-ui,sans-serif;margin:2rem;color:#222}section.shot{margin-bottom:2.5rem}section.shot[hidden]{display:none}h2{margin-bottom:.5rem}.toggles{display:flex;flex-wrap:wrap;gap:1rem;margin:0 0 1.5rem;position:sticky;top:0;background:#fff;padding:.75rem 0;z-index:1}.toggle{display:flex;align-items:center;gap:.4rem}.dim-label{font-size:.8rem;color:#555}.toggle button{font:inherit;font-size:.8rem;padding:.15rem .6rem;border:1px solid #bbb;background:#f6f6f6;border-radius:999px;cursor:pointer}.toggle button.active{background:#222;color:#fff;border-color:#222}.variants img{max-width:100%;height:auto;border:1px solid #ddd;border-radius:4px}.variant[hidden]{display:none}</style>
+</head>
+<body>
+<h1>Visual docs</h1>
+<div class="toggles"><div class="toggle" data-dim="view"><span class="dim-label">View</span><button type="button" data-val="default" class="active">default</button><button type="button" data-val="verbose">verbose</button><button type="button" data-val="debug">debug</button></div></div>
+<section class="shot"><h2>config</h2>
+<div class="variants"><img class="variant" data-variant="" loading="lazy" src="config.svg" alt="config"></div></section>
+<section class="shot"><h2>doctor</h2>
+<div class="variants"><img class="variant" data-variant="" loading="lazy" src="doctor.svg" alt="doctor"></div></section>
+<section class="shot"><h2>init</h2>
+<div class="variants"><img class="variant" data-variant="" loading="lazy" src="init.svg" alt="init"></div></section>
+<section class="shot"><h2>lint</h2>
+<div class="variants"><img class="variant" data-variant="view=debug" loading="lazy" src="lint-debug.svg" alt="lint [view=debug]" hidden><img class="variant" data-variant="view=default" loading="lazy" src="lint-default.svg" alt="lint [view=default]"><img class="variant" data-variant="view=verbose" loading="lazy" src="lint-verbose.svg" alt="lint [view=verbose]" hidden></div></section>
+<section class="shot"><h2>multi-judge</h2>
+<div class="variants"><img class="variant" data-variant="" loading="lazy" src="multi-judge.svg" alt="multi-judge"></div></section>
+<script>const bar=document.querySelector('.toggles');if(bar){const sel={};for(const t of bar.querySelectorAll('.toggle')){const a=t.querySelector('button.active')||t.querySelector('button');if(a)sel[t.dataset.dim]=a.dataset.val;}const parse=s=>{const o={};if(s)for(const p of s.split(';')){const i=p.indexOf('=');o[p.slice(0,i)]=p.slice(i+1);}return o;};const match=v=>{for(const k in v)if(sel[k]!==v[k])return false;return true;};const apply=()=>{for(const sec of document.querySelectorAll('.shot')){const imgs=sec.querySelectorAll('.variant');if(!imgs.length)continue;let any=false;for(const img of imgs){const ok=match(parse(img.dataset.variant));img.hidden=!ok;if(ok)any=true;}sec.hidden=!any;}for(const b of bar.querySelectorAll('.toggle button'))b.classList.toggle('active',sel[b.parentElement.dataset.dim]===b.dataset.val);};for(const b of bar.querySelectorAll('.toggle button'))b.addEventListener('click',()=>{sel[b.parentElement.dataset.dim]=b.dataset.val;apply();});apply();}</script>
+</body>
+</html>
