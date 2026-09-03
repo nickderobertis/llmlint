@@ -205,8 +205,9 @@ fn scope_cli_files(cwd: &Path, dir: &Path, cli_files: &[PathBuf]) -> Vec<PathBuf
 /// (exit 2) so a single run surfaces all the fixes; an empty file set is clean.
 ///
 /// `plugins` is what this run's `plugins:` URLs resolved to. When a directive
-/// names a rule nothing declares, they are named in the message — see
-/// [`unknown_rule_trailer`].
+/// names a rule nothing declares, they are named in the message (see
+/// `unknown_rule_trailer`), because a plugin's cached copy being older than its
+/// pin promises is what makes a correct suppression read as a typo.
 pub fn check(
     cwd: &Path,
     targets: &BTreeSet<PathBuf>,

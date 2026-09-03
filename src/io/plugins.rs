@@ -70,10 +70,11 @@ pub const TTL_VAR: &str = "LLMLINT_PLUGIN_TTL";
 /// without asking the origin anything, so a burst of runs costs one request.
 pub const DEFAULT_TTL_SECS: u64 = 3600;
 
-/// Version of the on-disk cache-entry metadata shape. An entry whose metadata
-/// declares a different schema is ignored (and refetched) rather than
-/// misread — the same way a previous-layout entry is.
-const CACHE_SCHEMA: u32 = 1;
+/// Version of the on-disk cache-entry metadata shape ([`CacheMeta`]) — a
+/// serialized contract other processes and later releases read, so it is bumped
+/// deliberately. An entry whose metadata declares a different schema is ignored
+/// (and refetched) rather than misread, the same way a previous-layout entry is.
+pub const CACHE_SCHEMA: u32 = 1;
 
 /// Filename prefix of a cache entry, which is followed by the **resolved**
 /// version (`v1.4.2.yml` + `v1.4.2.json`). The prefix plus the required sidecar
