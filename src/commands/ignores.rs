@@ -240,15 +240,10 @@ pub fn check(
 }
 
 /// The trailer a directive problem set earns when one of its problems is a rule
-/// nothing declares: which plugins are loaded and what version each resolved to.
-///
-/// A pinned plugin's rules can be *older than the pin promises* — the cache used
-/// to key entries by the pin, so a long-lived host kept the first version it ever
-/// fetched — and the symptom is unrecognisable: correct, current suppressions
-/// reported as naming rules that do not exist. Naming the resolved versions here
-/// puts the reader in front of the cache within a minute, instead of renaming the
-/// rule, then rescoping it, then auditing the consuming repository in turn. Empty
-/// when the run loaded no plugins, or when no problem is an unknown rule.
+/// nothing declares: which plugins are loaded and what version each resolved to,
+/// since a plugin resolving older than its pin promises is what makes a correct
+/// suppression read as a typo. Empty when the run loaded no plugins, or when no
+/// problem is an unknown rule.
 fn unknown_rule_trailer(problems: &[String], plugins: &[PluginResolution]) -> String {
     if plugins.is_empty() || !problems.iter().any(|p| p.contains("unknown rule")) {
         return String::new();

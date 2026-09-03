@@ -1925,6 +1925,23 @@ fn the_plugins_verb_reports_a_cache_it_cannot_locate() {
     assert!(err.contains("no plugin cache directory"), "got: {err}");
     assert!(err.contains("--dir"), "got: {err}");
 
+    // A `--dir` that is not a readable cache directory is a reported fault, not
+    // a cache that happens to be empty — the answer a mistyped path would
+    // otherwise get.
+    p.write("not-a-cache", "x\n");
+    let bad = p
+        .plugins()
+        .arg("--dir")
+        .arg(p.path().join("not-a-cache"))
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).contains("not-a-cache"),
+        "stderr: {}",
+        String::from_utf8_lossy(&bad.stderr)
+    );
+
     // `clear` reports machine-readably too, so a script can act on the count.
     let cleared = p
         .plugins()

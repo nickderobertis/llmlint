@@ -2,14 +2,10 @@
 //! clear`: empty it.
 //!
 //! Both are deterministic and free of any model, oneharness, or network call —
-//! they read (or remove) what [`crate::io::plugins`] wrote. They exist because
-//! the cost of a stale cached plugin was almost entirely *diagnosis*: a pin is a
-//! range, so a rule the plugin declares today can be absent from the copy a
-//! long-lived host resolved weeks ago, and the symptom (correct, current
-//! suppressions reported as naming rules that do not exist) points at everything
-//! except the cache. One line per cached entry — its URL, its pin, the version
-//! it resolved to, when the origin last confirmed it, and whether a newer
-//! version satisfying that pin is known — answers the question directly.
+//! they read (or remove) what [`crate::io::plugins`] wrote, which is where the
+//! cache's own contract lives. One line per cached entry, self-contained, so a
+//! plugin resolving to an unexpected version is read off the report rather than
+//! inferred.
 
 // llmlint: ignore-file[new_code_lands_in_a_project] That rule asks whether the
 // nearest Nx project definition covers this path; llmlint has no project graph

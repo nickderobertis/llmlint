@@ -662,14 +662,28 @@ fn write_meta(path: &Path, meta: &CacheMeta) -> Result<()> {
         .map_err(|e| io_err(format!("writing plugin cache {}", path.display()), e))
 }
 
+/// The per-URL subdirectories of a cache directory, for the two reporting verbs.
+///
+/// A cache directory is created on first store, so one that is not there yet is
+/// an empty cache. Every *other* read failure — a file where a directory should
+/// be, a directory this process may not read — is reported: those verbs answer a
+/// question about a directory the caller named, and "no plugins cached" is the
+/// wrong answer to a `--dir` that could not be read. Resolution
+/// ([`read_entries`]) still swallows both, because a run must not fail over a
+/// cache it can simply refetch past.
+fn cache_subdirs(dir: &Path) -> Result<Vec<PathBuf>> {
+    match std::fs::read_dir(dir) {
+        Ok(rd) => Ok(rd.flatten().map(|e| e.path()).collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(io_err(format!("reading plugin cache {}", dir.display()), e)),
+    }
+}
+
 /// Every cached plugin entry under `dir`, sorted by URL then version, each
 /// carrying whether a newer cached version satisfying its pin is known.
 pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Ok(Vec::new());
-    };
     let mut entries: Vec<Entry> = Vec::new();
-    for sub in rd.flatten().map(|e| e.path()) {
+    for sub in cache_subdirs(dir)? {
         // An empty `url` filter accepts any entry: listing has no URL in hand,
         // and each entry's metadata names its own.
         entries.extend(read_entries(&sub, ""));
@@ -708,11 +722,8 @@ pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
 /// leave empty) are touched — a shared cache directory keeps whatever else it
 /// holds.
 pub fn clear_cached(dir: &Path) -> Result<usize> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Ok(0);
-    };
     let mut removed = 0;
-    for sub in rd.flatten().map(|e| e.path()) {
+    for sub in cache_subdirs(dir)? {
         for entry in read_entries(&sub, "") {
             std::fs::remove_file(&entry.data)
                 .map_err(|e| io_err(format!("removing {}", entry.data.display()), e))?;
@@ -1434,10 +1445,19 @@ mod tests {
         .unwrap();
         assert!(read_entries(dir.path(), "u").is_empty());
         assert_eq!(read_entries(dir.path(), "other").len(), 1);
-        // A missing directory is simply an empty cache.
+        // A missing directory is simply an empty cache — it is created on the
+        // first store.
         assert!(read_entries(&dir.path().join("nope"), "u").is_empty());
         assert!(list_cached(&dir.path().join("nope")).unwrap().is_empty());
         assert_eq!(clear_cached(&dir.path().join("nope")).unwrap(), 0);
+        // A cache directory that is not a directory is a reported fault, not an
+        // empty cache: the reporting verbs answer about the path they were
+        // given. Resolution still shrugs and refetches.
+        let not_a_dir = dir.path().join("file.txt");
+        std::fs::write(&not_a_dir, "x").unwrap();
+        assert!(matches!(list_cached(&not_a_dir), Err(Error::Io(_))));
+        assert!(matches!(clear_cached(&not_a_dir), Err(Error::Io(_))));
+        assert!(read_entries(&not_a_dir, "u").is_empty());
     }
 
     #[test]
