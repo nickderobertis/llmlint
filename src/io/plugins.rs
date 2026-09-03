@@ -769,8 +769,14 @@ pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
     let mut entries: Vec<Entry> = Vec::new();
     for sub in cache_subdirs(dir)? {
         // An empty `url` filter accepts any entry: listing has no URL in hand,
-        // and each entry's metadata names its own.
-        entries.extend(read_entries(&sub, ""));
+        // and each entry's metadata names its own. The document half is checked
+        // too — this verb answers "what will a run resolve to?", so listing an
+        // entry resolution would refuse is the one wrong answer it can give.
+        entries.extend(
+            read_entries(&sub, "")
+                .into_iter()
+                .filter(|e| load_entry(e, &e.meta.url).is_some()),
+        );
     }
     entries.sort_by(|a, b| {
         a.meta
@@ -877,8 +883,8 @@ fn resolve_version(url: &str, req: Option<&VersionReq>, text: &str) -> Result<Re
 fn fetch_body(url: &str) -> Result<Body> {
     match file_url_path(url) {
         Some(path) => read_file_body(url, &path),
-        // An unconditional request carries no validator, so the origin has
-        // nothing to answer `304` to; `http_get` rejects one as a bad status.
+        // An unconditional request asks nothing conditionally, so `http_get`
+        // rejects a `304` as the bad status it is rather than answering `None`.
         None => Ok(http_get(url, None)?.unwrap_or_default()),
     }
 }
@@ -909,8 +915,9 @@ fn read_file_body(url: &str, path: &Path) -> Result<Body> {
 
 /// HTTPS GET via `ureq` (rustls, bundled roots). Honors `HTTP(S)_PROXY` /
 /// `NO_PROXY`. With `conditional` set, the cached entry's validators go out as
-/// `If-None-Match` / `If-Modified-Since` and a `304` answers `Ok(None)`. A
-/// transport error or any other non-2xx status becomes an [`Error::PluginFetch`].
+/// `If-None-Match` / `If-Modified-Since`, and a `304` answers `Ok(None)` — but
+/// only when one of them was actually sent. A transport error or any other
+/// non-2xx status becomes an [`Error::PluginFetch`].
 fn http_get(url: &str, conditional: Option<&CacheMeta>) -> Result<Option<Body>> {
     let fetch_err = |message: String| Error::PluginFetch {
         url: url.to_string(),
@@ -924,17 +931,24 @@ fn http_get(url: &str, conditional: Option<&CacheMeta>) -> Result<Option<Body>> 
         .build()
         .into();
     let mut req = agent.get(url);
+    // Whether this request actually asks conditionally. Holding a cached entry
+    // is not enough — an entry whose origin supplied no validator has nothing to
+    // ask with, and a `304` to an unconditional request is a protocol fault, not
+    // a confirmation that the entry is current.
+    let mut asked_conditionally = false;
     if let Some(meta) = conditional {
         if let Some(etag) = &meta.etag {
             req = req.header("If-None-Match", etag.as_str());
+            asked_conditionally = true;
         }
         if let Some(lm) = &meta.last_modified {
             req = req.header("If-Modified-Since", lm.as_str());
+            asked_conditionally = true;
         }
     }
     let mut resp = req.call().map_err(|e| fetch_err(e.to_string()))?;
     let status = resp.status().as_u16();
-    if conditional.is_some() && status == 304 {
+    if asked_conditionally && status == 304 {
         return Ok(None);
     }
     if !(200..300).contains(&status) {
@@ -1010,6 +1024,8 @@ mod tests {
     }
 
     impl TestOrigin {
+        /// An origin serving `body`. An empty `etag` means it supplies no
+        /// validator at all, so a conditional request has nothing to ask with.
         fn serve(body: &str, etag: &str) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
@@ -1025,14 +1041,21 @@ mod tests {
                     // sends them lowercased, so match on a lowercased request.
                     let request = String::from_utf8_lossy(&buf[..n]).to_lowercase();
                     let (body, etag, status) = state_t.lock().unwrap().clone();
+                    let validator = if etag.is_empty() {
+                        String::new()
+                    } else {
+                        format!("ETag: {etag}\r\n")
+                    };
                     let resp = if status != 200 {
                         format!("HTTP/1.1 {status} Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                    } else if request.contains(&format!("if-none-match: {}", etag.to_lowercase())) {
-                        format!("HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nConnection: close\r\n\r\n")
+                    } else if !etag.is_empty()
+                        && request.contains(&format!("if-none-match: {}", etag.to_lowercase()))
+                    {
+                        format!("HTTP/1.1 304 Not Modified\r\n{validator}Connection: close\r\n\r\n")
                     } else {
                         bodies_t.fetch_add(1, Ordering::SeqCst);
                         format!(
-                            "HTTP/1.1 200 OK\r\nETag: {etag}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            "HTTP/1.1 200 OK\r\n{validator}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                             body.len(),
                         )
                     };
@@ -1644,6 +1667,57 @@ mod tests {
         assert!(matches!(list_cached(&not_a_dir), Err(Error::Io(_))));
         assert!(matches!(clear_cached(&not_a_dir), Err(Error::Io(_))));
         assert!(read_entries(&not_a_dir, "u").is_empty());
+    }
+
+    #[test]
+    fn the_report_omits_an_entry_resolution_would_refuse() {
+        let dir = tempdir().unwrap();
+        let plugin = dir.path().join("plug.yml");
+        std::fs::write(&plugin, plugin_yaml("1.2", "genuine")).unwrap();
+        let cache = tempdir().unwrap();
+        let url = file_url(&plugin);
+        load_remote(&url, &req("1"), &opts_with_cache(cache.path())).unwrap();
+        assert_eq!(list_cached(cache.path()).unwrap().len(), 1);
+
+        // Corrupt the document half. The metadata is still there, but nothing
+        // backs it, so the report must not name an entry a run would pass over.
+        let sub = url_dir(cache.path(), &url);
+        std::fs::write(&read_entries(&sub, &url)[0].data, "version: : :\n").unwrap();
+        assert!(list_cached(cache.path()).unwrap().is_empty());
+        // Clearing still removes it, so a cache can be cleaned of exactly the
+        // entries that are no longer any use.
+        assert_eq!(clear_cached(cache.path()).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_not_modified_answer_to_an_unconditional_request_is_not_a_confirmation() {
+        // An origin that supplies no validator leaves the entry with nothing to
+        // ask with, so a later revalidation is an ordinary GET. A `304` to that
+        // request confirms nothing, and must not restart the entry's clock.
+        let origin = TestOrigin::serve(&plugin_yaml("1.2", "remote_rule"), "");
+        let cache = tempdir().unwrap();
+        let url = origin.url("/rules.yml");
+        let opts = always_revalidate(cache.path());
+        load_remote(&url, &req("1"), &opts).unwrap();
+
+        let sub = url_dir(cache.path(), &url);
+        let entry = &read_entries(&sub, &url)[0];
+        assert_eq!(entry.meta.etag, None, "the origin supplied no validator");
+        let mut meta = entry.meta.clone();
+        meta.confirmed_at = at(0);
+        write_meta(&entry.meta_path, &meta).unwrap();
+
+        origin.set_status(304);
+        let res = load_remote(&url, &req("1"), &opts).unwrap();
+        // The run keeps working from cache — a revalidation that could not be
+        // made never fails a run — but the entry was not confirmed.
+        assert_eq!(res.info.origin, Origin::Cache);
+        assert!(res.text.contains("remote_rule"));
+        assert_eq!(
+            read_entries(&sub, &url)[0].meta.confirmed_at,
+            at(0),
+            "an unanswered conditional request must not restart the clock"
+        );
     }
 
     #[test]
