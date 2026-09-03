@@ -182,14 +182,14 @@ const CONFIG_LINT: &str =
     "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1";
 
 /// A throwaway localhost HTTP origin for the plugin journeys: it serves one body
-/// with an `ETag`, answers `304 Not Modified` to a request whose `If-None-Match`
-/// matches, and can be switched to refuse with a failing status. Counts the
-/// full-body responses it sent, so a test can assert what was and wasn't
-/// downloaded. This exercises the real HTTPS-client path (localhost only — no
+/// with an `ETag` (or a `Last-Modified`), answers `304 Not Modified` to a request
+/// whose validator matches, and can be switched to refuse with a failing status.
+/// Counts the full-body responses it sent, so a test can assert what was and
+/// wasn't downloaded. This exercises the real HTTPS-client path (localhost only — no
 /// external network).
 struct HttpServer {
     base_url: String,
-    hits: Arc<AtomicUsize>,
+    bodies_served: Arc<AtomicUsize>,
     status: Arc<AtomicUsize>,
 }
 
@@ -208,9 +208,9 @@ impl HttpServer {
     fn serve_with(body: &str, validator: Validator) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let hits = Arc::new(AtomicUsize::new(0));
+        let bodies_served = Arc::new(AtomicUsize::new(0));
         let status = Arc::new(AtomicUsize::new(200));
-        let hits_thread = Arc::clone(&hits);
+        let bodies_thread = Arc::clone(&bodies_served);
         let status_thread = Arc::clone(&status);
         let body = body.to_string();
         let etag = "\"v1\"";
@@ -248,7 +248,7 @@ impl HttpServer {
                 } else if matched {
                     format!("HTTP/1.1 304 Not Modified\r\n{header}\r\nConnection: close\r\n\r\n")
                 } else {
-                    hits_thread.fetch_add(1, Ordering::SeqCst);
+                    bodies_thread.fetch_add(1, Ordering::SeqCst);
                     format!(
                         "HTTP/1.1 200 OK\r\n{header}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len(),
@@ -259,16 +259,18 @@ impl HttpServer {
         });
         HttpServer {
             base_url: format!("http://127.0.0.1:{port}"),
-            hits,
+            bodies_served,
             status,
         }
     }
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
-    /// Full-body responses served (a `304` is not one).
-    fn hits(&self) -> usize {
-        self.hits.load(Ordering::SeqCst)
+    /// How many full-body responses were served. A `304` and a refusal are
+    /// requests the server answered but did not send a document for, so neither
+    /// counts here — which is the point: a test asserts what was *downloaded*.
+    fn bodies_served(&self) -> usize {
+        self.bodies_served.load(Ordering::SeqCst)
     }
     /// Make every further request fail with `status`.
     fn refuse_with(&self, status: usize) {
@@ -1418,12 +1420,20 @@ fn pinned_url_plugin_is_fetched_over_http_and_cached() {
         .map(|r| r["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"remote_rule"));
-    assert_eq!(server.hits(), 1, "first run should fetch exactly once");
+    assert_eq!(
+        server.bodies_served(),
+        1,
+        "first run should fetch exactly once"
+    );
 
     // Second run reuses the cached pin: the server sees no further requests.
     let out = run();
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(server.hits(), 1, "an unchanged pin must not refetch");
+    assert_eq!(
+        server.bodies_served(),
+        1,
+        "an unchanged pin must not refetch"
+    );
 }
 
 /// A project whose only plugin is a pinned `file://` URL the test can rewrite
@@ -1718,14 +1728,18 @@ fn revalidation_journey(validator: Validator) {
         "stderr: {}",
         String::from_utf8_lossy(&first.stderr)
     );
-    assert_eq!(server.hits(), 1);
+    assert_eq!(server.bodies_served(), 1);
 
     // The origin answers the conditional request with `304 Not Modified`: the
     // entry is reused and nothing is downloaded again.
     let second = run();
     assert_eq!(second.status.code(), Some(0));
     assert!(reported_rules(&second).contains(&"remote_rule".to_string()));
-    assert_eq!(server.hits(), 1, "an unchanged plugin must not re-download");
+    assert_eq!(
+        server.bodies_served(),
+        1,
+        "an unchanged plugin must not re-download"
+    );
 
     // The origin now refuses outright. A revalidation that cannot be made is not
     // a failed run — the cached entry still answers.
@@ -7975,10 +7989,14 @@ fn plugin_refresh_forces_a_refetch() {
     };
 
     run(false);
-    assert_eq!(server.hits(), 1, "first run fetches once");
+    assert_eq!(server.bodies_served(), 1, "first run fetches once");
     // Refresh overrides the cache and refetches even though the pin is unchanged.
     run(true);
-    assert_eq!(server.hits(), 2, "refresh must refetch the cached pin");
+    assert_eq!(
+        server.bodies_served(),
+        2,
+        "refresh must refetch the cached pin"
+    );
 }
 
 // ---- --max-parallel concurrency (rendezvous barrier) ----------------------

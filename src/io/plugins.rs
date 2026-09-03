@@ -1098,6 +1098,34 @@ mod tests {
         );
     }
 
+    /// The freshness window's default is a user-facing number, so it is stated
+    /// in the README and in `AGENTS.md` as well as here. Nothing generates those
+    /// documents, so this is the gate that keeps the three from drifting: change
+    /// the constant and the two prose statements move with it, or this fails.
+    #[test]
+    fn the_documented_freshness_default_matches_the_constant() {
+        let default = DEFAULT_TTL_SECS.to_string();
+        for (name, text) in [
+            ("README.md", include_str!("../../README.md")),
+            ("AGENTS.md", include_str!("../../AGENTS.md")),
+        ] {
+            let line = text
+                .lines()
+                .find(|l| l.contains(TTL_VAR) && l.contains("default"))
+                .or_else(|| {
+                    // The statement may wrap, so fall back to the line that
+                    // carries the default itself.
+                    text.lines()
+                        .find(|l| l.contains("default") && l.contains(&default))
+                })
+                .unwrap_or_else(|| panic!("{name} states no {TTL_VAR} default"));
+            assert!(
+                line.contains(&default),
+                "{name} documents a freshness default that is not {default}: {line}"
+            );
+        }
+    }
+
     #[test]
     fn cache_metadata_v1_matches_the_committed_golden() {
         // The golden's own text fixes the persisted names, their order and the
