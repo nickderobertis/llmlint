@@ -805,19 +805,45 @@ env vars. The bundled config-lint plugin ships inside the binary and resolves
 
 A URL may be **pinned to a version** with an `@` suffix matching the plugin
 config's own top-level `version`: `@1` accepts any `1.x`, `@1.2` any `1.2.x`,
-`@1.2.3` exactly that. The pin is both an assertion (a mismatch is a hard error)
-and the **cache key**: a pinned URL is fetched once into the cache and reused on
-later runs without refetching — bump the pin to pull a new version. An *unpinned*
-URL is fetched every run.
+`@1.2.3` exactly that. A pin is an assertion (a mismatch is a hard error) and a
+*range*: `@1` promises that the author's non-breaking bumps reach you
+automatically. An *unpinned* URL is fetched every run and never cached.
+
+**The cache follows the pin's promise.** Each fetched document is cached under
+the version **it declares** — not under the pin — so `1.2` and `1.4` are two
+entries and neither answers for the other. A pinned URL resolves to the newest
+cached version satisfying the pin; once that entry is older than the freshness
+window, llmlint revalidates it against the origin (a conditional request, so an
+unchanged plugin costs no download) and adopts a newer version satisfying the
+same pin with no change to your config. A revalidation that *can't* be made —
+offline, a transport failure, a refused request — reuses the cached copy and the
+run keeps working: the cache is a speed-up, never a network dependency.
 
 The cache lives under `$XDG_CACHE_HOME/llmlint/plugins` (override with
-`LLMLINT_CACHE_DIR`). Set `LLMLINT_PLUGIN_REFRESH=1` to force a refetch.
+`LLMLINT_CACHE_DIR`). `LLMLINT_PLUGIN_TTL` sets the freshness window in seconds
+(default `3600`; `0` revalidates on every run) and `LLMLINT_PLUGIN_REFRESH=1`
+forces a refetch that replaces what the cache holds.
 
-Because a pinned `@1` reuses the cache across versions, **a plugin author must
-bump the config's `version:` whenever its rules change** — otherwise consumers
-silently keep behavior under a stale pin. [`llmlint check-version-bump`](#commands--exit-codes)
-guards exactly this: run it in CI to fail a change to a versioned config that
-didn't also bump its `version:`.
+Two commands make the cache readable when a plugin's rules aren't what you
+expect — the symptom is usually not obvious, e.g. a correct `llmlint: ignore`
+naming a rule the *current* plugin declares but a stale copy doesn't:
+
+```console
+$ llmlint plugins           # one line per cached entry
+plugin cache: /home/you/.cache/llmlint/plugins
+  https://example.com/org-rules.yml@1  version 1.2  fetched 2026-08-01T09:12:44Z  newer: 1.4
+  https://example.com/org-rules.yml@1  version 1.4  fetched 2026-09-03T10:02:11Z
+
+$ llmlint plugins clear     # drop every entry; the next run refetches
+llmlint: cleared 2 cached plugin entries from /home/you/.cache/llmlint/plugins
+```
+
+**A plugin author must still bump the config's `version:` whenever its rules
+change** — that declared version is what identifies a cache entry and what a
+consumer's pin ranges over, so an unbumped change is invisible to both.
+[`llmlint check-version-bump`](#commands--exit-codes) guards exactly this: run it
+in CI to fail a change to a versioned config that didn't also bump its
+`version:`.
 
 ### Linting your llmlint configs
 
@@ -1004,6 +1030,12 @@ source.
   repeatable) drill into part of a run; `--path` prints just the record's file
   path; `--format json` emits the raw record (or a JSON array when listing);
   `--dir`/`--cwd`/`--limit` tune where and how much.
+- `llmlint plugins` — report the [plugin cache](#plugins-shared-rule-sets):
+  per cached entry, its URL, its pin, the version it resolved to, when the origin
+  last confirmed it, and whether a newer version satisfying that pin is already
+  known. `llmlint plugins clear` empties the cache so the next run refetches;
+  `--dir` reads another cache directory and `--format json` emits the same fields
+  machine-readably. Deterministic: no model, oneharness, or network call.
 
 Exit codes: `0` all rules hold · `1` at least one violation · `2` usage,
 configuration, or harness error (could not complete the lint).

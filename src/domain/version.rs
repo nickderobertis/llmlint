@@ -6,8 +6,10 @@
 //! desired version with an `@` suffix on the URL (`url@1`, `url@1.1`,
 //! `url@1.1.1`); that pin is a [`VersionReq`]. A pin matches by *prefix*: `@1`
 //! matches any `1.x.y`, `@1.2` matches any `1.2.x`, and `@1.2.3` matches exactly
-//! `1.2.3`. The pin is therefore both an assertion (the fetched config must
-//! satisfy it) and the cache key (see [`crate::io::plugins`]).
+//! `1.2.3`. The pin is therefore an assertion the fetched config must satisfy;
+//! the *resolved* [`Version`] — never the pin — keys the on-disk plugin cache,
+//! so a non-breaking bump is a new entry rather than a hit on the old one (see
+//! [`crate::io::plugins`]).
 
 use std::borrow::Cow;
 use std::fmt;
@@ -15,8 +17,10 @@ use std::fmt;
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-/// A declared config version: 1–3 numeric components.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A declared config version: 1–3 numeric components. Ordered by its components
+/// (so the newest cached plugin entry satisfying a pin is `max`); a shorter
+/// version sorts before a longer one that extends it (`1` < `1.0` < `1.1`).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version(Vec<u64>);
 
 /// A requested version pin (the `@` suffix on a plugin URL): 1–3 numeric
@@ -171,6 +175,21 @@ mod tests {
         // A pin more specific than the declared version cannot be satisfied.
         assert!(!req.matches(&Version::parse("1.4").unwrap()));
         assert!(!req.matches(&Version::parse("1.4.3").unwrap()));
+    }
+
+    #[test]
+    fn versions_order_by_components() {
+        let v = |s: &str| Version::parse(s).unwrap();
+        // The cache picks the newest entry satisfying a pin, so ordering must
+        // put a later minor above an earlier one.
+        assert!(v("1.4") > v("1.2"));
+        assert!(v("1.10") > v("1.9"));
+        assert!(v("2") > v("1.99.99"));
+        // A shorter version sorts below a longer one that extends it.
+        assert!(v("1") < v("1.0"));
+        let mut all = [v("1.2"), v("2.0"), v("1.10")];
+        all.sort();
+        assert_eq!(all.iter().max().unwrap(), &v("2.0"));
     }
 
     #[test]

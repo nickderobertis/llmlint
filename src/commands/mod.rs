@@ -9,6 +9,7 @@ pub mod ignores;
 pub mod init;
 pub mod lint;
 pub mod lint_config;
+pub mod plugins;
 pub mod progress;
 pub mod validate;
 pub mod version_bump;
@@ -29,6 +30,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Where(args)) => where_::run(args),
         Some(Command::Doctor(args)) => doctor::run(args),
         Some(Command::History(args)) => history::run(args),
+        Some(Command::Plugins(args)) => plugins::run(args),
         None => lint::run(cli.lint),
     }
 }

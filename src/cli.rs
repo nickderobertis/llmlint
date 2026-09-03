@@ -80,6 +80,14 @@ pub enum Command {
     /// terminal report omits. Drill in with `--status`/`--rule` filters, print the
     /// record's path with `--path`, or emit `--format json`.
     History(HistoryArgs),
+    /// Report the on-disk plugin cache: per cached plugin, its URL, its version
+    /// pin, the version it resolved to, when the origin last confirmed it, and
+    /// whether a newer version satisfying that pin is already known. A pin is a
+    /// *range*, so a long-lived cache can hold an older version than the pin
+    /// promises — this is where to look when a rule a plugin declares seems not
+    /// to exist. `llmlint plugins clear` empties the cache so the next run
+    /// refetches. Deterministic: no model, oneharness, or network call.
+    Plugins(PluginsArgs),
 }
 
 #[derive(Args, Debug, Default)]
@@ -694,4 +702,28 @@ pub struct HistoryArgs {
     /// Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct PluginsArgs {
+    #[command(subcommand)]
+    pub command: Option<PluginsCommand>,
+
+    /// Read (or clear) this cache directory, overriding `LLMLINT_CACHE_DIR` and
+    /// the platform default.
+    #[arg(long = "dir", value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+
+    /// Output format. `human` (default) prints one line per cached entry;
+    /// `json` prints the same fields as a machine-readable document.
+    #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
+    pub format: OutputFormat,
+}
+
+#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginsCommand {
+    /// List every cached plugin entry (the default).
+    List,
+    /// Remove every cached plugin entry, so the next run refetches.
+    Clear,
 }

@@ -20,6 +20,7 @@ pub fn run(args: CheckIgnoresArgs) -> Result<i32> {
     // does, so the two never disagree about which files are in scope.
     let loaded = configfs::load_with_targets(&args.config, &cwd, &args.files)?;
     let scopes = loaded.scopes;
+    let plugins = loaded.plugins;
     let config = loaded.config;
     validate(&config)?;
 
@@ -35,7 +36,7 @@ pub fn run(args: CheckIgnoresArgs) -> Result<i32> {
     // A malformed directive is a hard exit-2 error (`Error::IgnoreDirective`),
     // exactly as it is for a lint run; a clean scan is quiet but for one line so
     // the command is usable in a noisy pre-commit loop.
-    ignores::check(&cwd, &targets, &known)?;
+    ignores::check(&cwd, &targets, &known, &plugins)?;
     println!(
         "llmlint: ignore directives OK ({} file(s) scanned)",
         targets.len()
