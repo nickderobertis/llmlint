@@ -1871,15 +1871,8 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
         .unwrap()
         .flatten()
         .map(|e| e.path())
-        .find(|p| {
-            p.file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("v1.2.")
-        })
-        .filter(|p| p.extension().unwrap() == "yml")
-        .unwrap();
+        .find(|p| p.file_name().is_some_and(|n| n == "v1.2.yml"))
+        .expect("the cached document is keyed by the version it declares");
     fs::write(
         &entry,
         format!("version: 1.9\nrules:\n  - {{ name: tampered_rule, description: \"{RULE}\" }}\n"),
