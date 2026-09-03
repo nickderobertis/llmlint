@@ -997,6 +997,19 @@ mod tests {
         }
     }
 
+    /// The committed goldens for the on-disk metadata shape (`CACHE_SCHEMA` 1).
+    /// They are byte-for-byte what [`write_meta`] produces, so asserting against
+    /// them pins the field names, their order, the schema value, and which
+    /// fields are omitted — see `tests/fixtures/plugin_cache/README.md`.
+    const GOLDEN_V1: &str = include_str!("../../tests/fixtures/plugin_cache/v1.json");
+    const GOLDEN_V1_NO_VALIDATORS: &str =
+        include_str!("../../tests/fixtures/plugin_cache/v1-no-validators.json");
+
+    const GOLDEN_URL: &str = "https://example.com/org-rules.yml";
+    const GOLDEN_ETAG: &str = "\"a1b2c3\"";
+    const GOLDEN_LAST_MODIFIED: &str = "Tue, 01 Sep 2026 09:12:44 GMT";
+    const GOLDEN_CONFIRMED_AT: u64 = 1_700_000_000;
+
     fn plugin_yaml(version: &str, rule: &str) -> String {
         format!("version: {version}\nrules:\n  - {{name: {rule}, description: d}}\n")
     }
@@ -1068,6 +1081,98 @@ mod tests {
             file_url_path("file:///C:/a/b.yml"),
             Some(PathBuf::from("C:/a/b.yml"))
         );
+    }
+
+    #[test]
+    fn cache_metadata_v1_matches_the_committed_golden() {
+        // The golden's own text fixes the persisted names, their order and the
+        // schema value, so a renamed or reordered field fails here rather than
+        // silently making every host's cache unreadable.
+        let raw: serde_json::Value = serde_json::from_str(GOLDEN_V1).unwrap();
+        let keys: Vec<&str> = raw
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "schema",
+                "url",
+                "pin",
+                "version",
+                "confirmed_at",
+                "etag",
+                "last_modified"
+            ]
+        );
+        assert_eq!(raw["schema"], 1);
+
+        // The real deserializer reads every field back as its parsed type.
+        let meta: CacheMeta = serde_json::from_str(GOLDEN_V1).unwrap();
+        assert_eq!(meta.schema, CacheSchema);
+        assert_eq!(meta.url, GOLDEN_URL);
+        assert_eq!(meta.pin, VersionReq::parse("1").unwrap());
+        assert_eq!(meta.version, ver("1.4"));
+        assert_eq!(meta.confirmed_at, GOLDEN_CONFIRMED_AT);
+        assert_eq!(meta.etag.as_deref(), Some(GOLDEN_ETAG));
+        assert_eq!(meta.last_modified.as_deref(), Some(GOLDEN_LAST_MODIFIED));
+
+        // …and the real writer puts it back byte for byte, so the golden is the
+        // file a host actually holds rather than an idealized rendering of it.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("v1.4.json");
+        write_meta(&path, &meta).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), GOLDEN_V1);
+    }
+
+    #[test]
+    fn absent_validators_are_omitted_and_read_back_as_none() {
+        // An origin that supplied neither validator writes neither field —
+        // omitted, not null — and an entry written that way still reads.
+        let meta: CacheMeta = serde_json::from_str(GOLDEN_V1_NO_VALIDATORS).unwrap();
+        assert_eq!(meta.etag, None);
+        assert_eq!(meta.last_modified, None);
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("v1.4.json");
+        write_meta(&path, &meta).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(written, GOLDEN_V1_NO_VALIDATORS);
+        assert!(!written.contains("etag"), "got: {written}");
+        assert!(!written.contains("last_modified"), "got: {written}");
+        assert!(!written.contains("null"), "got: {written}");
+    }
+
+    #[test]
+    fn a_stored_entry_is_the_golden_on_disk() {
+        // The path a real fetch takes, with the clock pinned: what `store`
+        // leaves beside the document is exactly the committed golden, and
+        // `read_entries` accepts it.
+        let dir = tempdir().unwrap();
+        let body = Body {
+            text: plugin_yaml("1.4", "org_rule"),
+            etag: Some(GOLDEN_ETAG.to_string()),
+            last_modified: Some(GOLDEN_LAST_MODIFIED.to_string()),
+        };
+        store(
+            dir.path(),
+            GOLDEN_URL,
+            &VersionReq::parse("1").unwrap(),
+            &ver("1.4"),
+            &body,
+            GOLDEN_CONFIRMED_AT,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("v1.4.json")).unwrap(),
+            GOLDEN_V1
+        );
+        let entries = read_entries(dir.path(), GOLDEN_URL);
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(entries[0].version(), &ver("1.4"));
+        assert_eq!(entries[0].meta.etag.as_deref(), Some(GOLDEN_ETAG));
     }
 
     #[test]

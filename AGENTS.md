@@ -636,8 +636,10 @@ harness reads target files on-demand with its own tools.
   first version it ever fetched, silently and undiagnosably. An entry is
   `<url-hash>/v<version>.yml`, keyed by the version the fetched **document
   declares**, with its metadata beside it in `v<version>.json` — `CacheMeta` is
-  that shape, and `CACHE_SCHEMA` versions it, so bump the constant when the shape
-  changes rather than restating the fields here. Resolution takes the newest
+  that shape, `CACHE_SCHEMA` versions it, and the committed golden
+  (`tests/fixtures/plugin_cache/`) pins the persisted form byte for byte — change
+  the shape and all three move in the same commit, rather than restating the
+  fields here. Resolution takes the newest
   entry satisfying the pin, admits it only while its document still declares the
   version its metadata claims, and revalidates once it is older than
   `LLMLINT_PLUGIN_TTL` (seconds, default 3600; it and `LLMLINT_PLUGIN_REFRESH`
