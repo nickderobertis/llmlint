@@ -189,6 +189,7 @@ const CONFIG_LINT: &str =
 /// external network).
 struct HttpServer {
     base_url: String,
+    requests: Arc<AtomicUsize>,
     bodies_served: Arc<AtomicUsize>,
     status: Arc<AtomicUsize>,
 }
@@ -208,8 +209,10 @@ impl HttpServer {
     fn serve_with(body: &str, validator: Validator) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(AtomicUsize::new(0));
         let bodies_served = Arc::new(AtomicUsize::new(0));
         let status = Arc::new(AtomicUsize::new(200));
+        let requests_thread = Arc::clone(&requests);
         let bodies_thread = Arc::clone(&bodies_served);
         let status_thread = Arc::clone(&status);
         let body = body.to_string();
@@ -221,6 +224,7 @@ impl HttpServer {
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
+                requests_thread.fetch_add(1, Ordering::SeqCst);
                 let mut buf = [0u8; 2048];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 // Header names are case-insensitive and the client sends them
@@ -259,12 +263,19 @@ impl HttpServer {
         });
         HttpServer {
             base_url: format!("http://127.0.0.1:{port}"),
+            requests,
             bodies_served,
             status,
         }
     }
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
+    }
+    /// How many requests the origin answered at all — including the conditional
+    /// ones a `304` answers. A run that must not touch the network leaves this
+    /// unchanged, which counting bodies alone would not prove.
+    fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
     }
     /// How many full-body responses were served. A `304` and a refusal are
     /// requests the server answered but did not send a document for, so neither
@@ -1433,6 +1444,14 @@ fn pinned_url_plugin_is_fetched_over_http_and_cached() {
         server.bodies_served(),
         1,
         "an unchanged pin must not refetch"
+    );
+    // Within the freshness window the entry is used with no request at all —
+    // not even a conditional one a `304` would answer, which a body count alone
+    // could not tell apart.
+    assert_eq!(
+        server.requests(),
+        1,
+        "a fresh cache entry must not contact the origin"
     );
 }
 

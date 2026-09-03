@@ -105,7 +105,8 @@ resolves the oneharness the test put on PATH.
   runs stands in for the remote one (`project_with_pinned_plugin` + `publish`,
   `LLMLINT_PLUGIN_TTL=0`), and the localhost `HttpServer` — offering an `ETag` or
   a `Last-Modified`, and able to refuse — stands in for a conditional one. The
-  covered ground: a bump reaching a consumer that changed nothing; a `304` and an
+  covered ground: a bump reaching a consumer that changed nothing; a fresh entry
+  making no request at all; a `304` and an
   unreachable or refusing origin both leaving the run working from cache, until
   `plugins clear` removes that fallback; the reporting verb's answer and the
   cache directory it cannot read; every entry a reader must pass over
