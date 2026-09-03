@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/nickderobertis/llmlint/compare/v0.4.0...v0.4.1) - 2026-09-03
+
+### Fixed
+
+- *(plugins)* key the plugin cache by the version fetched, and revalidate it ([#185](https://github.com/nickderobertis/llmlint/pull/185))
+
 ## [0.4.0](https://github.com/nickderobertis/llmlint/compare/v0.3.30...v0.4.0) - 2026-08-15
 
 ### Added
