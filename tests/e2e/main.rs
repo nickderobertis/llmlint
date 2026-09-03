@@ -1848,6 +1848,16 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
     )
     .unwrap();
     fs::write(sub.join("v4.0.yml"), "version: 4.0\nrules: []\n").unwrap();
+    // A correctly-named, current-schema sidecar whose validator is one no
+    // request could carry is not repaired into an entry either — the value
+    // cannot inhabit the metadata type, so the whole entry is passed over.
+    fs::write(sub.join("v5.0.yml"), "version: 5.0\nrules: []\n").unwrap();
+    fs::write(
+        sub.join("v5.0.json"),
+        "{\"schema\":1,\"url\":\"u\",\"pin\":\"1\",\"version\":\"5.0\",\
+         \"confirmed_at\":0,\"etag\":\"v1\\r\\nX-Injected: 1\"}",
+    )
+    .unwrap();
     // A well-formed sidecar under a filename that does not name the version it
     // declares must not adopt that version's document as an entry.
     fs::write(

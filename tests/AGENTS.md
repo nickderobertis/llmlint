@@ -110,7 +110,8 @@ resolves the oneharness the test put on PATH.
   unreachable or refusing origin both leaving the run working from cache, until
   `plugins clear` removes that fallback; the reporting verb's answer and the
   cache directory it cannot read; every entry a reader must pass over
-  (previous-layout, tampered, malformed, future-schema, mis-named sidecar); a
+  (previous-layout, tampered, malformed, future-schema, mis-named sidecar,
+  illegal validator); a
   rejected `LLMLINT_PLUGIN_TTL`/`_REFRESH`; and an ignore naming a rule nothing
   declares reporting the loaded plugins and their resolved versions. The
   persisted metadata shape has committed goldens (`tests/fixtures/plugin_cache/`)

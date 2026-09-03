@@ -370,7 +370,7 @@ fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> R
             };
             resolution(url, resolved, text, Origin::Cache)
         };
-        let now = now_secs();
+        let now = now_confirmed();
         if !is_stale(&entry.meta, opts.ttl_secs, now) {
             return Ok(cached(text));
         }
@@ -409,7 +409,7 @@ fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> R
     let body = fetch_body(url)?;
     let resolved = resolve_version(url, Some(req), &body.text)?;
     if let Some(v) = resolved.version() {
-        store(dir, url, req, v, &body, now_secs())?;
+        store(dir, url, req, v, &body, now_confirmed())?;
     }
     Ok(resolution(url, resolved, body.text, Origin::Fetched))
 }
@@ -457,9 +457,106 @@ fn load_entry(entry: &Entry, url: &str) -> Option<String> {
     (&declared == entry.version()).then_some(text)
 }
 
+/// A cache entry's confirmation time as persisted: seconds since the Unix epoch,
+/// and only a count some clock can hold. Deserializing rejects anything else, so
+/// a hand-edited number cannot inhabit [`CacheMeta`] at all and the addition that
+/// would panic on it is unreachable rather than guarded. Serde-transparent: on
+/// the wire it is the bare number, exactly as the golden holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConfirmedAt(u64);
+
+impl ConfirmedAt {
+    /// The confirmation time `secs` names, or `None` when no `SystemTime` can
+    /// hold it.
+    pub fn new(secs: u64) -> Option<Self> {
+        Self::to_instant(secs).map(|_| ConfirmedAt(secs))
+    }
+
+    /// Seconds since the Unix epoch, for arithmetic against the freshness window.
+    pub fn secs(self) -> u64 {
+        self.0
+    }
+
+    /// The instant this names. Total by construction — the value was checked
+    /// before the type existed — so there is no failure for a caller to handle.
+    pub fn instant(self) -> SystemTime {
+        Self::to_instant(self.0).unwrap_or(UNIX_EPOCH)
+    }
+
+    fn to_instant(secs: u64) -> Option<SystemTime> {
+        UNIX_EPOCH.checked_add(std::time::Duration::from_secs(secs))
+    }
+}
+
+impl Serialize for ConfirmedAt {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_u64(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ConfirmedAt {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let secs = u64::deserialize(d)?;
+        ConfirmedAt::new(secs).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "confirmation time {secs} is past any representable instant"
+            ))
+        })
+    }
+}
+
+/// The longest revalidation validator worth persisting. Real `ETag`s and HTTP
+/// dates are tens of bytes; the bound keeps a bloated cache file from being sent
+/// back to an origin verbatim.
+const MAX_VALIDATOR_LEN: usize = 512;
+
+/// A revalidation validator as persisted (`ETag` / `Last-Modified`): a legal,
+/// bounded HTTP header value, because going back out as a request header is the
+/// only thing it is for. Deserializing rejects anything else — a control
+/// character would split the request line — so an edited cache file cannot put
+/// one into a request. Serde-transparent: on the wire it is the bare string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeaderValue(String);
+
+impl HeaderValue {
+    /// The validator `v` names, or `None` when it is not one a request could
+    /// carry (empty, over-long, or holding a byte outside visible ASCII).
+    pub fn new(v: impl Into<String>) -> Option<Self> {
+        let v = v.into();
+        let legal = !v.is_empty()
+            && v.len() <= MAX_VALIDATOR_LEN
+            && v.bytes().all(|b| b == b'\t' || (0x20..0x7f).contains(&b));
+        legal.then_some(HeaderValue(v))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for HeaderValue {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for HeaderValue {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        HeaderValue::new(raw.clone()).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "{raw:?} is not a legal HTTP header value (visible ASCII, 1 to \
+                 {MAX_VALIDATOR_LEN} bytes)"
+            ))
+        })
+    }
+}
+
 /// Metadata stored beside each cache entry. Written as `v<version>.json` next to
 /// the `v<version>.yml` document it describes; an entry without readable
-/// metadata of the current [`CACHE_SCHEMA`] is not an entry.
+/// metadata of the current [`CACHE_SCHEMA`] is not an entry. Every field is the
+/// value it means, so metadata this release did not write fails to deserialize
+/// rather than arriving as something a later check has to catch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheMeta {
     /// On-disk shape version — only the one this release reads.
@@ -473,16 +570,16 @@ pub struct CacheMeta {
     pub pin: VersionReq,
     /// The version the fetched document declares — the entry's key.
     pub version: Version,
-    /// When the origin last **confirmed** this entry, in seconds since the Unix
-    /// epoch. A `304` refreshes it without downloading anything, so this is a
-    /// confirmation time, not a download time.
-    pub confirmed_at: u64,
+    /// When the origin last **confirmed** this entry. A `304` refreshes it
+    /// without downloading anything, so this is a confirmation time, not a
+    /// download time.
+    pub confirmed_at: ConfirmedAt,
     /// The `ETag` the response carried, for the next conditional request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub etag: Option<String>,
+    pub etag: Option<HeaderValue>,
     /// The `Last-Modified` the response carried.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_modified: Option<String>,
+    pub last_modified: Option<HeaderValue>,
 }
 
 /// One cache entry: its metadata and the paths of the two files that hold it.
@@ -537,18 +634,13 @@ fn as_utc_stamp<S: serde::Serializer>(
     s.serialize_str(&crate::io::history::format_timestamp(*at))
 }
 
-/// Whether `v` is a legal HTTP header value: visible ASCII (plus space and tab),
-/// bounded in length. A control character would split the request line; the
-/// bound keeps a bloated cache file from being sent verbatim.
-fn is_header_value(v: &str) -> bool {
-    !v.is_empty() && v.len() <= 512 && v.bytes().all(|b| b == b'\t' || (0x20..0x7f).contains(&b))
-}
-
-/// The instant a metadata timestamp names, or `None` when the number is past
-/// what a `SystemTime` can hold — which only a hand-edited or corrupt file
-/// produces, and which must never reach the arithmetic that would panic on it.
-fn instant(secs: u64) -> Option<SystemTime> {
-    UNIX_EPOCH.checked_add(std::time::Duration::from_secs(secs))
+/// The current confirmation time. A real clock is always representable, and a
+/// clock read that fails clamps to the epoch rather than failing a run.
+fn now_confirmed() -> ConfirmedAt {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    ConfirmedAt::new(secs).unwrap_or(ConfirmedAt(0))
 }
 
 /// The per-URL cache subdirectory, named by a hash of the URL.
@@ -581,21 +673,15 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
         let Ok(text) = std::fs::read_to_string(&meta_path) else {
             continue;
         };
-        let Ok(mut meta) = serde_json::from_str::<CacheMeta>(&text) else {
+        // Every persisted value is validated by this one parse: a timestamp no
+        // clock can hold, a validator no request could carry, a malformed
+        // version or pin, a schema this release does not read.
+        let Ok(meta) = serde_json::from_str::<CacheMeta>(&text) else {
             continue;
         };
         if !url.is_empty() && meta.url != url {
             continue;
         }
-        if instant(meta.confirmed_at).is_none() {
-            continue; // a confirmation time that is not a time
-        }
-        // A validator goes back out as a request header, and this file is
-        // editable, so anything that is not a legal header value is dropped
-        // rather than sent: the entry stays usable and simply revalidates
-        // unconditionally.
-        meta.etag = meta.etag.filter(|v| is_header_value(v));
-        meta.last_modified = meta.last_modified.filter(|v| is_header_value(v));
         // The sidecar must be the one this entry's version implies. Without
         // that, any `.json` declaring a version would adopt the document keyed
         // by it — a stray or forged file aliasing an entry it does not name, and
@@ -615,14 +701,8 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
 
 /// Whether an entry is older than the freshness window. A `confirmed_at` in the
 /// future (clock skew) counts as fresh.
-fn is_stale(meta: &CacheMeta, ttl_secs: u64, now: u64) -> bool {
-    now.saturating_sub(meta.confirmed_at) >= ttl_secs
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+fn is_stale(meta: &CacheMeta, ttl_secs: u64, now: ConfirmedAt) -> bool {
+    now.secs().saturating_sub(meta.confirmed_at.secs()) >= ttl_secs
 }
 
 /// Write an entry (document + metadata) under its **resolved** version.
@@ -632,7 +712,7 @@ fn store(
     req: &VersionReq,
     version: &Version,
     body: &Body,
-    now: u64,
+    now: ConfirmedAt,
 ) -> Result<()> {
     std::fs::create_dir_all(dir)
         .map_err(|e| io_err(format!("creating plugin cache dir {}", dir.display()), e))?;
@@ -654,7 +734,7 @@ fn store(
 }
 
 /// Record that the origin confirmed an entry is still current.
-fn touch(entry: &Entry, now: u64) -> Result<()> {
+fn touch(entry: &Entry, now: ConfirmedAt) -> Result<()> {
     let mut meta = entry.meta.clone();
     meta.confirmed_at = now;
     write_meta(&entry.meta_path, &meta)
@@ -713,8 +793,7 @@ pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
             url: e.meta.url.clone(),
             pin: e.meta.pin.clone(),
             version: e.version().clone(),
-            // `read_entries` admitted this entry, so its timestamp is an instant.
-            confirmed_at: instant(e.meta.confirmed_at).unwrap_or(UNIX_EPOCH),
+            confirmed_at: e.meta.confirmed_at.instant(),
             newer,
         });
     }
@@ -745,8 +824,8 @@ pub fn clear_cached(dir: &Path) -> Result<usize> {
 #[derive(Debug, Clone, Default)]
 struct Body {
     text: String,
-    etag: Option<String>,
-    last_modified: Option<String>,
+    etag: Option<HeaderValue>,
+    last_modified: Option<HeaderValue>,
 }
 
 /// Probe just the top-level `version` of a fetched plugin config.
@@ -847,10 +926,10 @@ fn http_get(url: &str, conditional: Option<&CacheMeta>) -> Result<Option<Body>> 
     let mut req = agent.get(url);
     if let Some(meta) = conditional {
         if let Some(etag) = &meta.etag {
-            req = req.header("If-None-Match", etag);
+            req = req.header("If-None-Match", etag.as_str());
         }
         if let Some(lm) = &meta.last_modified {
-            req = req.header("If-Modified-Since", lm);
+            req = req.header("If-Modified-Since", lm.as_str());
         }
     }
     let mut resp = req.call().map_err(|e| fetch_err(e.to_string()))?;
@@ -861,11 +940,13 @@ fn http_get(url: &str, conditional: Option<&CacheMeta>) -> Result<Option<Body>> 
     if !(200..300).contains(&status) {
         return Err(fetch_err(format!("HTTP status {status}")));
     }
+    // A validator is kept only if it is one a later conditional request could
+    // carry, so nothing unusable is ever persisted.
     let header = |name: &str| {
         resp.headers()
             .get(name)
             .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
+            .and_then(HeaderValue::new)
     };
     let etag = header("etag");
     let last_modified = header("last-modified");
@@ -1037,6 +1118,14 @@ mod tests {
         Version::parse(s).unwrap()
     }
 
+    fn validator(s: &str) -> HeaderValue {
+        HeaderValue::new(s).unwrap()
+    }
+
+    fn at(secs: u64) -> ConfirmedAt {
+        ConfirmedAt::new(secs).unwrap()
+    }
+
     /// The resolved version as text, for a compact assertion.
     fn resolved(res: &Resolution) -> Option<String> {
         res.info.resolved.version().map(ToString::to_string)
@@ -1158,9 +1247,9 @@ mod tests {
         assert_eq!(meta.url, GOLDEN_URL);
         assert_eq!(meta.pin, VersionReq::parse("1").unwrap());
         assert_eq!(meta.version, ver("1.4"));
-        assert_eq!(meta.confirmed_at, GOLDEN_CONFIRMED_AT);
-        assert_eq!(meta.etag.as_deref(), Some(GOLDEN_ETAG));
-        assert_eq!(meta.last_modified.as_deref(), Some(GOLDEN_LAST_MODIFIED));
+        assert_eq!(meta.confirmed_at, at(GOLDEN_CONFIRMED_AT));
+        assert_eq!(meta.etag, Some(validator(GOLDEN_ETAG)));
+        assert_eq!(meta.last_modified, Some(validator(GOLDEN_LAST_MODIFIED)));
 
         // …and the real writer puts it back byte for byte, so the golden is the
         // file a host actually holds rather than an idealized rendering of it.
@@ -1168,6 +1257,68 @@ mod tests {
         let path = dir.path().join("v1.4.json");
         write_meta(&path, &meta).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), GOLDEN_V1);
+    }
+
+    #[test]
+    fn a_persisted_timestamp_no_clock_can_hold_is_rejected_when_read() {
+        // The value cannot inhabit `CacheMeta` at all, so nothing downstream has
+        // to guard the arithmetic that would panic on it.
+        let meta = GOLDEN_V1.replace("1700000000", &u64::MAX.to_string());
+        let err = serde_json::from_str::<CacheMeta>(&meta).unwrap_err();
+        assert!(
+            err.to_string().contains("representable instant"),
+            "got: {err}"
+        );
+        assert_eq!(ConfirmedAt::new(u64::MAX), None);
+
+        // …and a value a clock can hold round-trips as the bare number the
+        // golden holds, keeping the wire shape a plain integer.
+        let ok = at(GOLDEN_CONFIRMED_AT);
+        assert_eq!(ok.secs(), GOLDEN_CONFIRMED_AT);
+        assert_eq!(
+            serde_json::to_string(&ok).unwrap(),
+            GOLDEN_CONFIRMED_AT.to_string()
+        );
+        assert_eq!(serde_json::from_str::<ConfirmedAt>("0").unwrap(), at(0));
+        assert_eq!(
+            ok.instant(),
+            UNIX_EPOCH + std::time::Duration::from_secs(ok.secs())
+        );
+    }
+
+    #[test]
+    fn a_persisted_validator_no_request_could_carry_is_rejected_when_read() {
+        // Each of these would either split the request line, send nothing, or
+        // ship a bloated cache file back to the origin verbatim.
+        for bad in [
+            "\"v1\"\r\nX-Injected: 1",
+            "\"v1\"\n",
+            "tab\u{7f}del",
+            "",
+            &"x".repeat(MAX_VALIDATOR_LEN + 1),
+        ] {
+            assert_eq!(HeaderValue::new(bad), None, "accepted {bad:?}");
+            let json = serde_json::to_string(bad).unwrap();
+            let err = serde_json::from_str::<HeaderValue>(&json).unwrap_err();
+            assert!(
+                err.to_string().contains("legal HTTP header value"),
+                "got: {err}"
+            );
+        }
+
+        // A real validator round-trips as the bare string the golden holds.
+        for good in [
+            GOLDEN_ETAG,
+            GOLDEN_LAST_MODIFIED,
+            "W/\"weak\"",
+            &"x".repeat(MAX_VALIDATOR_LEN),
+        ] {
+            let v = validator(good);
+            assert_eq!(v.as_str(), good);
+            let json = serde_json::to_string(&v).unwrap();
+            assert_eq!(json, serde_json::to_string(good).unwrap());
+            assert_eq!(serde_json::from_str::<HeaderValue>(&json).unwrap(), v);
+        }
     }
 
     #[test]
@@ -1196,8 +1347,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let body = Body {
             text: plugin_yaml("1.4", "org_rule"),
-            etag: Some(GOLDEN_ETAG.to_string()),
-            last_modified: Some(GOLDEN_LAST_MODIFIED.to_string()),
+            etag: Some(validator(GOLDEN_ETAG)),
+            last_modified: Some(validator(GOLDEN_LAST_MODIFIED)),
         };
         store(
             dir.path(),
@@ -1205,7 +1356,7 @@ mod tests {
             &VersionReq::parse("1").unwrap(),
             &ver("1.4"),
             &body,
-            GOLDEN_CONFIRMED_AT,
+            at(GOLDEN_CONFIRMED_AT),
         )
         .unwrap();
         assert_eq!(
@@ -1215,7 +1366,7 @@ mod tests {
         let entries = read_entries(dir.path(), GOLDEN_URL);
         assert_eq!(entries.len(), 1, "{entries:?}");
         assert_eq!(entries[0].version(), &ver("1.4"));
-        assert_eq!(entries[0].meta.etag.as_deref(), Some(GOLDEN_ETAG));
+        assert_eq!(entries[0].meta.etag, Some(validator(GOLDEN_ETAG)));
     }
 
     #[test]
@@ -1449,23 +1600,16 @@ mod tests {
             r#"{"schema":1,"url":"u","pin":"1","version":"5","confirmed_at":18446744073709551615}"#,
         )
         .unwrap();
-        // Current schema, a validator that is not a legal header value: the
-        // entry stays, minus the validator it cannot send.
+        // Current schema, a validator no request could carry: the metadata does
+        // not parse, so there is no entry — a header this release would never
+        // have written is not repaired into one.
         std::fs::write(dir.path().join("v4.yml"), "version: 4\n").unwrap();
         std::fs::write(
             dir.path().join("v4.json"),
             "{\"schema\":1,\"url\":\"u\",\"pin\":\"1\",\"version\":\"4\",\
-             \"confirmed_at\":0,\"etag\":\"v1\\r\\nX-Injected: 1\",\"last_modified\":\"\"}",
+             \"confirmed_at\":0,\"etag\":\"v1\\r\\nX-Injected: 1\"}",
         )
         .unwrap();
-        let kept = read_entries(dir.path(), "u");
-        assert_eq!(kept.len(), 1, "{kept:?}");
-        assert_eq!(
-            kept[0].meta.etag, None,
-            "an unsendable validator is dropped"
-        );
-        assert_eq!(kept[0].meta.last_modified, None);
-        std::fs::remove_file(dir.path().join("v4.json")).unwrap();
         assert!(read_entries(dir.path(), "u").is_empty());
         assert!(list_cached(dir.path()).unwrap().is_empty());
         // Metadata under a filename that does not name the version it declares
@@ -1533,16 +1677,16 @@ mod tests {
         let sub = url_dir(cache.path(), &url);
         let entries = read_entries(&sub, &url);
         let mut meta = entries[0].meta.clone();
-        meta.confirmed_at = 0;
+        meta.confirmed_at = at(0);
         write_meta(&entries[0].meta_path, &meta).unwrap();
-        assert!(is_stale(&meta, DEFAULT_TTL_SECS, now_secs()));
+        assert!(is_stale(&meta, DEFAULT_TTL_SECS, now_confirmed()));
 
         let res = load_remote(&url, &req("1"), &opts_with_cache(cache.path())).unwrap();
         assert!(res.text.contains("name: r"));
         let after = read_entries(&sub, &url);
         assert_eq!(after.len(), 1, "an unchanged version stays one entry");
         assert!(
-            !is_stale(&after[0].meta, DEFAULT_TTL_SECS, now_secs()),
+            !is_stale(&after[0].meta, DEFAULT_TTL_SECS, now_confirmed()),
             "revalidation must restart the clock: {:?}",
             after[0].meta
         );
@@ -1563,9 +1707,9 @@ mod tests {
         // The origin's validator was recorded beside the entry, and backdating
         // proves the 304 (not the window) is what refreshes the timestamp.
         let entries = read_entries(&sub, &url);
-        assert_eq!(entries[0].meta.etag.as_deref(), Some("\"v1\""));
+        assert_eq!(entries[0].meta.etag, Some(validator("\"v1\"")));
         let mut meta = entries[0].meta.clone();
-        meta.confirmed_at = 0;
+        meta.confirmed_at = at(0);
         write_meta(&entries[0].meta_path, &meta).unwrap();
 
         let second = load_remote(&url, &req("1"), &opts).unwrap();
@@ -1576,7 +1720,7 @@ mod tests {
             1,
             "an unchanged document must not be re-downloaded"
         );
-        assert!(read_entries(&sub, &url)[0].meta.confirmed_at > 0);
+        assert!(read_entries(&sub, &url)[0].meta.confirmed_at.secs() > 0);
     }
 
     #[test]
@@ -1594,16 +1738,16 @@ mod tests {
             url: "u".into(),
             pin: VersionReq::parse("1").unwrap(),
             version: ver("1"),
-            confirmed_at: 100,
+            confirmed_at: at(100),
             etag: None,
             last_modified: None,
         };
-        assert!(!is_stale(&meta, 10, 105));
-        assert!(is_stale(&meta, 10, 110));
+        assert!(!is_stale(&meta, 10, at(105)));
+        assert!(is_stale(&meta, 10, at(110)));
         // A future timestamp counts as fresh rather than underflowing.
-        assert!(!is_stale(&meta, 10, 50));
+        assert!(!is_stale(&meta, 10, at(50)));
         // A zero window always revalidates.
-        assert!(is_stale(&meta, 0, 100));
+        assert!(is_stale(&meta, 0, at(100)));
     }
 
     #[test]
