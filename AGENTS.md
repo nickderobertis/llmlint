@@ -631,12 +631,29 @@ harness reads target files on-demand with its own tools.
   full discovered set, so a project whose only config sits in an unrelated subtree
   is a clean zero-rule run, not a `ConfigNotFound`. `--config` replaces the whole
   walk with no cascade (`load_explicit`, globs rooted at `cwd`).
+- **Plugin cache keyed by the resolved version (convention):** a pin (`@1`) is a
+  *range*, so it must never be the cache key — keying by it freezes a host on the
+  first version it ever fetched, silently and undiagnosably. An entry is
+  `<url-hash>/v<version>.yml`, keyed by the version the fetched **document
+  declares**, with its metadata beside it in `v<version>.json` — `CacheMeta` is
+  that shape, `CACHE_SCHEMA` versions it, and the committed golden
+  (`tests/fixtures/plugin_cache/`) pins the persisted form byte for byte — change
+  the shape and all three move in the same commit, rather than restating the
+  fields here. Resolution takes the newest
+  entry satisfying the pin, admits it only while its document still declares the
+  version its metadata claims, and revalidates once it is older than
+  `LLMLINT_PLUGIN_TTL` (seconds, default 3600; it and `LLMLINT_PLUGIN_REFRESH`
+  read the same grammar every other `LLMLINT_*` setting does, and reject the rest). A revalidation that cannot be made
+  reuses the entry and never fails the run: a cache is a speed-up, not a network
+  dependency. A previous-layout file (named for a *pin*, no metadata) is
+  invisible. Keep the diagnosis path working — `llmlint plugins` / `plugins clear`
+  and the resolved versions named in the unknown-rule ignore error.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `check-version-bump`, `validate`, `lint-config`, `init`, `config` (`--sources`
   adds per-item provenance), `where` (locate one config item's source), `doctor`,
-  `history` (inspect logged run results). `commands/ignores.rs` holds the
-  ignore-directive resolution + scan shared by `lint`, `check-ignores`, and
-  `lint-config`.
+  `history` (inspect logged run results), `plugins` (report / clear the plugin
+  cache). `commands/ignores.rs` holds the ignore-directive resolution + scan
+  shared by `lint`, `check-ignores`, and `lint-config`.
 - **Deterministic (model-free) checks + `validate`:** llmlint's static checks —
   config structure (`domain::config::validate`, at load), inline `llmlint: ignore`
   directive structure (`check-ignores`), and **version bumps**

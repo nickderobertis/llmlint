@@ -6,8 +6,10 @@
 //! desired version with an `@` suffix on the URL (`url@1`, `url@1.1`,
 //! `url@1.1.1`); that pin is a [`VersionReq`]. A pin matches by *prefix*: `@1`
 //! matches any `1.x.y`, `@1.2` matches any `1.2.x`, and `@1.2.3` matches exactly
-//! `1.2.3`. The pin is therefore both an assertion (the fetched config must
-//! satisfy it) and the cache key (see [`crate::io::plugins`]).
+//! `1.2.3`. The pin is therefore an assertion the fetched config must satisfy;
+//! the *resolved* [`Version`] — never the pin — keys the on-disk plugin cache,
+//! so a non-breaking bump is a new entry rather than a hit on the old one (see
+//! [`crate::io::plugins`]).
 
 use std::borrow::Cow;
 use std::fmt;
@@ -15,8 +17,10 @@ use std::fmt;
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-/// A declared config version: 1–3 numeric components.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A declared config version: 1–3 numeric components. Ordered by its components
+/// (so the newest cached plugin entry satisfying a pin is `max`); a shorter
+/// version sorts before a longer one that extends it (`1` < `1.0` < `1.1`).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version(Vec<u64>);
 
 /// A requested version pin (the `@` suffix on a plugin URL): 1–3 numeric
@@ -95,7 +99,9 @@ impl fmt::Display for VersionReq {
 
 // A version serializes as a string ("1.2.3") and deserializes from a YAML
 // integer (`1`), float (`1.2`), or string (`"1.2.3"`) — so `version: 1`,
-// `version: 1.2`, and `version: "1.2.3"` all work in a config.
+// `version: 1.2`, and `version: "1.2.3"` all work in a config. A pin travels the
+// same way, so a persisted record (the plugin cache's metadata) can hold the
+// parsed types rather than re-validating text every time it is read.
 impl Serialize for Version {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.to_string())
@@ -104,17 +110,31 @@ impl Serialize for Version {
 
 impl<'de> Deserialize<'de> for Version {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let value = serde_yaml_ng::Value::deserialize(d)?;
-        let text = match &value {
-            serde_yaml_ng::Value::Number(n) => n.to_string(),
-            serde_yaml_ng::Value::String(s) => s.clone(),
-            other => {
-                return Err(de::Error::custom(format!(
-                    "version must be a number or string like 1, 1.2, or \"1.2.3\"; got {other:?}"
-                )))
-            }
-        };
-        Version::parse(&text).map_err(de::Error::custom)
+        Version::parse(&scalar_text(d, "version")?).map_err(de::Error::custom)
+    }
+}
+
+impl Serialize for VersionReq {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for VersionReq {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        VersionReq::parse(&scalar_text(d, "version pin")?).map_err(de::Error::custom)
+    }
+}
+
+/// The textual form of a numeric-or-string scalar, for the two impls above.
+fn scalar_text<'de, D: Deserializer<'de>>(d: D, what: &str) -> Result<String, D::Error> {
+    let value = serde_yaml_ng::Value::deserialize(d)?;
+    match &value {
+        serde_yaml_ng::Value::Number(n) => Ok(n.to_string()),
+        serde_yaml_ng::Value::String(s) => Ok(s.clone()),
+        other => Err(de::Error::custom(format!(
+            "{what} must be a number or string like 1, 1.2, or \"1.2.3\"; got {other:?}"
+        ))),
     }
 }
 
@@ -174,6 +194,21 @@ mod tests {
     }
 
     #[test]
+    fn versions_order_by_components() {
+        let v = |s: &str| Version::parse(s).unwrap();
+        // The cache picks the newest entry satisfying a pin, so ordering must
+        // put a later minor above an earlier one.
+        assert!(v("1.4") > v("1.2"));
+        assert!(v("1.10") > v("1.9"));
+        assert!(v("2") > v("1.99.99"));
+        // A shorter version sorts below a longer one that extends it.
+        assert!(v("1") < v("1.0"));
+        let mut all = [v("1.2"), v("2.0"), v("1.10")];
+        all.sort();
+        assert_eq!(all.iter().max().unwrap(), &v("2.0"));
+    }
+
+    #[test]
     fn deserializes_from_int_float_and_string() {
         let v: Version = serde_yaml_ng::from_str("1").unwrap();
         assert_eq!(v.to_string(), "1");
@@ -192,5 +227,23 @@ mod tests {
     fn serializes_as_string() {
         let v = Version::parse("1.2").unwrap();
         assert_eq!(serde_json::to_string(&v).unwrap(), "\"1.2\"");
+        let req = VersionReq::parse("1").unwrap();
+        assert_eq!(serde_json::to_string(&req).unwrap(), "\"1\"");
+    }
+
+    #[test]
+    fn pins_round_trip_through_a_persisted_record() {
+        // The plugin cache stores a pin in its metadata, so it must survive a
+        // write/read cycle as the parsed type — and malformed text must not.
+        let req = VersionReq::parse("1.2").unwrap();
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(serde_json::from_str::<VersionReq>(&json).unwrap(), req);
+        assert_eq!(
+            serde_json::from_str::<VersionReq>("1").unwrap(),
+            VersionReq::parse("1").unwrap()
+        );
+        assert!(serde_json::from_str::<VersionReq>("\"1.x\"").is_err());
+        assert!(serde_json::from_str::<VersionReq>("[1]").is_err());
+        assert!(serde_json::from_str::<Version>("[1]").is_err());
     }
 }

@@ -94,12 +94,30 @@ resolves the oneharness the test put on PATH.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
   `http://` URL is fetched once over HTTPS and reused from cache (not refetched),
-  while `LLMLINT_PLUGIN_REFRESH` forces a refetch of the same pin;
+  while `LLMLINT_PLUGIN_REFRESH` forces a refetch of the same pin **and replaces
+  what the cache holds** (the next cache-only run sees the replacement);
   a version mismatch, the removed `llmlint:` scheme, and the renamed top-level
   `include` key are each clear exit-2 errors; the bundled config-lint plugin (a
   URL resolved offline from the embedded copy) catches a bad rule in a config
   (its findings cite a file+line, since every config-lint rule requires
   attribution).
+- **Plugin cache freshness.** A `file://` origin the journey rewrites between
+  runs stands in for the remote one (`project_with_pinned_plugin` + `publish`,
+  `LLMLINT_PLUGIN_TTL=0`), and the localhost `HttpServer` — offering an `ETag` or
+  a `Last-Modified`, and able to refuse — stands in for a conditional one. The
+  covered ground: a bump reaching a consumer that changed nothing; a fresh entry
+  making no request at all; a `304` and an
+  unreachable or refusing origin both leaving the run working from cache, until
+  `plugins clear` removes that fallback; the reporting verb's answer and the
+  cache directory it cannot read; every entry a reader must pass over
+  (previous-layout, tampered, malformed, future-schema, mis-named sidecar,
+  illegal validator); a
+  rejected `LLMLINT_PLUGIN_TTL`/`_REFRESH`; and an ignore naming a rule nothing
+  declares reporting the loaded plugins and their resolved versions. The
+  persisted metadata shape has committed goldens (`tests/fixtures/plugin_cache/`)
+  asserted byte for byte against the real writer, so a renamed, reordered, or
+  no-longer-omitted field fails there rather than on the hosts whose caches it
+  would make unreadable.
 - `lint-config` is the `lint` engine with the bundled config-lint plugin forced on
   (no plugin entry needed in the project config): it catches a bad rule in a
   config, passes a clean one, skips cleanly when nothing matches the config globs,

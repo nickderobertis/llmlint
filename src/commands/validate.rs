@@ -30,6 +30,7 @@ pub fn run(args: ValidateArgs) -> Result<i32> {
     let loaded = configfs::load(&args.config, &cwd)?;
     let mut config = loaded.config;
     let mut scopes = loaded.scopes;
+    let plugins = loaded.plugins;
     // Fold the `LLMLINT_*` env overrides in as part of the static gate: a
     // malformed env value (a non-numeric timeout, a bad bool) is a boundary
     // error caught here alongside the config-structure checks.
@@ -51,7 +52,7 @@ pub fn run(args: ValidateArgs) -> Result<i32> {
     // `validate` is a whole-project gate).
     let targets = ignores::target_files(&cwd, &config, &scopes, &[])?;
     let known = ignores::known_rules(&config);
-    ignores::check(&cwd, &targets, &known)?;
+    ignores::check(&cwd, &targets, &known, &plugins)?;
 
     // 3. Version bumps for the discovered versioned config files (an empty CLI file
     // list makes `check` default to the discovered llmlint configs; it touches git

@@ -63,6 +63,7 @@ pub(crate) fn run_loaded(
 ) -> Result<i32> {
     let mut scopes = loaded.scopes;
     let sources = loaded.sources;
+    let plugins = loaded.plugins;
     let mut config = loaded.config;
     validate(&config)?;
     validate_filters(&config, &args)?;
@@ -206,7 +207,7 @@ pub(crate) fn run_loaded(
         .collect();
     let known = ignores::known_rules(&config);
     if !args.no_ignore_check {
-        ignores::check(&cwd, &targets, &known)?;
+        ignores::check(&cwd, &targets, &known, &plugins)?;
     }
 
     // Parse each target file's well-formed inline ignores into line-span

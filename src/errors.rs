@@ -95,11 +95,19 @@ pub enum Error {
     Template(String),
 
     #[error(
-        "invalid `llmlint: ignore` directive(s):\n{0}\n\
+        "invalid `llmlint: ignore` directive(s):\n{problems}\n\
          each must name specific configured rule(s) and a reason, e.g. \
-         `// llmlint: ignore[rule_name] why it is safe here`"
+         `// llmlint: ignore[rule_name] why it is safe here`{plugins}"
     )]
-    IgnoreDirective(String),
+    IgnoreDirective {
+        /// One line per structural problem, already file:line-prefixed.
+        problems: String,
+        /// Empty, or the loaded plugins and the version each resolved to —
+        /// appended when a directive names a rule nothing declares, since a
+        /// stale cached plugin is a likely cause (see
+        /// [`crate::commands::ignores`]).
+        plugins: String,
+    },
 
     #[error(
         "versioned config file(s) changed without a version bump:\n{0}\n\
@@ -213,9 +221,30 @@ mod tests {
         assert!(Error::Template("bad".into())
             .to_string()
             .contains("template error"));
-        assert!(Error::IgnoreDirective("src/a.rs:3: no reason".into())
-            .to_string()
-            .contains("invalid `llmlint: ignore` directive"));
+        let directive = Error::IgnoreDirective {
+            problems: "src/a.rs:3: no reason".into(),
+            plugins: String::new(),
+        }
+        .to_string();
+        assert!(directive.contains("invalid `llmlint: ignore` directive"));
+        assert!(
+            directive.ends_with("why it is safe here`"),
+            "got: {directive}"
+        );
+        // The plugin trailer, when present, is the message's last word.
+        let with_plugins = Error::IgnoreDirective {
+            problems: "src/a.rs:3: unknown rule \"x\"".into(),
+            plugins: "\nloaded plugins:\n  u@1 -> version 1.2 (from cache)".into(),
+        }
+        .to_string();
+        assert!(
+            with_plugins.contains("loaded plugins"),
+            "got: {with_plugins}"
+        );
+        assert!(
+            with_plugins.contains("version 1.2 (from cache)"),
+            "got: {with_plugins}"
+        );
         let bump = Error::VersionBump("  config_lint.yml".into()).to_string();
         assert!(
             bump.contains("changed without a version bump"),

@@ -148,6 +148,14 @@ impl Project {
         c.arg("validate");
         c
     }
+    /// `plugins`: the deterministic plugin-cache report (and `clear`), wired with
+    /// no `--oneharness-bin` — it never spawns a harness, reaches no network, and
+    /// only reads what a previous run cached.
+    fn plugins(&self) -> Command {
+        let mut c = self.bare();
+        c.arg("plugins");
+        c
+    }
     /// `lint-config`: the `lint` engine with the bundled config-lint plugin forced
     /// on (no project config needed), wired to the mock harness.
     fn lint_config(&self) -> Command {
@@ -173,45 +181,111 @@ const RULE: &str = "true when ok; false otherwise.";
 const CONFIG_LINT: &str =
     "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1";
 
-/// A throwaway localhost HTTP server for the plugin-fetch journey: serves one
-/// fixed body to every GET and counts requests, so a test can assert that a
-/// cached pin is not refetched. This exercises the real HTTPS-client fetch path
-/// (localhost only — no external network).
+/// A throwaway localhost HTTP origin for the plugin journeys: it serves one body
+/// with an `ETag` (or a `Last-Modified`), answers `304 Not Modified` to a request
+/// whose validator matches, and can be switched to refuse with a failing status.
+/// Counts the full-body responses it sent, so a test can assert what was and
+/// wasn't downloaded. This exercises the real HTTPS-client path (localhost only — no
+/// external network).
 struct HttpServer {
     base_url: String,
-    hits: Arc<AtomicUsize>,
+    requests: Arc<AtomicUsize>,
+    bodies_served: Arc<AtomicUsize>,
+    status: Arc<AtomicUsize>,
+}
+
+/// Which conditional-request validator an [`HttpServer`] offers. An origin
+/// supplies one or the other, and llmlint must revalidate against either.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Validator {
+    ETag,
+    LastModified,
 }
 
 impl HttpServer {
     fn serve(body: &str) -> Self {
+        HttpServer::serve_with(body, Validator::ETag)
+    }
+    fn serve_with(body: &str, validator: Validator) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let hits = Arc::new(AtomicUsize::new(0));
-        let hits_thread = Arc::clone(&hits);
+        let requests = Arc::new(AtomicUsize::new(0));
+        let bodies_served = Arc::new(AtomicUsize::new(0));
+        let status = Arc::new(AtomicUsize::new(200));
+        let requests_thread = Arc::clone(&requests);
+        let bodies_thread = Arc::clone(&bodies_served);
+        let status_thread = Arc::clone(&status);
         let body = body.to_string();
+        let etag = "\"v1\"";
+        // The other conditional-request validator, so a journey can drive the
+        // `If-Modified-Since` path an `ETag`-less origin produces.
+        let last_modified = "Tue, 01 Sep 2026 09:12:44 GMT";
+        let etag_mode = matches!(validator, Validator::ETag);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let mut buf = [0u8; 1024]; // read + discard the request head
-                let _ = stream.read(&mut buf);
-                hits_thread.fetch_add(1, Ordering::SeqCst);
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len(),
-                );
+                requests_thread.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                // Header names are case-insensitive and the client sends them
+                // lowercased.
+                let request = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+                let code = status_thread.load(Ordering::SeqCst);
+                let (header, matched) = if etag_mode {
+                    (
+                        format!("ETag: {etag}"),
+                        request.contains(&format!("if-none-match: {}", etag.to_lowercase())),
+                    )
+                } else {
+                    (
+                        format!("Last-Modified: {last_modified}"),
+                        request.contains(&format!(
+                            "if-modified-since: {}",
+                            last_modified.to_lowercase()
+                        )),
+                    )
+                };
+                let resp = if code != 200 {
+                    format!(
+                        "HTTP/1.1 {code} Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                } else if matched {
+                    format!("HTTP/1.1 304 Not Modified\r\n{header}\r\nConnection: close\r\n\r\n")
+                } else {
+                    bodies_thread.fetch_add(1, Ordering::SeqCst);
+                    format!(
+                        "HTTP/1.1 200 OK\r\n{header}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
+                    )
+                };
                 let _ = stream.write_all(resp.as_bytes());
             }
         });
         HttpServer {
             base_url: format!("http://127.0.0.1:{port}"),
-            hits,
+            requests,
+            bodies_served,
+            status,
         }
     }
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
-    fn hits(&self) -> usize {
-        self.hits.load(Ordering::SeqCst)
+    /// How many requests the origin answered at all — including the conditional
+    /// ones a `304` answers. A run that must not touch the network leaves this
+    /// unchanged, which counting bodies alone would not prove.
+    fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+    /// How many full-body responses were served. A `304` and a refusal are
+    /// requests the server answered but did not send a document for, so neither
+    /// counts here — which is the point: a test asserts what was *downloaded*.
+    fn bodies_served(&self) -> usize {
+        self.bodies_served.load(Ordering::SeqCst)
+    }
+    /// Make every further request fail with `status`.
+    fn refuse_with(&self, status: usize) {
+        self.status.store(status, Ordering::SeqCst);
     }
 }
 
@@ -1357,12 +1431,601 @@ fn pinned_url_plugin_is_fetched_over_http_and_cached() {
         .map(|r| r["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"remote_rule"));
-    assert_eq!(server.hits(), 1, "first run should fetch exactly once");
+    assert_eq!(
+        server.bodies_served(),
+        1,
+        "first run should fetch exactly once"
+    );
 
     // Second run reuses the cached pin: the server sees no further requests.
     let out = run();
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(server.hits(), 1, "an unchanged pin must not refetch");
+    assert_eq!(
+        server.bodies_served(),
+        1,
+        "an unchanged pin must not refetch"
+    );
+    // Within the freshness window the entry is used with no request at all —
+    // not even a conditional one a `304` would answer, which a body count alone
+    // could not tell apart.
+    assert_eq!(
+        server.requests(),
+        1,
+        "a fresh cache entry must not contact the origin"
+    );
+}
+
+/// A project whose only plugin is a pinned `file://` URL the test can rewrite
+/// between runs — a local origin standing in for the remote one, which is the
+/// only genuinely external thing in plugin resolution.
+fn project_with_pinned_plugin(rule: &str, version: &str) -> (Project, PathBuf, PathBuf) {
+    let p = Project::new();
+    let origin = p.path().join("origin.yml");
+    let cache = p.path().join("cache");
+    fs::write(
+        &origin,
+        format!("version: {version}\nrules:\n  - {{ name: {rule}, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{}@1\"\nrules:\n  \
+             - {{ name: local_rule, description: \"{RULE}\" }}\n",
+            file_url(&origin)
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    (p, origin, cache)
+}
+
+/// Publish a new version of the plugin at the same URL — what a plugin author
+/// does, and what a consumer pinning `@1` is promised to pick up.
+fn publish(origin: &Path, rule: &str, version: &str) {
+    fs::write(
+        origin,
+        format!("version: {version}\nrules:\n  - {{ name: {rule}, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+}
+
+/// The rule names in a `--format json` report.
+fn reported_rules(out: &std::process::Output) -> Vec<String> {
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_plugin_bump_at_the_origin_reaches_a_consumer_that_changed_nothing() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    // Revalidate on every run, so the window never hides the bump.
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(reported_rules(&first).contains(&"shared_rule_v1".to_string()));
+
+    // The author publishes a non-breaking bump. The consuming repo changes
+    // nothing — its config still says `@1`.
+    publish(&origin, "shared_rule_v2", "1.4");
+    let second = run();
+    assert_eq!(second.status.code(), Some(0));
+    let names = reported_rules(&second);
+    assert!(
+        names.contains(&"shared_rule_v2".to_string()),
+        "the bump must reach the consumer: {names:?}"
+    );
+    assert!(
+        !names.contains(&"shared_rule_v1".to_string()),
+        "the superseded version must not still be judged: {names:?}"
+    );
+}
+
+#[test]
+fn an_unreachable_plugin_origin_leaves_the_run_working_from_cache() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run().status.code(), Some(0));
+
+    // The origin goes away. Revalidation cannot be made, so the run keeps
+    // working from the cached copy rather than failing for want of the network.
+    fs::remove_file(&origin).unwrap();
+    let offline = run();
+    assert_eq!(
+        offline.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&offline.stderr)
+    );
+    assert!(reported_rules(&offline).contains(&"shared_rule".to_string()));
+
+    // Clearing the cache is what removes that safety net: the same run now has
+    // nowhere to resolve the plugin from, proving the pass above came from the
+    // cache and that the clearing verb actually emptied it.
+    p.plugins()
+        .arg("clear")
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cleared 1 cached plugin entry"));
+    p.plugins()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(empty"));
+    let cleared = run();
+    assert_eq!(cleared.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&cleared.stderr).contains("origin.yml"),
+        "stderr: {}",
+        String::from_utf8_lossy(&cleared.stderr)
+    );
+}
+
+#[test]
+fn plugin_refresh_replaces_what_the_cache_holds() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    // A long freshness window: only the refresh switch can reach the origin.
+    let run = |refresh: bool| {
+        let mut c = p.lint();
+        c.arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "86400");
+        if refresh {
+            c.env("LLMLINT_PLUGIN_REFRESH", "1");
+        }
+        c.output().unwrap()
+    };
+    assert_eq!(run(false).status.code(), Some(0));
+
+    // The author corrects the plugin in place, under the same declared version.
+    publish(&origin, "shared_rule_corrected", "1.2");
+    let cached = run(false);
+    assert!(
+        reported_rules(&cached).contains(&"shared_rule_v1".to_string()),
+        "within the window the cache answers: {:?}",
+        reported_rules(&cached)
+    );
+
+    let refreshed = run(true);
+    assert_eq!(refreshed.status.code(), Some(0));
+    assert!(
+        reported_rules(&refreshed).contains(&"shared_rule_corrected".to_string()),
+        "refresh must reach the origin: {:?}",
+        reported_rules(&refreshed)
+    );
+    // …and what it fetched is what the cache now holds, so the next (cache-only)
+    // run sees the replacement rather than the copy it replaced.
+    let after = run(false);
+    let names = reported_rules(&after);
+    assert!(
+        names.contains(&"shared_rule_corrected".to_string()),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"shared_rule_v1".to_string()), "{names:?}");
+}
+
+#[test]
+fn the_plugins_verb_reports_pin_resolved_version_and_a_newer_one() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    let run = || {
+        p.lint()
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .assert()
+            .success();
+    };
+    run();
+    publish(&origin, "shared_rule_v2", "1.4");
+    run();
+
+    let url = file_url(&origin);
+    let out = p
+        .plugins()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Naming the verb explicitly is the same report as omitting it.
+    let explicit = p
+        .plugins()
+        .arg("list")
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(explicit.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&explicit.stdout), text);
+    // Each entry names its URL, its pin, the version it resolved to and when the
+    // origin last confirmed it; the superseded one says what supersedes it.
+    assert!(
+        text.contains(&format!("{url}@1  version 1.2  confirmed 2")),
+        "got:\n{text}"
+    );
+    assert!(text.contains("newer: 1.4"), "got:\n{text}");
+    assert!(
+        text.contains(&format!("{url}@1  version 1.4  confirmed 2")),
+        "got:\n{text}"
+    );
+    assert!(
+        !text.contains("version 1.4  confirmed 2026-99"),
+        "the resolved version has nothing newer: {text}"
+    );
+
+    // `--dir` reads a cache directory directly, and `--format json` carries the
+    // same fields for a script.
+    let json = p
+        .plugins()
+        .arg("--dir")
+        .arg(&cache)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&json.stdout).unwrap();
+    let entries = v["plugins"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{v}");
+    assert_eq!(entries[0]["version"], "1.2");
+    assert_eq!(entries[0]["pin"], "1");
+    assert_eq!(entries[0]["newer"], "1.4");
+    assert_eq!(entries[1]["version"], "1.4");
+    assert_eq!(entries[1]["newer"], Value::Null);
+    assert!(entries[1]["url"].as_str().unwrap().ends_with("origin.yml"));
+}
+
+#[test]
+fn a_stale_http_plugin_is_revalidated_and_survives_a_refusal() {
+    // An origin offering an `ETag`, and one offering only `Last-Modified`: both
+    // validators must produce a conditional request llmlint can act on.
+    for validator in [Validator::ETag, Validator::LastModified] {
+        revalidation_journey(validator);
+    }
+}
+
+fn revalidation_journey(validator: Validator) {
+    let p = Project::new();
+    let server = HttpServer::serve_with(
+        &format!("version: 1.2\nrules:\n  - {{ name: remote_rule, description: \"{RULE}\" }}\n"),
+        validator,
+    );
+    let url = server.url("/rules.yml");
+    let cache = p.path().join("cache");
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{url}@1\"\nrules:\n  \
+             - {{ name: local_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Every run revalidates, so each one after the first is a conditional GET.
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .env("NO_PROXY", "*")
+            .env("no_proxy", "*")
+            .env("HTTP_PROXY", "")
+            .env("http_proxy", "")
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(server.bodies_served(), 1);
+
+    // The origin answers the conditional request with `304 Not Modified`: the
+    // entry is reused and nothing is downloaded again.
+    let second = run();
+    assert_eq!(second.status.code(), Some(0));
+    assert!(reported_rules(&second).contains(&"remote_rule".to_string()));
+    assert_eq!(
+        server.bodies_served(),
+        1,
+        "an unchanged plugin must not re-download"
+    );
+
+    // The origin now refuses outright. A revalidation that cannot be made is not
+    // a failed run — the cached entry still answers.
+    server.refuse_with(503);
+    let refused = run();
+    assert_eq!(
+        refused.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(reported_rules(&refused).contains(&"remote_rule".to_string()));
+
+    // …but with the cache cleared there is nothing left to fall back to, and the
+    // refusal surfaces as the error it is.
+    p.plugins()
+        .arg("clear")
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .assert()
+        .success();
+    let out = run();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("503"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_malformed_plugin_cache_window_is_rejected_at_the_boundary() {
+    let (p, _origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    // Both plugin-cache knobs are read from the environment, so both reject a
+    // value they cannot mean rather than silently picking one.
+    p.lint()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .env("LLMLINT_PLUGIN_TTL", "soon")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_PLUGIN_TTL"))
+        .stderr(predicate::str::contains("whole number of seconds"));
+    p.lint()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .env("LLMLINT_PLUGIN_REFRESH", "sometimes")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_PLUGIN_REFRESH"))
+        .stderr(predicate::str::contains("1/true/yes"));
+}
+
+#[test]
+fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run().status.code(), Some(0));
+
+    // A previous-layout file (named for the *pin*, no metadata beside it) sits in
+    // the same directory. It must stay invisible — never read as though `1.yml`
+    // named a resolved version.
+    let sub = fs::read_dir(&cache)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    fs::write(
+        sub.join("1.yml"),
+        format!(
+            "version: 1.0\nrules:\n  - {{ name: previous_layout_rule, description: \"{RULE}\" }}\n"
+        ),
+    )
+    .unwrap();
+    // Metadata that is not this release's — unparseable, a future schema, and a
+    // confirmation time no clock can hold — is passed over the same way.
+    fs::write(sub.join("v3.0.json"), "{not json").unwrap();
+    fs::write(sub.join("v3.0.yml"), "version: 3.0\nrules: []\n").unwrap();
+    fs::write(
+        sub.join("v4.0.json"),
+        r#"{"schema":99,"url":"u","pin":"1","version":"4.0","confirmed_at":0}"#,
+    )
+    .unwrap();
+    fs::write(sub.join("v4.0.yml"), "version: 4.0\nrules: []\n").unwrap();
+    // A correctly-named, current-schema sidecar whose validator is one no
+    // request could carry is not repaired into an entry either — the value
+    // cannot inhabit the metadata type, so the whole entry is passed over.
+    fs::write(sub.join("v5.0.yml"), "version: 5.0\nrules: []\n").unwrap();
+    fs::write(
+        sub.join("v5.0.json"),
+        "{\"schema\":1,\"url\":\"u\",\"pin\":\"1\",\"version\":\"5.0\",\
+         \"confirmed_at\":0,\"etag\":\"v1\\r\\nX-Injected: 1\"}",
+    )
+    .unwrap();
+    // A well-formed sidecar under a filename that does not name the version it
+    // declares must not adopt that version's document as an entry.
+    fs::write(
+        sub.join("stray.json"),
+        r#"{"schema":1,"url":"u","pin":"1","version":"3.0","confirmed_at":0}"#,
+    )
+    .unwrap();
+    // …as must an entry whose document no longer declares what its metadata
+    // claims: here the cached document is replaced wholesale.
+    let entry = fs::read_dir(&sub)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.file_name().is_some_and(|n| n == "v1.2.yml"))
+        .expect("the cached document is keyed by the version it declares");
+    fs::write(
+        &entry,
+        format!("version: 1.9\nrules:\n  - {{ name: tampered_rule, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+
+    let out = run();
+    assert_eq!(out.status.code(), Some(0));
+    let names = reported_rules(&out);
+    assert!(names.contains(&"shared_rule".to_string()), "{names:?}");
+    assert!(
+        !names.contains(&"previous_layout_rule".to_string()),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"tampered_rule".to_string()), "{names:?}");
+    // The reporting verb agrees: one entry, the genuine one.
+    let listed = p
+        .plugins()
+        .arg("--dir")
+        .arg(&cache)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(v["plugins"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["plugins"][0]["version"], "1.2");
+
+    // Clearing removes the one entry it recognizes and leaves everything else in
+    // a directory it may be sharing — it is not a directory wipe.
+    p.plugins()
+        .arg("clear")
+        .arg("--dir")
+        .arg(&cache)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cleared 1 cached plugin entry"));
+    assert!(
+        sub.join("1.yml").is_file(),
+        "a previous-layout file was removed"
+    );
+    assert!(
+        sub.join("v3.0.json").is_file(),
+        "a foreign file was removed"
+    );
+    let _ = origin;
+}
+
+#[test]
+fn an_origin_past_the_pinned_range_leaves_the_pinned_plugin_in_place() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run().status.code(), Some(0));
+
+    // The author publishes a *breaking* 2.0 at the same URL. `@1` asked for the
+    // 1.x range and the cache still has it, so the run keeps working on it.
+    publish(&origin, "breaking_rule", "2");
+    let kept = run();
+    assert_eq!(kept.status.code(), Some(0));
+    let names = reported_rules(&kept);
+    assert!(names.contains(&"shared_rule_v1".to_string()), "{names:?}");
+    assert!(!names.contains(&"breaking_rule".to_string()), "{names:?}");
+
+    // The same is true of a document that stops parsing at all.
+    fs::write(&origin, "version: : :\n  - oops\n").unwrap();
+    let kept = run();
+    assert_eq!(kept.status.code(), Some(0));
+    assert!(reported_rules(&kept).contains(&"shared_rule_v1".to_string()));
+}
+
+#[test]
+fn the_plugins_verb_reports_a_cache_it_cannot_locate() {
+    let p = Project::new();
+    // With no home or cache directory to derive one from, the command says so
+    // and names the way out rather than reporting an empty cache that isn't.
+    let out = p
+        .plugins()
+        .env_remove("HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env_remove("LOCALAPPDATA")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no plugin cache directory"), "got: {err}");
+    assert!(err.contains("--dir"), "got: {err}");
+
+    // A `--dir` that is not a readable cache directory is a reported fault, not
+    // a cache that happens to be empty — the answer a mistyped path would
+    // otherwise get.
+    p.write("not-a-cache", "x\n");
+    let bad = p
+        .plugins()
+        .arg("--dir")
+        .arg(p.path().join("not-a-cache"))
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).contains("not-a-cache"),
+        "stderr: {}",
+        String::from_utf8_lossy(&bad.stderr)
+    );
+
+    // `clear` reports machine-readably too, so a script can act on the count.
+    let cleared = p
+        .plugins()
+        .arg("clear")
+        .arg("--dir")
+        .arg(p.path().join("cache"))
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_eq!(cleared.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&cleared.stdout).unwrap();
+    assert_eq!(v["cleared"], 0);
+}
+
+#[test]
+fn an_ignore_naming_a_rule_nothing_declares_names_the_loaded_plugins() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    // A suppression naming a rule the *loaded* plugin copy does not declare —
+    // the exact shape a stale cached plugin produces.
+    p.write(
+        "src/lib.rs",
+        "// llmlint: ignore[renamed_rule] correct against the current plugin\n",
+    );
+
+    let out = p
+        .check_ignores()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("unknown rule \"renamed_rule\""), "got:\n{err}");
+    // …and the message names each loaded plugin and the version it resolved to,
+    // so the reader looks at the cache instead of at the rule.
+    assert!(err.contains("loaded plugins"), "got:\n{err}");
+    assert!(
+        err.contains(&format!("{}@1 -> version 1.2", file_url(&origin))),
+        "got:\n{err}"
+    );
+    assert!(err.contains("llmlint plugins"), "got:\n{err}");
 }
 
 // ---- file selection -------------------------------------------------------
@@ -7348,10 +8011,14 @@ fn plugin_refresh_forces_a_refetch() {
     };
 
     run(false);
-    assert_eq!(server.hits(), 1, "first run fetches once");
+    assert_eq!(server.bodies_served(), 1, "first run fetches once");
     // Refresh overrides the cache and refetches even though the pin is unchanged.
     run(true);
-    assert_eq!(server.hits(), 2, "refresh must refetch the cached pin");
+    assert_eq!(
+        server.bodies_served(),
+        2,
+        "refresh must refetch the cached pin"
+    );
 }
 
 // ---- --max-parallel concurrency (rendezvous barrier) ----------------------

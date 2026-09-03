@@ -40,7 +40,7 @@ pub fn run(args: LintConfigArgs) -> Result<i32> {
     let cli_files = files::from_cli(&cwd, &args.files);
     let targets = ignores::target_files(&cwd, &loaded.config, &loaded.scopes, &cli_files)?;
     let known = ignores::known_rules(&loaded.config);
-    ignores::check(&cwd, &targets, &known)?;
+    ignores::check(&cwd, &targets, &known, &loaded.plugins)?;
 
     // Phase 2 — the LLM-as-judge config lint, through the shared engine.
     lint::run_loaded(loaded, cwd, args.into_lint_args(), "lint-config")

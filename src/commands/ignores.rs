@@ -20,6 +20,7 @@ use crate::domain::ignore;
 use crate::errors::{Error, Result};
 use crate::io::configfs::{self, RuleScope};
 use crate::io::files;
+use crate::io::plugins::PluginResolution;
 
 /// After the session `files` filter is overridden post-load (by the env layer or
 /// a CLI flag), re-point the **cwd-rooted** rule scopes at the new filter. Rule
@@ -202,7 +203,17 @@ fn scope_cli_files(cwd: &Path, dir: &Path, cli_files: &[PathBuf]) -> Vec<PathBuf
 /// Non-UTF-8 (binary) files can't carry a text directive and are skipped. Every
 /// problem across every file is collected into one [`Error::IgnoreDirective`]
 /// (exit 2) so a single run surfaces all the fixes; an empty file set is clean.
-pub fn check(cwd: &Path, targets: &BTreeSet<PathBuf>, known: &BTreeSet<&str>) -> Result<()> {
+///
+/// `plugins` is what this run's `plugins:` URLs resolved to. When a directive
+/// names a rule nothing declares, they are named in the message (see
+/// `unknown_rule_trailer`), because a plugin's cached copy being older than its
+/// pin promises is what makes a correct suppression read as a typo.
+pub fn check(
+    cwd: &Path,
+    targets: &BTreeSet<PathBuf>,
+    known: &BTreeSet<&str>,
+    plugins: &[PluginResolution],
+) -> Result<()> {
     let mut problems: Vec<String> = Vec::new();
     for rel in targets {
         let Some(text) = files::read_text(cwd, rel)? else {
@@ -221,8 +232,33 @@ pub fn check(cwd: &Path, targets: &BTreeSet<PathBuf>, known: &BTreeSet<&str>) ->
     if problems.is_empty() {
         Ok(())
     } else {
-        Err(Error::IgnoreDirective(problems.join("\n")))
+        Err(Error::IgnoreDirective {
+            plugins: unknown_rule_trailer(&problems, plugins),
+            problems: problems.join("\n"),
+        })
     }
+}
+
+/// The trailer a directive problem set earns when one of its problems is a rule
+/// nothing declares: which plugins are loaded and what version each resolved to,
+/// since a plugin resolving older than its pin promises is what makes a correct
+/// suppression read as a typo. Empty when the run loaded no plugins, or when no
+/// problem is an unknown rule.
+fn unknown_rule_trailer(problems: &[String], plugins: &[PluginResolution]) -> String {
+    if plugins.is_empty() || !problems.iter().any(|p| p.contains("unknown rule")) {
+        return String::new();
+    }
+    let lines: Vec<String> = plugins
+        .iter()
+        .map(|p| format!("  {}", p.to_human()))
+        .collect();
+    format!(
+        "\nloaded plugins (a rule a plugin declares is missing when its cached copy \
+         is older than the pin promises):\n{}\n\
+         inspect with `llmlint plugins`, then `llmlint plugins clear` (or \
+         LLMLINT_PLUGIN_REFRESH=1) to refetch.",
+        lines.join("\n")
+    )
 }
 
 #[cfg(test)]

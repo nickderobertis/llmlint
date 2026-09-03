@@ -11,7 +11,7 @@ use crate::domain::config::{Config, FileFilter, Provenance, ProvenanceBuilder, R
 use crate::domain::version::VersionReq;
 use crate::errors::{io_err, Error, Result};
 use crate::io::assets;
-use crate::io::plugins::{self, ResolveOpts};
+use crate::io::plugins::{self, PluginResolution, ResolveOpts};
 
 /// Maximum depth of transitive `plugins:` resolution. A config's `plugins`
 /// pull in further configs, whose own `plugins` are pulled in turn, and so on.
@@ -39,6 +39,11 @@ pub struct Loaded {
     /// top-level setting in `config`. Lets `llmlint config` show where an item
     /// is defined, so a rule can be traced to the file that must be edited.
     pub provenance: Provenance,
+    /// What each remote (`plugins:`) URL resolved to — its pin, the version the
+    /// fetched document declares, and whether it came from the bundle, the cache,
+    /// or the origin. A diagnostic about a rule nothing declares names these, so
+    /// a stale cached plugin is read off the message instead of hunted for.
+    pub plugins: Vec<PluginResolution>,
     /// Maps each rule name to the directory its file globs are rooted at and the
     /// fallback file filter from the config that declared it. With nested
     /// discovery a rule from `a/b/llmlint.yml` is rooted at `a/b`, so its `*.txt`
@@ -206,10 +211,20 @@ pub fn load_config_lint(cwd: &Path) -> Result<Loaded> {
         .collect();
     let mut prov = ProvenanceBuilder::default();
     prov.record(&config, assets::CONFIG_LINT_URL);
+    let resolution = PluginResolution {
+        url: assets::CONFIG_LINT_URL.to_string(),
+        // Force-loaded from the embedded copy rather than requested by a config,
+        // so there is no pin to satisfy.
+        resolved: plugins::Resolved::Unpinned {
+            version: config.version.clone(),
+        },
+        origin: plugins::Origin::Bundled,
+    };
     Ok(Loaded {
         config,
         sources: vec![assets::CONFIG_LINT_URL.to_string()],
         provenance: prov.finish(),
+        plugins: vec![resolution],
         scopes,
     })
 }
@@ -228,9 +243,10 @@ fn file_under(cwd: &Path, dir: &Path, file: &Path) -> bool {
 /// all globs rooted at `cwd`). The first entry supplies the top-level scalars, the
 /// rest contribute rules/agents — exactly the pre-nesting behavior.
 fn load_explicit(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
-    let opts = ResolveOpts::from_env();
+    let opts = ResolveOpts::from_env()?;
     let mut visited: BTreeSet<String> = BTreeSet::new();
     let mut sources: Vec<String> = Vec::new();
+    let mut resolutions: Vec<PluginResolution> = Vec::new();
     let mut prov = ProvenanceBuilder::default();
     let mut acc: Option<Config> = None;
 
@@ -241,6 +257,7 @@ fn load_explicit(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
             &opts,
             &mut visited,
             &mut sources,
+            &mut resolutions,
             &mut prov,
             true, // explicit entries are session settings sources
             &mut acc,
@@ -266,6 +283,7 @@ fn load_explicit(entries: &[PathBuf], cwd: &Path) -> Result<Loaded> {
         config,
         sources,
         provenance: prov.finish(),
+        plugins: resolutions,
         scopes,
     })
 }
@@ -346,12 +364,13 @@ fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
             .then_with(|| a.path.cmp(&b.path))
     });
 
-    let opts = ResolveOpts::from_env();
+    let opts = ResolveOpts::from_env()?;
     // One shared visited set: a plugin pulled in by an earlier (nearer-`cwd`) unit
     // is not re-loaded by a later one, so a shared plugin's rules are attributed to
     // the nearest unit and never duplicated across units.
     let mut visited: BTreeSet<String> = BTreeSet::new();
     let mut sources: Vec<String> = Vec::new();
+    let mut resolutions: Vec<PluginResolution> = Vec::new();
     // Provenance is recorded across units in the same nearest-`cwd`-first order, so
     // first-writer-wins for settings/agents matches the merge; subtree units record
     // only their items (settings come from `cwd`-and-up only).
@@ -374,6 +393,7 @@ fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
             &opts,
             &mut visited,
             &mut sources,
+            &mut resolutions,
             &mut prov,
             !unit.is_descendant,
             &mut acc,
@@ -471,6 +491,7 @@ fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
         config: session,
         sources,
         provenance: prov.finish(),
+        plugins: resolutions,
         scopes,
     })
 }
@@ -547,21 +568,32 @@ impl Node {
         self.key()
     }
 
-    /// Returns `(text, base_dir_for_relative_plugins)`.
-    fn read(&self, opts: &ResolveOpts) -> Result<(String, Option<PathBuf>)> {
+    /// Returns `(text, base_dir_for_relative_plugins, resolution)`. The third
+    /// element is `Some` only for a URL plugin, and records what it resolved to.
+    fn read(
+        &self,
+        opts: &ResolveOpts,
+    ) -> Result<(String, Option<PathBuf>, Option<PluginResolution>)> {
         match self {
             Node::File(p) => {
                 let text = std::fs::read_to_string(p)
                     .map_err(|e| io_err(format!("reading config {}", p.display()), e))?;
-                Ok((text, p.parent().map(Path::to_path_buf)))
+                Ok((text, p.parent().map(Path::to_path_buf), None))
             }
             // Remote plugins can pull in further URL plugins, but not relative
             // file paths (there is no local base directory).
-            Node::Remote { url, req, .. } => Ok((plugins::load_remote(url, req, opts)?, None)),
+            Node::Remote { url, req, .. } => {
+                let resolved = plugins::load_remote(url, req, opts)?;
+                Ok((resolved.text, None, Some(resolved.info)))
+            }
         }
     }
 }
 
+// One recursive walk threads every accumulator a load builds — sources, plugin
+// resolutions, provenance, the merged config — through each node in one order.
+// Bundling them into a context struct would only rename the same arguments while
+// hiding that each is `&mut` and written in that order, so the list stands.
 #[allow(clippy::too_many_arguments)]
 fn load_node(
     node: Node,
@@ -569,6 +601,8 @@ fn load_node(
     opts: &ResolveOpts,
     visited: &mut BTreeSet<String>,
     sources: &mut Vec<String>,
+    // What each URL plugin resolved to, in load order (for diagnostics).
+    resolutions: &mut Vec<PluginResolution>,
     prov: &mut ProvenanceBuilder,
     // Whether this node's top-level settings count as a setting's source. True for
     // entry files and `cwd`-and-up discovered configs; false for a cascaded subtree
@@ -590,7 +624,10 @@ fn load_node(
     }
     sources.push(key);
 
-    let (text, base_dir) = node.read(opts)?;
+    let (text, base_dir, resolution) = node.read(opts)?;
+    if let Some(r) = resolution {
+        resolutions.push(r);
+    }
     let origin = node.origin();
     let cfg = parse(&text, &origin)?;
     let child_specs = cfg.plugins.clone();
@@ -619,6 +656,7 @@ fn load_node(
             opts,
             visited,
             sources,
+            resolutions,
             prov,
             record_settings,
             acc,
