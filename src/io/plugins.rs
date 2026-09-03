@@ -76,6 +76,32 @@ pub const DEFAULT_TTL_SECS: u64 = 3600;
 /// (and refetched) rather than misread, the same way a previous-layout entry is.
 pub const CACHE_SCHEMA: u32 = 1;
 
+/// The `schema` field of [`CacheMeta`]: the one shape this release can read.
+/// Deserializing rejects any other number, so metadata from a future (or
+/// previous) layout cannot inhabit the type at all — there is no
+/// "wrong-schema `CacheMeta`" to check for afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CacheSchema;
+
+impl Serialize for CacheSchema {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_u32(CACHE_SCHEMA)
+    }
+}
+
+impl<'de> Deserialize<'de> for CacheSchema {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let n = u32::deserialize(d)?;
+        if n == CACHE_SCHEMA {
+            Ok(CacheSchema)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "cache entry schema {n}, but this llmlint reads schema {CACHE_SCHEMA}"
+            )))
+        }
+    }
+}
+
 /// Filename prefix of a cache entry, which is followed by the **resolved**
 /// version (`v1.4.2.yml` + `v1.4.2.json`). The prefix plus the required sidecar
 /// metadata is what keeps a previous-layout file (named for a *pin*, e.g.
@@ -436,8 +462,8 @@ fn load_entry(entry: &Entry, url: &str) -> Option<String> {
 /// metadata of the current [`CACHE_SCHEMA`] is not an entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheMeta {
-    /// On-disk shape version (see [`CACHE_SCHEMA`]).
-    pub schema: u32,
+    /// On-disk shape version — only the one this release reads.
+    pub schema: CacheSchema,
     /// The URL this document was fetched from.
     pub url: String,
     /// The pin the fetch was made under (`@1`), which is a *range*, not this
@@ -511,6 +537,13 @@ fn as_utc_stamp<S: serde::Serializer>(
     s.serialize_str(&crate::io::history::format_timestamp(*at))
 }
 
+/// Whether `v` is a legal HTTP header value: visible ASCII (plus space and tab),
+/// bounded in length. A control character would split the request line; the
+/// bound keeps a bloated cache file from being sent verbatim.
+fn is_header_value(v: &str) -> bool {
+    !v.is_empty() && v.len() <= 512 && v.bytes().all(|b| b == b'\t' || (0x20..0x7f).contains(&b))
+}
+
 /// The instant a metadata timestamp names, or `None` when the number is past
 /// what a `SystemTime` can hold — which only a hand-edited or corrupt file
 /// produces, and which must never reach the arithmetic that would panic on it.
@@ -548,15 +581,21 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
         let Ok(text) = std::fs::read_to_string(&meta_path) else {
             continue;
         };
-        let Ok(meta) = serde_json::from_str::<CacheMeta>(&text) else {
+        let Ok(mut meta) = serde_json::from_str::<CacheMeta>(&text) else {
             continue;
         };
-        if meta.schema != CACHE_SCHEMA || (!url.is_empty() && meta.url != url) {
+        if !url.is_empty() && meta.url != url {
             continue;
         }
         if instant(meta.confirmed_at).is_none() {
             continue; // a confirmation time that is not a time
         }
+        // A validator goes back out as a request header, and this file is
+        // editable, so anything that is not a legal header value is dropped
+        // rather than sent: the entry stays usable and simply revalidates
+        // unconditionally.
+        meta.etag = meta.etag.filter(|v| is_header_value(v));
+        meta.last_modified = meta.last_modified.filter(|v| is_header_value(v));
         let (data, _) = entry_paths(dir, &meta.version);
         if !data.is_file() {
             continue;
@@ -599,7 +638,7 @@ fn store(
     write_meta(
         &meta_path,
         &CacheMeta {
-            schema: CACHE_SCHEMA,
+            schema: CacheSchema,
             url: url.to_string(),
             pin: req.clone(),
             version: version.clone(),
@@ -1262,6 +1301,23 @@ mod tests {
             r#"{"schema":1,"url":"u","pin":"1","version":"5","confirmed_at":18446744073709551615}"#,
         )
         .unwrap();
+        // Current schema, a validator that is not a legal header value: the
+        // entry stays, minus the validator it cannot send.
+        std::fs::write(dir.path().join("v4.yml"), "version: 4\n").unwrap();
+        std::fs::write(
+            dir.path().join("v4.json"),
+            "{\"schema\":1,\"url\":\"u\",\"pin\":\"1\",\"version\":\"4\",\
+             \"confirmed_at\":0,\"etag\":\"v1\\r\\nX-Injected: 1\",\"last_modified\":\"\"}",
+        )
+        .unwrap();
+        let kept = read_entries(dir.path(), "u");
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(
+            kept[0].meta.etag, None,
+            "an unsendable validator is dropped"
+        );
+        assert_eq!(kept[0].meta.last_modified, None);
+        std::fs::remove_file(dir.path().join("v4.json")).unwrap();
         assert!(read_entries(dir.path(), "u").is_empty());
         assert!(list_cached(dir.path()).unwrap().is_empty());
         // Metadata for another URL never answers for this one (hash collision).
@@ -1367,7 +1423,7 @@ mod tests {
     #[test]
     fn is_stale_tolerates_clock_skew() {
         let meta = CacheMeta {
-            schema: CACHE_SCHEMA,
+            schema: CacheSchema,
             url: "u".into(),
             pin: VersionReq::parse("1").unwrap(),
             version: ver("1"),

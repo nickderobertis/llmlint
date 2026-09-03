@@ -193,8 +193,19 @@ struct HttpServer {
     status: Arc<AtomicUsize>,
 }
 
+/// Which conditional-request validator an [`HttpServer`] offers. An origin
+/// supplies one or the other, and llmlint must revalidate against either.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Validator {
+    ETag,
+    LastModified,
+}
+
 impl HttpServer {
     fn serve(body: &str) -> Self {
+        HttpServer::serve_with(body, Validator::ETag)
+    }
+    fn serve_with(body: &str, validator: Validator) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let hits = Arc::new(AtomicUsize::new(0));
@@ -203,6 +214,10 @@ impl HttpServer {
         let status_thread = Arc::clone(&status);
         let body = body.to_string();
         let etag = "\"v1\"";
+        // The other conditional-request validator, so a journey can drive the
+        // `If-Modified-Since` path an `ETag`-less origin produces.
+        let last_modified = "Tue, 01 Sep 2026 09:12:44 GMT";
+        let etag_mode = matches!(validator, Validator::ETag);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
@@ -212,18 +227,30 @@ impl HttpServer {
                 // lowercased.
                 let request = String::from_utf8_lossy(&buf[..n]).to_lowercase();
                 let code = status_thread.load(Ordering::SeqCst);
+                let (header, matched) = if etag_mode {
+                    (
+                        format!("ETag: {etag}"),
+                        request.contains(&format!("if-none-match: {}", etag.to_lowercase())),
+                    )
+                } else {
+                    (
+                        format!("Last-Modified: {last_modified}"),
+                        request.contains(&format!(
+                            "if-modified-since: {}",
+                            last_modified.to_lowercase()
+                        )),
+                    )
+                };
                 let resp = if code != 200 {
                     format!(
                         "HTTP/1.1 {code} Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     )
-                } else if request.contains(&format!("if-none-match: {}", etag.to_lowercase())) {
-                    format!(
-                        "HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nConnection: close\r\n\r\n"
-                    )
+                } else if matched {
+                    format!("HTTP/1.1 304 Not Modified\r\n{header}\r\nConnection: close\r\n\r\n")
                 } else {
                     hits_thread.fetch_add(1, Ordering::SeqCst);
                     format!(
-                        "HTTP/1.1 200 OK\r\nETag: {etag}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 200 OK\r\n{header}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len(),
                     )
                 };
@@ -1646,10 +1673,19 @@ fn the_plugins_verb_reports_pin_resolved_version_and_a_newer_one() {
 
 #[test]
 fn a_stale_http_plugin_is_revalidated_and_survives_a_refusal() {
+    // An origin offering an `ETag`, and one offering only `Last-Modified`: both
+    // validators must produce a conditional request llmlint can act on.
+    for validator in [Validator::ETag, Validator::LastModified] {
+        revalidation_journey(validator);
+    }
+}
+
+fn revalidation_journey(validator: Validator) {
     let p = Project::new();
-    let server = HttpServer::serve(&format!(
-        "version: 1.2\nrules:\n  - {{ name: remote_rule, description: \"{RULE}\" }}\n"
-    ));
+    let server = HttpServer::serve_with(
+        &format!("version: 1.2\nrules:\n  - {{ name: remote_rule, description: \"{RULE}\" }}\n"),
+        validator,
+    );
     let url = server.url("/rules.yml");
     let cache = p.path().join("cache");
     p.write(
@@ -1769,6 +1805,16 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
         ),
     )
     .unwrap();
+    // Metadata that is not this release's — unparseable, a future schema, and a
+    // confirmation time no clock can hold — is passed over the same way.
+    fs::write(sub.join("v3.0.json"), "{not json").unwrap();
+    fs::write(sub.join("v3.0.yml"), "version: 3.0\nrules: []\n").unwrap();
+    fs::write(
+        sub.join("v4.0.json"),
+        r#"{"schema":99,"url":"u","pin":"1","version":"4.0","confirmed_at":0}"#,
+    )
+    .unwrap();
+    fs::write(sub.join("v4.0.yml"), "version: 4.0\nrules: []\n").unwrap();
     // …as must an entry whose document no longer declares what its metadata
     // claims: here the cached document is replaced wholesale.
     let entry = fs::read_dir(&sub)
@@ -1811,6 +1857,24 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
     let v: Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(v["plugins"].as_array().unwrap().len(), 1, "{v}");
     assert_eq!(v["plugins"][0]["version"], "1.2");
+
+    // Clearing removes the one entry it recognizes and leaves everything else in
+    // a directory it may be sharing — it is not a directory wipe.
+    p.plugins()
+        .arg("clear")
+        .arg("--dir")
+        .arg(&cache)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cleared 1 cached plugin entry"));
+    assert!(
+        sub.join("1.yml").is_file(),
+        "a previous-layout file was removed"
+    );
+    assert!(
+        sub.join("v3.0.json").is_file(),
+        "a foreign file was removed"
+    );
     let _ = origin;
 }
 
