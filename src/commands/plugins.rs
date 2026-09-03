@@ -7,12 +7,9 @@
 //! plugin resolving to an unexpected version is read off the report rather than
 //! inferred.
 
-// llmlint: ignore-file[new_code_lands_in_a_project] That rule asks whether the
-// nearest Nx project definition covers this path; llmlint has no project graph
-// for one to be nearest in. "No monorepo — single binary crate; no Nx/affected
-// wiring" is a recorded, deliberate exclusion in AGENTS.md ("Stack and
-// composition"), so no file under `src/` can satisfy the rule and this one is
-// compiled, tested, and gated by the root crate exactly like its siblings.
+// llmlint: ignore-file[new_code_lands_in_a_project] The rule asks which Nx
+// project covers this path; llmlint has no project graph, by the deliberate
+// exclusion AGENTS.md records under "Stack and composition".
 
 use std::path::PathBuf;
 

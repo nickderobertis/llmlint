@@ -1815,6 +1815,13 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
     )
     .unwrap();
     fs::write(sub.join("v4.0.yml"), "version: 4.0\nrules: []\n").unwrap();
+    // A well-formed sidecar under a filename that does not name the version it
+    // declares must not adopt that version's document as an entry.
+    fs::write(
+        sub.join("stray.json"),
+        r#"{"schema":1,"url":"u","pin":"1","version":"3.0","confirmed_at":0}"#,
+    )
+    .unwrap();
     // …as must an entry whose document no longer declares what its metadata
     // claims: here the cached document is replaced wholesale.
     let entry = fs::read_dir(&sub)

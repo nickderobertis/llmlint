@@ -101,26 +101,21 @@ resolves the oneharness the test put on PATH.
   URL resolved offline from the embedded copy) catches a bad rule in a config
   (its findings cite a file+line, since every config-lint rule requires
   attribution).
-- **Plugin cache freshness.** A `file://` origin the journey rewrites between runs
-  stands in for the remote one (`project_with_pinned_plugin` + `publish`, with
-  `LLMLINT_PLUGIN_TTL=0`): a non-breaking bump reaches a consumer that changed
-  nothing; an unreachable origin still exits 0 from cache, and `plugins clear`
-  removes that fallback so the same run then fails; `llmlint plugins` reports each
-  entry (human, `--format json`, `--dir`, either side of the verb) and says so when
-  it cannot locate a cache at all; an ignore naming a rule nothing declares fails
-  exit-2 naming the loaded plugins and their resolved versions. Corruption and
-  boundary paths are journeys too: a previous-layout or tampered entry is passed
-  over, an origin past the pinned range leaves the pinned plugin in place, and a
-  malformed `LLMLINT_PLUGIN_TTL`/`_REFRESH` is exit-2 located to the variable.
-  Over the real HTTP client (the localhost `HttpServer`, which carries an `ETag`
-  or a `Last-Modified` and can refuse): a `304` from either validator reuses the
-  entry without re-downloading, and a refusal falls back to it — until the cache
-  is cleared, when the refusal surfaces. Clearing removes only entries it
-  recognizes, leaving anything else in a shared cache directory alone. The
-  persisted metadata shape has committed goldens
-  (`tests/fixtures/plugin_cache/`), asserted byte for byte against the real
-  writer — so a renamed, reordered, or no-longer-omitted field fails there rather
-  than on the hosts whose caches it would make unreadable.
+- **Plugin cache freshness.** A `file://` origin the journey rewrites between
+  runs stands in for the remote one (`project_with_pinned_plugin` + `publish`,
+  `LLMLINT_PLUGIN_TTL=0`), and the localhost `HttpServer` — offering an `ETag` or
+  a `Last-Modified`, and able to refuse — stands in for a conditional one. The
+  covered ground: a bump reaching a consumer that changed nothing; a `304` and an
+  unreachable or refusing origin both leaving the run working from cache, until
+  `plugins clear` removes that fallback; the reporting verb's answer and the
+  cache directory it cannot read; every entry a reader must pass over
+  (previous-layout, tampered, malformed, future-schema, mis-named sidecar); a
+  rejected `LLMLINT_PLUGIN_TTL`/`_REFRESH`; and an ignore naming a rule nothing
+  declares reporting the loaded plugins and their resolved versions. The
+  persisted metadata shape has committed goldens (`tests/fixtures/plugin_cache/`)
+  asserted byte for byte against the real writer, so a renamed, reordered, or
+  no-longer-omitted field fails there rather than on the hosts whose caches it
+  would make unreadable.
 - `lint-config` is the `lint` engine with the bundled config-lint plugin forced on
   (no plugin entry needed in the project config): it catches a bad rule in a
   config, passes a clean one, skips cleanly when nothing matches the config globs,

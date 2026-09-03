@@ -596,8 +596,12 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
         // unconditionally.
         meta.etag = meta.etag.filter(|v| is_header_value(v));
         meta.last_modified = meta.last_modified.filter(|v| is_header_value(v));
-        let (data, _) = entry_paths(dir, &meta.version);
-        if !data.is_file() {
+        // The sidecar must be the one this entry's version implies. Without
+        // that, any `.json` declaring a version would adopt the document keyed
+        // by it — a stray or forged file aliasing an entry it does not name, and
+        // a `touch` writing back to the wrong sidecar.
+        let (data, expected_meta) = entry_paths(dir, &meta.version);
+        if meta_path != expected_meta || !data.is_file() {
             continue;
         }
         out.push(Entry {
@@ -1436,6 +1440,16 @@ mod tests {
         std::fs::remove_file(dir.path().join("v4.json")).unwrap();
         assert!(read_entries(dir.path(), "u").is_empty());
         assert!(list_cached(dir.path()).unwrap().is_empty());
+        // Metadata under a filename that does not name the version it declares
+        // never adopts that version's document.
+        std::fs::write(dir.path().join("v2.yml"), "version: 2\n").unwrap();
+        std::fs::write(
+            dir.path().join("stray.json"),
+            r#"{"schema":1,"url":"u","pin":"1","version":"2","confirmed_at":0}"#,
+        )
+        .unwrap();
+        assert!(read_entries(dir.path(), "u").is_empty());
+        std::fs::remove_file(dir.path().join("stray.json")).unwrap();
         // Metadata for another URL never answers for this one (hash collision).
         std::fs::write(dir.path().join("v7.yml"), "version: 7\n").unwrap();
         std::fs::write(
