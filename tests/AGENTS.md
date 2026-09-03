@@ -112,6 +112,9 @@ resolves the oneharness the test put on PATH.
   boundary paths are journeys too: a previous-layout or tampered entry is passed
   over, an origin past the pinned range leaves the pinned plugin in place, and a
   malformed `LLMLINT_PLUGIN_TTL`/`_REFRESH` is exit-2 located to the variable.
+  Over the real HTTP client (the localhost `HttpServer`, which carries an `ETag`
+  and can refuse): a `304` reuses the entry without re-downloading, and a refusal
+  falls back to it — until the cache is cleared, when the refusal surfaces.
 - `lint-config` is the `lint` engine with the bundled config-lint plugin forced on
   (no plugin entry needed in the project config): it catches a bad rule in a
   config, passes a clean one, skips cleanly when nothing matches the config globs,

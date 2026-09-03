@@ -441,9 +441,10 @@ pub struct CacheMeta {
     /// The URL this document was fetched from.
     pub url: String,
     /// The pin the fetch was made under (`@1`), which is a *range*, not this
-    /// entry's identity. Parsed on read, so metadata naming a malformed pin is
-    /// not metadata.
-    pub pin: Option<VersionReq>,
+    /// entry's identity. Only a pinned fetch is ever cached, so an entry always
+    /// records one; metadata without a pin (or naming a malformed one) is not
+    /// metadata this release wrote, and is passed over.
+    pub pin: VersionReq,
     /// The version the fetched document declares — the entry's key.
     pub version: Version,
     /// When the origin last **confirmed** this entry, in seconds since the Unix
@@ -481,12 +482,14 @@ impl Entry {
 pub struct CachedPlugin {
     pub url: String,
     /// The pin recorded in the entry's metadata.
-    pub pin: Option<VersionReq>,
+    pub pin: VersionReq,
     pub version: Version,
-    /// When the origin last confirmed this entry, in seconds since the Unix
-    /// epoch; serialized (and printed) as the RFC 3339 UTC stamp.
+    /// When the origin last confirmed this entry; serialized (and printed) as
+    /// the RFC 3339 UTC stamp. An instant rather than a raw count, so the
+    /// metadata's arbitrary number is converted once — where it is validated —
+    /// instead of at each rendering.
     #[serde(serialize_with = "as_utc_stamp")]
-    pub confirmed_at: u64,
+    pub confirmed_at: SystemTime,
     /// The newest *other* cached version of the same URL that also satisfies
     /// this entry's pin, if any — i.e. this entry is no longer what the pin
     /// resolves to.
@@ -497,16 +500,22 @@ impl CachedPlugin {
     /// When the origin last confirmed this entry, as the same RFC 3339 UTC stamp
     /// the history records use. The human report and the JSON one share it.
     pub fn confirmed_at_utc(&self) -> String {
-        utc_stamp(self.confirmed_at)
+        crate::io::history::format_timestamp(self.confirmed_at)
     }
 }
 
-fn utc_stamp(secs: u64) -> String {
-    crate::io::history::format_timestamp(UNIX_EPOCH + std::time::Duration::from_secs(secs))
+fn as_utc_stamp<S: serde::Serializer>(
+    at: &SystemTime,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_str(&crate::io::history::format_timestamp(*at))
 }
 
-fn as_utc_stamp<S: serde::Serializer>(secs: &u64, s: S) -> std::result::Result<S::Ok, S::Error> {
-    s.serialize_str(&utc_stamp(*secs))
+/// The instant a metadata timestamp names, or `None` when the number is past
+/// what a `SystemTime` can hold — which only a hand-edited or corrupt file
+/// produces, and which must never reach the arithmetic that would panic on it.
+fn instant(secs: u64) -> Option<SystemTime> {
+    UNIX_EPOCH.checked_add(std::time::Duration::from_secs(secs))
 }
 
 /// The per-URL cache subdirectory, named by a hash of the URL.
@@ -544,6 +553,9 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
         };
         if meta.schema != CACHE_SCHEMA || (!url.is_empty() && meta.url != url) {
             continue;
+        }
+        if instant(meta.confirmed_at).is_none() {
+            continue; // a confirmation time that is not a time
         }
         let (data, _) = entry_paths(dir, &meta.version);
         if !data.is_file() {
@@ -589,7 +601,7 @@ fn store(
         &CacheMeta {
             schema: CACHE_SCHEMA,
             url: url.to_string(),
-            pin: Some(req.clone()),
+            pin: req.clone(),
             version: version.clone(),
             confirmed_at: now,
             etag: body.etag.clone(),
@@ -636,7 +648,7 @@ pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
             .filter(|o| {
                 o.meta.url == e.meta.url
                     && o.version() > e.version()
-                    && e.meta.pin.as_ref().is_none_or(|r| r.matches(o.version()))
+                    && e.meta.pin.matches(o.version())
             })
             .map(|o| o.version().clone())
             .max();
@@ -644,7 +656,8 @@ pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
             url: e.meta.url.clone(),
             pin: e.meta.pin.clone(),
             version: e.version().clone(),
-            confirmed_at: e.meta.confirmed_at,
+            // `read_entries` admitted this entry, so its timestamp is an instant.
+            confirmed_at: instant(e.meta.confirmed_at).unwrap_or(UNIX_EPOCH),
             newer,
         });
     }
@@ -1234,7 +1247,23 @@ mod tests {
             r#"{"schema":1,"url":"u","pin":"1","version":"x","confirmed_at":0}"#,
         )
         .unwrap();
+        // Current schema, no pin — only a pinned fetch is ever cached.
+        std::fs::write(dir.path().join("v6.yml"), "version: 6\n").unwrap();
+        std::fs::write(
+            dir.path().join("v6.json"),
+            r#"{"schema":1,"url":"u","version":"6","confirmed_at":0}"#,
+        )
+        .unwrap();
+        // Current schema, a confirmation time no clock can represent: it must be
+        // passed over rather than reach the arithmetic that would panic on it.
+        std::fs::write(dir.path().join("v5.yml"), "version: 5\n").unwrap();
+        std::fs::write(
+            dir.path().join("v5.json"),
+            r#"{"schema":1,"url":"u","pin":"1","version":"5","confirmed_at":18446744073709551615}"#,
+        )
+        .unwrap();
         assert!(read_entries(dir.path(), "u").is_empty());
+        assert!(list_cached(dir.path()).unwrap().is_empty());
         // Metadata for another URL never answers for this one (hash collision).
         std::fs::write(dir.path().join("v7.yml"), "version: 7\n").unwrap();
         std::fs::write(
@@ -1340,7 +1369,7 @@ mod tests {
         let meta = CacheMeta {
             schema: CACHE_SCHEMA,
             url: "u".into(),
-            pin: Some(VersionReq::parse("1").unwrap()),
+            pin: VersionReq::parse("1").unwrap(),
             version: ver("1"),
             confirmed_at: 100,
             etag: None,

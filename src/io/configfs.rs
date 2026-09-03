@@ -590,6 +590,10 @@ impl Node {
     }
 }
 
+// One recursive walk threads every accumulator a load builds — sources, plugin
+// resolutions, provenance, the merged config — through each node in one order.
+// Bundling them into a context struct would only rename the same arguments while
+// hiding that each is `&mut` and written in that order, so the list stands.
 #[allow(clippy::too_many_arguments)]
 fn load_node(
     node: Node,

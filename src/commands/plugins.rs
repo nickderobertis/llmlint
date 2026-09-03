@@ -74,17 +74,14 @@ fn render_list(dir: &std::path::Path, entries: &[CachedPlugin], format: OutputFo
         return out;
     }
     for e in entries {
-        let pin = match &e.pin {
-            Some(p) => format!("@{p}"),
-            None => String::new(),
-        };
         let newer = match &e.newer {
             Some(v) => format!("  newer: {v}"),
             None => String::new(),
         };
         out.push_str(&format!(
-            "  {}{pin}  version {}  confirmed {}{newer}\n",
+            "  {}@{}  version {}  confirmed {}{newer}\n",
             e.url,
+            e.pin,
             e.version,
             e.confirmed_at_utc()
         ));
@@ -116,9 +113,9 @@ mod tests {
     fn entry(version: &str, newer: Option<&str>) -> CachedPlugin {
         CachedPlugin {
             url: "https://x/rules.yml".into(),
-            pin: Some(VersionReq::parse("1").unwrap()),
+            pin: VersionReq::parse("1").unwrap(),
             version: Version::parse(version).unwrap(),
-            confirmed_at: 1_700_000_000,
+            confirmed_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
             newer: newer.map(|v| Version::parse(v).unwrap()),
         }
     }

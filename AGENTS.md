@@ -635,9 +635,9 @@ harness reads target files on-demand with its own tools.
   *range*, so it must never be the cache key — keying by it freezes a host on the
   first version it ever fetched, silently and undiagnosably. An entry is
   `<url-hash>/v<version>.yml`, keyed by the version the fetched **document
-  declares**, with `v<version>.json` metadata beside it (URL, pin, resolved
-  version, `fetched_at`, any `ETag`/`Last-Modified`); `CACHE_SCHEMA` versions that
-  on-disk shape — bump it when the shape changes. Resolution takes the newest
+  declares**, with its metadata beside it in `v<version>.json` — `CacheMeta` is
+  that shape, and `CACHE_SCHEMA` versions it, so bump the constant when the shape
+  changes rather than restating the fields here. Resolution takes the newest
   entry satisfying the pin, admits it only while its document still declares the
   version its metadata claims, and revalidates once it is older than
   `LLMLINT_PLUGIN_TTL` (seconds, default 3600; it and `LLMLINT_PLUGIN_REFRESH`

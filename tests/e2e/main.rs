@@ -181,13 +181,16 @@ const RULE: &str = "true when ok; false otherwise.";
 const CONFIG_LINT: &str =
     "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1";
 
-/// A throwaway localhost HTTP server for the plugin-fetch journey: serves one
-/// fixed body to every GET and counts requests, so a test can assert that a
-/// cached pin is not refetched. This exercises the real HTTPS-client fetch path
-/// (localhost only — no external network).
+/// A throwaway localhost HTTP origin for the plugin journeys: it serves one body
+/// with an `ETag`, answers `304 Not Modified` to a request whose `If-None-Match`
+/// matches, and can be switched to refuse with a failing status. Counts the
+/// full-body responses it sent, so a test can assert what was and wasn't
+/// downloaded. This exercises the real HTTPS-client path (localhost only — no
+/// external network).
 struct HttpServer {
     base_url: String,
     hits: Arc<AtomicUsize>,
+    status: Arc<AtomicUsize>,
 }
 
 impl HttpServer {
@@ -195,31 +198,54 @@ impl HttpServer {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let hits = Arc::new(AtomicUsize::new(0));
+        let status = Arc::new(AtomicUsize::new(200));
         let hits_thread = Arc::clone(&hits);
+        let status_thread = Arc::clone(&status);
         let body = body.to_string();
+        let etag = "\"v1\"";
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let mut buf = [0u8; 1024]; // read + discard the request head
-                let _ = stream.read(&mut buf);
-                hits_thread.fetch_add(1, Ordering::SeqCst);
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len(),
-                );
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                // Header names are case-insensitive and the client sends them
+                // lowercased.
+                let request = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+                let code = status_thread.load(Ordering::SeqCst);
+                let resp = if code != 200 {
+                    format!(
+                        "HTTP/1.1 {code} Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                } else if request.contains(&format!("if-none-match: {}", etag.to_lowercase())) {
+                    format!(
+                        "HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nConnection: close\r\n\r\n"
+                    )
+                } else {
+                    hits_thread.fetch_add(1, Ordering::SeqCst);
+                    format!(
+                        "HTTP/1.1 200 OK\r\nETag: {etag}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
+                    )
+                };
                 let _ = stream.write_all(resp.as_bytes());
             }
         });
         HttpServer {
             base_url: format!("http://127.0.0.1:{port}"),
             hits,
+            status,
         }
     }
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
+    /// Full-body responses served (a `304` is not one).
     fn hits(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
+    }
+    /// Make every further request fail with `status`.
+    fn refuse_with(&self, status: usize) {
+        self.status.store(status, Ordering::SeqCst);
     }
 }
 
@@ -1572,6 +1598,15 @@ fn the_plugins_verb_reports_pin_resolved_version_and_a_newer_one() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
     let text = String::from_utf8_lossy(&out.stdout);
+    // Naming the verb explicitly is the same report as omitting it.
+    let explicit = p
+        .plugins()
+        .arg("list")
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(explicit.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&explicit.stdout), text);
     // Each entry names its URL, its pin, the version it resolved to and when the
     // origin last confirmed it; the superseded one says what supersedes it.
     assert!(
@@ -1607,6 +1642,81 @@ fn the_plugins_verb_reports_pin_resolved_version_and_a_newer_one() {
     assert_eq!(entries[1]["version"], "1.4");
     assert_eq!(entries[1]["newer"], Value::Null);
     assert!(entries[1]["url"].as_str().unwrap().ends_with("origin.yml"));
+}
+
+#[test]
+fn a_stale_http_plugin_is_revalidated_and_survives_a_refusal() {
+    let p = Project::new();
+    let server = HttpServer::serve(&format!(
+        "version: 1.2\nrules:\n  - {{ name: remote_rule, description: \"{RULE}\" }}\n"
+    ));
+    let url = server.url("/rules.yml");
+    let cache = p.path().join("cache");
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{url}@1\"\nrules:\n  \
+             - {{ name: local_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    // Every run revalidates, so each one after the first is a conditional GET.
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .env("NO_PROXY", "*")
+            .env("no_proxy", "*")
+            .env("HTTP_PROXY", "")
+            .env("http_proxy", "")
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(server.hits(), 1);
+
+    // The origin answers the conditional request with `304 Not Modified`: the
+    // entry is reused and nothing is downloaded again.
+    let second = run();
+    assert_eq!(second.status.code(), Some(0));
+    assert!(reported_rules(&second).contains(&"remote_rule".to_string()));
+    assert_eq!(server.hits(), 1, "an unchanged plugin must not re-download");
+
+    // The origin now refuses outright. A revalidation that cannot be made is not
+    // a failed run — the cached entry still answers.
+    server.refuse_with(503);
+    let refused = run();
+    assert_eq!(
+        refused.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(reported_rules(&refused).contains(&"remote_rule".to_string()));
+
+    // …but with the cache cleared there is nothing left to fall back to, and the
+    // refusal surfaces as the error it is.
+    p.plugins()
+        .arg("clear")
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .assert()
+        .success();
+    let out = run();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("503"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
