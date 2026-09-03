@@ -169,8 +169,12 @@ impl Origin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginResolution {
     pub url: String,
-    pub pin: Option<String>,
-    pub version: Option<String>,
+    /// The pin this URL was requested under, as parsed — not the text it was
+    /// spelled with, which was already validated away at the boundary.
+    pub pin: Option<VersionReq>,
+    /// The version the resolved document declares (`None` only for an unpinned
+    /// plugin, which need not declare one).
+    pub version: Option<Version>,
     pub origin: Origin,
 }
 
@@ -311,16 +315,25 @@ fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> R
     } else {
         read_entries(dir, url)
     };
-    if let Some(entry) = newest_matching(&entries, req) {
+    if let Some((entry, text)) = newest_usable(&entries, req, url) {
+        let cached = |text: String| {
+            resolution(
+                url,
+                Some(req),
+                Some(entry.version.clone()),
+                text,
+                Origin::Cache,
+            )
+        };
         let now = now_secs();
         if !is_stale(&entry.meta, opts.ttl_secs, now) {
-            return read_entry(url, req, entry);
+            return Ok(cached(text));
         }
         match revalidate(url, &entry.meta) {
             // Unchanged: the origin confirmed the entry, so its clock restarts.
             Ok(None) => {
                 touch(entry, now)?;
-                return read_entry(url, req, entry);
+                return Ok(cached(text));
             }
             Ok(Some(body)) => {
                 // A newer document satisfying the same pin is adopted with no
@@ -340,13 +353,13 @@ fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> R
                         ));
                     }
                 }
-                return read_entry(url, req, entry);
+                return Ok(cached(text));
             }
             // Offline, a transport failure, a refusal: a cache is a speed-up, not
             // a network dependency, so the run keeps working from what it has.
             // The timestamp is deliberately *not* refreshed, so the next run
             // tries the origin again.
-            Err(_) => return read_entry(url, req, entry),
+            Err(_) => return Ok(cached(text)),
         }
     }
 
@@ -377,29 +390,41 @@ fn resolution(
         text,
         info: PluginResolution {
             url: url.to_string(),
-            pin: pin.map(VersionReq::to_string),
-            version: version.map(|v| v.to_string()),
+            pin: pin.cloned(),
+            version,
             origin,
         },
     }
 }
 
-/// Read a cache entry's document. A cached entry that has gone unreadable since
-/// it was listed is a real I/O fault (the run would otherwise silently judge
-/// against nothing), so it surfaces rather than being swallowed.
-fn read_entry(url: &str, req: &VersionReq, entry: &Entry) -> Result<Resolution> {
-    let text = std::fs::read_to_string(&entry.data)
-        .map_err(|e| io_err(format!("reading cached plugin {}", entry.data.display()), e))?;
-    Ok(resolution(
-        url,
-        Some(req),
-        Some(entry.version.clone()),
-        text,
-        Origin::Cache,
-    ))
+/// The newest cached entry satisfying `req` whose **document** still backs its
+/// metadata, together with that document's text.
+///
+/// The cache directory is an input like any other — a file on disk, editable,
+/// truncatable, and written by an older release — so the sidecar is not taken
+/// on trust: an entry counts only when the document it names parses and still
+/// declares the version the metadata claims (which, having been matched against
+/// the pin, is what makes the text safe to hand to the caller). Anything else is
+/// passed over for the next-newest match, and an empty result simply fetches —
+/// never an error, and never a document the pin did not ask for.
+fn newest_usable<'a>(
+    entries: &'a [Entry],
+    req: &VersionReq,
+    url: &str,
+) -> Option<(&'a Entry, String)> {
+    let mut matching: Vec<&Entry> = entries.iter().filter(|e| req.matches(&e.version)).collect();
+    matching.sort_by(|a, b| b.version.cmp(&a.version)); // newest first
+    matching
+        .into_iter()
+        .find_map(|e| load_entry(e, url).map(|text| (e, text)))
 }
 
-// ---- the on-disk cache ----------------------------------------------------
+/// A cache entry's document, if it still declares the version its metadata does.
+fn load_entry(entry: &Entry, url: &str) -> Option<String> {
+    let text = std::fs::read_to_string(&entry.data).ok()?;
+    let declared = declared_version(url, &text).ok()??;
+    (declared == entry.version).then_some(text)
+}
 
 /// Metadata stored beside each cache entry. Written as `v<version>.json` next to
 /// the `v<version>.yml` document it describes; an entry without readable
@@ -435,17 +460,41 @@ struct Entry {
     meta_path: PathBuf,
 }
 
-/// A cached plugin as [`list_cached`] reports it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A cached plugin as [`list_cached`] reports it. This is the single source of
+/// the reporting verb's machine-readable shape too: `llmlint plugins --format
+/// json` serializes these values rather than restating the fields, so the two
+/// cannot drift.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CachedPlugin {
     pub url: String,
+    /// The pin recorded in the entry's metadata, as written there — arbitrary
+    /// on-disk text, so it is reported rather than re-parsed.
     pub pin: Option<String>,
-    pub version: String,
+    pub version: Version,
+    /// When the origin last confirmed this entry, in seconds since the Unix
+    /// epoch; serialized (and printed) as the RFC 3339 UTC stamp.
+    #[serde(serialize_with = "as_utc_stamp")]
     pub fetched_at: u64,
     /// The newest *other* cached version of the same URL that also satisfies
     /// this entry's pin, if any — i.e. this entry is no longer what the pin
     /// resolves to.
-    pub newer: Option<String>,
+    pub newer: Option<Version>,
+}
+
+impl CachedPlugin {
+    /// When the origin last confirmed this entry, as the same RFC 3339 UTC stamp
+    /// the history records use. The human report and the JSON one share it.
+    pub fn fetched_at_utc(&self) -> String {
+        utc_stamp(self.fetched_at)
+    }
+}
+
+fn utc_stamp(secs: u64) -> String {
+    crate::io::history::format_timestamp(UNIX_EPOCH + std::time::Duration::from_secs(secs))
+}
+
+fn as_utc_stamp<S: serde::Serializer>(secs: &u64, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_str(&utc_stamp(*secs))
 }
 
 /// The per-URL cache subdirectory, named by a hash of the URL.
@@ -499,14 +548,6 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
         });
     }
     out
-}
-
-/// The newest cached entry satisfying `req` — what a pin resolves to.
-fn newest_matching<'a>(entries: &'a [Entry], req: &VersionReq) -> Option<&'a Entry> {
-    entries
-        .iter()
-        .filter(|e| req.matches(&e.version))
-        .max_by(|a, b| a.version.cmp(&b.version))
 }
 
 /// Whether an entry is older than the freshness window. A `fetched_at` in the
@@ -595,12 +636,11 @@ pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
                     && req.as_ref().is_none_or(|r| r.matches(&o.version))
             })
             .map(|o| o.version.clone())
-            .max()
-            .map(|v| v.to_string());
+            .max();
         out.push(CachedPlugin {
             url: e.meta.url.clone(),
             pin: e.meta.pin.clone(),
-            version: e.meta.version.clone(),
+            version: e.version.clone(),
             fetched_at: e.meta.fetched_at,
             newer,
         });
@@ -630,8 +670,6 @@ pub fn clear_cached(dir: &Path) -> Result<usize> {
     }
     Ok(removed)
 }
-
-// ---- fetching -------------------------------------------------------------
 
 /// A fetched document plus whatever revalidation validators the origin supplied.
 #[derive(Debug, Clone, Default)]
@@ -905,6 +943,15 @@ mod tests {
         Some(VersionReq::parse(s).unwrap())
     }
 
+    fn ver(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+
+    /// The resolved version as text, for a compact assertion.
+    fn resolved(res: &Resolution) -> Option<String> {
+        res.info.version.as_ref().map(ToString::to_string)
+    }
+
     #[test]
     fn parse_spec_classifies_local_and_remote() {
         assert_eq!(
@@ -989,7 +1036,7 @@ mod tests {
         let res = load_remote(&url, &req("1"), &opts).unwrap();
         assert!(res.text.contains("name: r"));
         assert_eq!(res.info.origin, Origin::Fetched);
-        assert_eq!(res.info.version.as_deref(), Some("1"));
+        assert_eq!(resolved(&res).as_deref(), Some("1"));
 
         // Within the freshness window the entry is reused with no origin read:
         // mutating the source changes nothing.
@@ -1026,28 +1073,28 @@ mod tests {
         let url = file_url(&plugin);
 
         let first = load_remote(&url, &req("1"), &opts).unwrap();
-        assert_eq!(first.info.version.as_deref(), Some("1.2"));
+        assert_eq!(resolved(&first).as_deref(), Some("1.2"));
 
         // The plugin author publishes 1.4 — the consumer changes nothing.
         std::fs::write(&plugin, plugin_yaml("1.4", "new_rule")).unwrap();
         let second = load_remote(&url, &req("1"), &opts).unwrap();
         assert!(second.text.contains("new_rule"), "got: {}", second.text);
-        assert_eq!(second.info.version.as_deref(), Some("1.4"));
+        assert_eq!(resolved(&second).as_deref(), Some("1.4"));
 
         // Both versions are now cached as separate entries, and the pin resolves
         // to the newer one even without reaching the origin again.
         let cached = load_remote(&url, &req("1"), &opts_with_cache(cache.path())).unwrap();
         assert_eq!(cached.info.origin, Origin::Cache);
-        assert_eq!(cached.info.version.as_deref(), Some("1.4"));
+        assert_eq!(resolved(&cached).as_deref(), Some("1.4"));
         let listed = list_cached(cache.path()).unwrap();
         assert_eq!(listed.len(), 2, "{listed:?}");
-        assert_eq!(listed[0].version, "1.2");
-        assert_eq!(listed[0].newer.as_deref(), Some("1.4"));
-        assert_eq!(listed[1].version, "1.4");
+        assert_eq!(listed[0].version, ver("1.2"));
+        assert_eq!(listed[0].newer, Some(ver("1.4")));
+        assert_eq!(listed[1].version, ver("1.4"));
         assert_eq!(listed[1].newer, None);
         // A more specific pin still resolves to its own range.
         let pinned = load_remote(&url, &req("1.2"), &opts_with_cache(cache.path())).unwrap();
-        assert_eq!(pinned.info.version.as_deref(), Some("1.2"));
+        assert_eq!(resolved(&pinned).as_deref(), Some("1.2"));
     }
 
     #[test]
@@ -1109,14 +1156,49 @@ mod tests {
 
         let res = load_remote(&url, &req("1"), &opts_with_cache(cache.path())).unwrap();
         assert!(res.text.contains("current"), "got: {}", res.text);
-        assert_eq!(res.info.version.as_deref(), Some("1.4"));
+        assert_eq!(resolved(&res).as_deref(), Some("1.4"));
         // It is also invisible to the reporting verb.
         let listed = list_cached(cache.path()).unwrap();
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].version, "1.4");
+        assert_eq!(listed[0].version, ver("1.4"));
         // …and the stale file is left alone by a clear (it is not ours to read).
         assert_eq!(clear_cached(cache.path()).unwrap(), 1);
         assert!(sub.join("1.yml").is_file());
+    }
+
+    #[test]
+    fn a_cached_document_that_no_longer_backs_its_metadata_is_not_used() {
+        let dir = tempdir().unwrap();
+        let plugin = dir.path().join("plug.yml");
+        std::fs::write(&plugin, plugin_yaml("1.2", "genuine")).unwrap();
+        let cache = tempdir().unwrap();
+        let url = file_url(&plugin);
+        let opts = opts_with_cache(cache.path());
+        load_remote(&url, &req("1"), &opts).unwrap();
+
+        // Tamper with the cached document: it now declares a version its own
+        // metadata does not claim, though one the pin would still accept.
+        let sub = url_dir(cache.path(), &url);
+        let entry = &read_entries(&sub, &url)[0];
+        std::fs::write(&entry.data, plugin_yaml("1.9", "tampered")).unwrap();
+
+        // The entry is passed over, so the origin answers instead — the run
+        // never judges against a document nothing vouches for.
+        let res = load_remote(&url, &req("1"), &opts).unwrap();
+        assert!(res.text.contains("genuine"), "got: {}", res.text);
+        assert_eq!(res.info.origin, Origin::Fetched);
+
+        // …and with the origin gone there is nothing to fall back to, so it is
+        // an error rather than the mismatched document.
+        std::fs::write(&entry.data, plugin_yaml("1.9", "tampered")).unwrap();
+        std::fs::remove_file(&plugin).unwrap();
+        let err = load_remote(&url, &req("1"), &opts).unwrap_err();
+        assert!(matches!(err, Error::PluginFetch { .. }), "got: {err}");
+
+        // An unparseable cached document is passed over the same way.
+        std::fs::write(&entry.data, "version: : :\n  - oops\n").unwrap();
+        let err = load_remote(&url, &req("1"), &opts).unwrap_err();
+        assert!(matches!(err, Error::PluginFetch { .. }), "got: {err}");
     }
 
     #[test]
@@ -1317,8 +1399,8 @@ mod tests {
     fn resolution_renders_a_human_line() {
         let res = PluginResolution {
             url: "https://x/p.yml".into(),
-            pin: Some("1".into()),
-            version: Some("1.4".into()),
+            pin: Some(VersionReq::parse("1").unwrap()),
+            version: Some(ver("1.4")),
             origin: Origin::Cache,
         };
         assert_eq!(

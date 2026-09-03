@@ -11,14 +11,19 @@
 //! it resolved to, when the origin last confirmed it, and whether a newer
 //! version satisfying that pin is known — answers the question directly.
 
+// llmlint: ignore-file[new_code_lands_in_a_project] That rule asks whether the
+// nearest Nx project definition covers this path; llmlint has no project graph
+// for one to be nearest in. "No monorepo — single binary crate; no Nx/affected
+// wiring" is a recorded, deliberate exclusion in AGENTS.md ("Stack and
+// composition"), so no file under `src/` can satisfy the rule and this one is
+// compiled, tested, and gated by the root crate exactly like its siblings.
+
 use std::path::PathBuf;
-use std::time::{Duration, UNIX_EPOCH};
 
 use serde_json::json;
 
 use crate::cli::{OutputFormat, PluginsArgs, PluginsCommand};
 use crate::errors::{Error, Result};
-use crate::io::history;
 use crate::io::plugins::{self, CachedPlugin, ResolveOpts};
 
 pub fn run(args: PluginsArgs) -> Result<i32> {
@@ -55,19 +60,9 @@ fn cache_dir(explicit: Option<PathBuf>) -> Result<PathBuf> {
 /// scripted check can read a single line without tracking a group header.
 fn render_list(dir: &std::path::Path, entries: &[CachedPlugin], format: OutputFormat) -> String {
     if format == OutputFormat::Json {
-        let items: Vec<_> = entries
-            .iter()
-            .map(|e| {
-                json!({
-                    "url": e.url,
-                    "pin": e.pin,
-                    "version": e.version,
-                    "fetched_at": timestamp(e.fetched_at),
-                    "newer": e.newer,
-                })
-            })
-            .collect();
-        let doc = json!({ "dir": dir.display().to_string(), "plugins": items });
+        // Serialized straight from `CachedPlugin`, so the machine-readable shape
+        // is the model rather than a second statement of it.
+        let doc = json!({ "dir": dir.display().to_string(), "plugins": entries });
         return format!(
             "{}\n",
             serde_json::to_string_pretty(&doc).unwrap_or_default()
@@ -91,7 +86,7 @@ fn render_list(dir: &std::path::Path, entries: &[CachedPlugin], format: OutputFo
             "  {}{pin}  version {}  fetched {}{newer}\n",
             e.url,
             e.version,
-            timestamp(e.fetched_at)
+            e.fetched_at_utc()
         ));
     }
     out
@@ -112,23 +107,19 @@ fn render_clear(dir: &std::path::Path, removed: usize, format: OutputFormat) -> 
     )
 }
 
-/// Epoch seconds as the same RFC 3339 UTC stamp the history records use.
-fn timestamp(secs: u64) -> String {
-    history::format_timestamp(UNIX_EPOCH + Duration::from_secs(secs))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::version::Version;
     use std::path::Path;
 
     fn entry(version: &str, newer: Option<&str>) -> CachedPlugin {
         CachedPlugin {
             url: "https://x/rules.yml".into(),
             pin: Some("1".into()),
-            version: version.into(),
+            version: Version::parse(version).unwrap(),
             fetched_at: 1_700_000_000,
-            newer: newer.map(str::to_string),
+            newer: newer.map(|v| Version::parse(v).unwrap()),
         }
     }
 

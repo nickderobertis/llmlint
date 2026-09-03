@@ -214,7 +214,7 @@ pub fn load_config_lint(cwd: &Path) -> Result<Loaded> {
     let resolution = PluginResolution {
         url: assets::CONFIG_LINT_URL.to_string(),
         pin: None,
-        version: config.version.as_ref().map(ToString::to_string),
+        version: config.version.clone(),
         origin: plugins::Origin::Bundled,
     };
     Ok(Loaded {
