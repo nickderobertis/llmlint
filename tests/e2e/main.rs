@@ -148,6 +148,14 @@ impl Project {
         c.arg("validate");
         c
     }
+    /// `plugins`: the deterministic plugin-cache report (and `clear`), wired with
+    /// no `--oneharness-bin` — it never spawns a harness, reaches no network, and
+    /// only reads what a previous run cached.
+    fn plugins(&self) -> Command {
+        let mut c = self.bare();
+        c.arg("plugins");
+        c
+    }
     /// `lint-config`: the `lint` engine with the bundled config-lint plugin forced
     /// on (no project config needed), wired to the mock harness.
     fn lint_config(&self) -> Command {
@@ -1363,6 +1371,270 @@ fn pinned_url_plugin_is_fetched_over_http_and_cached() {
     let out = run();
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(server.hits(), 1, "an unchanged pin must not refetch");
+}
+
+/// A project whose only plugin is a pinned `file://` URL the test can rewrite
+/// between runs — a local origin standing in for the remote one, which is the
+/// only genuinely external thing in plugin resolution.
+fn project_with_pinned_plugin(rule: &str, version: &str) -> (Project, PathBuf, PathBuf) {
+    let p = Project::new();
+    let origin = p.path().join("origin.yml");
+    let cache = p.path().join("cache");
+    fs::write(
+        &origin,
+        format!("version: {version}\nrules:\n  - {{ name: {rule}, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - \"{}@1\"\nrules:\n  \
+             - {{ name: local_rule, description: \"{RULE}\" }}\n",
+            file_url(&origin)
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    (p, origin, cache)
+}
+
+/// Publish a new version of the plugin at the same URL — what a plugin author
+/// does, and what a consumer pinning `@1` is promised to pick up.
+fn publish(origin: &Path, rule: &str, version: &str) {
+    fs::write(
+        origin,
+        format!("version: {version}\nrules:\n  - {{ name: {rule}, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+}
+
+/// The rule names in a `--format json` report.
+fn reported_rules(out: &std::process::Output) -> Vec<String> {
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_plugin_bump_at_the_origin_reaches_a_consumer_that_changed_nothing() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    // Revalidate on every run, so the window never hides the bump.
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(reported_rules(&first).contains(&"shared_rule_v1".to_string()));
+
+    // The author publishes a non-breaking bump. The consuming repo changes
+    // nothing — its config still says `@1`.
+    publish(&origin, "shared_rule_v2", "1.4");
+    let second = run();
+    assert_eq!(second.status.code(), Some(0));
+    let names = reported_rules(&second);
+    assert!(
+        names.contains(&"shared_rule_v2".to_string()),
+        "the bump must reach the consumer: {names:?}"
+    );
+    assert!(
+        !names.contains(&"shared_rule_v1".to_string()),
+        "the superseded version must not still be judged: {names:?}"
+    );
+}
+
+#[test]
+fn an_unreachable_plugin_origin_leaves_the_run_working_from_cache() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run().status.code(), Some(0));
+
+    // The origin goes away. Revalidation cannot be made, so the run keeps
+    // working from the cached copy rather than failing for want of the network.
+    fs::remove_file(&origin).unwrap();
+    let offline = run();
+    assert_eq!(
+        offline.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&offline.stderr)
+    );
+    assert!(reported_rules(&offline).contains(&"shared_rule".to_string()));
+
+    // Clearing the cache is what removes that safety net: the same run now has
+    // nowhere to resolve the plugin from, proving the pass above came from the
+    // cache and that the clearing verb actually emptied it.
+    p.plugins()
+        .arg("clear")
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cleared 1 cached plugin entry"));
+    p.plugins()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(empty"));
+    let cleared = run();
+    assert_eq!(cleared.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&cleared.stderr).contains("origin.yml"),
+        "stderr: {}",
+        String::from_utf8_lossy(&cleared.stderr)
+    );
+}
+
+#[test]
+fn plugin_refresh_replaces_what_the_cache_holds() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    // A long freshness window: only the refresh switch can reach the origin.
+    let run = |refresh: bool| {
+        let mut c = p.lint();
+        c.arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "86400");
+        if refresh {
+            c.env("LLMLINT_PLUGIN_REFRESH", "1");
+        }
+        c.output().unwrap()
+    };
+    assert_eq!(run(false).status.code(), Some(0));
+
+    // The author corrects the plugin in place, under the same declared version.
+    publish(&origin, "shared_rule_corrected", "1.2");
+    let cached = run(false);
+    assert!(
+        reported_rules(&cached).contains(&"shared_rule_v1".to_string()),
+        "within the window the cache answers: {:?}",
+        reported_rules(&cached)
+    );
+
+    let refreshed = run(true);
+    assert_eq!(refreshed.status.code(), Some(0));
+    assert!(
+        reported_rules(&refreshed).contains(&"shared_rule_corrected".to_string()),
+        "refresh must reach the origin: {:?}",
+        reported_rules(&refreshed)
+    );
+    // …and what it fetched is what the cache now holds, so the next (cache-only)
+    // run sees the replacement rather than the copy it replaced.
+    let after = run(false);
+    let names = reported_rules(&after);
+    assert!(
+        names.contains(&"shared_rule_corrected".to_string()),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"shared_rule_v1".to_string()), "{names:?}");
+}
+
+#[test]
+fn the_plugins_verb_reports_pin_resolved_version_and_a_newer_one() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    let run = || {
+        p.lint()
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .assert()
+            .success();
+    };
+    run();
+    publish(&origin, "shared_rule_v2", "1.4");
+    run();
+
+    let url = file_url(&origin);
+    let out = p
+        .plugins()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Each entry names its URL, its pin, the version it resolved to and when the
+    // origin last confirmed it; the superseded one says what supersedes it.
+    assert!(
+        text.contains(&format!("{url}@1  version 1.2  fetched 2")),
+        "got:\n{text}"
+    );
+    assert!(text.contains("newer: 1.4"), "got:\n{text}");
+    assert!(
+        text.contains(&format!("{url}@1  version 1.4  fetched 2")),
+        "got:\n{text}"
+    );
+    assert!(
+        !text.contains("version 1.4  fetched 2026-99"),
+        "the resolved version has nothing newer: {text}"
+    );
+
+    // `--dir` reads a cache directory directly, and `--format json` carries the
+    // same fields for a script.
+    let json = p
+        .plugins()
+        .arg("--dir")
+        .arg(&cache)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&json.stdout).unwrap();
+    let entries = v["plugins"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{v}");
+    assert_eq!(entries[0]["version"], "1.2");
+    assert_eq!(entries[0]["pin"], "1");
+    assert_eq!(entries[0]["newer"], "1.4");
+    assert_eq!(entries[1]["version"], "1.4");
+    assert_eq!(entries[1]["newer"], Value::Null);
+    assert!(entries[1]["url"].as_str().unwrap().ends_with("origin.yml"));
+}
+
+#[test]
+fn an_ignore_naming_a_rule_nothing_declares_names_the_loaded_plugins() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    // A suppression naming a rule the *loaded* plugin copy does not declare —
+    // the exact shape a stale cached plugin produces.
+    p.write(
+        "src/lib.rs",
+        "// llmlint: ignore[renamed_rule] correct against the current plugin\n",
+    );
+
+    let out = p
+        .check_ignores()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("unknown rule \"renamed_rule\""), "got:\n{err}");
+    // …and the message names each loaded plugin and the version it resolved to,
+    // so the reader looks at the cache instead of at the rule.
+    assert!(err.contains("loaded plugins"), "got:\n{err}");
+    assert!(
+        err.contains(&format!("{}@1 -> version 1.2", file_url(&origin))),
+        "got:\n{err}"
+    );
+    assert!(err.contains("llmlint plugins"), "got:\n{err}");
 }
 
 // ---- file selection -------------------------------------------------------

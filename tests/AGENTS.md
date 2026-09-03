@@ -94,12 +94,27 @@ resolves the oneharness the test put on PATH.
 - Multi-judge majority: a single dissent still passes; a majority dissent fails.
 - `plugins` merges rules from another file and from a `file://` URL; a pinned
   `http://` URL is fetched once over HTTPS and reused from cache (not refetched),
-  while `LLMLINT_PLUGIN_REFRESH` forces a refetch of the same pin;
+  while `LLMLINT_PLUGIN_REFRESH` forces a refetch of the same pin **and replaces
+  what the cache holds** (the next cache-only run sees the replacement);
   a version mismatch, the removed `llmlint:` scheme, and the renamed top-level
   `include` key are each clear exit-2 errors; the bundled config-lint plugin (a
   URL resolved offline from the embedded copy) catches a bad rule in a config
   (its findings cite a file+line, since every config-lint rule requires
   attribution).
+- **Plugin cache freshness** (a pin is a *range*, so the cache must not freeze the
+  first version a machine fetched). A `file://` origin the journey rewrites between
+  runs stands in for the remote one — `project_with_pinned_plugin` +
+  `publish` — with `LLMLINT_PLUGIN_TTL=0` to revalidate every run: a
+  **non-breaking bump** at the origin (1.2 -> 1.4) reaches a consumer whose config
+  still says `@1` and never re-judges the superseded version; an **unreachable
+  origin** (the document deleted) leaves the run working from cache at exit 0, and
+  `llmlint plugins clear` removes that safety net so the same run then fails —
+  proving both the fallback and the clearing verb. `llmlint plugins` names each
+  entry's URL, pin, resolved version, fetch time and the newer version
+  superseding it (human and `--format json`, `--dir` and `LLMLINT_CACHE_DIR`), and
+  an `llmlint: ignore` naming a rule nothing declares fails exit-2 with the loaded
+  plugins and their resolved versions in the message — the diagnosis path for a
+  stale cached plugin.
 - `lint-config` is the `lint` engine with the bundled config-lint plugin forced on
   (no plugin entry needed in the project config): it catches a bad rule in a
   config, passes a clean one, skips cleanly when nothing matches the config globs,
