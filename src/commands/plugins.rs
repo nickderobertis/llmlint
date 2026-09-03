@@ -83,10 +83,10 @@ fn render_list(dir: &std::path::Path, entries: &[CachedPlugin], format: OutputFo
             None => String::new(),
         };
         out.push_str(&format!(
-            "  {}{pin}  version {}  fetched {}{newer}\n",
+            "  {}{pin}  version {}  confirmed {}{newer}\n",
             e.url,
             e.version,
-            e.fetched_at_utc()
+            e.confirmed_at_utc()
         ));
     }
     out
@@ -110,15 +110,15 @@ fn render_clear(dir: &std::path::Path, removed: usize, format: OutputFormat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::version::Version;
+    use crate::domain::version::{Version, VersionReq};
     use std::path::Path;
 
     fn entry(version: &str, newer: Option<&str>) -> CachedPlugin {
         CachedPlugin {
             url: "https://x/rules.yml".into(),
-            pin: Some("1".into()),
+            pin: Some(VersionReq::parse("1").unwrap()),
             version: Version::parse(version).unwrap(),
-            fetched_at: 1_700_000_000,
+            confirmed_at: 1_700_000_000,
             newer: newer.map(|v| Version::parse(v).unwrap()),
         }
     }
@@ -133,13 +133,12 @@ mod tests {
         assert!(out.contains("plugin cache: /cache"), "got:\n{out}");
         assert!(
             out.contains(
-                "https://x/rules.yml@1  version 1.2  fetched 2023-11-14T22:13:20Z  newer: 1.4"
+                "https://x/rules.yml@1  version 1.2  confirmed 2023-11-14T22:13:20Z  newer: 1.4"
             ),
             "got:\n{out}"
         );
-        // The entry the pin resolves to has nothing newer to report.
-        assert!(out.contains("version 1.4  fetched 2023-11-14T22:13:20Z\n"));
-        assert!(!out.contains("version 1.4  fetched 2023-11-14T22:13:20Z  newer"));
+        assert!(out.contains("version 1.4  confirmed 2023-11-14T22:13:20Z\n"));
+        assert!(!out.contains("version 1.4  confirmed 2023-11-14T22:13:20Z  newer"));
     }
 
     #[test]
@@ -161,7 +160,7 @@ mod tests {
         assert_eq!(v["plugins"][0]["pin"], "1");
         assert_eq!(v["plugins"][0]["version"], "1.2");
         assert_eq!(v["plugins"][0]["newer"], "1.4");
-        assert_eq!(v["plugins"][0]["fetched_at"], "2023-11-14T22:13:20Z");
+        assert_eq!(v["plugins"][0]["confirmed_at"], "2023-11-14T22:13:20Z");
     }
 
     #[test]

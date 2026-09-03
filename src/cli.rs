@@ -710,13 +710,14 @@ pub struct PluginsArgs {
     pub command: Option<PluginsCommand>,
 
     /// Read (or clear) this cache directory, overriding `LLMLINT_CACHE_DIR` and
-    /// the platform default.
-    #[arg(long = "dir", value_name = "DIR")]
+    /// the platform default. Accepted on either side of the verb.
+    #[arg(long = "dir", value_name = "DIR", global = true)]
     pub dir: Option<PathBuf>,
 
     /// Output format. `human` (default) prints one line per cached entry;
-    /// `json` prints the same fields as a machine-readable document.
-    #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
+    /// `json` prints the same fields as a machine-readable document. Accepted on
+    /// either side of the verb.
+    #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human, global = true)]
     pub format: OutputFormat,
 }
 

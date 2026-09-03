@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::version::{Version, VersionReq};
 use crate::errors::{io_err, Error, Result};
-use crate::io::assets;
+use crate::io::{assets, env};
 
 /// Env var overriding the cache directory.
 pub const CACHE_DIR_VAR: &str = "LLMLINT_CACHE_DIR";
@@ -110,17 +110,19 @@ pub struct ResolveOpts {
 
 impl ResolveOpts {
     /// Build from the environment: [`CACHE_DIR_VAR`] (else the platform cache
-    /// dir), [`REFRESH_VAR`], and [`TTL_VAR`]. A malformed TTL is an exit-2
-    /// [`Error::Env`] located to the variable — validated at the boundary, never
-    /// silently ignored.
+    /// dir), [`REFRESH_VAR`], and [`TTL_VAR`]. A malformed window or switch is an
+    /// exit-2 [`Error::Env`] located to the variable — validated at the boundary,
+    /// never silently ignored, and the switch reads the same bool grammar every
+    /// other `LLMLINT_*` setting does.
     pub fn from_env() -> Result<Self> {
         let cache_dir = std::env::var_os(CACHE_DIR_VAR)
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .or_else(default_cache_dir);
-        let refresh = std::env::var_os(REFRESH_VAR)
-            .map(|v| v == "1" || v == "true")
-            .unwrap_or(false);
+        let refresh = match non_empty_var(REFRESH_VAR) {
+            Some(v) => env::parse_bool(REFRESH_VAR, &v)?,
+            None => false,
+        };
         let ttl_secs = match non_empty_var(TTL_VAR) {
             Some(v) => v.trim().parse::<u64>().map_err(|_| Error::Env {
                 var: TTL_VAR.to_string(),
@@ -169,23 +171,50 @@ impl Origin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginResolution {
     pub url: String,
-    /// The pin this URL was requested under, as parsed — not the text it was
-    /// spelled with, which was already validated away at the boundary.
-    pub pin: Option<VersionReq>,
-    /// The version the resolved document declares (`None` only for an unpinned
-    /// plugin, which need not declare one).
-    pub version: Option<Version>,
+    /// What was asked for and what answered.
+    pub resolved: Resolved,
     pub origin: Origin,
+}
+
+/// What a `plugins:` URL resolved to. The pin and the version that satisfied it
+/// are one value rather than two independently-optional fields, because a pinned
+/// plugin whose document declares no version in the pin's range never resolves
+/// at all — resolution raises that as an error before building this value, so
+/// "pinned, but nothing satisfied it" is not a state this type can hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolved {
+    /// Requested under a pin, and answered by a document declaring `version`.
+    Pinned { pin: VersionReq, version: Version },
+    /// Requested with no pin, which a document need not declare a version for.
+    Unpinned { version: Option<Version> },
+}
+
+impl Resolved {
+    /// The pin this URL was requested under, if any.
+    pub fn pin(&self) -> Option<&VersionReq> {
+        match self {
+            Resolved::Pinned { pin, .. } => Some(pin),
+            Resolved::Unpinned { .. } => None,
+        }
+    }
+
+    /// The version the resolved document declares, if it declares one.
+    pub fn version(&self) -> Option<&Version> {
+        match self {
+            Resolved::Pinned { version, .. } => Some(version),
+            Resolved::Unpinned { version } => version.as_ref(),
+        }
+    }
 }
 
 impl PluginResolution {
     /// One human line: `url@pin -> version 1.4 (from cache)`.
     pub fn to_human(&self) -> String {
-        let pin = match &self.pin {
+        let pin = match self.resolved.pin() {
             Some(p) => format!("@{p}"),
             None => String::new(),
         };
-        let version = match &self.version {
+        let version = match self.resolved.version() {
             Some(v) => format!("version {v}"),
             None => "no declared version".to_string(),
         };
@@ -278,11 +307,10 @@ fn split_version(spec: &str) -> Result<(String, Option<VersionReq>)> {
 pub fn load_remote(url: &str, req: &Option<VersionReq>, opts: &ResolveOpts) -> Result<Resolution> {
     // Bundled plugins resolve offline from the embedded copy.
     if let Some(content) = assets::bundled_url(url) {
-        validate_version(url, req.as_ref(), content)?;
+        let resolved = resolve_version(url, req.as_ref(), content)?;
         return Ok(resolution(
             url,
-            req.as_ref(),
-            declared_version(url, content).unwrap_or(None),
+            resolved,
             content.to_string(),
             Origin::Bundled,
         ));
@@ -293,15 +321,8 @@ pub fn load_remote(url: &str, req: &Option<VersionReq>, opts: &ResolveOpts) -> R
         (Some(r), Some(dir)) => load_cached(url, r, &url_dir(dir, url), opts),
         _ => {
             let body = fetch_body(url)?;
-            validate_version(url, req.as_ref(), &body.text)?;
-            let version = declared_version(url, &body.text)?;
-            Ok(resolution(
-                url,
-                req.as_ref(),
-                version,
-                body.text,
-                Origin::Fetched,
-            ))
+            let resolved = resolve_version(url, req.as_ref(), &body.text)?;
+            Ok(resolution(url, resolved, body.text, Origin::Fetched))
         }
     }
 }
@@ -311,19 +332,17 @@ pub fn load_remote(url: &str, req: &Option<VersionReq>, opts: &ResolveOpts) -> R
 /// nothing usable (or `--refresh` forces it).
 fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> Result<Resolution> {
     let entries = if opts.refresh {
-        Vec::new() // a forced refetch never consults the cache
+        Vec::new()
     } else {
         read_entries(dir, url)
     };
     if let Some((entry, text)) = newest_usable(&entries, req, url) {
         let cached = |text: String| {
-            resolution(
-                url,
-                Some(req),
-                Some(entry.version.clone()),
-                text,
-                Origin::Cache,
-            )
+            let resolved = Resolved::Pinned {
+                pin: req.clone(),
+                version: entry.version().clone(),
+            };
+            resolution(url, resolved, text, Origin::Cache)
         };
         let now = now_secs();
         if !is_stale(&entry.meta, opts.ttl_secs, now) {
@@ -344,13 +363,11 @@ fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> R
                 if let Some(v) = declared_version(url, &body.text).unwrap_or(None) {
                     if req.matches(&v) {
                         store(dir, url, req, &v, &body, now)?;
-                        return Ok(resolution(
-                            url,
-                            Some(req),
-                            Some(v),
-                            body.text,
-                            Origin::Fetched,
-                        ));
+                        let resolved = Resolved::Pinned {
+                            pin: req.clone(),
+                            version: v,
+                        };
+                        return Ok(resolution(url, resolved, body.text, Origin::Fetched));
                     }
                 }
                 return Ok(cached(text));
@@ -364,34 +381,19 @@ fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> R
     }
 
     let body = fetch_body(url)?;
-    validate_version(url, Some(req), &body.text)?;
-    // A pinned fetch that validated always declares a version.
-    let version = declared_version(url, &body.text)?;
-    if let Some(v) = &version {
+    let resolved = resolve_version(url, Some(req), &body.text)?;
+    if let Some(v) = resolved.version() {
         store(dir, url, req, v, &body, now_secs())?;
     }
-    Ok(resolution(
-        url,
-        Some(req),
-        version,
-        body.text,
-        Origin::Fetched,
-    ))
+    Ok(resolution(url, resolved, body.text, Origin::Fetched))
 }
 
-fn resolution(
-    url: &str,
-    pin: Option<&VersionReq>,
-    version: Option<Version>,
-    text: String,
-    origin: Origin,
-) -> Resolution {
+fn resolution(url: &str, resolved: Resolved, text: String, origin: Origin) -> Resolution {
     Resolution {
         text,
         info: PluginResolution {
             url: url.to_string(),
-            pin: pin.cloned(),
-            version,
+            resolved,
             origin,
         },
     }
@@ -412,8 +414,11 @@ fn newest_usable<'a>(
     req: &VersionReq,
     url: &str,
 ) -> Option<(&'a Entry, String)> {
-    let mut matching: Vec<&Entry> = entries.iter().filter(|e| req.matches(&e.version)).collect();
-    matching.sort_by(|a, b| b.version.cmp(&a.version)); // newest first
+    let mut matching: Vec<&Entry> = entries
+        .iter()
+        .filter(|e| req.matches(e.version()))
+        .collect();
+    matching.sort_by(|a, b| b.version().cmp(a.version()));
     matching
         .into_iter()
         .find_map(|e| load_entry(e, url).map(|text| (e, text)))
@@ -423,7 +428,7 @@ fn newest_usable<'a>(
 fn load_entry(entry: &Entry, url: &str) -> Option<String> {
     let text = std::fs::read_to_string(&entry.data).ok()?;
     let declared = declared_version(url, &text).ok()??;
-    (declared == entry.version).then_some(text)
+    (&declared == entry.version()).then_some(text)
 }
 
 /// Metadata stored beside each cache entry. Written as `v<version>.json` next to
@@ -436,13 +441,15 @@ pub struct CacheMeta {
     /// The URL this document was fetched from.
     pub url: String,
     /// The pin the fetch was made under (`@1`), which is a *range*, not this
-    /// entry's identity.
-    pub pin: Option<String>,
+    /// entry's identity. Parsed on read, so metadata naming a malformed pin is
+    /// not metadata.
+    pub pin: Option<VersionReq>,
     /// The version the fetched document declares — the entry's key.
-    pub version: String,
-    /// When the origin last confirmed this entry, in seconds since the Unix
-    /// epoch (a `304` refreshes it, so it means "confirmed", not "downloaded").
-    pub fetched_at: u64,
+    pub version: Version,
+    /// When the origin last **confirmed** this entry, in seconds since the Unix
+    /// epoch. A `304` refreshes it without downloading anything, so this is a
+    /// confirmation time, not a download time.
+    pub confirmed_at: u64,
     /// The `ETag` the response carried, for the next conditional request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub etag: Option<String>,
@@ -455,9 +462,15 @@ pub struct CacheMeta {
 #[derive(Debug, Clone)]
 struct Entry {
     meta: CacheMeta,
-    version: Version,
     data: PathBuf,
     meta_path: PathBuf,
+}
+
+impl Entry {
+    /// The version this entry is keyed by.
+    fn version(&self) -> &Version {
+        &self.meta.version
+    }
 }
 
 /// A cached plugin as [`list_cached`] reports it. This is the single source of
@@ -467,14 +480,13 @@ struct Entry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CachedPlugin {
     pub url: String,
-    /// The pin recorded in the entry's metadata, as written there — arbitrary
-    /// on-disk text, so it is reported rather than re-parsed.
-    pub pin: Option<String>,
+    /// The pin recorded in the entry's metadata.
+    pub pin: Option<VersionReq>,
     pub version: Version,
     /// When the origin last confirmed this entry, in seconds since the Unix
     /// epoch; serialized (and printed) as the RFC 3339 UTC stamp.
     #[serde(serialize_with = "as_utc_stamp")]
-    pub fetched_at: u64,
+    pub confirmed_at: u64,
     /// The newest *other* cached version of the same URL that also satisfies
     /// this entry's pin, if any — i.e. this entry is no longer what the pin
     /// resolves to.
@@ -484,8 +496,8 @@ pub struct CachedPlugin {
 impl CachedPlugin {
     /// When the origin last confirmed this entry, as the same RFC 3339 UTC stamp
     /// the history records use. The human report and the JSON one share it.
-    pub fn fetched_at_utc(&self) -> String {
-        utc_stamp(self.fetched_at)
+    pub fn confirmed_at_utc(&self) -> String {
+        utc_stamp(self.confirmed_at)
     }
 }
 
@@ -533,16 +545,12 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
         if meta.schema != CACHE_SCHEMA || (!url.is_empty() && meta.url != url) {
             continue;
         }
-        let Ok(version) = Version::parse(&meta.version) else {
-            continue;
-        };
-        let (data, _) = entry_paths(dir, &version);
+        let (data, _) = entry_paths(dir, &meta.version);
         if !data.is_file() {
             continue;
         }
         out.push(Entry {
             meta,
-            version,
             data,
             meta_path,
         });
@@ -550,10 +558,10 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
     out
 }
 
-/// Whether an entry is older than the freshness window. A `fetched_at` in the
+/// Whether an entry is older than the freshness window. A `confirmed_at` in the
 /// future (clock skew) counts as fresh.
 fn is_stale(meta: &CacheMeta, ttl_secs: u64, now: u64) -> bool {
-    now.saturating_sub(meta.fetched_at) >= ttl_secs
+    now.saturating_sub(meta.confirmed_at) >= ttl_secs
 }
 
 fn now_secs() -> u64 {
@@ -581,9 +589,9 @@ fn store(
         &CacheMeta {
             schema: CACHE_SCHEMA,
             url: url.to_string(),
-            pin: Some(req.to_string()),
-            version: version.to_string(),
-            fetched_at: now,
+            pin: Some(req.clone()),
+            version: version.clone(),
+            confirmed_at: now,
             etag: body.etag.clone(),
             last_modified: body.last_modified.clone(),
         },
@@ -593,7 +601,7 @@ fn store(
 /// Record that the origin confirmed an entry is still current.
 fn touch(entry: &Entry, now: u64) -> Result<()> {
     let mut meta = entry.meta.clone();
-    meta.fetched_at = now;
+    meta.confirmed_at = now;
     write_meta(&entry.meta_path, &meta)
 }
 
@@ -607,7 +615,7 @@ fn write_meta(path: &Path, meta: &CacheMeta) -> Result<()> {
 /// carrying whether a newer cached version satisfying its pin is known.
 pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
     let Ok(rd) = std::fs::read_dir(dir) else {
-        return Ok(Vec::new()); // no cache directory yet — an empty cache
+        return Ok(Vec::new());
     };
     let mut entries: Vec<Entry> = Vec::new();
     for sub in rd.flatten().map(|e| e.path()) {
@@ -619,29 +627,24 @@ pub fn list_cached(dir: &Path) -> Result<Vec<CachedPlugin>> {
         a.meta
             .url
             .cmp(&b.meta.url)
-            .then_with(|| a.version.cmp(&b.version))
+            .then_with(|| a.version().cmp(b.version()))
     });
     let mut out = Vec::with_capacity(entries.len());
     for e in &entries {
-        let req = e
-            .meta
-            .pin
-            .as_deref()
-            .and_then(|p| VersionReq::parse(p).ok());
         let newer = entries
             .iter()
             .filter(|o| {
                 o.meta.url == e.meta.url
-                    && o.version > e.version
-                    && req.as_ref().is_none_or(|r| r.matches(&o.version))
+                    && o.version() > e.version()
+                    && e.meta.pin.as_ref().is_none_or(|r| r.matches(o.version()))
             })
-            .map(|o| o.version.clone())
+            .map(|o| o.version().clone())
             .max();
         out.push(CachedPlugin {
             url: e.meta.url.clone(),
             pin: e.meta.pin.clone(),
-            version: e.version.clone(),
-            fetched_at: e.meta.fetched_at,
+            version: e.version().clone(),
+            confirmed_at: e.meta.confirmed_at,
             newer,
         });
     }
@@ -696,14 +699,21 @@ fn declared_version(url: &str, text: &str) -> Result<Option<Version>> {
     Ok(probe.version)
 }
 
-/// Check a fetched plugin's declared version against the requested pin. An
-/// unpinned plugin accepts any (or no) declared version.
-fn validate_version(url: &str, req: Option<&VersionReq>, text: &str) -> Result<()> {
+/// Check a fetched plugin's declared version against the requested pin, and
+/// yield the [`Resolved`] it establishes. An unpinned plugin accepts any (or no)
+/// declared version; a pinned one that declares none, or one outside the range,
+/// is the error raised here — which is what makes `Resolved::Pinned` the only
+/// answer a successful pinned call can give.
+fn resolve_version(url: &str, req: Option<&VersionReq>, text: &str) -> Result<Resolved> {
+    let declared = declared_version(url, text)?;
     let Some(req) = req else {
-        return Ok(());
+        return Ok(Resolved::Unpinned { version: declared });
     };
-    match declared_version(url, text)? {
-        Some(v) if req.matches(&v) => Ok(()),
+    match declared {
+        Some(version) if req.matches(&version) => Ok(Resolved::Pinned {
+            pin: req.clone(),
+            version,
+        }),
         Some(v) => Err(Error::PluginVersionMismatch {
             url: url.to_string(),
             requested: req.to_string(),
@@ -949,7 +959,7 @@ mod tests {
 
     /// The resolved version as text, for a compact assertion.
     fn resolved(res: &Resolution) -> Option<String> {
-        res.info.version.as_ref().map(ToString::to_string)
+        res.info.resolved.version().map(ToString::to_string)
     }
 
     #[test]
@@ -1209,19 +1219,19 @@ mod tests {
         // Right shape, wrong schema version.
         std::fs::write(
             dir.path().join("v9.json"),
-            r#"{"schema":99,"url":"u","pin":"1","version":"9","fetched_at":0}"#,
+            r#"{"schema":99,"url":"u","pin":"1","version":"9","confirmed_at":0}"#,
         )
         .unwrap();
         // Current schema, but the document beside it is missing.
         std::fs::write(
             dir.path().join("v8.json"),
-            r#"{"schema":1,"url":"u","pin":"1","version":"8","fetched_at":0}"#,
+            r#"{"schema":1,"url":"u","pin":"1","version":"8","confirmed_at":0}"#,
         )
         .unwrap();
         // Current schema, unparseable version.
         std::fs::write(
             dir.path().join("vx.json"),
-            r#"{"schema":1,"url":"u","pin":"1","version":"x","fetched_at":0}"#,
+            r#"{"schema":1,"url":"u","pin":"1","version":"x","confirmed_at":0}"#,
         )
         .unwrap();
         assert!(read_entries(dir.path(), "u").is_empty());
@@ -1229,7 +1239,7 @@ mod tests {
         std::fs::write(dir.path().join("v7.yml"), "version: 7\n").unwrap();
         std::fs::write(
             dir.path().join("v7.json"),
-            r#"{"schema":1,"url":"other","pin":"1","version":"7","fetched_at":0}"#,
+            r#"{"schema":1,"url":"other","pin":"1","version":"7","confirmed_at":0}"#,
         )
         .unwrap();
         assert!(read_entries(dir.path(), "u").is_empty());
@@ -1271,7 +1281,7 @@ mod tests {
         let sub = url_dir(cache.path(), &url);
         let entries = read_entries(&sub, &url);
         let mut meta = entries[0].meta.clone();
-        meta.fetched_at = 0;
+        meta.confirmed_at = 0;
         write_meta(&entries[0].meta_path, &meta).unwrap();
         assert!(is_stale(&meta, DEFAULT_TTL_SECS, now_secs()));
 
@@ -1303,7 +1313,7 @@ mod tests {
         let entries = read_entries(&sub, &url);
         assert_eq!(entries[0].meta.etag.as_deref(), Some("\"v1\""));
         let mut meta = entries[0].meta.clone();
-        meta.fetched_at = 0;
+        meta.confirmed_at = 0;
         write_meta(&entries[0].meta_path, &meta).unwrap();
 
         let second = load_remote(&url, &req("1"), &opts).unwrap();
@@ -1314,7 +1324,7 @@ mod tests {
             1,
             "an unchanged document must not be re-downloaded"
         );
-        assert!(read_entries(&sub, &url)[0].meta.fetched_at > 0);
+        assert!(read_entries(&sub, &url)[0].meta.confirmed_at > 0);
     }
 
     #[test]
@@ -1330,9 +1340,9 @@ mod tests {
         let meta = CacheMeta {
             schema: CACHE_SCHEMA,
             url: "u".into(),
-            pin: Some("1".into()),
-            version: "1".into(),
-            fetched_at: 100,
+            pin: Some(VersionReq::parse("1").unwrap()),
+            version: ver("1"),
+            confirmed_at: 100,
             etag: None,
             last_modified: None,
         };
@@ -1352,8 +1362,7 @@ mod tests {
         let cache = tempdir().unwrap();
         let opts = opts_with_cache(cache.path());
         let res = load_remote(&file_url(&plugin), &None, &opts).unwrap();
-        assert_eq!(res.info.version, None);
-        assert_eq!(res.info.pin, None);
+        assert_eq!(res.info.resolved, Resolved::Unpinned { version: None });
         // No cache files written for an unpinned fetch.
         let entries = std::fs::read_dir(cache.path()).unwrap().count();
         assert_eq!(entries, 0);
@@ -1388,7 +1397,8 @@ mod tests {
         let res = load_remote(assets::CONFIG_LINT_URL, &req("1"), &no_cache()).unwrap();
         assert!(res.text.contains("name_describes_what_the_rule_checks"));
         assert_eq!(res.info.origin, Origin::Bundled);
-        assert!(res.info.version.is_some());
+        assert!(res.info.resolved.version().is_some());
+        assert!(res.info.resolved.pin().is_some());
         assert!(res.info.to_human().contains("from bundled"));
         // A pin the embedded version can't satisfy still errors.
         let err = load_remote(assets::CONFIG_LINT_URL, &req("2"), &no_cache()).unwrap_err();
@@ -1399,8 +1409,10 @@ mod tests {
     fn resolution_renders_a_human_line() {
         let res = PluginResolution {
             url: "https://x/p.yml".into(),
-            pin: Some(VersionReq::parse("1").unwrap()),
-            version: Some(ver("1.4")),
+            resolved: Resolved::Pinned {
+                pin: VersionReq::parse("1").unwrap(),
+                version: ver("1.4"),
+            },
             origin: Origin::Cache,
         };
         assert_eq!(
@@ -1409,8 +1421,7 @@ mod tests {
         );
         let unpinned = PluginResolution {
             url: "https://x/p.yml".into(),
-            pin: None,
-            version: None,
+            resolved: Resolved::Unpinned { version: None },
             origin: Origin::Fetched,
         };
         assert_eq!(

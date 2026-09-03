@@ -213,8 +213,11 @@ pub fn load_config_lint(cwd: &Path) -> Result<Loaded> {
     prov.record(&config, assets::CONFIG_LINT_URL);
     let resolution = PluginResolution {
         url: assets::CONFIG_LINT_URL.to_string(),
-        pin: None,
-        version: config.version.clone(),
+        // Force-loaded from the embedded copy rather than requested by a config,
+        // so there is no pin to satisfy.
+        resolved: plugins::Resolved::Unpinned {
+            version: config.version.clone(),
+        },
         origin: plugins::Origin::Bundled,
     };
     Ok(Loaded {

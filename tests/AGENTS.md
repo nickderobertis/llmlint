@@ -106,8 +106,12 @@ resolves the oneharness the test put on PATH.
   `LLMLINT_PLUGIN_TTL=0`): a non-breaking bump reaches a consumer that changed
   nothing; an unreachable origin still exits 0 from cache, and `plugins clear`
   removes that fallback so the same run then fails; `llmlint plugins` reports each
-  entry (human, `--format json`, `--dir`); an ignore naming a rule nothing declares
-  fails exit-2 naming the loaded plugins and their resolved versions.
+  entry (human, `--format json`, `--dir`, either side of the verb) and says so when
+  it cannot locate a cache at all; an ignore naming a rule nothing declares fails
+  exit-2 naming the loaded plugins and their resolved versions. Corruption and
+  boundary paths are journeys too: a previous-layout or tampered entry is passed
+  over, an origin past the pinned range leaves the pinned plugin in place, and a
+  malformed `LLMLINT_PLUGIN_TTL`/`_REFRESH` is exit-2 located to the variable.
 - `lint-config` is the `lint` engine with the bundled config-lint plugin forced on
   (no plugin entry needed in the project config): it catches a bad rule in a
   config, passes a clean one, skips cleanly when nothing matches the config globs,

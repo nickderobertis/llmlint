@@ -222,7 +222,9 @@ fn parse_list(var: &str, val: &str) -> Result<Vec<String>> {
 
 /// Parse a boolean using the documented grammar (`1`/`true`/`yes` vs
 /// `0`/`false`/`no`, case-insensitive), erroring (located to `var`) otherwise.
-fn parse_bool(var: &str, val: &str) -> Result<bool> {
+/// Shared with the settings read outside this table (the plugin-cache switches),
+/// so every `LLMLINT_*` boolean reads the same grammar.
+pub(crate) fn parse_bool(var: &str, val: &str) -> Result<bool> {
     match val.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" => Ok(true),
         "0" | "false" | "no" => Ok(false),

@@ -831,8 +831,8 @@ naming a rule the *current* plugin declares but a stale copy doesn't:
 ```console
 $ llmlint plugins           # one line per cached entry
 plugin cache: /home/you/.cache/llmlint/plugins
-  https://example.com/org-rules.yml@1  version 1.2  fetched 2026-08-01T09:12:44Z  newer: 1.4
-  https://example.com/org-rules.yml@1  version 1.4  fetched 2026-09-03T10:02:11Z
+  https://example.com/org-rules.yml@1  version 1.2  confirmed 2026-08-01T09:12:44Z  newer: 1.4
+  https://example.com/org-rules.yml@1  version 1.4  confirmed 2026-09-03T10:02:11Z
 
 $ llmlint plugins clear     # drop every entry; the next run refetches
 llmlint: cleared 2 cached plugin entries from /home/you/.cache/llmlint/plugins
@@ -1030,12 +1030,11 @@ source.
   repeatable) drill into part of a run; `--path` prints just the record's file
   path; `--format json` emits the raw record (or a JSON array when listing);
   `--dir`/`--cwd`/`--limit` tune where and how much.
-- `llmlint plugins` — report the [plugin cache](#plugins-shared-rule-sets):
-  per cached entry, its URL, its pin, the version it resolved to, when the origin
-  last confirmed it, and whether a newer version satisfying that pin is already
-  known. `llmlint plugins clear` empties the cache so the next run refetches;
-  `--dir` reads another cache directory and `--format json` emits the same fields
-  machine-readably. Deterministic: no model, oneharness, or network call.
+- `llmlint plugins` — report the [plugin cache](#plugins-shared-rule-sets), one
+  line per cached entry, so a plugin resolving to an unexpected version is visible
+  rather than inferred; `llmlint plugins clear` empties it so the next run
+  refetches. Deterministic: no model, oneharness, or network call. Run
+  `llmlint plugins --help` for its flags.
 
 Exit codes: `0` all rules hold · `1` at least one violation · `2` usage,
 configuration, or harness error (could not complete the lint).

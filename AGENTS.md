@@ -640,7 +640,8 @@ harness reads target files on-demand with its own tools.
   on-disk shape — bump it when the shape changes. Resolution takes the newest
   entry satisfying the pin, admits it only while its document still declares the
   version its metadata claims, and revalidates once it is older than
-  `LLMLINT_PLUGIN_TTL` (seconds, default 3600). A revalidation that cannot be made
+  `LLMLINT_PLUGIN_TTL` (seconds, default 3600; it and `LLMLINT_PLUGIN_REFRESH`
+  read the same grammar every other `LLMLINT_*` setting does, and reject the rest). A revalidation that cannot be made
   reuses the entry and never fails the run: a cache is a speed-up, not a network
   dependency. A previous-layout file (named for a *pin*, no metadata) is
   invisible. Keep the diagnosis path working — `llmlint plugins` / `plugins clear`

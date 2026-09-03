@@ -1575,16 +1575,16 @@ fn the_plugins_verb_reports_pin_resolved_version_and_a_newer_one() {
     // Each entry names its URL, its pin, the version it resolved to and when the
     // origin last confirmed it; the superseded one says what supersedes it.
     assert!(
-        text.contains(&format!("{url}@1  version 1.2  fetched 2")),
+        text.contains(&format!("{url}@1  version 1.2  confirmed 2")),
         "got:\n{text}"
     );
     assert!(text.contains("newer: 1.4"), "got:\n{text}");
     assert!(
-        text.contains(&format!("{url}@1  version 1.4  fetched 2")),
+        text.contains(&format!("{url}@1  version 1.4  confirmed 2")),
         "got:\n{text}"
     );
     assert!(
-        !text.contains("version 1.4  fetched 2026-99"),
+        !text.contains("version 1.4  confirmed 2026-99"),
         "the resolved version has nothing newer: {text}"
     );
 
@@ -1607,6 +1607,163 @@ fn the_plugins_verb_reports_pin_resolved_version_and_a_newer_one() {
     assert_eq!(entries[1]["version"], "1.4");
     assert_eq!(entries[1]["newer"], Value::Null);
     assert!(entries[1]["url"].as_str().unwrap().ends_with("origin.yml"));
+}
+
+#[test]
+fn a_malformed_plugin_cache_window_is_rejected_at_the_boundary() {
+    let (p, _origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    // Both plugin-cache knobs are read from the environment, so both reject a
+    // value they cannot mean rather than silently picking one.
+    p.lint()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .env("LLMLINT_PLUGIN_TTL", "soon")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_PLUGIN_TTL"))
+        .stderr(predicate::str::contains("whole number of seconds"));
+    p.lint()
+        .env("LLMLINT_CACHE_DIR", &cache)
+        .env("LLMLINT_PLUGIN_REFRESH", "sometimes")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_PLUGIN_REFRESH"))
+        .stderr(predicate::str::contains("1/true/yes"));
+}
+
+#[test]
+fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule", "1.2");
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run().status.code(), Some(0));
+
+    // A previous-layout file (named for the *pin*, no metadata beside it) sits in
+    // the same directory. It must stay invisible — never read as though `1.yml`
+    // named a resolved version.
+    let sub = fs::read_dir(&cache)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    fs::write(
+        sub.join("1.yml"),
+        format!(
+            "version: 1.0\nrules:\n  - {{ name: previous_layout_rule, description: \"{RULE}\" }}\n"
+        ),
+    )
+    .unwrap();
+    // …as must an entry whose document no longer declares what its metadata
+    // claims: here the cached document is replaced wholesale.
+    let entry = fs::read_dir(&sub)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("v1.2.")
+        })
+        .filter(|p| p.extension().unwrap() == "yml")
+        .unwrap();
+    fs::write(
+        &entry,
+        format!("version: 1.9\nrules:\n  - {{ name: tampered_rule, description: \"{RULE}\" }}\n"),
+    )
+    .unwrap();
+
+    let out = run();
+    assert_eq!(out.status.code(), Some(0));
+    let names = reported_rules(&out);
+    assert!(names.contains(&"shared_rule".to_string()), "{names:?}");
+    assert!(
+        !names.contains(&"previous_layout_rule".to_string()),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"tampered_rule".to_string()), "{names:?}");
+    // The reporting verb agrees: one entry, the genuine one.
+    let listed = p
+        .plugins()
+        .arg("--dir")
+        .arg(&cache)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(v["plugins"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["plugins"][0]["version"], "1.2");
+    let _ = origin;
+}
+
+#[test]
+fn an_origin_past_the_pinned_range_leaves_the_pinned_plugin_in_place() {
+    let (p, origin, cache) = project_with_pinned_plugin("shared_rule_v1", "1.2");
+    let run = || {
+        p.lint()
+            .arg("--format")
+            .arg("json")
+            .env("LLMLINT_CACHE_DIR", &cache)
+            .env("LLMLINT_PLUGIN_TTL", "0")
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run().status.code(), Some(0));
+
+    // The author publishes a *breaking* 2.0 at the same URL. `@1` asked for the
+    // 1.x range and the cache still has it, so the run keeps working on it.
+    publish(&origin, "breaking_rule", "2");
+    let kept = run();
+    assert_eq!(kept.status.code(), Some(0));
+    let names = reported_rules(&kept);
+    assert!(names.contains(&"shared_rule_v1".to_string()), "{names:?}");
+    assert!(!names.contains(&"breaking_rule".to_string()), "{names:?}");
+
+    // The same is true of a document that stops parsing at all.
+    fs::write(&origin, "version: : :\n  - oops\n").unwrap();
+    let kept = run();
+    assert_eq!(kept.status.code(), Some(0));
+    assert!(reported_rules(&kept).contains(&"shared_rule_v1".to_string()));
+}
+
+#[test]
+fn the_plugins_verb_reports_a_cache_it_cannot_locate() {
+    let p = Project::new();
+    // With no home or cache directory to derive one from, the command says so
+    // and names the way out rather than reporting an empty cache that isn't.
+    let out = p
+        .plugins()
+        .env_remove("HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .env_remove("LOCALAPPDATA")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no plugin cache directory"), "got: {err}");
+    assert!(err.contains("--dir"), "got: {err}");
+
+    // `clear` reports machine-readably too, so a script can act on the count.
+    let cleared = p
+        .plugins()
+        .arg("clear")
+        .arg("--dir")
+        .arg(p.path().join("cache"))
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_eq!(cleared.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&cleared.stdout).unwrap();
+    assert_eq!(v["cleared"], 0);
 }
 
 #[test]
