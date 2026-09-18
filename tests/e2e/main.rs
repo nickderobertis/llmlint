@@ -11077,19 +11077,15 @@ fn history_limit_truncates_the_listing() {
 }
 
 // ---- the pre-push visual guard (.githooks/pre-push) -------------------------
-//
-// The guard is a bash hook, so these journeys are unix-only, like the Windows
-// color gate is Windows-only.
 
+// llmlint: ignore-block[e2e_not_mocked] the hook's third-party tools (screencomp, freeze) are its external-process seam, stubbed as this suite stubs oneharness: the real hook script runs, and the real tools are not installed by `just setup` or CI's gate
 /// A scratch checkout for driving the real `.githooks/pre-push` script the way
-/// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo): the hook, a
-/// `screencomp.toml`, and stubs at the hook's three subprocess seams — a
-/// `screencomp` on PATH that records every call's argv and answers `scope` with
-/// "relevant" and `classify` with `$STUB_CLASSIFY_EXIT`, a `freeze` so the hook
-/// gets past its tool check, and a `scripts/screenshots.sh` that records the
-/// capture dir it was handed. A real capture needs the pinned `freeze`,
-/// screencomp, and a release build (none of which `just setup` installs), so the
-/// seams are stubbed exactly as this suite stubs oneharness for llmlint.
+/// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo; unix-only, as
+/// the hook is bash): the hook, a `screencomp.toml`, and stubs at the hook's
+/// three subprocess seams — a `screencomp` on PATH that records every call's
+/// argv and answers `scope` with "relevant" and `classify` with
+/// `$STUB_CLASSIFY_EXIT`, a `freeze` so the hook gets past its tool check, and a
+/// `scripts/screenshots.sh` that records the capture dir it was handed.
 #[cfg(unix)]
 struct GuardRepo {
     p: Project,
@@ -11269,3 +11265,4 @@ fn pre_push_guard_refuses_a_config_with_more_than_one_lane() {
         "no capture or screencomp call should run:\n{calls}"
     );
 }
+// llmlint: ignore-end[e2e_not_mocked]

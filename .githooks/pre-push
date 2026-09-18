@@ -19,6 +19,8 @@
 #
 # Enable once per clone:  git config core.hooksPath .githooks
 # Bypass intentionally:   git push --no-verify
+#
+# llmlint: ignore-file[changed_behavior_has_e2e] the `pre_push_guard_*` journeys in tests/e2e/main.rs drive this real script the way git does, with screencomp/freeze/the capture stubbed at the subprocess seam (as the suite stubs oneharness); those third-party tools are not installed by `just setup` or CI's gate, and their own behavior is theirs to test
 set -euo pipefail
 
 # The one [capture].arches lane, read from screencomp.toml so it is declared in
