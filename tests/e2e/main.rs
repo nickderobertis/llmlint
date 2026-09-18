@@ -11076,8 +11076,6 @@ fn history_limit_truncates_the_listing() {
     assert_eq!(arr.as_array().unwrap().len(), 2);
 }
 
-// ---- the pre-push visual guard (.githooks/pre-push) -------------------------
-
 // llmlint: ignore-block[e2e_not_mocked] the hook's third-party tools (screencomp, freeze) are its external-process seam, stubbed as this suite stubs oneharness: the real hook script runs, and the real tools are not installed by `just setup` or CI's gate
 /// A scratch checkout for driving the real `.githooks/pre-push` script the way
 /// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo; unix-only, as
