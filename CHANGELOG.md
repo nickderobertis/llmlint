@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/nickderobertis/llmlint/compare/v0.4.1...v0.4.2) - 2026-09-18
+
+### Added
+
+- *(oneharness)* ask for the JSON report explicitly and raise the CLI floor ([#190](https://github.com/nickderobertis/llmlint/pull/190))
+
 ## [0.4.1](https://github.com/nickderobertis/llmlint/compare/v0.4.0...v0.4.1) - 2026-09-03
 
 ### Fixed
