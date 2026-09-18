@@ -4997,6 +4997,7 @@ fn doctor_fails_clearly_when_oneharness_is_missing() {
         .stderr(predicate::str::contains("oneharness not found"));
 }
 
+// llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
 #[test]
 fn doctor_fails_clearly_when_oneharness_is_too_old() {
     // A pre-0.14.0 oneharness refuses `run --format json` (and, older still,
@@ -5012,6 +5013,7 @@ fn doctor_fails_clearly_when_oneharness_is_too_old() {
         .stderr(predicate::str::contains("too old"))
         .stderr(predicate::str::contains("0.14.0"));
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 #[test]
 fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
@@ -5173,6 +5175,7 @@ fn an_ambient_oneharness_override_never_reaches_a_test_command() {
         .stdout(predicate::str::contains("(oneharness)"));
 }
 
+// llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
 #[test]
 fn lint_fails_clearly_when_oneharness_is_too_old() {
     // The pre-flight version gate stops the run before any judge call. The
@@ -5201,6 +5204,7 @@ fn lint_fails_clearly_when_oneharness_is_too_old() {
         "no oneharness `run` should happen when the version gate fails"
     );
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 // ---- failure / recovery ---------------------------------------------------
 

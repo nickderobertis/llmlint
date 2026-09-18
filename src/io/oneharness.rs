@@ -843,6 +843,27 @@ mod tests {
     }
 
     #[test]
+    fn docs_name_min_version_as_the_floor() {
+        // README.md and AGENTS.md each state the floor for a reader who never
+        // opens this file, so they restate `MIN_VERSION` as a literal; this
+        // pins each restatement to the constant so a bump can't leave a doc
+        // naming the old floor as current.
+        let (major, minor, patch) = MIN_VERSION;
+        let readme = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"));
+        let expected = format!("oneharness ≥ {major}.{minor}.{patch}");
+        assert!(
+            readme.contains(&expected),
+            "README.md must state the floor as `{expected}` to match oneharness::MIN_VERSION"
+        );
+        let agents = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/AGENTS.md"));
+        let expected = format!("**oneharness >= {major}.{minor}.{patch}**");
+        assert!(
+            agents.contains(&expected),
+            "AGENTS.md must state the floor as `{expected}` to match oneharness::MIN_VERSION"
+        );
+    }
+
+    #[test]
     fn check_min_version_errors_when_binary_missing() {
         let client = Client::new(Some("definitely-not-a-real-binary-xyz"));
         assert!(matches!(
