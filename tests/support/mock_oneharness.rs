@@ -30,7 +30,10 @@
 //!   `fallback.ran` name even on success, so llmlint must fall back to the first
 //!   `results` entry that produced structured output.
 //! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
-//!   (default `0.3.12`), so a test can drive llmlint's minimum-version gate.
+//!   (default: llmlint's `MIN_VERSION`), so a test can drive the minimum-version gate.
+//! - `run` honors `--format` like oneharness >= 0.14.0: `json` prints the JSON
+//!   report (every branch below), while `text` or no `--format` at all prints a
+//!   human text view, and any other value is refused with exit 2.
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
@@ -57,6 +60,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use llmlint::io::oneharness::MIN_VERSION;
 use serde_json::{json, Map, Value};
 
 fn flag(name: &str) -> bool {
@@ -214,14 +218,18 @@ fn main() {
     }
 
     // `llmlint doctor` (and lint's pre-flight version gate) call `<bin>
-    // --version`. Default to a version that satisfies llmlint's minimum;
-    // `LLMLINT_MOCK_VERSION` overrides it so a test can drive the too-old path.
+    // --version`. Default to exactly llmlint's minimum (one source, so the
+    // mock can never drift below the floor); `LLMLINT_MOCK_VERSION` overrides
+    // it so a test can drive the too-old path.
     if args.iter().any(|a| a == "--version" || a == "-V") {
         if let Some(dir) = env::var_os("LLMLINT_MOCK_DUMP_HISTORY_LABELS") {
             let value = env::var("ONEHARNESS_HISTORY_LABELS").unwrap_or_default();
             let _ = fs::write(PathBuf::from(dir).join("version"), value);
         }
-        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.21".into());
+        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| {
+            let (major, minor, patch) = MIN_VERSION;
+            format!("{major}.{minor}.{patch}")
+        });
         println!("oneharness {version} (mock)");
         return;
     }
@@ -237,6 +245,31 @@ fn main() {
     // llmlint passed (e.g. that `--harness` is omitted when not configured).
     if let Some(dump) = env::var_os("LLMLINT_MOCK_DUMP_ARGS") {
         let _ = fs::write(PathBuf::from(dump), args[1..].join("\n"));
+    }
+
+    // `--format` takes exactly `text` (oneharness's default: a human-readable
+    // view) or `json` (the machine report every branch below prints). Mirror
+    // that, so a run that stops asking for JSON gets text llmlint cannot parse
+    // instead of silently keeping the old default. A bare trailing `--format`
+    // is a usage error, as it is for oneharness's clap parser, not the default.
+    let format = arg_value(&args, "--format");
+    if format.is_none() && args.iter().any(|a| a == "--format") {
+        eprintln!("error: a value is required for '--format <FORMAT>' but none was supplied");
+        std::process::exit(2);
+    }
+    match format.as_deref() {
+        Some("json") => {}
+        None | Some("text") => {
+            println!("{harness}: ok (mock text view; pass --format json for the report)");
+            return;
+        }
+        Some(other) => {
+            eprintln!(
+                "error: invalid value '{other}' for '--format <FORMAT>' \
+                 [possible values: text, json]"
+            );
+            std::process::exit(2);
+        }
     }
 
     // Optionally record the rendered system prompt so the e2e suite can assert

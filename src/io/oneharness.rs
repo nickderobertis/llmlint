@@ -32,9 +32,13 @@ pub const DEFAULT_BIN: &str = "oneharness";
 /// mode, `--mode read-only`, has been required since 0.3.0.) The named
 /// `failure_kind: "tool_deferred"` that lets llmlint give a specific diagnostic
 /// when a bridged/managed harness defers a builtin tool instead of running it
-/// (issue #142) landed in 0.3.21 — the current floor. An older binary lacks
-/// these, so it is rejected up front.
-pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 21);
+/// (issue #142) landed in 0.3.21. `run --format json` — which lets llmlint ask
+/// for the machine-readable report explicitly instead of relying on JSON being
+/// `run`'s default output — landed in 0.14.0, the current floor. An older
+/// binary lacks these (and refuses `--format` as an unknown argument), so it is
+/// rejected up front.
+// llmlint: ignore[invalid_states_unrepresentable] every u64 (major, minor, patch) triple is a valid semver core, and tuple order is semver-core order
+pub const MIN_VERSION: (u64, u64, u64) = (0, 14, 0);
 
 const HISTORY_LABELS_ENV: &str = "ONEHARNESS_HISTORY_LABELS";
 
@@ -369,6 +373,12 @@ impl Client {
             "--mode".into(),
             "read-only".into(),
             "--require-available".into(),
+            // Ask for the JSON report llmlint parses rather than relying on it
+            // being `run`'s default output (oneharness defaults to a human
+            // text view). `--compact` keeps it on one line. (Requires
+            // oneharness >= MIN_VERSION; checked up front.)
+            "--format".into(),
+            "json".into(),
             "--compact".into(),
         ];
         if let Some(h) = req.harness {
@@ -756,6 +766,36 @@ mod tests {
     }
 
     #[test]
+    fn every_run_asks_for_the_json_report() {
+        // oneharness defaults `run` to a human text view; llmlint parses JSON,
+        // so the argv must request it whichever optional flags are present.
+        let client = Client::new(Some("definitely-not-a-real-binary-xyz"));
+        let schema = json!({"type": "object"});
+        let cwd = std::env::temp_dir();
+        let config = std::env::temp_dir().join("oneharness.toml");
+        let bare = RunRequest {
+            harness: None,
+            no_config: false,
+            ..req(&schema, &cwd)
+        };
+        let full = RunRequest {
+            model: Some("some-model"),
+            schema_max_retries: Some(2),
+            oneharness_config: Some(&config),
+            no_config: false,
+            ..req(&schema, &cwd)
+        };
+        for r in [bare, req(&schema, &cwd), full] {
+            let (trace, _) = client.run_with_trace(&r);
+            assert!(
+                trace.command.contains(" --format json --compact"),
+                "{}",
+                trace.command
+            );
+        }
+    }
+
+    #[test]
     fn parse_semver_reads_major_minor_patch() {
         assert_eq!(parse_semver("oneharness 0.3.0"), Some((0, 3, 0)));
         assert_eq!(parse_semver("oneharness 0.3.1 (abc)"), Some((0, 3, 1)));
@@ -779,11 +819,48 @@ mod tests {
     #[test]
     fn min_version_comparison_uses_tuple_order() {
         // Sanity-check the ordering the `check_min_version` gate relies on.
-        assert!((0, 3, 21) >= MIN_VERSION);
-        assert!((0, 4, 0) >= MIN_VERSION);
+        assert!((0, 14, 0) >= MIN_VERSION);
+        assert!((0, 14, 1) >= MIN_VERSION);
+        assert!((0, 15, 0) >= MIN_VERSION);
         assert!((1, 0, 0) >= MIN_VERSION);
-        assert!((0, 3, 20) < MIN_VERSION);
+        assert!((0, 13, 99) < MIN_VERSION);
+        assert!((0, 3, 21) < MIN_VERSION);
         assert!((0, 3, 0) < MIN_VERSION);
+    }
+
+    #[test]
+    fn pyproject_oneharness_floor_matches_min_version() {
+        // The wheel's `oneharness-cli` floor (what `pip install llmlint-cli`
+        // resolves) and `MIN_VERSION` (what the binary enforces) restate one
+        // contract; bumping one without the other is a drift, not a convention.
+        let pyproject = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/pyproject.toml"));
+        let (major, minor, patch) = MIN_VERSION;
+        let expected = format!("\"oneharness-cli>={major}.{minor}.{patch}\"");
+        assert!(
+            pyproject.contains(&expected),
+            "pyproject.toml must depend on {expected} to match oneharness::MIN_VERSION"
+        );
+    }
+
+    #[test]
+    fn docs_name_min_version_as_the_floor() {
+        // README.md and AGENTS.md each state the floor for a reader who never
+        // opens this file, so they restate `MIN_VERSION` as a literal; this
+        // pins each restatement to the constant so a bump can't leave a doc
+        // naming the old floor as current.
+        let (major, minor, patch) = MIN_VERSION;
+        let readme = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"));
+        let expected = format!("oneharness ≥ {major}.{minor}.{patch}");
+        assert!(
+            readme.contains(&expected),
+            "README.md must state the floor as `{expected}` to match oneharness::MIN_VERSION"
+        );
+        let agents = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/AGENTS.md"));
+        let expected = format!("**oneharness >= {major}.{minor}.{patch}**");
+        assert!(
+            agents.contains(&expected),
+            "AGENTS.md must state the floor as `{expected}` to match oneharness::MIN_VERSION"
+        );
     }
 
     #[test]

@@ -130,8 +130,10 @@ stops, so the judge never gets a verdict. llmlint detects this and says so,
 naming the deferred tool and pointing you to a standalone shell or CI, instead
 of the opaque "no JSON value could be extracted" you'd otherwise chase. Confirm
 a deployment up front with `llmlint doctor --probe`: it makes one trivial
-tool-using call and checks the harness actually ran it. (This needs oneharness
-≥ 0.3.21, which reports the deferral as a named `tool_deferred` failure.)
+tool-using call and checks the harness actually ran it. (The deferral is
+reported as a named `tool_deferred` failure, which oneharness has carried since
+0.3.21; llmlint itself needs oneharness ≥ 0.14.0, the release that lets it ask
+`run` for its JSON report with `--format json`.)
 
 **Behind a mirror.** In a network that can reach a release-proxy mirror but not
 `github.com`, point the archive download at it:

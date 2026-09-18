@@ -4997,20 +4997,23 @@ fn doctor_fails_clearly_when_oneharness_is_missing() {
         .stderr(predicate::str::contains("oneharness not found"));
 }
 
+// llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
 #[test]
 fn doctor_fails_clearly_when_oneharness_is_too_old() {
-    // A pre-0.3.21 oneharness lacks the `tool_deferred` failure_kind (and, older
-    // still, `--system-file`), so doctor rejects it below the floor.
+    // A pre-0.14.0 oneharness refuses `run --format json` (and, older still,
+    // lacks the `tool_deferred` failure_kind and `--system-file`), so doctor
+    // rejects it below the floor.
     let p = Project::new();
     p.bare()
         .arg("doctor")
         .env("LLMLINT_ONEHARNESS_BIN", mock_path())
-        .env("LLMLINT_MOCK_VERSION", "0.3.20")
+        .env("LLMLINT_MOCK_VERSION", "0.13.9")
         .assert()
         .code(2)
         .stderr(predicate::str::contains("too old"))
-        .stderr(predicate::str::contains("0.3.21"));
+        .stderr(predicate::str::contains("0.14.0"));
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 #[test]
 fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
@@ -5024,7 +5027,7 @@ fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("could not determine"))
-        .stderr(predicate::str::contains("0.3.21"));
+        .stderr(predicate::str::contains("0.14.0"));
 }
 
 #[test]
@@ -5172,9 +5175,12 @@ fn an_ambient_oneharness_override_never_reaches_a_test_command() {
         .stdout(predicate::str::contains("(oneharness)"));
 }
 
+// llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
 #[test]
 fn lint_fails_clearly_when_oneharness_is_too_old() {
-    // The pre-flight version gate stops the run before any judge call.
+    // The pre-flight version gate stops the run before any judge call. The
+    // version is the last release before `run --format json` (0.14.0): it would
+    // refuse the flag as an unknown argument, so llmlint refuses it by name.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -5186,17 +5192,19 @@ fn lint_fails_clearly_when_oneharness_is_too_old() {
     p.write("src/lib.rs", "// code\n");
     let runlog = p.path().join("runlog");
     p.lint()
-        .env("LLMLINT_MOCK_VERSION", "0.2.529")
+        .env("LLMLINT_MOCK_VERSION", "0.13.9")
         .env("LLMLINT_MOCK_RUNLOG", &runlog)
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("too old"));
+        .stderr(predicate::str::contains("too old"))
+        .stderr(predicate::str::contains("0.14.0"));
     // The gate fires before planning, so no judge ran.
     assert!(
         !runlog.exists() || fs::read_dir(&runlog).unwrap().count() == 0,
         "no oneharness `run` should happen when the version gate fails"
     );
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 // ---- failure / recovery ---------------------------------------------------
 
@@ -5770,6 +5778,46 @@ fn oneharness_runs_in_read_only_mode() {
         .expect("--mode flag should be forwarded on every run");
     assert_eq!(mode, "read-only");
 }
+
+// llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
+#[test]
+fn oneharness_is_asked_for_the_json_report_explicitly() {
+    // llmlint parses oneharness's JSON report, and oneharness's default output
+    // is a human text view, so every `run` must say `--format json` itself —
+    // for the default agent and for one pinning a harness and model alike. The
+    // `-v` trace shows the same argv that was spawned.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  pinned:\n    \
+             harness: codex\n    model: some-model\nrules:\n  \
+             - {{ name: default_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: pinned_rule, description: \"{RULE}\", agent: pinned }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"default_rule": true, "pinned_rule": true}"#);
+    for rule in ["default_rule", "pinned_rule"] {
+        let args_dump = p.path().join(format!("{rule}-args.txt"));
+        p.lint_v()
+            .arg("--rule")
+            .arg(rule)
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("--format json --compact"));
+        let dumped = fs::read_to_string(&args_dump).unwrap();
+        let format = dumped
+            .lines()
+            .skip_while(|l| *l != "--format")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{rule}: --format should be forwarded, got:\n{dumped}"));
+        assert_eq!(format, "json", "{rule}");
+    }
+}
+// llmlint: ignore-end[e2e_not_mocked]
 
 #[test]
 fn oneharness_sessions_are_labeled_as_llmlint_without_labeling_version_checks() {
@@ -11031,3 +11079,192 @@ fn history_limit_truncates_the_listing() {
     let arr: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(arr.as_array().unwrap().len(), 2);
 }
+
+// llmlint: ignore-block[e2e_not_mocked] the hook's third-party tools (screencomp, freeze) are its external-process seam, stubbed as this suite stubs oneharness: the real hook script runs, and the real tools are not installed by `just setup` or CI's gate
+/// A scratch checkout for driving the real `.githooks/pre-push` script the way
+/// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo; unix-only, as
+/// the hook is bash): the hook, a `screencomp.toml`, and stubs at the hook's
+/// three subprocess seams — a `screencomp` on PATH that records every call's
+/// argv and answers `scope` with "relevant" and `classify` with
+/// `$STUB_CLASSIFY_EXIT`, a `freeze` so the hook gets past its tool check, and a
+/// `scripts/screenshots.sh` that records the capture dir it was handed.
+#[cfg(unix)]
+struct GuardRepo {
+    p: Project,
+}
+
+#[cfg(unix)]
+impl GuardRepo {
+    fn new(screencomp_toml: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let p = Project::new();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        p.write(
+            ".githooks/pre-push",
+            &fs::read_to_string(root.join(".githooks/pre-push")).unwrap(),
+        );
+        p.write("screencomp.toml", screencomp_toml);
+        p.write(
+            "bin/screencomp",
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$STUB_CALLS\"\n\
+             case \"$1\" in\n  scope) exit 3 ;;\n  \
+             classify) exit \"${STUB_CLASSIFY_EXIT:-0}\" ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        p.write("bin/freeze", "#!/usr/bin/env bash\nexit 0\n");
+        p.write(
+            "scripts/screenshots.sh",
+            "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n",
+        );
+        for stub in ["bin/screencomp", "bin/freeze"] {
+            fs::set_permissions(p.path().join(stub), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        init_repo(p.path());
+        git(p.path(), &["add", "."]);
+        git(p.path(), &["commit", "-q", "-m", "baseline"]);
+        // The pushed range changes a guarded path (the stub `scope` says so).
+        p.write("src/io/oneharness.rs", "// changed\n");
+        git(p.path(), &["add", "."]);
+        git(p.path(), &["commit", "-q", "-m", "change"]);
+        GuardRepo { p }
+    }
+
+    /// Run the hook over `HEAD~1..HEAD`; returns its output and the stubs' call
+    /// log (one line per screencomp call: its argv; plus the capture dir).
+    fn run(&self, classify_exit: i32) -> (std::process::Output, String) {
+        let calls = self.p.path().join("calls");
+        let _ = fs::remove_file(&calls);
+        let path = format!(
+            "{}:{}",
+            self.p.path().join("bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let mut c = std::process::Command::new("bash");
+        c.arg(".githooks/pre-push")
+            .current_dir(self.p.path())
+            .env("PATH", path)
+            .env("STUB_CALLS", &calls)
+            .env("STUB_CLASSIFY_EXIT", classify_exit.to_string())
+            .env("SCREENCOMP_GUARD_RANGE", "HEAD~1..HEAD")
+            .env_remove("CI")
+            .stdin(std::process::Stdio::null());
+        // The suite's own gate runs inside a pre-push hook; the hook under test
+        // must diff the scratch repo, not the one this test fired in.
+        for name in llmlint::io::diff::AMBIENT_REPOSITORY_VARS {
+            c.env_remove(name);
+        }
+        let out = c.output().unwrap();
+        let log = fs::read_to_string(&calls).unwrap_or_default();
+        (out, log)
+    }
+}
+
+/// The repository's own `screencomp.toml` and the one lane it declares under
+/// `[capture].arches` — read here independently of the hook's parsing.
+#[cfg(unix)]
+fn repo_screencomp_toml() -> (String, String) {
+    let toml =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("screencomp.toml")).unwrap();
+    let arches = toml
+        .lines()
+        .find_map(|l| l.strip_prefix("arches = ["))
+        .expect("screencomp.toml declares [capture].arches");
+    let lanes: Vec<&str> = arches
+        .split(']')
+        .next()
+        .unwrap()
+        .split(',')
+        .map(|s| s.trim().trim_matches('"'))
+        .collect();
+    assert_eq!(lanes.len(), 1, "the guard assumes one lane; got {lanes:?}");
+    (toml.clone(), lanes[0].to_string())
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_classifies_the_configured_lane_on_every_host() {
+    // llmlint's SVGs are byte-identical on every arch, so the committed baseline
+    // of the ONE configured lane is the baseline for every host: the hook must
+    // capture into and classify that lane — taken from screencomp.toml, never
+    // from `uname -m` — else a host of any other arch fails every guarded push
+    // for want of a baseline it does not need. Proven for the repository's real
+    // lane, then for a lane no host has, so the assertion discriminates on
+    // every CI arch.
+    let (toml, lane) = repo_screencomp_toml();
+    for (toml, lane) in [
+        (toml, lane),
+        (
+            "[capture]\narches = [\"riscv64\"]\n".to_string(),
+            "riscv64".to_string(),
+        ),
+    ] {
+        let repo = GuardRepo::new(&toml);
+        let (out, calls) = repo.run(0);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "{lane}: stdout={stdout}\nstderr={stderr}"
+        );
+        assert!(
+            stdout.contains(&format!(
+                "screenshots unchanged against shots/baseline/{lane}.json"
+            )),
+            "{lane}: {stdout}"
+        );
+        assert!(
+            calls.contains(&format!("SHOTS_OUT=shots/current/{lane}\n")),
+            "{lane}: {calls}"
+        );
+        let classify = calls
+            .lines()
+            .find(|l| l.starts_with("classify "))
+            .unwrap_or_else(|| panic!("{lane}: no classify call in:\n{calls}"));
+        assert_eq!(
+            classify,
+            format!(
+                "classify --baseline-manifest shots/baseline/{lane}.json \
+                 --current shots/current --arch {lane} --exit-code"
+            )
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_blocks_on_drift_and_refreshes_the_lane_baseline() {
+    // classify exit 3 = drift: the hook regenerates that lane's manifest (so the
+    // developer can commit it), renders the review gallery, and blocks the push.
+    let (toml, lane) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    let (out, calls) = repo.run(3);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("SCREENSHOTS CHANGED"), "{stderr}");
+    assert!(
+        calls.contains(&format!(
+            "manifest --input shots/current --arch {lane} --output shots/baseline/{lane}.json\n"
+        )),
+        "{calls}"
+    );
+    assert!(
+        calls.contains(&format!("gallery --input shots/current --arch {lane} ")),
+        "{calls}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_refuses_a_config_with_more_than_one_lane() {
+    // A second lane would need its own committed baseline and CI job; the guard
+    // is built for exactly one, so it says so rather than guessing which to use.
+    let repo = GuardRepo::new("[capture]\narches = [\"x86_64\", \"arm64\"]\n");
+    let (out, calls) = repo.run(0);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("expected exactly one lane"), "{stderr}");
+    assert!(
+        calls.is_empty(),
+        "no capture or screencomp call should run:\n{calls}"
+    );
+}
+// llmlint: ignore-end[e2e_not_mocked]

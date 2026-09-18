@@ -38,8 +38,9 @@ dynamic = ["version"]
 # its prebuilt binary ships the same way as ours (the oneharness-cli wheel), so
 # depending on it makes `pip install llmlint-cli` a complete, working install.
 # The floor mirrors oneharness::MIN_VERSION in src/io/oneharness.rs — bump them
-# together when the runtime floor moves.
-dependencies = ["oneharness-cli>=0.3.21"]
+# together when the runtime floor moves (the e2e test
+# `pyproject_oneharness_floor_matches_min_version` fails when they drift).
+dependencies = ["oneharness-cli>=0.14.0"]
 
 [project.urls]
 Repository = "https://github.com/nickderobertis/llmlint"

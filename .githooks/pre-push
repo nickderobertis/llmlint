@@ -10,17 +10,29 @@
 # (a vendored, pinned font), so the capture runs NATIVELY here — no Docker, no
 # pinned container — and still produces byte-identical output to CI.
 #
+# That byte-identity is also why the guard does NOT key its baseline on the host
+# arch: screencomp scopes captures per arch and refuses one it has no lane for,
+# but llmlint's SVGs are identical on every arch (the contract screencomp.toml
+# states under [capture]), so the single configured lane is the baseline for
+# every host — an aarch64 machine classifies against it too, rather than failing
+# every push that touches a guarded path for want of a second baseline + CI lane.
+#
 # Enable once per clone:  git config core.hooksPath .githooks
 # Bypass intentionally:   git push --no-verify
+#
+# llmlint: ignore-file[changed_behavior_has_e2e] the `pre_push_guard_*` journeys in tests/e2e/main.rs drive this real script the way git does, with screencomp/freeze/the capture stubbed at the subprocess seam (as the suite stubs oneharness); those third-party tools are not installed by `just setup` or CI's gate, and their own behavior is theirs to test
 set -euo pipefail
 
-case "$(uname -m)" in
-  arm64 | aarch64) ARCH="arm64" ;;
-  x86_64 | amd64)  ARCH="x86_64" ;;
-  *) echo "pre-push: unsupported arch $(uname -m); bypass with git push --no-verify" >&2; exit 1 ;;
-esac
-
-MANIFEST="shots/baseline/${ARCH}.json"    # committed baseline for this arch
+# The one [capture].arches lane, read from screencomp.toml so it is declared in
+# exactly one place. The guard assumes a single lane (that is what byte-identity
+# buys); a second one would need its own baseline + CI job, so refuse loudly.
+LANE="$(sed -n 's/^arches *= *\[ *"\([^"]*\)" *\].*/\1/p' screencomp.toml)"
+if ! [[ "$LANE" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo "pre-push: expected exactly one lane in [capture].arches of screencomp.toml" >&2
+  echo "          (the guard classifies that lane on every host); got: [${LANE:-none}]" >&2
+  exit 1
+fi
+MANIFEST="shots/baseline/${LANE}.json"     # the lane's committed baseline
 GALLERY="shots/review"                     # [guard].gallery (review output)
 CURRENT="shots/current"                    # capture root, mirrors visual-docs.yml
 
@@ -87,11 +99,11 @@ if ! command -v freeze >/dev/null 2>&1; then
   echo "          then retry, or bypass with: git push --no-verify" >&2
   exit 1
 fi
-SHOTS_OUT="$CURRENT/$ARCH" bash scripts/screenshots.sh
+SHOTS_OUT="$CURRENT/$LANE" bash scripts/screenshots.sh
 
 # --- 4. Classify the capture against the committed baseline manifest ---------
 set +e
-screencomp classify --baseline-manifest "$MANIFEST" --current "$CURRENT" --exit-code
+screencomp classify --baseline-manifest "$MANIFEST" --current "$CURRENT" --arch "$LANE" --exit-code
 status=$?
 set -e
 
@@ -104,8 +116,8 @@ elif [ "$status" -ne 3 ]; then
 fi
 
 # --- On drift (classify exit 3): regenerate, build a gallery, BLOCK. ---------
-screencomp manifest --input "$CURRENT" --output "$MANIFEST"
-screencomp gallery --input "$CURRENT" \
+screencomp manifest --input "$CURRENT" --arch "$LANE" --output "$MANIFEST"
+screencomp gallery --input "$CURRENT" --arch "$LANE" \
   --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null
 
 {

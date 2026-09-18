@@ -483,10 +483,9 @@ resolves the oneharness the test put on PATH.
   while a subtree agent traces to the subtree config.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
-- Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
-  via the dumped arg vector. The minimum-oneharness-version gate (>= 0.3.21,
-  needed for read-only mode, `--system-file`, and the `tool_deferred`
-  failure_kind) is exercised both ways: `doctor`
+- Every `run` carries `--mode read-only` (llmlint judges, never edits) and
+  `--format json`, asserted via the dumped arg vector. The minimum-version gate
+  (`oneharness::MIN_VERSION`) is exercised both ways: `doctor`
   and `lint` reject a too-old oneharness with a clear exit-2 "too old" error (the
   mock's reported version is driven by `LLMLINT_MOCK_VERSION`), a version string
   with no parseable number is a distinct exit-2 "could not determine" error, and
@@ -598,7 +597,7 @@ resolves the oneharness the test put on PATH.
   real tool-using harness call (driven by the mock) and reports **ok** when the
   tool executed inline; the default `doctor` (no `--probe`) makes no harness call.
 - Deferred-tool diagnostic (issue #142): when the harness defers a builtin tool
-  instead of executing it, oneharness (>= 0.3.21) reports
+  instead of executing it, oneharness (since 0.3.21) reports
   `failure_kind: "tool_deferred"` (mock: `LLMLINT_MOCK_DEFERRED=1`). Both `lint`
   and `doctor --probe` surface a **specific** actionable error naming the
   deferral and pointing to a standalone shell / CI — never the generic "failed
@@ -714,6 +713,19 @@ renders; this tier proves that end result.
   (`.github/workflows/win-color.yml`). It needs no harness CLI, auth, or
   oneharness — only the binary + the fixture — so unlike the live tier it is free
   and runs on every PR.
+
+## The pre-push visual guard (`.githooks/pre-push`)
+
+The `pre_push_guard_*` journeys drive the **real hook script** the way git does
+(cwd = a scratch repo, the range on `SCREENCOMP_GUARD_RANGE`), with stubs at its
+subprocess seams (`GuardRepo`): a `screencomp` that records argv and answers with
+a chosen exit, a `freeze`, and a `scripts/screenshots.sh`. The real tools are not
+installed by `just setup` or CI's gate, so they are stubbed as the suite stubs
+oneharness; a change to the hook's own logic gets its journey here. They are
+`#[cfg(unix)]` — the hook is bash. The invariant they pin: llmlint's SVGs are
+byte-identical on every arch, so the hook classifies the **one**
+`[capture].arches` lane from `screencomp.toml` on every host (never `uname -m`)
+and refuses a config declaring more than one.
 
 ## Unit vs e2e
 
