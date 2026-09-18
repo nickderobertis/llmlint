@@ -483,11 +483,9 @@ resolves the oneharness the test put on PATH.
   while a subtree agent traces to the subtree config.
 - An agent's `harness` is forwarded as `--harness`; leaving it unset omits the
   flag so oneharness falls back to its own configured default harness.
-- Every `run` carries `--mode read-only` (llmlint judges, never edits), asserted
-  via the dumped arg vector, as does `--format json` (the mock, like oneharness,
-  prints a text view without it). The minimum-oneharness-version gate
-  (>= 0.14.0, needed for `--format json`, read-only mode, `--system-file`, and
-  the `tool_deferred` failure_kind) is exercised both ways: `doctor`
+- Every `run` carries `--mode read-only` (llmlint judges, never edits) and
+  `--format json`, asserted via the dumped arg vector. The minimum-version gate
+  (`oneharness::MIN_VERSION`) is exercised both ways: `doctor`
   and `lint` reject a too-old oneharness with a clear exit-2 "too old" error (the
   mock's reported version is driven by `LLMLINT_MOCK_VERSION`), a version string
   with no parseable number is a distinct exit-2 "could not determine" error, and
