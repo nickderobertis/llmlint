@@ -4999,17 +4999,18 @@ fn doctor_fails_clearly_when_oneharness_is_missing() {
 
 #[test]
 fn doctor_fails_clearly_when_oneharness_is_too_old() {
-    // A pre-0.3.21 oneharness lacks the `tool_deferred` failure_kind (and, older
-    // still, `--system-file`), so doctor rejects it below the floor.
+    // A pre-0.14.0 oneharness refuses `run --format json` (and, older still,
+    // lacks the `tool_deferred` failure_kind and `--system-file`), so doctor
+    // rejects it below the floor.
     let p = Project::new();
     p.bare()
         .arg("doctor")
         .env("LLMLINT_ONEHARNESS_BIN", mock_path())
-        .env("LLMLINT_MOCK_VERSION", "0.3.20")
+        .env("LLMLINT_MOCK_VERSION", "0.13.9")
         .assert()
         .code(2)
         .stderr(predicate::str::contains("too old"))
-        .stderr(predicate::str::contains("0.3.21"));
+        .stderr(predicate::str::contains("0.14.0"));
 }
 
 #[test]
@@ -5024,7 +5025,7 @@ fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("could not determine"))
-        .stderr(predicate::str::contains("0.3.21"));
+        .stderr(predicate::str::contains("0.14.0"));
 }
 
 #[test]
@@ -5174,7 +5175,9 @@ fn an_ambient_oneharness_override_never_reaches_a_test_command() {
 
 #[test]
 fn lint_fails_clearly_when_oneharness_is_too_old() {
-    // The pre-flight version gate stops the run before any judge call.
+    // The pre-flight version gate stops the run before any judge call. The
+    // version is the last release before `run --format json` (0.14.0): it would
+    // refuse the flag as an unknown argument, so llmlint refuses it by name.
     let p = Project::new();
     p.write(
         "llmlint.yml",
@@ -5186,11 +5189,12 @@ fn lint_fails_clearly_when_oneharness_is_too_old() {
     p.write("src/lib.rs", "// code\n");
     let runlog = p.path().join("runlog");
     p.lint()
-        .env("LLMLINT_MOCK_VERSION", "0.2.529")
+        .env("LLMLINT_MOCK_VERSION", "0.13.9")
         .env("LLMLINT_MOCK_RUNLOG", &runlog)
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("too old"));
+        .stderr(predicate::str::contains("too old"))
+        .stderr(predicate::str::contains("0.14.0"));
     // The gate fires before planning, so no judge ran.
     assert!(
         !runlog.exists() || fs::read_dir(&runlog).unwrap().count() == 0,
@@ -5769,6 +5773,44 @@ fn oneharness_runs_in_read_only_mode() {
         .nth(1)
         .expect("--mode flag should be forwarded on every run");
     assert_eq!(mode, "read-only");
+}
+
+#[test]
+fn oneharness_is_asked_for_the_json_report_explicitly() {
+    // llmlint parses oneharness's JSON report, and oneharness's default output
+    // is a human text view, so every `run` must say `--format json` itself —
+    // for the default agent and for one pinning a harness and model alike. The
+    // `-v` trace shows the same argv that was spawned.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  pinned:\n    \
+             harness: codex\n    model: some-model\nrules:\n  \
+             - {{ name: default_rule, description: \"{RULE}\" }}\n  \
+             - {{ name: pinned_rule, description: \"{RULE}\", agent: pinned }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"default_rule": true, "pinned_rule": true}"#);
+    for rule in ["default_rule", "pinned_rule"] {
+        let args_dump = p.path().join(format!("{rule}-args.txt"));
+        p.lint_v()
+            .arg("--rule")
+            .arg(rule)
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .env("LLMLINT_MOCK_DUMP_ARGS", &args_dump)
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("--format json --compact"));
+        let dumped = fs::read_to_string(&args_dump).unwrap();
+        let format = dumped
+            .lines()
+            .skip_while(|l| *l != "--format")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{rule}: --format should be forwarded, got:\n{dumped}"));
+        assert_eq!(format, "json", "{rule}");
+    }
 }
 
 #[test]

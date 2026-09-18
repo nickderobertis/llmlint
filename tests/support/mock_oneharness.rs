@@ -30,7 +30,10 @@
 //!   `fallback.ran` name even on success, so llmlint must fall back to the first
 //!   `results` entry that produced structured output.
 //! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
-//!   (default `0.3.12`), so a test can drive llmlint's minimum-version gate.
+//!   (default `0.14.0`), so a test can drive llmlint's minimum-version gate.
+//! - `run` honors `--format` like oneharness >= 0.14.0: `json` prints the JSON
+//!   report (every branch below), while `text` or no `--format` at all prints a
+//!   human text view, and any other value is refused with exit 2.
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
@@ -221,7 +224,7 @@ fn main() {
             let value = env::var("ONEHARNESS_HISTORY_LABELS").unwrap_or_default();
             let _ = fs::write(PathBuf::from(dir).join("version"), value);
         }
-        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.3.21".into());
+        let version = env::var("LLMLINT_MOCK_VERSION").unwrap_or_else(|_| "0.14.0".into());
         println!("oneharness {version} (mock)");
         return;
     }
@@ -237,6 +240,25 @@ fn main() {
     // llmlint passed (e.g. that `--harness` is omitted when not configured).
     if let Some(dump) = env::var_os("LLMLINT_MOCK_DUMP_ARGS") {
         let _ = fs::write(PathBuf::from(dump), args[1..].join("\n"));
+    }
+
+    // `--format` takes exactly `text` (oneharness's default: a human-readable
+    // view) or `json` (the machine report every branch below prints). Mirror
+    // that, so a run that stops asking for JSON gets text llmlint cannot parse
+    // instead of silently keeping the old default.
+    match arg_value(&args, "--format").as_deref() {
+        Some("json") => {}
+        None | Some("text") => {
+            println!("{harness}: ok (mock text view; pass --format json for the report)");
+            return;
+        }
+        Some(other) => {
+            eprintln!(
+                "error: invalid value '{other}' for '--format <FORMAT>' \
+                 [possible values: text, json]"
+            );
+            std::process::exit(2);
+        }
     }
 
     // Optionally record the rendered system prompt so the e2e suite can assert

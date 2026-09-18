@@ -32,9 +32,12 @@ pub const DEFAULT_BIN: &str = "oneharness";
 /// mode, `--mode read-only`, has been required since 0.3.0.) The named
 /// `failure_kind: "tool_deferred"` that lets llmlint give a specific diagnostic
 /// when a bridged/managed harness defers a builtin tool instead of running it
-/// (issue #142) landed in 0.3.21 — the current floor. An older binary lacks
-/// these, so it is rejected up front.
-pub const MIN_VERSION: (u64, u64, u64) = (0, 3, 21);
+/// (issue #142) landed in 0.3.21. `run --format json` — which lets llmlint ask
+/// for the machine-readable report explicitly instead of relying on JSON being
+/// `run`'s default output — landed in 0.14.0, the current floor. An older
+/// binary lacks these (and refuses `--format` as an unknown argument), so it is
+/// rejected up front.
+pub const MIN_VERSION: (u64, u64, u64) = (0, 14, 0);
 
 const HISTORY_LABELS_ENV: &str = "ONEHARNESS_HISTORY_LABELS";
 
@@ -369,6 +372,12 @@ impl Client {
             "--mode".into(),
             "read-only".into(),
             "--require-available".into(),
+            // Ask for the JSON report llmlint parses rather than relying on it
+            // being `run`'s default output (oneharness defaults to a human
+            // text view). `--compact` keeps it on one line. (Requires
+            // oneharness >= MIN_VERSION; checked up front.)
+            "--format".into(),
+            "json".into(),
             "--compact".into(),
         ];
         if let Some(h) = req.harness {
@@ -756,6 +765,36 @@ mod tests {
     }
 
     #[test]
+    fn every_run_asks_for_the_json_report() {
+        // oneharness defaults `run` to a human text view; llmlint parses JSON,
+        // so the argv must request it whichever optional flags are present.
+        let client = Client::new(Some("definitely-not-a-real-binary-xyz"));
+        let schema = json!({"type": "object"});
+        let cwd = std::env::temp_dir();
+        let config = std::env::temp_dir().join("oneharness.toml");
+        let bare = RunRequest {
+            harness: None,
+            no_config: false,
+            ..req(&schema, &cwd)
+        };
+        let full = RunRequest {
+            model: Some("some-model"),
+            schema_max_retries: Some(2),
+            oneharness_config: Some(&config),
+            no_config: false,
+            ..req(&schema, &cwd)
+        };
+        for r in [bare, req(&schema, &cwd), full] {
+            let (trace, _) = client.run_with_trace(&r);
+            assert!(
+                trace.command.contains(" --format json --compact"),
+                "{}",
+                trace.command
+            );
+        }
+    }
+
+    #[test]
     fn parse_semver_reads_major_minor_patch() {
         assert_eq!(parse_semver("oneharness 0.3.0"), Some((0, 3, 0)));
         assert_eq!(parse_semver("oneharness 0.3.1 (abc)"), Some((0, 3, 1)));
@@ -779,10 +818,12 @@ mod tests {
     #[test]
     fn min_version_comparison_uses_tuple_order() {
         // Sanity-check the ordering the `check_min_version` gate relies on.
-        assert!((0, 3, 21) >= MIN_VERSION);
-        assert!((0, 4, 0) >= MIN_VERSION);
+        assert!((0, 14, 0) >= MIN_VERSION);
+        assert!((0, 14, 1) >= MIN_VERSION);
+        assert!((0, 15, 0) >= MIN_VERSION);
         assert!((1, 0, 0) >= MIN_VERSION);
-        assert!((0, 3, 20) < MIN_VERSION);
+        assert!((0, 13, 99) < MIN_VERSION);
+        assert!((0, 3, 21) < MIN_VERSION);
         assert!((0, 3, 0) < MIN_VERSION);
     }
 

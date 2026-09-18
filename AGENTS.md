@@ -149,9 +149,10 @@ llmlint shells out to `oneharness run` once per `(agent, judge, batch)` (plus a
 bounded corrective re-ask — see the scope bullet below), passing the rendered
 template via `--system-file` (a temp file, not an inline argv string — the
 briefing carries every changed file's inlined diff, so an inline `--system`
-would trip the OS `Argument list too long` limit; this is why the floor is
+would trip the OS `Argument list too long` limit; `--system-file` needs
 oneharness >= 0.3.12), a generated JSON Schema via `--schema` (oneharness
-validates it and re-prompts on failure), and reading the per-result `structured`
+validates it and re-prompts on failure), and `--format json` (oneharness's
+default output is a human text view), then reading the per-result `structured`
 value. **oneharness is a runtime prerequisite** — found on PATH, overridable via
 `--oneharness-bin` / `LLMLINT_ONEHARNESS_BIN` / config, with a **sibling
 fallback**: when nothing is overridden and PATH has no `oneharness`, llmlint
@@ -168,10 +169,13 @@ harness reads target files on-demand with its own tools.
   read target files but can't edit them or run commands (needs oneharness >=
   0.3.0). It also passes the rendered system prompt by file (`--system-file`, so
   a large briefing never trips the OS argv limit — needs oneharness >= 0.3.12).
-  The floor is **oneharness >= 0.3.21** (`oneharness::MIN_VERSION`): that release
-  reports a deferred builtin tool as a named `failure_kind: "tool_deferred"`,
-  which is what lets llmlint give the specific deferred-tool diagnostic (below)
-  instead of an opaque schema error. Both `lint` (pre-flight, once per run) and
+  A deferred builtin tool is reported as a named `failure_kind: "tool_deferred"`
+  since 0.3.21, which is what lets llmlint give the specific deferred-tool
+  diagnostic (below) instead of an opaque schema error. The floor is
+  **oneharness >= 0.14.0** (`oneharness::MIN_VERSION`): every `run` passes
+  `--format json` (beside `--compact`) because oneharness's default output is a
+  human text view, and an older binary refuses `--format` as an unknown
+  argument. Both `lint` (pre-flight, once per run) and
   `doctor` parse `oneharness --version` and fail with a clear exit-2 error when
   the binary is older (or its version can't be parsed) rather than letting a
   missing flag blow up mid-run. Bump `MIN_VERSION` in `src/io/oneharness.rs`, the
@@ -183,7 +187,7 @@ harness reads target files on-demand with its own tools.
   **defers** builtin tools to an external controller instead of executing them
   inline (a bridged/managed Claude Code session, empty
   `tengu_non_deferrable_builtins`) makes every judge call dead-end with no
-  verdict. oneharness (>= 0.3.21) names this as `failure_kind: "tool_deferred"`
+  verdict. oneharness (since 0.3.21) names this as `failure_kind: "tool_deferred"`
   on the result (status may be `ok`; `structured` null) with an actionable
   `error`. `parse_verdicts` (`src/io/oneharness.rs`) checks that **before** the
   schema/no-structured branches and raises `Error::ToolDeferred`, surfacing
