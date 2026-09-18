@@ -714,6 +714,32 @@ renders; this tier proves that end result.
   oneharness — only the binary + the fixture — so unlike the live tier it is free
   and runs on every PR.
 
+## The pre-push visual guard (`.githooks/pre-push`)
+
+The guard is a bash hook, so its journeys are `#[cfg(unix)]` (as the color gate
+above is Windows-only). They drive the **real hook script** the way git does —
+cwd = a scratch repo, the pushed range on `SCREENCOMP_GUARD_RANGE` — with stubs
+at its three subprocess seams (`GuardRepo`): a `screencomp` on PATH that records
+every call's argv and answers `scope` with "relevant" and `classify` with a
+chosen exit, a `freeze` so the tool check passes, and a `scripts/screenshots.sh`
+that records the capture dir it was handed. A real capture needs the pinned
+`freeze`, screencomp, and a release build — none installed by `just setup` — so
+the seams are stubbed exactly as the suite stubs oneharness for llmlint.
+
+- llmlint's SVGs are byte-identical on every arch, so the committed baseline of
+  the **one** `[capture].arches` lane is the baseline for every host: the hook
+  captures into and classifies that lane, read from `screencomp.toml`, never from
+  `uname -m` (`pre_push_guard_classifies_the_configured_lane_on_every_host`) —
+  proven for the repository's real lane and for a lane no host has, so the
+  assertion discriminates on every CI arch. (Before this, an aarch64 host failed
+  every guarded push for want of an `arm64` baseline it does not need.)
+- On drift (classify exit 3) the hook regenerates that lane's manifest, renders
+  the review gallery, and blocks the push with exit 1
+  (`pre_push_guard_blocks_on_drift_and_refreshes_the_lane_baseline`).
+- A `screencomp.toml` declaring more than one lane is refused up front, before
+  any capture or screencomp call — a second lane needs its own baseline + CI
+  job (`pre_push_guard_refuses_a_config_with_more_than_one_lane`).
+
 ## Unit vs e2e
 
 Pure domain logic (validation, planning, voting, schema, rendering, reporting)

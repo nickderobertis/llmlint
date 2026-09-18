@@ -11075,3 +11075,197 @@ fn history_limit_truncates_the_listing() {
     let arr: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(arr.as_array().unwrap().len(), 2);
 }
+
+// ---- the pre-push visual guard (.githooks/pre-push) -------------------------
+//
+// The guard is a bash hook, so these journeys are unix-only, like the Windows
+// color gate is Windows-only.
+
+/// A scratch checkout for driving the real `.githooks/pre-push` script the way
+/// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo): the hook, a
+/// `screencomp.toml`, and stubs at the hook's three subprocess seams — a
+/// `screencomp` on PATH that records every call's argv and answers `scope` with
+/// "relevant" and `classify` with `$STUB_CLASSIFY_EXIT`, a `freeze` so the hook
+/// gets past its tool check, and a `scripts/screenshots.sh` that records the
+/// capture dir it was handed. A real capture needs the pinned `freeze`,
+/// screencomp, and a release build (none of which `just setup` installs), so the
+/// seams are stubbed exactly as this suite stubs oneharness for llmlint.
+#[cfg(unix)]
+struct GuardRepo {
+    p: Project,
+}
+
+#[cfg(unix)]
+impl GuardRepo {
+    fn new(screencomp_toml: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let p = Project::new();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        p.write(
+            ".githooks/pre-push",
+            &fs::read_to_string(root.join(".githooks/pre-push")).unwrap(),
+        );
+        p.write("screencomp.toml", screencomp_toml);
+        p.write(
+            "bin/screencomp",
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$STUB_CALLS\"\n\
+             case \"$1\" in\n  scope) exit 3 ;;\n  \
+             classify) exit \"${STUB_CLASSIFY_EXIT:-0}\" ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        p.write("bin/freeze", "#!/usr/bin/env bash\nexit 0\n");
+        p.write(
+            "scripts/screenshots.sh",
+            "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n",
+        );
+        for stub in ["bin/screencomp", "bin/freeze"] {
+            fs::set_permissions(p.path().join(stub), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        init_repo(p.path());
+        git(p.path(), &["add", "."]);
+        git(p.path(), &["commit", "-q", "-m", "baseline"]);
+        // The pushed range changes a guarded path (the stub `scope` says so).
+        p.write("src/io/oneharness.rs", "// changed\n");
+        git(p.path(), &["add", "."]);
+        git(p.path(), &["commit", "-q", "-m", "change"]);
+        GuardRepo { p }
+    }
+
+    /// Run the hook over `HEAD~1..HEAD`; returns its output and the stubs' call
+    /// log (one line per screencomp call: its argv; plus the capture dir).
+    fn run(&self, classify_exit: i32) -> (std::process::Output, String) {
+        let calls = self.p.path().join("calls");
+        let _ = fs::remove_file(&calls);
+        let path = format!(
+            "{}:{}",
+            self.p.path().join("bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let mut c = std::process::Command::new("bash");
+        c.arg(".githooks/pre-push")
+            .current_dir(self.p.path())
+            .env("PATH", path)
+            .env("STUB_CALLS", &calls)
+            .env("STUB_CLASSIFY_EXIT", classify_exit.to_string())
+            .env("SCREENCOMP_GUARD_RANGE", "HEAD~1..HEAD")
+            .env_remove("CI")
+            .stdin(std::process::Stdio::null());
+        // The suite's own gate runs inside a pre-push hook; the hook under test
+        // must diff the scratch repo, not the one this test fired in.
+        for name in llmlint::io::diff::AMBIENT_REPOSITORY_VARS {
+            c.env_remove(name);
+        }
+        let out = c.output().unwrap();
+        let log = fs::read_to_string(&calls).unwrap_or_default();
+        (out, log)
+    }
+}
+
+/// The repository's own `screencomp.toml` and the one lane it declares under
+/// `[capture].arches` — read here independently of the hook's parsing.
+#[cfg(unix)]
+fn repo_screencomp_toml() -> (String, String) {
+    let toml =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("screencomp.toml")).unwrap();
+    let arches = toml
+        .lines()
+        .find_map(|l| l.strip_prefix("arches = ["))
+        .expect("screencomp.toml declares [capture].arches");
+    let lanes: Vec<&str> = arches
+        .split(']')
+        .next()
+        .unwrap()
+        .split(',')
+        .map(|s| s.trim().trim_matches('"'))
+        .collect();
+    assert_eq!(lanes.len(), 1, "the guard assumes one lane; got {lanes:?}");
+    (toml.clone(), lanes[0].to_string())
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_classifies_the_configured_lane_on_every_host() {
+    // llmlint's SVGs are byte-identical on every arch, so the committed baseline
+    // of the ONE configured lane is the baseline for every host: the hook must
+    // capture into and classify that lane — taken from screencomp.toml, never
+    // from `uname -m` — else a host of any other arch fails every guarded push
+    // for want of a baseline it does not need. Proven for the repository's real
+    // lane, then for a lane no host has, so the assertion discriminates on
+    // every CI arch.
+    let (toml, lane) = repo_screencomp_toml();
+    for (toml, lane) in [
+        (toml, lane),
+        (
+            "[capture]\narches = [\"riscv64\"]\n".to_string(),
+            "riscv64".to_string(),
+        ),
+    ] {
+        let repo = GuardRepo::new(&toml);
+        let (out, calls) = repo.run(0);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "{lane}: stdout={stdout}\nstderr={stderr}"
+        );
+        assert!(
+            stdout.contains(&format!(
+                "screenshots unchanged against shots/baseline/{lane}.json"
+            )),
+            "{lane}: {stdout}"
+        );
+        assert!(
+            calls.contains(&format!("SHOTS_OUT=shots/current/{lane}\n")),
+            "{lane}: {calls}"
+        );
+        let classify = calls
+            .lines()
+            .find(|l| l.starts_with("classify "))
+            .unwrap_or_else(|| panic!("{lane}: no classify call in:\n{calls}"));
+        assert_eq!(
+            classify,
+            format!(
+                "classify --baseline-manifest shots/baseline/{lane}.json \
+                 --current shots/current --arch {lane} --exit-code"
+            )
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_blocks_on_drift_and_refreshes_the_lane_baseline() {
+    // classify exit 3 = drift: the hook regenerates that lane's manifest (so the
+    // developer can commit it), renders the review gallery, and blocks the push.
+    let (toml, lane) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    let (out, calls) = repo.run(3);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("SCREENSHOTS CHANGED"), "{stderr}");
+    assert!(
+        calls.contains(&format!(
+            "manifest --input shots/current --arch {lane} --output shots/baseline/{lane}.json\n"
+        )),
+        "{calls}"
+    );
+    assert!(
+        calls.contains(&format!("gallery --input shots/current --arch {lane} ")),
+        "{calls}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_refuses_a_config_with_more_than_one_lane() {
+    // A second lane would need its own committed baseline and CI job; the guard
+    // is built for exactly one, so it says so rather than guessing which to use.
+    let repo = GuardRepo::new("[capture]\narches = [\"x86_64\", \"arm64\"]\n");
+    let (out, calls) = repo.run(0);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("expected exactly one lane"), "{stderr}");
+    assert!(
+        calls.is_empty(),
+        "no capture or screencomp call should run:\n{calls}"
+    );
+}

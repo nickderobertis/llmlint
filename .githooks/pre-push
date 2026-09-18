@@ -21,8 +21,16 @@
 # Bypass intentionally:   git push --no-verify
 set -euo pipefail
 
-LANE="x86_64"                              # the one [capture].arches lane (screencomp.toml)
-MANIFEST="shots/baseline/${LANE}.json"     # its committed baseline
+# The one [capture].arches lane, read from screencomp.toml so it is declared in
+# exactly one place. The guard assumes a single lane (that is what byte-identity
+# buys); a second one would need its own baseline + CI job, so refuse loudly.
+LANE="$(sed -n 's/^arches *= *\[ *"\([^"]*\)" *\].*/\1/p' screencomp.toml)"
+if ! [[ "$LANE" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo "pre-push: expected exactly one lane in [capture].arches of screencomp.toml" >&2
+  echo "          (the guard classifies that lane on every host); got: [${LANE:-none}]" >&2
+  exit 1
+fi
+MANIFEST="shots/baseline/${LANE}.json"     # the lane's committed baseline
 GALLERY="shots/review"                     # [guard].gallery (review output)
 CURRENT="shots/current"                    # capture root, mirrors visual-docs.yml
 
