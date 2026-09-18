@@ -178,11 +178,10 @@ harness reads target files on-demand with its own tools.
   argument. Both `lint` (pre-flight, once per run) and
   `doctor` parse `oneharness --version` and fail with a clear exit-2 error when
   the binary is older (or its version can't be parsed) rather than letting a
-  missing flag blow up mid-run. Bump `MIN_VERSION` in `src/io/oneharness.rs`, the
-  mock's default in `tests/support/mock_oneharness.rs`, and the `oneharness-cli`
-  floor in `pyproject.toml` together when the floor moves (the e2e
-  `pyproject_oneharness_floor_matches_min_version` fails when the last two drift;
-  the mock's default drifting below the floor fails every happy-path journey).
+  missing flag blow up mid-run. Bump `MIN_VERSION` in `src/io/oneharness.rs` and
+  the `oneharness-cli` floor in `pyproject.toml` together when the floor moves; a
+  unit test beside `MIN_VERSION` gates them against each other, and the mock
+  oneharness reports `MIN_VERSION` as its default version rather than restating it.
 
 - **Deferred-tool diagnostic (convention, issue #142):** the judge *inherently*
   uses tools — it reads the code it judges — so a harness deployment that

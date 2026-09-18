@@ -37,6 +37,7 @@ pub const DEFAULT_BIN: &str = "oneharness";
 /// `run`'s default output — landed in 0.14.0, the current floor. An older
 /// binary lacks these (and refuses `--format` as an unknown argument), so it is
 /// rejected up front.
+// llmlint: ignore[invalid_states_unrepresentable] every u64 (major, minor, patch) triple is a valid semver core, and tuple order is semver-core order
 pub const MIN_VERSION: (u64, u64, u64) = (0, 14, 0);
 
 const HISTORY_LABELS_ENV: &str = "ONEHARNESS_HISTORY_LABELS";
@@ -825,6 +826,20 @@ mod tests {
         assert!((0, 13, 99) < MIN_VERSION);
         assert!((0, 3, 21) < MIN_VERSION);
         assert!((0, 3, 0) < MIN_VERSION);
+    }
+
+    #[test]
+    fn pyproject_oneharness_floor_matches_min_version() {
+        // The wheel's `oneharness-cli` floor (what `pip install llmlint-cli`
+        // resolves) and `MIN_VERSION` (what the binary enforces) restate one
+        // contract; bumping one without the other is a drift, not a convention.
+        let pyproject = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/pyproject.toml"));
+        let (major, minor, patch) = MIN_VERSION;
+        let expected = format!("\"oneharness-cli>={major}.{minor}.{patch}\"");
+        assert!(
+            pyproject.contains(&expected),
+            "pyproject.toml must depend on {expected} to match oneharness::MIN_VERSION"
+        );
     }
 
     #[test]

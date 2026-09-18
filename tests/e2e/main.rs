@@ -5014,23 +5014,6 @@ fn doctor_fails_clearly_when_oneharness_is_too_old() {
 }
 
 #[test]
-fn pyproject_oneharness_floor_matches_min_version() {
-    // The wheel's `oneharness-cli` floor is what `pip install llmlint-cli`
-    // resolves; `MIN_VERSION` is what the binary enforces. They restate one
-    // contract, so a floor bumped in one place but not the other is a drift
-    // this gate catches rather than a convention to remember.
-    let pyproject =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("pyproject.toml"))
-            .expect("reading pyproject.toml");
-    let (major, minor, patch) = llmlint::io::oneharness::MIN_VERSION;
-    let expected = format!("\"oneharness-cli>={major}.{minor}.{patch}\"");
-    assert!(
-        pyproject.contains(&expected),
-        "pyproject.toml must depend on {expected} to match oneharness::MIN_VERSION"
-    );
-}
-
-#[test]
 fn doctor_fails_clearly_when_oneharness_version_is_unparseable() {
     // A `--version` output with no numeric version can't be checked against the
     // minimum, so the required capabilities can't be honored: hard error.
@@ -5792,7 +5775,7 @@ fn oneharness_runs_in_read_only_mode() {
     assert_eq!(mode, "read-only");
 }
 
-// llmlint: ignore-block[e2e_not_mocked] oneharness is this suite's external boundary by design (AGENTS.md "Tests are context engineering"): the real llmlint binary runs as a subprocess against the mock-oneharness fixture, itself a real subprocess at the `--oneharness-bin` seam; the real-oneharness path is the live tier.
+// llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
 #[test]
 fn oneharness_is_asked_for_the_json_report_explicitly() {
     // llmlint parses oneharness's JSON report, and oneharness's default output
