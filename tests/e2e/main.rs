@@ -11084,9 +11084,10 @@ fn history_limit_truncates_the_listing() {
 /// A scratch checkout for driving the real `.githooks/pre-push` script the way
 /// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo; unix-only, as
 /// the hook is bash): the hook, a `screencomp.toml`, the REAL
-/// `scripts/host-arch.sh` (the hook's own lane-naming helper, not a third-party
-/// seam — so the lane under test is the one this host would really guard), and
-/// stubs at the hook's three subprocess seams — a `screencomp` on PATH that
+/// `scripts/host-arch.sh` and `scripts/bless-baseline.sh` (the hook's own
+/// helpers, not third-party seams — so the lane under test is the one this host
+/// would really guard, and the drift path really runs the shared bless script
+/// `just screenshots-bless` runs), and stubs at the hook's three subprocess seams — a `screencomp` on PATH that
 /// records every call's argv and answers `scope` with "relevant" and `classify`
 /// with `$STUB_CLASSIFY_EXIT`, a `freeze` so the hook gets past its tool check,
 /// and a `scripts/screenshots.sh` that records the capture dir it was handed.
@@ -11106,10 +11107,9 @@ impl GuardRepo {
             &fs::read_to_string(root.join(".githooks/pre-push")).unwrap(),
         );
         p.write("screencomp.toml", screencomp_toml);
-        p.write(
-            "scripts/host-arch.sh",
-            &fs::read_to_string(root.join("scripts/host-arch.sh")).unwrap(),
-        );
+        for helper in ["scripts/host-arch.sh", "scripts/bless-baseline.sh"] {
+            p.write(helper, &fs::read_to_string(root.join(helper)).unwrap());
+        }
         p.write(
             "bin/screencomp",
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$STUB_CALLS\"\n\
@@ -11257,9 +11257,10 @@ fn pre_push_guard_classifies_this_hosts_lane_among_the_declared_ones() {
 #[test]
 fn pre_push_guard_blocks_on_drift_and_refreshes_the_lane_baseline() {
     // classify exit 3 = drift: the hook regenerates THIS host's lane manifest (so
-    // the developer can commit it — the `just screenshots-bless` path by another
-    // name), renders the review gallery, and blocks the push. The other declared
-    // lane's baseline is left alone; CI's job for it is what checks the two agree.
+    // the developer can commit it) via the same scripts/bless-baseline.sh that
+    // `just screenshots-bless` runs, renders the review gallery, and blocks the
+    // push. The other declared lane's baseline is left alone; CI's job for it is
+    // what checks the two agree.
     let (toml, _) = repo_screencomp_toml();
     let lane = host_lane();
     let repo = GuardRepo::new(&toml);
@@ -11351,35 +11352,63 @@ fn ci_freeze_version() -> String {
         .to_string()
 }
 
+/// How a stand-in release tarball is built, so a journey can drive the script's
+/// validation paths as well as its happy one.
+#[cfg(unix)]
+enum StandIn {
+    /// A well-formed archive whose `freeze` prints the asset it came out of.
+    Good,
+    /// Well-formed, but the pinned digest names different bytes (a tampered or
+    /// truncated download).
+    WrongDigest,
+    /// Matches its pinned digest, but upstream moved the binary out of the stem
+    /// directory.
+    NoBinary,
+}
+
 /// Drive the real `scripts/ci-install-freeze.sh` on a host whose `uname -m` says
 /// `raw_arch`, against a stand-in release tree served over `file://`: one tarball
 /// per arch freeze publishes for Linux, each carrying a `freeze` that prints the
-/// asset it came out of. Returns the script's output and the scratch project, so
+/// asset it came out of, plus a pinned-digest file in the release's own
+/// `checksums.txt` format. Returns the script's output and the scratch project, so
 /// a journey can ask the INSTALLED binary which asset was chosen (`out/freeze`).
 #[cfg(unix)]
-fn run_ci_install_freeze(raw_arch: &str) -> (std::process::Output, Project) {
+fn run_ci_install_freeze(raw_arch: &str, kind: StandIn) -> (std::process::Output, Project) {
     use std::os::unix::fs::PermissionsExt;
     let version = ci_freeze_version();
     let p = Project::new();
     let releases = p.path().join(format!("releases/v{version}"));
     fs::create_dir_all(&releases).unwrap();
     let staging = p.path().join("staging");
+    let mut sums = String::new();
     for asset_arch in ["x86_64", "arm64"] {
         let stem = format!("freeze_{version}_Linux_{asset_arch}");
-        let bin = staging.join(&stem).join("freeze");
+        let inner = match kind {
+            StandIn::NoBinary => "README.md",
+            _ => "freeze",
+        };
+        let bin = staging.join(&stem).join(inner);
         fs::create_dir_all(bin.parent().unwrap()).unwrap();
         fs::write(&bin, format!("#!/usr/bin/env bash\nprintf '{stem}\\n'\n")).unwrap();
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let archive = releases.join(format!("{stem}.tar.gz"));
         let tar = std::process::Command::new("tar")
             .arg("-czf")
-            .arg(releases.join(format!("{stem}.tar.gz")))
+            .arg(&archive)
             .arg("-C")
             .arg(&staging)
             .arg(&stem)
             .status()
             .unwrap();
         assert!(tar.success(), "packing the stand-in {stem} release");
+        let digest = match kind {
+            StandIn::WrongDigest => "0".repeat(64),
+            _ => sha256_hex(&archive),
+        };
+        sums.push_str(&format!("{digest}  {stem}.tar.gz\n"));
     }
+    let sums_file = p.path().join("freeze.sha256");
+    fs::write(&sums_file, &sums).unwrap();
 
     let stub_dir = p.path().join("bin");
     fs::create_dir_all(&stub_dir).unwrap();
@@ -11406,9 +11435,30 @@ fn run_ci_install_freeze(raw_arch: &str) -> (std::process::Output, Project) {
             format!("file://{}", p.path().join("releases").display()),
         )
         .env("FREEZE_INSTALL_DIR", p.path().join("out"))
+        .env("FREEZE_SHA256_FILE", &sums_file)
         .output()
         .unwrap();
     (out, p)
+}
+
+/// The SHA-256 of a file as lowercase hex, computed the way the script does.
+#[cfg(unix)]
+fn sha256_hex(path: &Path) -> String {
+    let out = std::process::Command::new("sha256sum")
+        .arg(path)
+        .output()
+        .or_else(|_| {
+            std::process::Command::new("shasum")
+                .args(["-a", "256"])
+                .arg(path)
+                .output()
+        })
+        .expect("a sha256 tool");
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 #[cfg(unix)]
@@ -11423,7 +11473,7 @@ fn ci_install_freeze_installs_the_build_matching_the_runner_architecture() {
         ("aarch64", "arm64"),
         ("arm64", "arm64"),
     ] {
-        let (out, p) = run_ci_install_freeze(raw_arch);
+        let (out, p) = run_ci_install_freeze(raw_arch, StandIn::Good);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(out.status.success(), "{raw_arch}: {stderr}");
         let installed = p.path().join("out/freeze");
@@ -11453,11 +11503,66 @@ fn ci_install_freeze_refuses_an_architecture_with_no_pinned_build() {
     // freeze publishes Linux x86_64 and arm64; on anything else the script names
     // the architecture and exits non-zero, rather than fetching a URL that does
     // not exist and leaving the capture to fail later on a confusing tar error.
-    let (out, p) = run_ci_install_freeze("riscv64");
+    let (out, p) = run_ci_install_freeze("riscv64", StandIn::Good);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("riscv64"), "{stderr}");
+    assert!(
+        stderr.contains("just screenshots-tools"),
+        "no next action: {stderr}"
+    );
     assert!(!p.path().join("out/freeze").exists(), "installed anyway");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_refuses_an_archive_that_misses_its_pinned_digest() {
+    // The digests are pinned in this repository, not fetched beside the archive,
+    // so a tampered or truncated download is refused before it is unpacked —
+    // never installed and then discovered later.
+    let (out, p) = run_ci_install_freeze("x86_64", StandIn::WrongDigest);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("sha256 mismatch"), "{stderr}");
+    assert!(stderr.contains("checksums.txt"), "no next action: {stderr}");
+    assert!(!p.path().join("out/freeze").exists(), "installed anyway");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_refuses_an_archive_with_no_freeze_binary() {
+    // An archive that matches its pin but no longer carries <stem>/freeze means
+    // upstream moved the layout: say so and stop, rather than leaving `install`
+    // to fail with a bare "cannot stat" the capture step cannot act on.
+    let (out, p) = run_ci_install_freeze("aarch64", StandIn::NoBinary);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("archive layout"), "{stderr}");
+    assert!(!p.path().join("out/freeze").exists(), "installed anyway");
+}
+
+/// The digests `scripts/ci-install-freeze.sh` pins cover both Linux assets of the
+/// version it installs — a missing line fails the capture at the digest check, on
+/// the lane whose asset was never pinned.
+#[cfg(unix)]
+#[test]
+fn pinned_freeze_digests_cover_every_installable_asset() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sums = fs::read_to_string(root.join("scripts/freeze.sha256")).unwrap();
+    let version = ci_freeze_version();
+    for asset_arch in ["x86_64", "arm64"] {
+        let want = format!("freeze_{version}_Linux_{asset_arch}.tar.gz");
+        let line = sums
+            .lines()
+            .find(|l| l.split_whitespace().nth(1) == Some(want.as_str()))
+            .unwrap_or_else(|| panic!("scripts/freeze.sha256 pins no digest for {want}"));
+        let digest = line.split_whitespace().next().unwrap();
+        assert_eq!(digest.len(), 64, "not a sha256 for {want}: {digest}");
+        assert!(
+            digest.chars().all(|c| c.is_ascii_hexdigit()),
+            "not hex for {want}: {digest}"
+        );
+    }
 }
 
 /// CI's installer and `just screenshots-tools` must pin the SAME freeze: the

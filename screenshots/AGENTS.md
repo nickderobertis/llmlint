@@ -81,30 +81,21 @@ gate should catch.
 
 ## Lanes: one per arch, each with its own baseline
 
-screencomp scopes captures per CPU arch (a *lane*), and `[capture].arches` in
-`screencomp.toml` declares them: **`x86_64` and `arm64`**. CI fans one job out per
-lane (the reusable workflow runs `arm64` on `ubuntu-24.04-arm`), and each lane has
-its own committed baseline — `shots/baseline/x86_64.json` and
-`shots/baseline/arm64.json`.
+screencomp scopes captures per CPU arch (a *lane*). `[capture].arches` declares
+**`x86_64` and `arm64`**, each with its own committed
+`shots/baseline/<arch>.json`; CI runs one job per lane (`arm64` on
+`ubuntu-24.04-arm`).
 
-Two lanes are declared even though the bytes are identical, because the *guard* is
-local: `.githooks/pre-push` classifies and re-blesses the lane of the **host it runs
-on**, so a host whose arch no lane declares cannot guard its own pushes at all (it
-refuses, naming the declared lanes). llmlint is developed on arm64 and released from
-CI's x86_64, so both are real hosts. The identical-bytes contract is what makes that
-split safe: one host re-blesses its own lane, and CI's job for the *other* lane is
-the check that the two agree. An `every_declared_capture_lane_has_a_committed_baseline`
-journey in `tests/e2e/main.rs` holds them byte-equal, so a lane can never land
-without a baseline or drift away from its sibling.
+Both are declared even though the bytes are identical, because the guard is
+**local**: `.githooks/pre-push` classifies and re-blesses the lane of the host it
+runs on, and refuses a host arch no lane declares. llmlint is developed on arm64
+and released from CI's x86_64, so both are real hosts.
 
-**Re-blessing from an arm64 host** (or any other): run `just screenshots-bless`. It
-recaptures and rewrites **this host's lane only** —
-`shots/baseline/$(bash scripts/host-arch.sh).json`, so `arm64.json` on an arm64
-machine — and leaves the other lane's baseline alone. Commit it alongside
-`docs/screenshots/`; CI's other lane then checks the two still agree. The pre-push
-guard does exactly the same thing for you when it catches drift. `scripts/host-arch.sh`
-is the single place a lane's name is derived from `uname -m`, shared by the capture,
-the guard, and the bless recipe so they can never disagree.
+**Re-blessing, on any host:** `just screenshots-bless` rewrites **this host's lane
+only** (`scripts/host-arch.sh` names it — the single place a lane name is derived
+from `uname -m`, shared with the capture and the guard). Commit it with
+`docs/screenshots/`; the identical-bytes contract is what makes that safe, and CI's
+job for the *other* lane is the check on it.
 
 ## Outputs
 

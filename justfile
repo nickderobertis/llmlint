@@ -242,8 +242,7 @@ screenshots-gif:
 # across arches, so the other lane needs no local rewrite; CI's job for it is what
 # checks the two agree.
 screenshots-bless: screenshots
-    @command -v screencomp >/dev/null || { echo "screencomp not installed: https://github.com/nickderobertis/screencomp#install" >&2; exit 1; }
-    screencomp manifest --input shots/current --arch "$(bash scripts/host-arch.sh)" --output "shots/baseline/$(bash scripts/host-arch.sh).json"
+    @bash scripts/bless-baseline.sh
     @echo "baseline refreshed for the $(bash scripts/host-arch.sh) lane; commit shots/baseline/ + docs/screenshots/"
 
 # Install/refresh the optional llmlint toolchain. Idempotent.

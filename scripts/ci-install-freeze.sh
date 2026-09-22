@@ -10,6 +10,7 @@
 #
 # Keep `freeze_version` below in sync with `freeze-version` in the justfile — the
 # `ci_install_freeze_*` journeys in tests/e2e/main.rs gate them against each other.
+# llmlint: ignore-file[new_code_lands_in_a_project] llmlint is deliberately a single binary crate with no monorepo and no Nx project graph (AGENTS.md, "Stack and composition"), so there is no project definition for a CI-only shell installer to land in; its owning surface is the visual-docs workflow's capture-command, and the ci_install_freeze_* journeys in tests/e2e/main.rs drive it end to end
 set -euo pipefail
 
 freeze_version="0.2.2"
@@ -23,32 +24,66 @@ x86_64 | amd64) asset_arch="x86_64" ;;
 arm64 | aarch64) asset_arch="arm64" ;;
 *)
   echo "ci-install-freeze: no pinned freeze build for this architecture: $host" >&2
-  echo "                   (freeze v$freeze_version ships Linux x86_64 and arm64)" >&2
+  echo "                   freeze v$freeze_version ships Linux x86_64 and arm64 only." >&2
+  echo "                   Run the capture on one of those, or install freeze from" >&2
+  echo "                   source first: just screenshots-tools" >&2
   exit 1
   ;;
 esac
 
 # Overridable so the e2e journeys can drive the real script against a stand-in
-# release tree instead of the network; CI uses the defaults.
+# release tree and digest pin instead of the network; CI uses the defaults.
 base_url="${FREEZE_BASE_URL:-https://github.com/charmbracelet/freeze/releases/download}"
 install_dir="${FREEZE_INSTALL_DIR:-/usr/local/bin}"
+sums_file="${FREEZE_SHA256_FILE:-$(dirname "$0")/freeze.sha256}"
 
 stem="freeze_${freeze_version}_Linux_${asset_arch}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-curl -fsSL -o "$tmp/freeze.tar.gz" "$base_url/v${freeze_version}/${stem}.tar.gz"
-tar -xzf "$tmp/freeze.tar.gz" -C "$tmp"
+# Portable SHA-256 (Linux coreutils vs macOS/BSD), as in scripts/screenshots.sh.
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
 
-bin="$tmp/$stem/freeze"
-if [ ! -f "$bin" ]; then
-  bin="$(find "$tmp" -type f -name freeze | head -n 1)"
+curl -fsSL -o "$tmp/freeze.tar.gz" "$base_url/v${freeze_version}/${stem}.tar.gz"
+
+# Validate the archive before unpacking it: the expected digest is pinned in THIS
+# repository, not fetched beside the archive — a checksum served from the
+# download's own origin vouches for nothing (the reasoning scripts/install.sh's
+# `sum_trusted` applies). $sums_file holds the relevant lines of the release's
+# checksums.txt verbatim, so refreshing it on a version bump is a copy.
+expected="$(awk -v want="${stem}.tar.gz" '$2 == want { print $1 }' "$sums_file")"
+if [ -z "$expected" ]; then
+  echo "ci-install-freeze: no pinned sha256 for ${stem}.tar.gz in $sums_file" >&2
+  echo "                   Add its line from" >&2
+  echo "                   $base_url/v${freeze_version}/checksums.txt" >&2
+  exit 1
 fi
-if [ -z "$bin" ] || [ ! -f "$bin" ]; then
-  echo "ci-install-freeze: no 'freeze' binary inside ${stem}.tar.gz" >&2
+actual="$(sha256 "$tmp/freeze.tar.gz")"
+if [ "$actual" != "$expected" ]; then
+  echo "ci-install-freeze: sha256 mismatch for ${stem}.tar.gz — NOT installing" >&2
+  echo "                   expected $expected (pinned in $sums_file)" >&2
+  echo "                   got      $actual" >&2
+  echo "                   If the pin is stale, refresh $sums_file from" >&2
+  echo "                   $base_url/v${freeze_version}/checksums.txt; otherwise treat" >&2
+  echo "                   the download as untrusted and do not retry blindly." >&2
+  exit 1
+fi
+
+tar -xzf "$tmp/freeze.tar.gz" -C "$tmp"
+if [ ! -f "$tmp/$stem/freeze" ]; then
+  echo "ci-install-freeze: ${stem}.tar.gz matched its pinned digest but holds no" >&2
+  echo "                   $stem/freeze — upstream changed the archive layout." >&2
+  echo "                   Re-pin freeze_version here and in the justfile against" >&2
+  echo "                   the new layout." >&2
   exit 1
 fi
 
 install -d "$install_dir"
-install "$bin" "$install_dir/freeze"
+install "$tmp/$stem/freeze" "$install_dir/freeze"
 echo "ci-install-freeze: installed freeze v$freeze_version ($asset_arch) to $install_dir"

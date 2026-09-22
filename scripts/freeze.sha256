@@ -1,0 +1,8 @@
+# SHA-256 digests of the `freeze` release archives scripts/ci-install-freeze.sh
+# installs, copied verbatim from the release's own checksums.txt. Pinned HERE so
+# the trust root is this repository rather than the download's origin; refresh
+# both lines whenever freeze_version (and the justfile's freeze-version) moves.
+#
+#   https://github.com/charmbracelet/freeze/releases/download/v0.2.2/checksums.txt
+ba1164c2e6d573af32df13ddc5868f7cdfc8b9992f26f53695787ca5f4274023  freeze_0.2.2_Linux_arm64.tar.gz
+012fdbdd16c0c19570f9052aac34d16d93d7d0d3b565b05374cc59492f53539b  freeze_0.2.2_Linux_x86_64.tar.gz

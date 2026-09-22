@@ -130,7 +130,7 @@ elif [ "$status" -ne 3 ]; then
 fi
 
 # --- On drift (classify exit 3): regenerate, build a gallery, BLOCK. ---------
-screencomp manifest --input "$CURRENT" --arch "$LANE" --output "$MANIFEST"
+SHOTS_CURRENT="$CURRENT" bash scripts/bless-baseline.sh   # rewrites $MANIFEST
 screencomp gallery --input "$CURRENT" --arch "$LANE" \
   --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null
 

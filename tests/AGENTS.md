@@ -726,44 +726,28 @@ lane helper (`scripts/host-arch.sh`) is **not** stubbed — the real one is copi
 in, so the lane under test is the one this host would really guard. They are
 `#[cfg(unix)]` — the hook is bash.
 
-The invariant they pin: `[capture].arches` declares one lane per arch (`x86_64`
-and `arm64`), each with its own committed baseline, and the guard is **local** —
-it classifies and re-blesses the lane of the **host it runs on**.
-
-- `pre_push_guard_classifies_this_hosts_lane_among_the_declared_ones` — against
-  the repository's real `screencomp.toml`, then against a config that declares the
-  host's lane **last**, which discriminates "the host's lane" from "the first
-  declared lane" on every CI arch.
-- `pre_push_guard_blocks_on_drift_and_refreshes_the_lane_baseline` — classify exit
-  3 regenerates *this host's* manifest, renders the gallery, and blocks the push.
-- `pre_push_guard_refuses_a_host_lane_the_config_does_not_declare` — a host arch no
-  lane declares has no baseline to classify against, so the hook refuses (naming
-  the declared lanes and how to add one) instead of guarding another arch's
-  baseline. Driven with lanes no host has, so it refuses on every CI arch.
-- `every_declared_capture_lane_has_a_committed_baseline` — every declared lane has
-  a `shots/baseline/<arch>.json` and they are byte-equal, which is the
-  identical-bytes contract that lets one host bless its own lane and CI's other
-  lane check it. (Not a hook journey, so outside `GuardRepo`.)
+The invariant they pin: `[capture].arches` declares one lane per arch, each with
+its own committed baseline, and the guard is **local** — it classifies and
+re-blesses the lane of the **host it runs on**, refusing a host arch no lane
+declares. Journeys cover the clean push, drift (which rewrites that lane's
+manifest and blocks), and the undeclared-host refusal; each drives configurations
+that discriminate the host's lane from the first declared one on **every** CI
+arch, so the suite is not x86_64-only. A companion check holds every declared
+lane's baseline present and byte-equal — the identical-bytes contract that lets
+one host bless its own lane and CI's job for the other check it.
 
 ## CI's `freeze` installer (`scripts/ci-install-freeze.sh`)
 
-CI fans the capture out over the declared lanes and runs `arm64` on
-`ubuntu-24.04-arm`, so the capture step must fetch the `freeze` release matching
-the **runner's** architecture. The `ci_install_freeze_*` journeys drive the real
-script with real `curl`/`tar`/`install`; only what a test cannot own is stood in —
-the runner's CPU (a `uname` ahead of the real one on `PATH`) and charmbracelet's
-release server (a local release tree served over `file://`, one tarball per Linux
-arch, each carrying a `freeze` that prints the asset it came out of).
-
-- `ci_install_freeze_installs_the_build_matching_the_runner_architecture` — the
-  four `uname -m` spellings (`x86_64`/`amd64`/`aarch64`/`arm64`) each install the
-  matching asset, proven by running the **installed** binary.
-- `ci_install_freeze_refuses_an_architecture_with_no_pinned_build` — an arch freeze
-  does not publish for exits non-zero naming it, rather than fetching a URL that
-  does not exist.
-- `ci_install_freeze_pins_the_version_the_justfile_pins` — the script's
-  `freeze_version` equals the justfile's `freeze-version`, so a local capture and
-  CI's can never render with different `freeze` versions.
+CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the
+`freeze` release matching the **runner's** architecture, and validate it against
+digests pinned in this repository. The `ci_install_freeze_*` journeys drive the
+real script with real `curl`/`tar`/`install`; only what a test cannot own is stood
+in — the runner's CPU (a `uname` ahead of the real one on `PATH`) and
+charmbracelet's release server (a local release tree over `file://`, with its own
+pin file). They cover every `uname -m` spelling installing the matching asset
+(proven by running the installed binary), an architecture freeze does not publish
+for, an archive failing its pinned digest, one missing the binary, and the pin
+agreeing with the justfile's.
 
 ## Unit vs e2e
 
