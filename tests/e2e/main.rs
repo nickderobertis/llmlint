@@ -11119,7 +11119,8 @@ impl GuardRepo {
         p.write("bin/freeze", "#!/usr/bin/env bash\nexit 0\n");
         p.write(
             "scripts/screenshots.sh",
-            "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n",
+            "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n\
+             mkdir -p \"$SHOTS_OUT\"\n",
         );
         for stub in ["bin/screencomp", "bin/freeze"] {
             fs::set_permissions(p.path().join(stub), fs::Permissions::from_mode(0o755)).unwrap();
@@ -11337,7 +11338,7 @@ fn every_declared_capture_lane_has_a_committed_baseline() {
     }
 }
 
-// llmlint: ignore-block[e2e_not_mocked] the REAL scripts/ci-install-freeze.sh runs here, with real curl/tar/install; only the two things a test cannot own are stood in — the runner's CPU (a `uname` ahead of the real one on PATH) and charmbracelet's release server (a local release tree served over file://) — the same subprocess-seam substitution the pre-push journeys above make for screencomp
+// llmlint: ignore-block[e2e_not_mocked] the real script runs with real curl/tar/install; a test cannot own the runner's CPU or charmbracelet's release server, so only those two are stood in
 /// The `freeze` version `scripts/ci-install-freeze.sh` pins, read from the script
 /// so these journeys follow a pin bump instead of going stale.
 #[cfg(unix)]
@@ -11563,6 +11564,110 @@ fn pinned_freeze_digests_cover_every_installable_asset() {
             "not hex for {want}: {digest}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_refuses_a_malformed_override_before_fetching() {
+    // The three overrides steer a download and two filesystem paths, so a bad one
+    // must fail with its own name attached rather than deep inside curl or awk.
+    for (var, value, needle) in [
+        (
+            "FREEZE_BASE_URL",
+            "ftp://example.invalid",
+            "FREEZE_BASE_URL",
+        ),
+        ("FREEZE_INSTALL_DIR", "", "FREEZE_INSTALL_DIR"),
+        (
+            "FREEZE_SHA256_FILE",
+            "/nonexistent/freeze.sha256",
+            "digest pin file",
+        ),
+    ] {
+        let p = Project::new();
+        let stub_dir = p.path().join("bin");
+        fs::create_dir_all(&stub_dir).unwrap();
+        fs::write(
+            stub_dir.join("uname"),
+            "#!/usr/bin/env bash\nprintf 'x86_64\\n'\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(stub_dir.join("uname"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let out = std::process::Command::new("bash")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/ci-install-freeze.sh"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    stub_dir.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env("FREEZE_INSTALL_DIR", p.path().join("out"))
+            .env(var, value)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{var}: {stderr}");
+        assert!(stderr.contains(needle), "{var}: {stderr}");
+        assert!(
+            !p.path().join("out/freeze").exists(),
+            "{var}: installed anyway"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn bless_baseline_refuses_when_there_is_no_capture_to_bless() {
+    // `just screenshots-bless` and the guard's drift path share this script; with
+    // no capture in shots/current there is nothing to write a manifest from, so it
+    // says so instead of handing screencomp a path that is not there.
+    use std::os::unix::fs::PermissionsExt;
+    let p = Project::new();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for helper in ["scripts/host-arch.sh", "scripts/bless-baseline.sh"] {
+        p.write(helper, &fs::read_to_string(root.join(helper)).unwrap());
+    }
+    let calls = p.path().join("calls");
+    p.write(
+        "bin/screencomp",
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$STUB_CALLS\"\n",
+    );
+    fs::set_permissions(
+        p.path().join("bin/screencomp"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let out = std::process::Command::new("bash")
+        .arg("scripts/bless-baseline.sh")
+        .current_dir(p.path())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                p.path().join("bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("STUB_CALLS", &calls)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("no capture to bless"), "{stderr}");
+    assert!(
+        stderr.contains("just screenshots"),
+        "no next action: {stderr}"
+    );
+    assert!(
+        !calls.exists(),
+        "screencomp should not have been called: {:?}",
+        fs::read_to_string(&calls)
+    );
 }
 
 /// CI's installer and `just screenshots-tools` must pin the SAME freeze: the

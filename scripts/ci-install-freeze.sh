@@ -10,7 +10,7 @@
 #
 # Keep `freeze_version` below in sync with `freeze-version` in the justfile — the
 # `ci_install_freeze_*` journeys in tests/e2e/main.rs gate them against each other.
-# llmlint: ignore-file[new_code_lands_in_a_project] llmlint is deliberately a single binary crate with no monorepo and no Nx project graph (AGENTS.md, "Stack and composition"), so there is no project definition for a CI-only shell installer to land in; its owning surface is the visual-docs workflow's capture-command, and the ci_install_freeze_* journeys in tests/e2e/main.rs drive it end to end
+# llmlint: ignore-file[new_code_lands_in_a_project] a single binary crate with no Nx project graph (AGENTS.md) has no project for a shell script to belong to
 set -euo pipefail
 
 freeze_version="0.2.2"
@@ -32,10 +32,37 @@ arm64 | aarch64) asset_arch="arm64" ;;
 esac
 
 # Overridable so the e2e journeys can drive the real script against a stand-in
-# release tree and digest pin instead of the network; CI uses the defaults.
-base_url="${FREEZE_BASE_URL:-https://github.com/charmbracelet/freeze/releases/download}"
-install_dir="${FREEZE_INSTALL_DIR:-/usr/local/bin}"
-sums_file="${FREEZE_SHA256_FILE:-$(dirname "$0")/freeze.sha256}"
+# release tree and digest pin instead of the network; CI uses the defaults. `-`
+# rather than `:-`: an override that is SET but empty is a misconfigured caller
+# (an unset variable expanded into it), which the checks below reject — silently
+# falling back to the default would install somewhere nobody asked for.
+base_url="${FREEZE_BASE_URL-https://github.com/charmbracelet/freeze/releases/download}"
+install_dir="${FREEZE_INSTALL_DIR-/usr/local/bin}"
+sums_file="${FREEZE_SHA256_FILE-$(dirname "$0")/freeze.sha256}"
+
+# Validate the three overrides before anything is fetched or written: each one
+# steers a download or a filesystem write, so a malformed value must fail here
+# with its own name attached, not deep inside curl/awk/install.
+case "$base_url" in
+https://* | file://*) ;;
+*)
+  echo "ci-install-freeze: FREEZE_BASE_URL must be an https:// or file:// URL" >&2
+  echo "                   got: ${base_url:-<empty>}" >&2
+  echo "                   Unset it to use the default release base." >&2
+  exit 1
+  ;;
+esac
+if [ -z "$install_dir" ]; then
+  echo "ci-install-freeze: FREEZE_INSTALL_DIR is empty; it must name a directory" >&2
+  echo "                   to install into. Unset it to use /usr/local/bin." >&2
+  exit 1
+fi
+if [ ! -r "$sums_file" ]; then
+  echo "ci-install-freeze: no readable digest pin file at $sums_file" >&2
+  echo "                   Restore scripts/freeze.sha256, or point" >&2
+  echo "                   FREEZE_SHA256_FILE at a copy of it." >&2
+  exit 1
+fi
 
 stem="freeze_${freeze_version}_Linux_${asset_arch}"
 tmp="$(mktemp -d)"

@@ -66,6 +66,11 @@ cd "$repo_root"
 # guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT per lane.
 arch="$(bash "$repo_root/scripts/host-arch.sh")"
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
+if [ -e "$SHOTS_OUT" ] && [ ! -d "$SHOTS_OUT" ]; then
+  echo "screenshots: SHOTS_OUT must name a directory to capture into;" >&2
+  echo "             $SHOTS_OUT is not one. Unset it or point it elsewhere." >&2
+  exit 1
+fi
 font="$repo_root/screenshots/fonts/JetBrainsMono-Regular.ttf"
 fixture="$repo_root/screenshots/fixture"
 docs_dir="$repo_root/docs/screenshots"

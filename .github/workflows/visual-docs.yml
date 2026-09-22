@@ -56,5 +56,5 @@ jobs:
       capture-command: |
         export RUSTUP_TOOLCHAIN=1.96.0
         bash scripts/ci-install-freeze.sh
-        # llmlint: ignore[work_goes_through_command_surface] this block runs inside rust:1.96.0-bookworm, which has no `just`; `just screenshots` is a one-line wrapper around exactly this invocation, so installing just here to call it would add a download without adding a step (the pre-push guard invokes the script directly for the same reason)
+        # llmlint: ignore[work_goes_through_command_surface] no `just` in this container; `just screenshots` wraps exactly this line
         bash scripts/screenshots.sh
