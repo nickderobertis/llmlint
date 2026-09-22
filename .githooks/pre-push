@@ -10,26 +10,40 @@
 # (a vendored, pinned font), so the capture runs NATIVELY here — no Docker, no
 # pinned container — and still produces byte-identical output to CI.
 #
-# That byte-identity is also why the guard does NOT key its baseline on the host
-# arch: screencomp scopes captures per arch and refuses one it has no lane for,
-# but llmlint's SVGs are identical on every arch (the contract screencomp.toml
-# states under [capture]), so the single configured lane is the baseline for
-# every host — an aarch64 machine classifies against it too, rather than failing
-# every push that touches a guarded path for want of a second baseline + CI lane.
+# screencomp scopes captures per arch, so each declared lane owns its own
+# committed baseline and its own CI job. This guard classifies the lane of the
+# HOST it runs on — an x86_64 machine refreshes shots/baseline/x86_64.json, an
+# arm64 machine shots/baseline/arm64.json — and refuses a host whose arch
+# [capture].arches does not declare, since nothing has ever captured a baseline
+# for it. llmlint's SVGs are byte-identical across arches (the contract
+# screencomp.toml states under [capture]), so the lanes agree in practice; that
+# is what makes one host's local re-bless of its own lane safe, and CI's other
+# lane the check on it.
 #
 # Enable once per clone:  git config core.hooksPath .githooks
 # Bypass intentionally:   git push --no-verify
 #
+# Re-blessing from either host: `just screenshots-bless` recaptures and rewrites
+# THIS host's lane only (shots/baseline/$(bash scripts/host-arch.sh).json), which
+# is also what this guard does for you on drift. An arm64 host therefore refreshes
+# shots/baseline/arm64.json and commits it; the x86_64 lane is left untouched and
+# CI's x86_64 job checks the two agree (and vice versa on an x86_64 host).
+#
 # llmlint: ignore-file[changed_behavior_has_e2e] the `pre_push_guard_*` journeys in tests/e2e/main.rs drive this real script the way git does, with screencomp/freeze/the capture stubbed at the subprocess seam (as the suite stubs oneharness); those third-party tools are not installed by `just setup` or CI's gate, and their own behavior is theirs to test
 set -euo pipefail
 
-# The one [capture].arches lane, read from screencomp.toml so it is declared in
-# exactly one place. The guard assumes a single lane (that is what byte-identity
-# buys); a second one would need its own baseline + CI job, so refuse loudly.
-LANE="$(sed -n 's/^arches *= *\[ *"\([^"]*\)" *\].*/\1/p' screencomp.toml)"
-if ! [[ "$LANE" =~ ^[A-Za-z0-9_]+$ ]]; then
-  echo "pre-push: expected exactly one lane in [capture].arches of screencomp.toml" >&2
-  echo "          (the guard classifies that lane on every host); got: [${LANE:-none}]" >&2
+# The declared [capture].arches lanes, read from screencomp.toml so they live in
+# exactly one place, and this host's own lane among them. Anything else is a host
+# with no committed baseline and no CI job, so refuse loudly rather than guess.
+LANES="$(sed -n 's/^arches *= *\[\(.*\)\].*/\1/p' screencomp.toml \
+  | tr -d '"[:blank:]' | tr ',' '\n' | grep -v '^$' || true)"
+LANE="$(bash scripts/host-arch.sh)"
+if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
+  echo "pre-push: this host's architecture ($LANE) has no lane in [capture].arches" >&2
+  echo "          of screencomp.toml, so it has no committed baseline to classify" >&2
+  echo "          against. Declared: [${LANES//$'\n'/, }]" >&2
+  echo "          Add \"$LANE\" there (CI fans one job out per lane), capture it" >&2
+  echo "          with 'just screenshots-bless', and commit shots/baseline/$LANE.json." >&2
   exit 1
 fi
 MANIFEST="shots/baseline/${LANE}.json"     # the lane's committed baseline

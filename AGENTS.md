@@ -133,11 +133,21 @@ Use the `just` recipes; do not hand-roll equivalents.
   screencomp's reusable workflow) classifies against the committed baseline
   (`shots/baseline/<arch>.json`), publishes a GitHub Pages gallery, and posts a
   sticky before/after PR comment; `fail-on-drift` makes unexpected drift a red
-  build. The local pre-push guard (`.githooks/pre-push`) regenerates the baseline
-  on drift. `freeze` is *not* installed by `just setup` — `just screenshots-tools`
-  installs the pinned version; screencomp is installed separately (CI installs
-  both). Keep the three `freeze` version pins in sync (justfile, `visual-docs.yml`,
-  `screenshots-tools`). The README **hero** is a separate animated GIF of the
+  build. **Two lanes** are declared in `[capture].arches` — `x86_64` and `arm64`
+  (CI runs the arm64 one on `ubuntu-24.04-arm`) — each with its own committed
+  baseline, because the local pre-push guard (`.githooks/pre-push`) classifies and
+  re-blesses the lane of the **host it runs on** and refuses a host arch no lane
+  declares; llmlint is developed on arm64 and released from CI's x86_64, so both
+  are real hosts. The SVGs are identical across arches, so the two baselines are
+  the same bytes (an e2e journey holds them equal) and one host's
+  `just screenshots-bless` — which rewrites **its own** lane only, named by
+  `scripts/host-arch.sh` — is checked by CI's job for the other lane. `freeze` is
+  *not* installed by `just setup` — `just screenshots-tools` installs the pinned
+  version; screencomp is installed separately (CI installs both, `freeze` via
+  `scripts/ci-install-freeze.sh`, which picks the prebuilt release matching the
+  runner's arch). Keep the two `freeze` version pins in sync (`freeze-version` in
+  the justfile, `freeze_version` in `scripts/ci-install-freeze.sh`; an e2e journey
+  gates them against each other). The README **hero** is a separate animated GIF of the
   live-progress view (`docs/screenshots/demo.gif`, `just screenshots-gif`,
   `scripts/demo-gif.py`) — same real-binary-against-the-fixture approach, rendered
   to frames with the vendored font (Pillow, no `ttyd`/`ffmpeg`); it is *not*
@@ -499,7 +509,8 @@ harness reads target files on-demand with its own tools.
   the PR title. Queue with `gh pr merge --auto --squash`; merged heads auto-delete.
   Admins may break-glass.
 - **All gating checks required**: `check` (full e2e gate), `deny`, `install`,
-  `pr-title`, and the Visual docs diff check (`visual-docs / report (x86_64)`),
+  `pr-title`, and the Visual docs diff check, one per declared capture lane
+  (`visual-docs / report (x86_64)`, `visual-docs / report (arm64)`),
   plus linear history, conversation resolution, no force-push/deletion.
 - **PRs follow `.github/pull_request_template.md`** (What / Why; the squash body).
 - **Releases**: Conventional Commits drive release-plz (pre-1.0: `feat`→minor,

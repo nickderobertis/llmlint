@@ -59,8 +59,10 @@ Unlike a rasterized PNG (whose anti-aliasing drifts across CPUs — why the web
 app in `allowlister-remote` captures inside a pinned Playwright container), an
 SVG is pure layout math. We pin both inputs:
 
-- **`freeze` is version-pinned** (`just`'s `freeze-version`, the CI
-  `capture-command`, and `screenshots-tools` all agree).
+- **`freeze` is version-pinned** (`just`'s `freeze-version`, which
+  `screenshots-tools` installs, and `freeze_version` in
+  `scripts/ci-install-freeze.sh`, which CI's `capture-command` runs; an e2e
+  journey holds the two equal).
 - **The font is vendored** (`fonts/JetBrainsMono-Regular.ttf`, OFL — see
   `fonts/JetBrainsMono-OFL.txt`) and passed via `--font.file`, so freeze never
   fetches one over the network (which also makes capture offline and fast). The
@@ -73,9 +75,36 @@ SVG is pure layout math. We pin both inputs:
   verbatim in the `config` scene's effective config — and drifts the hash against
   a baseline CI captured with a clean shell.
 
-The result: identical bytes on every machine and runner, so a single `x86_64`
-lane and baseline cover everyone — the SVG only changes when the report's
-**content or formatting** changes, which is exactly what the gate should catch.
+The result: identical bytes on every machine and runner — the SVG only changes
+when the report's **content or formatting** changes, which is exactly what the
+gate should catch.
+
+## Lanes: one per arch, each with its own baseline
+
+screencomp scopes captures per CPU arch (a *lane*), and `[capture].arches` in
+`screencomp.toml` declares them: **`x86_64` and `arm64`**. CI fans one job out per
+lane (the reusable workflow runs `arm64` on `ubuntu-24.04-arm`), and each lane has
+its own committed baseline — `shots/baseline/x86_64.json` and
+`shots/baseline/arm64.json`.
+
+Two lanes are declared even though the bytes are identical, because the *guard* is
+local: `.githooks/pre-push` classifies and re-blesses the lane of the **host it runs
+on**, so a host whose arch no lane declares cannot guard its own pushes at all (it
+refuses, naming the declared lanes). llmlint is developed on arm64 and released from
+CI's x86_64, so both are real hosts. The identical-bytes contract is what makes that
+split safe: one host re-blesses its own lane, and CI's job for the *other* lane is
+the check that the two agree. An `every_declared_capture_lane_has_a_committed_baseline`
+journey in `tests/e2e/main.rs` holds them byte-equal, so a lane can never land
+without a baseline or drift away from its sibling.
+
+**Re-blessing from an arm64 host** (or any other): run `just screenshots-bless`. It
+recaptures and rewrites **this host's lane only** —
+`shots/baseline/$(bash scripts/host-arch.sh).json`, so `arm64.json` on an arm64
+machine — and leaves the other lane's baseline alone. Commit it alongside
+`docs/screenshots/`; CI's other lane then checks the two still agree. The pre-push
+guard does exactly the same thing for you when it catches drift. `scripts/host-arch.sh`
+is the single place a lane's name is derived from `uname -m`, shared by the capture,
+the guard, and the bless recipe so they can never disagree.
 
 ## Outputs
 
@@ -100,22 +129,28 @@ when the live view's format changes (`src/commands/progress.rs`).
 ## Commands
 
 - `just screenshots-tools` — install the pinned `freeze` (needs Go). screencomp
-  is installed separately (see its README); CI installs both itself.
+  is installed separately (see its README); CI installs both itself — `freeze`
+  via `scripts/ci-install-freeze.sh`, which picks the prebuilt release matching
+  the runner's arch (so the arm64 lane's runner gets an arm64 binary) and pins the
+  same version this recipe does.
 - `just screenshots` — capture (builds the release binaries, writes the shots +
   the README copies). Quiet on success.
 - `just screenshots-gif` — regenerate the animated demo GIF (needs Python 3 +
   Pillow). Builds the release binaries, then writes `docs/screenshots/demo.gif`.
 - `just screenshots-bless` — after an **intended** output change, recapture and
-  refresh `shots/baseline/<arch>.json`. Commit it alongside `docs/screenshots/`.
+  refresh **this host's** lane, `shots/baseline/<arch>.json` (the arch from
+  `scripts/host-arch.sh`). Commit it alongside `docs/screenshots/`.
 
 ## The strict gate
 
 CI (`fail-on-drift: true`) fails when a capture diverges from the committed
 baseline. The local pre-push guard (`.githooks/pre-push`, enable with
 `git config core.hooksPath .githooks`) re-captures **only** when a
-`[guard].paths` file changes (`screencomp.toml`), and on drift it regenerates the
-baseline, builds a review gallery (`shots/review/index.html`), and blocks the
-push so you commit the refreshed baseline + README images deliberately.
+`[guard].paths` file changes (`screencomp.toml`), and on drift it regenerates
+**this host's lane** baseline, builds a review gallery (`shots/review/index.html`),
+and blocks the push so you commit the refreshed baseline + README images
+deliberately. If the host's arch is not one of the declared lanes it refuses
+instead, naming what is declared and how to add the lane.
 
 ## Changing the screenshots
 
@@ -123,4 +158,7 @@ Editing the report format (`src/domain/report.rs`), the CLI surface, the fixture
 or the scenes in `scripts/screenshots.sh` will change the SVGs. That is expected —
 run `just screenshots-bless` and commit the new baseline + `docs/screenshots/`.
 Bumping `freeze-version` or the vendored font reflows every shot; bless once and
-keep the three `freeze` version references in sync.
+keep the two `freeze` version pins in sync (`freeze-version` in the justfile and
+`freeze_version` in `scripts/ci-install-freeze.sh` — an e2e journey holds them
+equal). A reflow changes every lane identically, so one host's bless covers both
+baselines.
