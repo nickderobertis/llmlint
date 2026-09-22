@@ -721,11 +721,33 @@ The `pre_push_guard_*` journeys drive the **real hook script** the way git does
 subprocess seams (`GuardRepo`): a `screencomp` that records argv and answers with
 a chosen exit, a `freeze`, and a `scripts/screenshots.sh`. The real tools are not
 installed by `just setup` or CI's gate, so they are stubbed as the suite stubs
-oneharness; a change to the hook's own logic gets its journey here. They are
-`#[cfg(unix)]` — the hook is bash. The invariant they pin: llmlint's SVGs are
-byte-identical on every arch, so the hook classifies the **one**
-`[capture].arches` lane from `screencomp.toml` on every host (never `uname -m`)
-and refuses a config declaring more than one.
+oneharness; a change to the hook's own logic gets its journey here. The hook's own
+lane helper (`scripts/host-arch.sh`) is **not** stubbed — the real one is copied
+in, so the lane under test is the one this host would really guard. They are
+`#[cfg(unix)]` — the hook is bash.
+
+The invariant they pin: `[capture].arches` declares one lane per arch, each with
+its own committed baseline, and the guard is **local** — it classifies and
+re-blesses the lane of the **host it runs on**, refusing a host arch no lane
+declares. Journeys cover the clean push, drift (which rewrites that lane's
+manifest and blocks), and the undeclared-host refusal; each drives configurations
+that discriminate the host's lane from the first declared one on **every** CI
+arch, so the suite is not x86_64-only. A companion check holds every declared
+lane's baseline present and byte-equal — the identical-bytes contract that lets
+one host bless its own lane and CI's job for the other check it.
+
+## CI's `freeze` installer (`scripts/ci-install-freeze.sh`)
+
+CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the
+`freeze` release matching the **runner's** architecture, and validate it against
+digests pinned in this repository. The `ci_install_freeze_*` journeys drive the
+real script with real `curl`/`tar`/`install`; only what a test cannot own is stood
+in — the runner's CPU (a `uname` ahead of the real one on `PATH`) and
+charmbracelet's release server (a local release tree over `file://`, with its own
+pin file). They cover every `uname -m` spelling installing the matching asset
+(proven by running the installed binary), an architecture freeze does not publish
+for, an archive failing its pinned digest, one missing the binary, and the pin
+agreeing with the justfile's.
 
 ## Unit vs e2e
 

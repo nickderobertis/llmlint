@@ -3,9 +3,11 @@
 # gallery, the GitHub Pages deploy, and the sticky before/after PR comment.
 #
 # Which CPU arch(es) CI captures is read from [capture].arches in screencomp.toml
-# — one lane per arch. llmlint's shots are deterministic SVGs (vendored, pinned
-# font), so a single x86_64 lane covers every machine; no pinned capture
-# container is needed.
+# — one lane per arch, fanned out by the reusable workflow (arm64 runs on
+# ubuntu-24.04-arm). llmlint declares x86_64 and arm64 because its pre-push guard
+# is local and classifies the host's own lane; the shots are deterministic SVGs
+# (vendored, pinned font) so the two lanes' baselines are identical bytes, and
+# each lane here is the check on the other. No pinned capture container is needed.
 name: Visual docs
 
 on:
@@ -43,13 +45,16 @@ jobs:
       # image only has to build + render — no Playwright, no pinned-CPU concerns.
       container: rust:1.96.0-bookworm
       # Install the pinned `freeze` from its prebuilt release (no Go needed), then
-      # capture. RUSTUP_TOOLCHAIN bypasses rust-toolchain.toml so we build with the
-      # image's toolchain instead of syncing its extra components/targets (the SVG
-      # bytes don't depend on the compiler anyway). The reusable workflow exports
-      # $SHOTS_OUT as shots/current/<arch>; the script writes captures.json + SVGs.
+      # capture. The asset must match THIS runner's architecture — the arm64 lane
+      # runs on ubuntu-24.04-arm — so the choice lives in a script
+      # (scripts/ci-install-freeze.sh) that picks it from `uname -m`, rather than in
+      # a hard-coded URL here. RUSTUP_TOOLCHAIN bypasses rust-toolchain.toml so we
+      # build with the image's toolchain instead of syncing its extra
+      # components/targets (the SVG bytes don't depend on the compiler anyway). The
+      # reusable workflow exports $SHOTS_OUT as shots/current/<arch>; the script
+      # writes captures.json + SVGs.
       capture-command: |
         export RUSTUP_TOOLCHAIN=1.96.0
-        curl -fsSL -o /tmp/freeze.tgz https://github.com/charmbracelet/freeze/releases/download/v0.2.2/freeze_0.2.2_Linux_x86_64.tar.gz
-        tar -xzf /tmp/freeze.tgz -C /tmp
-        install /tmp/freeze_0.2.2_Linux_x86_64/freeze /usr/local/bin/freeze
+        bash scripts/ci-install-freeze.sh
+        # llmlint: ignore[work_goes_through_command_surface] no `just` in this container; `just screenshots` wraps exactly this line
         bash scripts/screenshots.sh

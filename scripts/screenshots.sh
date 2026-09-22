@@ -62,12 +62,15 @@ export LLMLINT_NO_HISTORY=1
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-arch="$(uname -m)"
-case "$arch" in
-  x86_64 | amd64) arch="x86_64" ;;
-  arm64 | aarch64) arch="arm64" ;;
-esac
+# This host's capture lane (shots/current/<arch>), named the same way the pre-push
+# guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT per lane.
+arch="$(bash "$repo_root/scripts/host-arch.sh")"
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
+if [ -e "$SHOTS_OUT" ] && [ ! -d "$SHOTS_OUT" ]; then
+  echo "screenshots: SHOTS_OUT must name a directory to capture into;" >&2
+  echo "             $SHOTS_OUT is not one. Unset it or point it elsewhere." >&2
+  exit 1
+fi
 font="$repo_root/screenshots/fonts/JetBrainsMono-Regular.ttf"
 fixture="$repo_root/screenshots/fixture"
 docs_dir="$repo_root/docs/screenshots"

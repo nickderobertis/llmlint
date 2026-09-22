@@ -11083,11 +11083,14 @@ fn history_limit_truncates_the_listing() {
 // llmlint: ignore-block[e2e_not_mocked] the hook's third-party tools (screencomp, freeze) are its external-process seam, stubbed as this suite stubs oneharness: the real hook script runs, and the real tools are not installed by `just setup` or CI's gate
 /// A scratch checkout for driving the real `.githooks/pre-push` script the way
 /// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo; unix-only, as
-/// the hook is bash): the hook, a `screencomp.toml`, and stubs at the hook's
-/// three subprocess seams — a `screencomp` on PATH that records every call's
-/// argv and answers `scope` with "relevant" and `classify` with
-/// `$STUB_CLASSIFY_EXIT`, a `freeze` so the hook gets past its tool check, and a
-/// `scripts/screenshots.sh` that records the capture dir it was handed.
+/// the hook is bash): the hook, a `screencomp.toml`, the REAL
+/// `scripts/host-arch.sh` and `scripts/bless-baseline.sh` (the hook's own
+/// helpers, not third-party seams — so the lane under test is the one this host
+/// would really guard, and the drift path really runs the shared bless script
+/// `just screenshots-bless` runs), and stubs at the hook's three subprocess seams — a `screencomp` on PATH that
+/// records every call's argv and answers `scope` with "relevant" and `classify`
+/// with `$STUB_CLASSIFY_EXIT`, a `freeze` so the hook gets past its tool check,
+/// and a `scripts/screenshots.sh` that records the capture dir it was handed.
 #[cfg(unix)]
 struct GuardRepo {
     p: Project,
@@ -11104,6 +11107,9 @@ impl GuardRepo {
             &fs::read_to_string(root.join(".githooks/pre-push")).unwrap(),
         );
         p.write("screencomp.toml", screencomp_toml);
+        for helper in ["scripts/host-arch.sh", "scripts/bless-baseline.sh"] {
+            p.write(helper, &fs::read_to_string(root.join(helper)).unwrap());
+        }
         p.write(
             "bin/screencomp",
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$STUB_CALLS\"\n\
@@ -11113,7 +11119,8 @@ impl GuardRepo {
         p.write("bin/freeze", "#!/usr/bin/env bash\nexit 0\n");
         p.write(
             "scripts/screenshots.sh",
-            "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n",
+            "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n\
+             mkdir -p \"$SHOTS_OUT\"\n",
         );
         for stub in ["bin/screencomp", "bin/freeze"] {
             fs::set_permissions(p.path().join(stub), fs::Permissions::from_mode(0o755)).unwrap();
@@ -11158,45 +11165,63 @@ impl GuardRepo {
     }
 }
 
-/// The repository's own `screencomp.toml` and the one lane it declares under
-/// `[capture].arches` — read here independently of the hook's parsing.
-#[cfg(unix)]
-fn repo_screencomp_toml() -> (String, String) {
-    let toml =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("screencomp.toml")).unwrap();
+/// Every lane `screencomp.toml` declares under `[capture].arches`, read
+/// independently of the hook's own parsing.
+fn declared_capture_lanes(toml: &str) -> Vec<String> {
     let arches = toml
         .lines()
         .find_map(|l| l.strip_prefix("arches = ["))
         .expect("screencomp.toml declares [capture].arches");
-    let lanes: Vec<&str> = arches
+    arches
         .split(']')
         .next()
         .unwrap()
         .split(',')
-        .map(|s| s.trim().trim_matches('"'))
-        .collect();
-    assert_eq!(lanes.len(), 1, "the guard assumes one lane; got {lanes:?}");
-    (toml.clone(), lanes[0].to_string())
+        .map(|s| s.trim().trim_matches('"').to_string())
+        .collect()
+}
+
+/// The repository's own `screencomp.toml` and the lanes it declares.
+#[cfg(unix)]
+fn repo_screencomp_toml() -> (String, Vec<String>) {
+    let toml =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("screencomp.toml")).unwrap();
+    let lanes = declared_capture_lanes(&toml);
+    (toml, lanes)
+}
+
+/// The lane this host guards, derived the way `scripts/host-arch.sh` derives it
+/// but from Rust's own target arch — so the expectation is independent of the
+/// shell helper the hook actually calls.
+#[cfg(unix)]
+fn host_lane() -> String {
+    match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "arm64",
+        other => other,
+    }
+    .to_string()
 }
 
 #[cfg(unix)]
 #[test]
-fn pre_push_guard_classifies_the_configured_lane_on_every_host() {
-    // llmlint's SVGs are byte-identical on every arch, so the committed baseline
-    // of the ONE configured lane is the baseline for every host: the hook must
-    // capture into and classify that lane — taken from screencomp.toml, never
-    // from `uname -m` — else a host of any other arch fails every guarded push
-    // for want of a baseline it does not need. Proven for the repository's real
-    // lane, then for a lane no host has, so the assertion discriminates on
-    // every CI arch.
-    let (toml, lane) = repo_screencomp_toml();
-    for (toml, lane) in [
-        (toml, lane),
-        (
-            "[capture]\narches = [\"riscv64\"]\n".to_string(),
-            "riscv64".to_string(),
-        ),
-    ] {
+fn pre_push_guard_classifies_this_hosts_lane_among_the_declared_ones() {
+    // Each declared [capture].arches lane owns its own committed baseline, and
+    // the guard is LOCAL: it must capture into and classify the lane of the HOST
+    // it runs on, so that host re-blesses its own baseline and CI's other lane
+    // checks it. Proven against the repository's real configuration (which
+    // declares this host's lane on either CI arch), then against a config that
+    // declares the host's lane LAST — which discriminates "the host's lane" from
+    // "the first declared lane" on every arch.
+    let (toml, lanes) = repo_screencomp_toml();
+    let lane = host_lane();
+    assert!(
+        lanes.contains(&lane),
+        "screencomp.toml must declare this host's lane {lane}; got {lanes:?}"
+    );
+    let host_last = format!("[capture]\narches = [\"riscv64\", \"{lane}\"]\n");
+    for toml in [toml, host_last] {
+        let lane = lane.clone();
         let repo = GuardRepo::new(&toml);
         let (out, calls) = repo.run(0);
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -11232,9 +11257,13 @@ fn pre_push_guard_classifies_the_configured_lane_on_every_host() {
 #[cfg(unix)]
 #[test]
 fn pre_push_guard_blocks_on_drift_and_refreshes_the_lane_baseline() {
-    // classify exit 3 = drift: the hook regenerates that lane's manifest (so the
-    // developer can commit it), renders the review gallery, and blocks the push.
-    let (toml, lane) = repo_screencomp_toml();
+    // classify exit 3 = drift: the hook regenerates THIS host's lane manifest (so
+    // the developer can commit it) via the same scripts/bless-baseline.sh that
+    // `just screenshots-bless` runs, renders the review gallery, and blocks the
+    // push. The other declared lane's baseline is left alone; CI's job for it is
+    // what checks the two agree.
+    let (toml, _) = repo_screencomp_toml();
+    let lane = host_lane();
     let repo = GuardRepo::new(&toml);
     let (out, calls) = repo.run(3);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -11254,17 +11283,407 @@ fn pre_push_guard_blocks_on_drift_and_refreshes_the_lane_baseline() {
 
 #[cfg(unix)]
 #[test]
-fn pre_push_guard_refuses_a_config_with_more_than_one_lane() {
-    // A second lane would need its own committed baseline and CI job; the guard
-    // is built for exactly one, so it says so rather than guessing which to use.
-    let repo = GuardRepo::new("[capture]\narches = [\"x86_64\", \"arm64\"]\n");
+fn pre_push_guard_refuses_a_host_lane_the_config_does_not_declare() {
+    // A lane nothing declares has no committed baseline and no CI job, so there
+    // is nothing to classify against: the guard says so — naming what IS declared
+    // and how to add the lane — rather than silently guarding another arch's
+    // baseline. Driven with lanes no host has, so it refuses on every CI arch.
+    let repo = GuardRepo::new("[capture]\narches = [\"riscv64\", \"s390x\"]\n");
     let (out, calls) = repo.run(0);
     let stderr = String::from_utf8_lossy(&out.stderr);
+    let lane = host_lane();
     assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("expected exactly one lane"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("this host's architecture ({lane}) has no lane")),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Declared: [riscv64, s390x]"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("shots/baseline/{lane}.json")),
+        "{stderr}"
+    );
     assert!(
         calls.is_empty(),
         "no capture or screencomp call should run:\n{calls}"
     );
+}
+// llmlint: ignore-end[e2e_not_mocked]
+
+/// Every lane declared in `[capture].arches` has a committed baseline manifest,
+/// and — under the identical-bytes contract screencomp.toml states — they carry
+/// the same shots. A lane whose baseline never landed would fail every guarded
+/// push on a host of that arch, and its CI job with it.
+#[test]
+fn every_declared_capture_lane_has_a_committed_baseline() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let toml = fs::read_to_string(root.join("screencomp.toml")).unwrap();
+    let lanes = declared_capture_lanes(&toml);
+    assert!(lanes.len() >= 2, "expected several lanes; got {lanes:?}");
+    let manifests: Vec<(String, String)> = lanes
+        .iter()
+        .map(|lane| {
+            let path = root.join(format!("shots/baseline/{lane}.json"));
+            let body = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("no baseline for declared lane {lane}: {e}"));
+            (lane.clone(), body)
+        })
+        .collect();
+    let (first_lane, first) = &manifests[0];
+    for (lane, body) in &manifests[1..] {
+        assert_eq!(
+            body, first,
+            "shots/baseline/{lane}.json must carry the same shots as \
+             shots/baseline/{first_lane}.json (the SVGs are byte-identical across arches)"
+        );
+    }
+}
+
+// llmlint: ignore-block[e2e_not_mocked] the real script runs with real curl/tar/install; a test cannot own the runner's CPU or charmbracelet's release server, so only those two are stood in
+/// The `freeze` version `scripts/ci-install-freeze.sh` pins, read from the script
+/// so these journeys follow a pin bump instead of going stale.
+#[cfg(unix)]
+fn ci_freeze_version() -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/ci-install-freeze.sh");
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("freeze_version="))
+        .expect("scripts/ci-install-freeze.sh pins freeze_version")
+        .trim_matches('"')
+        .to_string()
+}
+
+/// How a stand-in release tarball is built, so a journey can drive the script's
+/// validation paths as well as its happy one.
+#[cfg(unix)]
+enum StandIn {
+    /// A well-formed archive whose `freeze` prints the asset it came out of.
+    Good,
+    /// Well-formed, but the pinned digest names different bytes (a tampered or
+    /// truncated download).
+    WrongDigest,
+    /// Matches its pinned digest, but upstream moved the binary out of the stem
+    /// directory.
+    NoBinary,
+}
+
+/// Drive the real `scripts/ci-install-freeze.sh` on a host whose `uname -m` says
+/// `raw_arch`, against a stand-in release tree served over `file://`: one tarball
+/// per arch freeze publishes for Linux, each carrying a `freeze` that prints the
+/// asset it came out of, plus a pinned-digest file in the release's own
+/// `checksums.txt` format. Returns the script's output and the scratch project, so
+/// a journey can ask the INSTALLED binary which asset was chosen (`out/freeze`).
+#[cfg(unix)]
+fn run_ci_install_freeze(raw_arch: &str, kind: StandIn) -> (std::process::Output, Project) {
+    use std::os::unix::fs::PermissionsExt;
+    let version = ci_freeze_version();
+    let p = Project::new();
+    let releases = p.path().join(format!("releases/v{version}"));
+    fs::create_dir_all(&releases).unwrap();
+    let staging = p.path().join("staging");
+    let mut sums = String::new();
+    for asset_arch in ["x86_64", "arm64"] {
+        let stem = format!("freeze_{version}_Linux_{asset_arch}");
+        let inner = match kind {
+            StandIn::NoBinary => "README.md",
+            _ => "freeze",
+        };
+        let bin = staging.join(&stem).join(inner);
+        fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        fs::write(&bin, format!("#!/usr/bin/env bash\nprintf '{stem}\\n'\n")).unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let archive = releases.join(format!("{stem}.tar.gz"));
+        let tar = std::process::Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&staging)
+            .arg(&stem)
+            .status()
+            .unwrap();
+        assert!(tar.success(), "packing the stand-in {stem} release");
+        let digest = match kind {
+            StandIn::WrongDigest => "0".repeat(64),
+            _ => sha256_hex(&archive),
+        };
+        sums.push_str(&format!("{digest}  {stem}.tar.gz\n"));
+    }
+    let sums_file = p.path().join("freeze.sha256");
+    fs::write(&sums_file, &sums).unwrap();
+
+    let stub_dir = p.path().join("bin");
+    fs::create_dir_all(&stub_dir).unwrap();
+    let uname = stub_dir.join("uname");
+    fs::write(
+        &uname,
+        format!("#!/usr/bin/env bash\nprintf '{raw_arch}\\n'\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&uname, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = std::process::Command::new("bash")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/ci-install-freeze.sh"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                stub_dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env(
+            "FREEZE_BASE_URL",
+            format!("file://{}", p.path().join("releases").display()),
+        )
+        .env("FREEZE_INSTALL_DIR", p.path().join("out"))
+        .env("FREEZE_SHA256_FILE", &sums_file)
+        .output()
+        .unwrap();
+    (out, p)
+}
+
+/// The SHA-256 of a file as lowercase hex, computed the way the script does.
+#[cfg(unix)]
+fn sha256_hex(path: &Path) -> String {
+    let out = std::process::Command::new("sha256sum")
+        .arg(path)
+        .output()
+        .or_else(|_| {
+            std::process::Command::new("shasum")
+                .args(["-a", "256"])
+                .arg(path)
+                .output()
+        })
+        .expect("a sha256 tool");
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_installs_the_build_matching_the_runner_architecture() {
+    // CI captures one lane per [capture].arches entry and runs the arm64 lane on
+    // an arm64 runner, so the capture step must fetch the freeze release for the
+    // runner it is on — a hard-coded x86_64 asset simply will not execute there.
+    for (raw_arch, asset_arch) in [
+        ("x86_64", "x86_64"),
+        ("amd64", "x86_64"),
+        ("aarch64", "arm64"),
+        ("arm64", "arm64"),
+    ] {
+        let (out, p) = run_ci_install_freeze(raw_arch, StandIn::Good);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{raw_arch}: {stderr}");
+        let installed = p.path().join("out/freeze");
+        assert!(
+            installed.is_file(),
+            "{raw_arch}: nothing installed: {stderr}"
+        );
+        let said = String::from_utf8_lossy(
+            &std::process::Command::new(&installed)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        assert_eq!(
+            said,
+            format!("freeze_{}_Linux_{asset_arch}", ci_freeze_version()),
+            "{raw_arch}: installed the wrong release asset"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_refuses_an_architecture_with_no_pinned_build() {
+    // freeze publishes Linux x86_64 and arm64; on anything else the script names
+    // the architecture and exits non-zero, rather than fetching a URL that does
+    // not exist and leaving the capture to fail later on a confusing tar error.
+    let (out, p) = run_ci_install_freeze("riscv64", StandIn::Good);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("riscv64"), "{stderr}");
+    assert!(
+        stderr.contains("just screenshots-tools"),
+        "no next action: {stderr}"
+    );
+    assert!(!p.path().join("out/freeze").exists(), "installed anyway");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_refuses_an_archive_that_misses_its_pinned_digest() {
+    // The digests are pinned in this repository, not fetched beside the archive,
+    // so a tampered or truncated download is refused before it is unpacked —
+    // never installed and then discovered later.
+    let (out, p) = run_ci_install_freeze("x86_64", StandIn::WrongDigest);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("sha256 mismatch"), "{stderr}");
+    assert!(stderr.contains("checksums.txt"), "no next action: {stderr}");
+    assert!(!p.path().join("out/freeze").exists(), "installed anyway");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_refuses_an_archive_with_no_freeze_binary() {
+    // An archive that matches its pin but no longer carries <stem>/freeze means
+    // upstream moved the layout: say so and stop, rather than leaving `install`
+    // to fail with a bare "cannot stat" the capture step cannot act on.
+    let (out, p) = run_ci_install_freeze("aarch64", StandIn::NoBinary);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("archive layout"), "{stderr}");
+    assert!(!p.path().join("out/freeze").exists(), "installed anyway");
+}
+
+/// The digests `scripts/ci-install-freeze.sh` pins cover both Linux assets of the
+/// version it installs — a missing line fails the capture at the digest check, on
+/// the lane whose asset was never pinned.
+#[cfg(unix)]
+#[test]
+fn pinned_freeze_digests_cover_every_installable_asset() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sums = fs::read_to_string(root.join("scripts/freeze.sha256")).unwrap();
+    let version = ci_freeze_version();
+    for asset_arch in ["x86_64", "arm64"] {
+        let want = format!("freeze_{version}_Linux_{asset_arch}.tar.gz");
+        let line = sums
+            .lines()
+            .find(|l| l.split_whitespace().nth(1) == Some(want.as_str()))
+            .unwrap_or_else(|| panic!("scripts/freeze.sha256 pins no digest for {want}"));
+        let digest = line.split_whitespace().next().unwrap();
+        assert_eq!(digest.len(), 64, "not a sha256 for {want}: {digest}");
+        assert!(
+            digest.chars().all(|c| c.is_ascii_hexdigit()),
+            "not hex for {want}: {digest}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_refuses_a_malformed_override_before_fetching() {
+    // The three overrides steer a download and two filesystem paths, so a bad one
+    // must fail with its own name attached rather than deep inside curl or awk.
+    for (var, value, needle) in [
+        (
+            "FREEZE_BASE_URL",
+            "ftp://example.invalid",
+            "FREEZE_BASE_URL",
+        ),
+        ("FREEZE_INSTALL_DIR", "", "FREEZE_INSTALL_DIR"),
+        (
+            "FREEZE_SHA256_FILE",
+            "/nonexistent/freeze.sha256",
+            "digest pin file",
+        ),
+    ] {
+        let p = Project::new();
+        let stub_dir = p.path().join("bin");
+        fs::create_dir_all(&stub_dir).unwrap();
+        fs::write(
+            stub_dir.join("uname"),
+            "#!/usr/bin/env bash\nprintf 'x86_64\\n'\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(stub_dir.join("uname"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let out = std::process::Command::new("bash")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/ci-install-freeze.sh"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    stub_dir.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env("FREEZE_INSTALL_DIR", p.path().join("out"))
+            .env(var, value)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{var}: {stderr}");
+        assert!(stderr.contains(needle), "{var}: {stderr}");
+        assert!(
+            !p.path().join("out/freeze").exists(),
+            "{var}: installed anyway"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn bless_baseline_refuses_when_there_is_no_capture_to_bless() {
+    // `just screenshots-bless` and the guard's drift path share this script; with
+    // no capture in shots/current there is nothing to write a manifest from, so it
+    // says so instead of handing screencomp a path that is not there.
+    use std::os::unix::fs::PermissionsExt;
+    let p = Project::new();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for helper in ["scripts/host-arch.sh", "scripts/bless-baseline.sh"] {
+        p.write(helper, &fs::read_to_string(root.join(helper)).unwrap());
+    }
+    let calls = p.path().join("calls");
+    p.write(
+        "bin/screencomp",
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$STUB_CALLS\"\n",
+    );
+    fs::set_permissions(
+        p.path().join("bin/screencomp"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let out = std::process::Command::new("bash")
+        .arg("scripts/bless-baseline.sh")
+        .current_dir(p.path())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                p.path().join("bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("STUB_CALLS", &calls)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("no capture to bless"), "{stderr}");
+    assert!(
+        stderr.contains("just screenshots"),
+        "no next action: {stderr}"
+    );
+    assert!(
+        !calls.exists(),
+        "screencomp should not have been called: {:?}",
+        fs::read_to_string(&calls)
+    );
+}
+
+/// CI's installer and `just screenshots-tools` must pin the SAME freeze: the
+/// vendored-font SVGs reflow when the renderer changes, so a drifted pin would
+/// make every local capture disagree with the baseline CI classifies against.
+#[cfg(unix)]
+#[test]
+fn ci_install_freeze_pins_the_version_the_justfile_pins() {
+    let justfile =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("justfile")).unwrap();
+    let pinned = justfile
+        .lines()
+        .find_map(|l| l.strip_prefix("freeze-version := "))
+        .expect("the justfile pins freeze-version")
+        .trim()
+        .trim_matches('"');
+    assert_eq!(ci_freeze_version(), pinned);
 }
 // llmlint: ignore-end[e2e_not_mocked]

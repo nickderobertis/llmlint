@@ -26,9 +26,11 @@ samply-version := "0.13.1"
 
 # Renderer for the terminal screenshots (`just screenshots`). NOT part of the
 # gate or `just setup`: screenshots are informational, like the benches. CI's
-# Visual-docs workflow installs the same pinned version; `just screenshots-tools`
-# installs it locally on demand. screencomp (the classify/gallery/PR-comment tool)
-# is installed separately — see https://github.com/nickderobertis/screencomp.
+# Visual-docs workflow installs the same pinned version from the prebuilt release
+# matching its runner's arch (`scripts/ci-install-freeze.sh`, whose pin an e2e
+# journey holds equal to this one); `just screenshots-tools` installs it locally
+# on demand. screencomp (the classify/gallery/PR-comment tool) is installed
+# separately — see https://github.com/nickderobertis/screencomp.
 freeze-version := "0.2.2"
 
 # List available recipes.
@@ -204,7 +206,8 @@ profile *ARGS:
 # Deterministic SVGs of the real CLI output, rendered by `freeze` from a vendored
 # pinned font, gated/galleried/PR-commented by screencomp (see screenshots/AGENTS.md).
 # Regenerating is out of the gate, like the benches; CI's Visual-docs workflow owns
-# the comparison, and the pre-push guard regenerates the baseline locally on drift.
+# the comparison — one job per lane in [capture].arches (x86_64 and arm64) — and the
+# pre-push guard regenerates THIS host's lane baseline locally on drift.
 
 # Install the pinned screenshot renderer (`freeze`) on demand. Needs Go.
 screenshots-tools:
@@ -231,10 +234,16 @@ screenshots-gif:
 
 # Refresh the committed baseline manifest from a fresh capture (after an intended
 # output change). Commit shots/baseline/*.json + docs/screenshots/ alongside.
+#
+# There is one lane per arch in [capture].arches (screencomp.toml), and this
+# refreshes THIS host's lane only — an arm64 host rewrites shots/baseline/arm64.json,
+# an x86_64 host shots/baseline/x86_64.json, each via scripts/host-arch.sh so the
+# name matches what the pre-push guard classifies. The shots are byte-identical
+# across arches, so the other lane needs no local rewrite; CI's job for it is what
+# checks the two agree.
 screenshots-bless: screenshots
-    @command -v screencomp >/dev/null || { echo "screencomp not installed: https://github.com/nickderobertis/screencomp#install" >&2; exit 1; }
-    screencomp manifest --input shots/current --output shots/baseline/$(uname -m | sed 's/amd64/x86_64/;s/aarch64/arm64/').json
-    @echo "baseline refreshed; commit shots/baseline/ + docs/screenshots/"
+    @bash scripts/bless-baseline.sh
+    @echo "baseline refreshed for the $(bash scripts/host-arch.sh) lane; commit shots/baseline/ + docs/screenshots/"
 
 # Install/refresh the optional llmlint toolchain. Idempotent.
 setup-llmlint:
