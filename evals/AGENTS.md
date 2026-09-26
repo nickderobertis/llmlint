@@ -30,8 +30,12 @@ out of `just check` and the `Judge eval` workflow is not a required check.
   `evals/results/<ts>-<arm>.{json,md}` (gitignored); `--baseline` adds a delta
   column. Needs `oneharness` + an authenticated `claude` on PATH.
 - CI (`.github/workflows/eval.yml`): `selftest` on any `evals/`/`src/` change;
-  the paid run only when a verdict-moving path changes (its `changes` filter),
-  diffed against `evals/baselines/harness-sonnet.json`, as a sticky PR comment.
+  the paid arms only when a verdict-moving path changes (its `changes` filter),
+  each diffed against its committed baseline as a sticky PR comment: `harness`
+  (vs `harness-sonnet.json`) and `jev` (vs `jev.json`, 2 repeats; skipped
+  cleanly when the repo has no `TYPESAFE_API_KEY` secret). The cascade arm is
+  local-only (it pays for both backends) — re-run it when the band or a unit
+  threshold changes.
 
 ## Corpus layout
 

@@ -139,3 +139,69 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
+
+  # Every rule judged by TypeSafe's Jev (fractions of a cent per corpus pass),
+  # diffed against the committed Jev baseline. Runs only when the repo has a
+  # TYPESAFE_API_KEY secret; without one the job reports that and exits clean.
+  jev:
+    needs: [selftest, changes]
+    if: >-
+      github.repository == 'nickderobertis/llmlint' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (needs.changes.outputs.judge == 'true' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    permissions:
+      contents: read
+      pull-requests: write # the sticky results comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+    steps:
+      - name: Is a TypeSafe key configured?
+        id: key
+        run: |
+          if [ -n "$TYPESAFE_API_KEY" ]; then echo "set=true" >> "$GITHUB_OUTPUT"; else
+            echo "No TYPESAFE_API_KEY secret: skipping the Jev arm." >> "$GITHUB_STEP_SUMMARY"; fi
+      - if: steps.key.outputs.set == 'true'
+        uses: actions/checkout@v4
+      - if: steps.key.outputs.set == 'true'
+        run: rustup show
+      - if: steps.key.outputs.set == 'true'
+        uses: Swatinem/rust-cache@v2
+      - if: steps.key.outputs.set == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - if: steps.key.outputs.set == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run the Jev arm against the committed baseline
+        if: steps.key.outputs.set == 'true'
+        run: >-
+          just eval --arm jev --repeats 2
+          --baseline evals/baselines/jev.json
+          --out evals/results/pr-jev.json
+      - name: Job summary
+        if: always() && hashFiles('evals/results/pr-jev.md') != ''
+        run: cat evals/results/pr-jev.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Post sticky PR comment
+        if: always() && github.event_name == 'pull_request' && hashFiles('evals/results/pr-jev.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- llmlint-eval-jev -->';
+            const body = `${marker}\n${fs.readFileSync('evals/results/pr-jev.md', 'utf8')}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
