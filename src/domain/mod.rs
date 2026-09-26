@@ -13,6 +13,7 @@ pub mod cost;
 pub mod diffmodel;
 pub mod ignore;
 pub mod jev;
+pub mod jevunits;
 pub mod plan;
 pub mod report;
 pub mod schema;

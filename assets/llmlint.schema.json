@@ -408,6 +408,17 @@
               "type": "null"
             }
           ]
+        },
+        "jev": {
+          "description": "How Jev decomposes this rule when it is judged by `jev` or `cascade`\n(default: one question over the whole file).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleJev"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -425,6 +436,33 @@
         {
           "description": "A natural-language condition describing when the rule applies. The judge\ndecides whether it holds for the change *before* evaluating the verdict,\nand reports the rule \"not relevant\" (with no verdict) when it does not.",
           "type": "string"
+        }
+      ]
+    },
+    "RuleJev": {
+      "description": "A rule's Jev decomposition.",
+      "type": "object",
+      "properties": {
+        "unit": {
+          "description": "How the rule is split into Jev questions (default `file`).",
+          "$ref": "#/$defs/JevUnit",
+          "default": "file"
+        }
+      },
+      "additionalProperties": false
+    },
+    "JevUnit": {
+      "description": "How Jev decomposes one rule's check (under `judge: jev` / `cascade`). The\nharness ignores it.",
+      "oneOf": [
+        {
+          "description": "One question about the whole file (per chunk of an oversized file).",
+          "type": "string",
+          "const": "file"
+        },
+        {
+          "description": "Every documented item (a function, method, struct, …) is checked on its\nown: each sentence of its doc comment or docstring becomes one question —\nis this claim true of the item's code? For rules that doc comments must\nmatch behavior. The rule's `description` is not sent to Jev for this unit.",
+          "type": "string",
+          "const": "doc_claims"
         }
       ]
     }

@@ -715,6 +715,30 @@ rules:
     description: Handlers reach the database only through repositories.
 ```
 
+**Shaping Jev's questions (`jev.unit`).** Jev answers one well-scoped question
+over a small state far better than one compound question over a whole file, so
+a rule whose check is really "for each X in the file" can tell llmlint how to
+split it:
+
+```yaml
+rules:
+  - name: doc_comments_match_behavior
+    description: Every doc comment describes what its function actually does.
+    jev: { unit: doc_claims }
+```
+
+- `file` (default) — one question about the whole file.
+- `doc_claims` — every documented function or method (Rust `///`, Python
+  docstrings, `/** … */`, Go `//` docs) is checked on its own: each sentence of
+  its doc becomes one question — *does this function's code contradict this
+  claim?* — with the same-file functions it calls included, so "raises
+  `NotFound` on a 404" can be checked when the 404 handling lives in a helper.
+  Docs on types, fields, and constants are descriptive and not checked. A
+  violation cites the contradicted sentence. On the eval corpus's held-out
+  cases this took doc-comment rules from 54% to 100% recall (95% precision).
+
+`jev.unit` only shapes Jev's questions; the harness ignores it.
+
 **Jev sends your code to TypeSafe.** A `jev` rule's files (their full text, and
 their diff under `--diff`) go to TypeSafe's API; decide whether that is acceptable
 for a repository before enabling it (TypeSafe offers zero data retention to

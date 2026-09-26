@@ -538,6 +538,15 @@ harness reads target files on-demand with its own tools.
   pre-flight runs only if something escalates. `plan.escalated` records what went
   to the harness; the default band comes from the `evals/` sweep — re-derive it
   there, not by feel.
+  **Jev units (convention):** a rule's `jev: { unit }` picks how Jev decomposes
+  it (`JevUnit`; default `file`). Extraction is pure, heuristic, per-language
+  (`domain::jevunits`, no parser): it only scopes the state — a construct it
+  misses is simply not asked about, never judged wrong. `doc_claims` asks one
+  *contradiction* Noul per doc sentence over the documented function (plus the
+  same-file functions it calls, under `helpers`), function-like items only.
+  Each unit has its own fail threshold (`jev::holds_threshold`), tuned on the
+  eval corpus's **dev** split only and reported on **held-out**; cascade triage
+  escalates a below-band file that reported no violation rather than passing it.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

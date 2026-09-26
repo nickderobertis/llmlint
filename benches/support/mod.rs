@@ -44,6 +44,7 @@ pub fn example_rule_specs() -> Vec<RuleSpec> {
             relevance: None,
             require_line_attribution: false,
             files: example_files(),
+            jev_unit: Default::default(),
         })
         .collect()
 }
@@ -74,6 +75,7 @@ pub fn example_resolved() -> Vec<ResolvedRule> {
             relevance: None,
             require_line_attribution: false,
             judge: llmlint::domain::config::JudgeKind::Harness,
+            jev_unit: Default::default(),
         })
         .collect()
 }
@@ -94,6 +96,7 @@ pub fn synthetic_resolved(n: usize, judges: u32) -> Vec<ResolvedRule> {
             relevance: None,
             require_line_attribution: false,
             judge: llmlint::domain::config::JudgeKind::Harness,
+            jev_unit: Default::default(),
         })
         .collect()
 }
@@ -120,6 +123,7 @@ pub fn synthetic_rule_specs(n: usize) -> Vec<RuleSpec> {
             relevance: None,
             require_line_attribution: false,
             files: vec!["src/lib.rs".into()],
+            jev_unit: Default::default(),
         })
         .collect()
 }

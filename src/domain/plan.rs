@@ -50,6 +50,8 @@ pub struct ResolvedRule {
     pub require_line_attribution: bool,
     /// The backend that judges this rule (rule > agent > session > harness).
     pub judge: JudgeKind,
+    /// How Jev decomposes this rule when it asks Jev.
+    pub jev_unit: crate::domain::config::JevUnit,
 }
 
 /// Inputs the planner consults *besides* the rules themselves:
@@ -334,6 +336,7 @@ pub fn build(
                             // applicability the judge sees never lists a rule for a
                             // file it wholly ignores.
                             files: e.effective.iter().map(|p| to_slash(p)).collect(),
+                            jev_unit: e.rule.jev_unit,
                         })
                         .collect(),
                 });
@@ -798,6 +801,7 @@ mod tests {
             relevance: None,
             require_line_attribution: false,
             judge: JudgeKind::Harness,
+            jev_unit: Default::default(),
         }
     }
 

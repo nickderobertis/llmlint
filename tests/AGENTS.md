@@ -675,6 +675,12 @@ resolves the oneharness the test put on PATH.
   zero-width band from `LLMLINT_JEV_ESCALATE_*` trusts Jev everywhere; a band
   that doesn't straddle 0.5 (config or env) fails `validate` with exit 2;
   `--plan-only` names the cascade group.
+- Jev units (`tests/e2e/jev.rs`): `jev: { unit: doc_claims }` sends one request
+  per documented function (not a documented const) whose state is that function
+  plus its same-file callee under `helpers`, one claim question per doc sentence;
+  a contradicted claim fails at its doc line; 0.40 passes a claims rule (its
+  threshold is 0.35) where a whole-file rule would fail; a file with no documented
+  function gets no request; an unknown `jev.unit` fails `validate` (exit 2).
 
 ## Live tier (`scripts/live-*.sh`)
 

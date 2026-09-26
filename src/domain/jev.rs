@@ -26,6 +26,8 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
+use crate::domain::config::JevUnit;
+use crate::domain::jevunits;
 use crate::domain::verdict::{JudgeScore, RuleVerdict, Violation};
 
 /// The model llmlint pins by default: thresholds are tuned per version, and an
@@ -35,6 +37,19 @@ pub const DEFAULT_MODEL: &str = "jev-1.13.0";
 /// A rule holds when Jev's probability that it holds reaches this. The cascade
 /// (a later milestone) replaces the single cut with an escalation band.
 pub const HOLDS_THRESHOLD: f64 = 0.5;
+
+/// The probability below which a rule fails, per unit. A `doc_claims` rule is
+/// asked "does the code *contradict* this claim?", a conservative framing whose
+/// probabilities run lower than a whole-file "does it hold?": on the eval
+/// corpus's dev split, 0.35 kept every catchable violation while admitting the
+/// fewest false alarms (re-derive it there, on dev only, when the question
+/// changes).
+pub fn holds_threshold(unit: JevUnit) -> f64 {
+    match unit {
+        JevUnit::File => HOLDS_THRESHOLD,
+        JevUnit::DocClaims => 0.35,
+    }
+}
 
 /// A conditional rule is relevant when Jev's probability reaches this.
 pub const RELEVANT_THRESHOLD: f64 = 0.5;
@@ -60,6 +75,8 @@ pub struct JevRule {
     pub description: String,
     /// The `relevance` condition, when the rule has one.
     pub relevance: Option<String>,
+    /// How the rule is decomposed into questions.
+    pub unit: JevUnit,
 }
 
 /// One file to judge.
@@ -86,6 +103,12 @@ pub struct Request {
     /// The only candidate line, when there is exactly one: nothing to ask, so a
     /// failing rule cites it directly (a Choice needs at least two options).
     only_line: Option<usize>,
+    /// The rules this request asks about (a unit-specific request asks only
+    /// the rules of that unit).
+    asked: Vec<String>,
+    /// Per rule, its claim questions with the line each claim starts on
+    /// (`doc_claims` requests only).
+    claim_questions: BTreeMap<String, Vec<(String, usize)>>,
 }
 
 fn line_id(n: usize) -> String {
@@ -122,8 +145,120 @@ fn chunks(text: &str) -> Vec<(usize, Vec<&str>)> {
     out
 }
 
-/// Build the requests for one file: one per chunk, each asking every rule.
+/// Build the requests for one file: whole-file rules share one request per
+/// chunk; each unit-specific rule adds requests for its units.
 pub fn build_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
+    let whole: Vec<JevRule> = rules
+        .iter()
+        .filter(|r| r.unit == JevUnit::File)
+        .cloned()
+        .collect();
+    let docs: Vec<JevRule> = rules
+        .iter()
+        .filter(|r| r.unit == JevUnit::DocClaims)
+        .cloned()
+        .collect();
+    let mut out = Vec::new();
+    if !whole.is_empty() {
+        out.extend(file_requests(unit, &whole));
+    }
+    if !docs.is_empty() {
+        out.extend(doc_claim_requests(unit, &docs));
+    }
+    out
+}
+
+/// One request per documented item (per the extractor in
+/// [`jevunits::doc_items`]): the state is only that item's code, and each
+/// sentence of its doc is one Noul — is this claim true of the code? Under
+/// `--diff`, only items whose doc or code the diff touches are asked.
+fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
+    let lines: Vec<&str> = unit.text.lines().collect();
+    jevunits::doc_items(unit.path, unit.text)
+        .into_iter()
+        .filter(|item| !item.claims.is_empty())
+        .filter(|item| match unit.added_lines {
+            None => true,
+            Some(added) => {
+                let first = item.claims[0].line.min(item.code_start);
+                added.iter().any(|n| (first..=item.code_end).contains(n))
+            }
+        })
+        .map(|item| {
+            let code: String = (item.code_start..=item.code_end)
+                .filter_map(|n| lines.get(n - 1).map(|l| format!("{}| {l}\n", line_id(n))))
+                .collect();
+            let tagged = |a: usize, b: usize| -> String {
+                (a..=b)
+                    .filter_map(|n| lines.get(n - 1).map(|l| format!("{}| {l}\n", line_id(n))))
+                    .collect()
+            };
+            let mut state = json!({ "path": unit.path, "code": code });
+            let with_helpers = !item.helpers.is_empty();
+            if with_helpers {
+                let helpers: String = item
+                    .helpers
+                    .iter()
+                    .map(|&(a, b)| tagged(a, b))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                state["helpers"] = json!(helpers);
+            }
+            let mut questions = Map::new();
+            let mut claim_questions = BTreeMap::new();
+            for rule in rules {
+                let mut ids = Vec::new();
+                for (k, claim) in item.claims.iter().enumerate() {
+                    let id = format!("claim:{}:{k}", rule.name);
+                    questions.insert(id.clone(), claim_question(&claim.text, with_helpers));
+                    ids.push((id, claim.line));
+                }
+                if let Some(cond) = &rule.relevance {
+                    questions.insert(
+                        format!("relevant:{}", rule.name),
+                        json!({
+                            "type": "noul",
+                            "instructions": { "condition": cond, "question": "Is `condition` true of `code`?" },
+                        }),
+                    );
+                }
+                claim_questions.insert(rule.name.clone(), ids);
+            }
+            Request {
+                state,
+                questions,
+                line_questions: BTreeMap::new(),
+                only_line: None,
+                asked: rules.iter().map(|r| r.name.clone()).collect(),
+                claim_questions,
+            }
+        })
+        .collect()
+}
+
+/// One claim as a Noul. It asks whether the code *contradicts* the claim rather
+/// than whether the claim is *true*: a claim the code cannot confirm either way
+/// (a performance note, a caller contract) is not a contradiction, while a
+/// literal "is it true?" reads it as false and raises a false alarm. The
+/// probability that the rule holds is `1 - p(contradicts)`.
+fn claim_question(claim: &str, with_helpers: bool) -> Value {
+    let code = if with_helpers {
+        "the code in `code` (together with the functions it calls, in `helpers`)"
+    } else {
+        "the code in `code`"
+    };
+    json!({
+        "type": "noul",
+        "instructions": { "claim": claim, "question": format!("Does {code} contradict `claim`?") },
+        "criteria": {
+            "true": "The code does something `claim` says it does not, or fails to do something `claim` says it does.",
+            "false": "Nothing in the code goes against `claim`, including when the code cannot show whether `claim` holds.",
+        },
+    })
+}
+
+/// One request per chunk of the file, each asking every (whole-file) rule.
+fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
     let parts = chunks(unit.text);
     let total_lines = unit.text.lines().count();
     let multi = parts.len() > 1;
@@ -188,6 +323,8 @@ pub fn build_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                     [n] => Some(*n),
                     _ => None,
                 },
+                asked: rules.iter().map(|r| r.name.clone()).collect(),
+                claim_questions: BTreeMap::new(),
             }
         })
         .collect()
@@ -290,12 +427,36 @@ pub fn read_answers(
     answers: &Map<String, Value>,
 ) -> Result<BTreeMap<String, RuleAnswer>, String> {
     let mut out = BTreeMap::new();
-    for rule in rules {
-        let p_holds = noul(answers, &format!("holds:{}", rule.name))?;
+    for rule in rules.iter().filter(|r| req.asked.contains(&r.name)) {
         let p_relevant = match rule.relevance {
             Some(_) => Some(noul(answers, &format!("relevant:{}", rule.name))?),
             None => None,
         };
+        // A claims request: the rule holds as far as its least-true claim, which
+        // is also where a violation points.
+        if let Some(claims) = req.claim_questions.get(&rule.name) {
+            let mut worst: Option<(f64, usize)> = None;
+            for (id, line) in claims {
+                // The question asks for a contradiction; the rule holds as far
+                // as the claim is not contradicted.
+                let p = 1.0 - noul(answers, id)?;
+                if worst.is_none_or(|(w, _)| p < w) {
+                    worst = Some((p, *line));
+                }
+            }
+            if let Some((p_holds, line)) = worst {
+                out.insert(
+                    rule.name.clone(),
+                    RuleAnswer {
+                        p_holds,
+                        p_relevant,
+                        line: Some((line as u64, 1.0)),
+                    },
+                );
+            }
+            continue;
+        }
+        let p_holds = noul(answers, &format!("holds:{}", rule.name))?;
         // Across windows, keep the option the model is most sure of.
         let mut line: Option<(u64, f64)> = None;
         for id in req.line_questions.get(&rule.name).into_iter().flatten() {
@@ -324,7 +485,7 @@ pub fn read_answers(
 ///
 /// A conditional rule is relevant when any chunk is; not-relevant chunks never
 /// count toward the verdict. The rule holds when every relevant chunk reaches
-/// [`HOLDS_THRESHOLD`]; each failing file contributes one violation at the line
+/// its unit's [`holds_threshold`]; each failing file contributes one violation at the line
 /// of its least-holding chunk (when localized), whose message carries the
 /// probability — Jev writes no rationale, so the number *is* the explanation.
 pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVerdict {
@@ -336,7 +497,7 @@ pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVe
             .iter()
             .filter(|a| relevant(a))
             .min_by(|a, b| a.p_holds.total_cmp(&b.p_holds));
-        if let Some(a) = worst.filter(|a| a.p_holds < HOLDS_THRESHOLD) {
+        if let Some(a) = worst.filter(|a| a.p_holds < holds_threshold(rule.unit)) {
             violations.push(Violation {
                 file: Some(file.clone()),
                 line: a.line.map(|(n, _)| n),
@@ -437,7 +598,13 @@ pub fn triage(v: &RuleVerdict, band: Band) -> Triage {
         if s.p_relevant.is_some_and(|p| p < RELEVANT_THRESHOLD) {
             continue;
         }
-        if s.p_holds < band.low {
+        // A confident fail must be one Jev actually reported: below the band
+        // but above the unit's own threshold, it is escalated, not passed.
+        let reported = v
+            .violations
+            .iter()
+            .any(|x| x.file.as_deref() == Some(s.file.as_str()));
+        if s.p_holds < band.low && reported {
             failing.insert(s.file.as_str());
             any_decided_relevant = true;
         } else if s.p_holds < band.high {
@@ -494,6 +661,7 @@ mod tests {
             name: name.into(),
             description: format!("{name} holds"),
             relevance: relevance.map(str::to_string),
+            unit: JevUnit::File,
         }
     }
 
@@ -910,5 +1078,124 @@ mod tests {
             let e = Band::from_settings(Some(lo), Some(hi)).unwrap_err();
             assert!(e.contains("jev.escalate_low"), "{e}");
         }
+    }
+    fn doc_rule(name: &str) -> JevRule {
+        JevRule {
+            name: name.into(),
+            description: "docs match behavior".into(),
+            relevance: None,
+            unit: JevUnit::DocClaims,
+        }
+    }
+
+    const DOCUMENTED: &str = "\
+fn helper() -> u8 { 1 }
+
+/// Sort cheapest first. Never panics.
+pub fn sort(v: &mut [u8]) {
+    helper();
+    v.sort();
+}
+
+fn undocumented() {}
+";
+
+    #[test]
+    fn doc_claims_ask_one_contradiction_per_claim_over_the_item_and_its_helpers() {
+        let rules = [doc_rule("docs"), rule("whole", None)];
+        let reqs = build_requests(&file(DOCUMENTED, None, None), &rules);
+        assert_eq!(
+            reqs.len(),
+            2,
+            "one whole-file request + one per documented item"
+        );
+        let item = &reqs[1];
+        assert_eq!(
+            item.state["code"],
+            "L4| pub fn sort(v: &mut [u8]) {\nL5|     helper();\nL6|     v.sort();\nL7| }\n"
+        );
+        assert_eq!(item.state["helpers"], "L1| fn helper() -> u8 { 1 }\n");
+        assert_eq!(
+            item.questions.keys().collect::<Vec<_>>(),
+            ["claim:docs:0", "claim:docs:1"]
+        );
+        let q = &item.questions["claim:docs:0"];
+        assert_eq!(q["instructions"]["claim"], "Sort cheapest first.");
+        assert!(q["instructions"]["question"]
+            .as_str()
+            .unwrap()
+            .contains("contradict"));
+        assert!(q["instructions"]["question"]
+            .as_str()
+            .unwrap()
+            .contains("`helpers`"));
+        // The whole-file request never asks the doc rule.
+        assert!(reqs[0].questions.keys().all(|k| !k.contains("docs")));
+
+        // The rule holds as far as its most-contradicted claim, cited at its line.
+        let got = read_answers(
+            item,
+            &rules,
+            &answers(json!({
+                "claim:docs:0": {"noul": 0.9},
+                "claim:docs:1": {"noul": 0.1},
+            })),
+        )
+        .unwrap();
+        assert_eq!(got.len(), 1, "only the rule this request asked");
+        let a = &got["docs"];
+        assert!((a.p_holds - 0.1).abs() < 1e-9);
+        assert_eq!(a.line, Some((3, 1.0)));
+    }
+
+    #[test]
+    fn doc_claims_under_diff_ask_only_items_the_change_touches() {
+        let rules = [doc_rule("docs")];
+        let untouched = build_requests(&file(DOCUMENTED, Some("d"), Some(&[9])), &rules);
+        assert!(
+            untouched.is_empty(),
+            "the change only touched an undocumented fn"
+        );
+        let touched = build_requests(&file(DOCUMENTED, Some("d"), Some(&[6])), &rules);
+        assert_eq!(touched.len(), 1);
+        let doc_edit = build_requests(&file(DOCUMENTED, Some("d"), Some(&[3])), &rules);
+        assert_eq!(doc_edit.len(), 1, "editing the doc itself counts");
+    }
+
+    #[test]
+    fn doc_claims_fail_below_their_own_threshold() {
+        let r = doc_rule("docs");
+        let at = |p: f64| verdict(&r, &[("a.rs".into(), vec![ans(p, None, Some(3))])]);
+        assert!(!at(0.30).holds, "below the doc_claims threshold");
+        assert!(
+            at(0.40).holds,
+            "a whole-file rule would fail at 0.40; a claims rule does not"
+        );
+        assert!(
+            !verdict(
+                &rule("w", None),
+                &[("a.rs".into(), vec![ans(0.40, None, Some(3))])]
+            )
+            .holds
+        );
+    }
+
+    #[test]
+    fn triage_escalates_a_below_band_file_that_reported_no_violation() {
+        // Below the band (0.3 < 0.4) but above the claims threshold, so the
+        // verdict carries no violation for it: escalate, never silently pass.
+        let v = verdict(
+            &doc_rule("docs"),
+            &[("a.rs".into(), vec![ans(0.38, None, Some(3))])],
+        );
+        assert!(v.holds);
+        let t = triage(
+            &v,
+            Band {
+                low: 0.4,
+                high: 0.9,
+            },
+        );
+        assert_eq!(t.escalate, ["a.rs"]);
     }
 }

@@ -303,6 +303,7 @@ mod tests {
             relevance: None,
             require_line_attribution: None,
             judge: None,
+            jev: None,
         }
     }
 

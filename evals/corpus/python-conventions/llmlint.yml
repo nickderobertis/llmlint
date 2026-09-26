@@ -8,6 +8,7 @@ agents:
     harness: claude-code
 rules:
   - name: docstrings_match_behavior
+    jev: { unit: doc_claims }
     files: { include: ["src/**/*.py"] }
     require_line_attribution: true
     description: |

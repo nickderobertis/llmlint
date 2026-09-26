@@ -18,6 +18,11 @@ out of `just check` and the `Judge eval` workflow is not a required check.
   **jev** (every rule judged by TypeSafe's Jev via `LLMLINT_JUDGE=jev`; needs
   `TYPESAFE_API_KEY`, costs fractions of a cent), or **cascade** (Jev first, the
   uncertain band re-judged by the harness; needs both).
+- **Dev / held-out split (`--split dev|test`):** a stable hash of each case id
+  puts ~1/3 of cases in `test`. Tune judge techniques (question wording, unit
+  thresholds, the band) on `dev` only; `test` is the number you report. Never
+  pick a threshold from `test`. Jev drifts ~2pp between identical runs, so use
+  `--repeats 2+` when comparing variants.
 - **Tuning the cascade band offline:** the `jev` arm's result file keeps each
   item's `p_holds` (the report's per-file `scores`), so a band can be swept
   against the harness baseline without another model call. The shipped default

@@ -125,6 +125,8 @@ fn answer(request: &Value, scripts: &BTreeMap<String, Script>) -> Value {
         let a = match kind {
             "holds" => json!({"type": "noul", "noul": s.holds.unwrap_or(0.95)}),
             "relevant" => json!({"type": "noul", "noul": s.relevant.unwrap_or(0.9)}),
+            // A claim question asks for a *contradiction*: p = 1 - p(holds).
+            "claim" => json!({"type": "noul", "noul": 1.0 - s.holds.unwrap_or(0.95)}),
             _ => {
                 let options: Vec<&String> = q["criteria"].as_object().unwrap().keys().collect();
                 let want = s.line.map(|n| format!("L{n}"));
@@ -638,4 +640,101 @@ fn cascade_plan_only_names_the_cascade_group() {
         .stdout(predicates::str::contains(
             "judge cascade: Jev per file first",
         ));
+}
+
+// ---- jev: { unit: doc_claims } --------------------------------------------
+
+const DOCUMENTED: &str = "\
+fn cheapest(a: u8, b: u8) -> bool {
+    a > b
+}
+
+/// Sort line items cheapest first. Never allocates.
+pub fn sort(items: &mut [u8]) {
+    items.sort_by(|a, b| b.cmp(a));
+    let _ = cheapest(1, 2);
+}
+
+/// Descriptive docs on a constant are not checked.
+pub const LIMIT: u8 = 3;
+";
+
+#[test]
+fn doc_claims_checks_each_claim_against_its_function_and_helpers() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\njudge: jev\nrules:\n  \
+         - { name: docs_match_code, description: \"Doc comments match behavior.\", jev: { unit: doc_claims } }\n",
+    );
+    p.write("src/a.rs", DOCUMENTED);
+    let jev = MockJev::start(&[("docs_match_code", holds(0.1))], &[]);
+    let out = json_of(&run_jev(&p, &jev).code(1));
+    let v = &out["rules"][0]["violations"][0];
+    assert_eq!(
+        (v["file"].clone(), v["line"].clone()),
+        (json!("src/a.rs"), json!(5))
+    );
+    assert!(v["message"].as_str().unwrap().contains("p(holds)=0.10"));
+
+    let reqs = jev.requests();
+    assert_eq!(
+        reqs.len(),
+        1,
+        "one request for the one documented function (not the const)"
+    );
+    let body = &reqs[0].body;
+    assert!(body["state"]["code"]
+        .as_str()
+        .unwrap()
+        .starts_with("L6| pub fn sort("));
+    assert!(body["state"]["helpers"]
+        .as_str()
+        .unwrap()
+        .contains("L1| fn cheapest("));
+    let claims: Vec<&str> = body["questions"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|q| q["instructions"]["claim"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        claims,
+        ["Sort line items cheapest first.", "Never allocates."]
+    );
+}
+
+#[test]
+fn doc_claims_passes_above_its_threshold_and_skips_undocumented_files() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\njudge: jev\nrules:\n  \
+         - { name: docs_match_code, description: \"Doc comments match behavior.\", jev: { unit: doc_claims } }\n",
+    );
+    p.write("src/a.rs", DOCUMENTED);
+    p.write("src/b.rs", "fn undocumented() {}\n");
+    // 0.40 fails a whole-file rule but passes a claims rule (threshold 0.35).
+    let jev = MockJev::start(&[("docs_match_code", holds(0.40))], &[]);
+    let out = json_of(&run_jev(&p, &jev).code(0));
+    assert_eq!(out["rules"][0]["outcome"], "pass");
+    assert_eq!(
+        jev.requests().len(),
+        1,
+        "no request for a file with no documented function"
+    );
+}
+
+#[test]
+fn an_unknown_jev_unit_is_a_config_error() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nrules:\n  - { name: r, description: \"d\", jev: { unit: sentences } }\n",
+    );
+    p.bare()
+        .arg("validate")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("unknown variant `sentences`"));
 }

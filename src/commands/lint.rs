@@ -139,6 +139,7 @@ pub(crate) fn run_loaded(
             relevance,
             require_line_attribution: rule.requires_line_attribution(),
             judge: config.judge_for(rule),
+            jev_unit: rule.jev_unit(),
         });
     }
 
@@ -991,6 +992,7 @@ fn execute_jev(
             name: r.name.clone(),
             description: r.description.clone(),
             relevance: r.relevance.clone(),
+            unit: r.jev_unit,
         })
         .collect();
 
@@ -1358,6 +1360,7 @@ mod tests {
             relevance: None,
             require_line_attribution: None,
             judge: None,
+            jev: None,
         }
     }
 
@@ -1520,6 +1523,7 @@ mod tests {
             relevance: None,
             require_line_attribution: false,
             judge: crate::domain::config::JudgeKind::Harness,
+            jev_unit: Default::default(),
         }];
         let mut diffs: BTreeMap<PathBuf, String> = BTreeMap::new();
         diffs.insert(PathBuf::from("a.rs"), "diff a".into());
@@ -1544,6 +1548,7 @@ mod tests {
             relevance: None,
             require_line_attribution: false,
             judge: crate::domain::config::JudgeKind::Harness,
+            jev_unit: Default::default(),
         }];
         restrict_to_changed(&mut resolved, &BTreeMap::new(), dir.path());
         assert!(resolved[0].files.is_empty());

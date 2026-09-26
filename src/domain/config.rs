@@ -158,6 +158,30 @@ impl JudgeKind {
     }
 }
 
+/// How Jev decomposes one rule's check (under `judge: jev` / `cascade`). The
+/// harness ignores it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JevUnit {
+    /// One question about the whole file (per chunk of an oversized file).
+    #[default]
+    File,
+    /// Every documented item (a function, method, struct, …) is checked on its
+    /// own: each sentence of its doc comment or docstring becomes one question —
+    /// is this claim true of the item's code? For rules that doc comments must
+    /// match behavior. The rule's `description` is not sent to Jev for this unit.
+    DocClaims,
+}
+
+/// A rule's Jev decomposition.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuleJev {
+    /// How the rule is split into Jev questions (default `file`).
+    #[serde(default)]
+    pub unit: JevUnit,
+}
+
 /// How llmlint calls TypeSafe's Jev API for rules judged by `jev`. The API key
 /// is never config: it is read from the `TYPESAFE_API_KEY` environment variable.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -324,6 +348,10 @@ pub struct Rule {
     /// `judge`. Unset inherits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judge: Option<JudgeKind>,
+    /// How Jev decomposes this rule when it is judged by `jev` or `cascade`
+    /// (default: one question over the whole file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jev: Option<RuleJev>,
 }
 
 impl Rule {
@@ -345,6 +373,11 @@ impl Rule {
 
     /// How this rule's relevance resolves, applying the default (always evaluate
     /// when `relevance` is unset or `true`).
+    /// How Jev decomposes this rule (default whole-file).
+    pub fn jev_unit(&self) -> JevUnit {
+        self.jev.as_ref().map(|j| j.unit).unwrap_or_default()
+    }
+
     pub fn relevance_mode(&self) -> RelevanceMode {
         match &self.relevance {
             None | Some(Relevance::Always(true)) => RelevanceMode::Always,
@@ -556,6 +589,7 @@ const RULE_FIELDS: &[&str] = &[
     "relevance",
     "require_line_attribution",
     "judge",
+    "jev",
 ];
 
 /// Where a resolved rule, and each of its fields, comes from. A rule with no
@@ -752,6 +786,7 @@ fn rule_provenance(occ: &[(String, Rule)]) -> RuleProvenance {
         base.1.judge.is_some() || w.judge.is_some(),
         w.judge,
     );
+    note("jev", base.1.jev.is_some() || w.jev.is_some(), w.jev);
     RuleProvenance {
         source: base_src.to_string(),
         fields,
@@ -912,6 +947,7 @@ struct FieldWinners {
     relevance: Option<usize>,
     require_line_attribution: Option<usize>,
     judge: Option<usize>,
+    jev: Option<usize>,
 }
 
 fn field_winners(overrides: &[&Rule]) -> FieldWinners {
@@ -928,6 +964,7 @@ fn field_winners(overrides: &[&Rule]) -> FieldWinners {
             .iter()
             .position(|ov| ov.require_line_attribution.is_some()),
         judge: overrides.iter().position(|ov| ov.judge.is_some()),
+        jev: overrides.iter().position(|ov| ov.jev.is_some()),
     }
 }
 
@@ -961,6 +998,9 @@ fn merge_override(base: &Rule, overrides: &[&Rule]) -> Rule {
     }
     if let Some(i) = w.judge {
         out.judge = overrides[i].judge;
+    }
+    if let Some(i) = w.jev {
+        out.jev = overrides[i].jev.clone();
     }
     out
 }
@@ -1069,6 +1109,7 @@ mod tests {
             relevance: None,
             require_line_attribution: None,
             judge: None,
+            jev: None,
         }
     }
 

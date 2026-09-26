@@ -26,6 +26,7 @@ Stdlib only (Python >= 3.11 for `tomllib`).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import concurrent.futures
 import datetime as dt
 import json
@@ -90,6 +91,13 @@ class Case:
     @property
     def id(self) -> str:
         return f"{self.suite}/{self.name}"
+
+    @property
+    def split(self) -> str:
+        """`test` (held out) or `dev`, fixed by a stable hash of the case id so a
+        case never changes sides and a new case lands on one automatically.
+        Tune judge techniques on `dev` only; `test` is the number to report."""
+        return "test" if int(hashlib.sha256(self.id.encode()).hexdigest(), 16) % 3 == 0 else "dev"
 
 
 def load_case(suite_dir: Path, case_dir: Path) -> Case:
@@ -353,7 +361,7 @@ def score_runs(cases: list[Case], runs: list[Run], tol: int) -> list[dict]:
         case = by_case[run.case]
         for e in case.expects:
             it = judge_item(e, run, tol)
-            it.update(case=case.id, suite=case.suite, rep=run.rep)
+            it.update(case=case.id, suite=case.suite, split=case.split, rep=run.rep)
             items.append(it)
     return items
 
@@ -548,6 +556,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--arm", choices=ARMS, default="harness")
     ap.add_argument("--suite", action="append", help="limit to a suite (repeatable)")
+    ap.add_argument(
+        "--split",
+        choices=("all", "dev", "test"),
+        default="all",
+        help="dev = cases to tune on; test = held-out cases to report (default all)",
+    )
     ap.add_argument("--repeats", type=int, default=1, help="runs per case (stability)")
     ap.add_argument("-j", "--jobs", type=int, default=4, help="cases run concurrently")
     ap.add_argument("--model", help="harness model override (harness arm)")
@@ -603,6 +617,8 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, KeyError, tomllib.TOMLDecodeError) as e:
         print(f"eval: bad corpus: {e}", file=sys.stderr)
         return 2
+    if a.split != "all":
+        cases = [c for c in cases if c.split == a.split]
     opts = Opts(llmlint, oneharness, mock, a.model, a.timeout)
 
     jobs = [(c, rep) for rep in range(a.repeats) for c in cases]
@@ -629,6 +645,7 @@ def main(argv: list[str] | None = None) -> int:
             "cascade": f"{os.environ.get('LLMLINT_JEV_MODEL') or 'jev-1.13.0'} + {a.model or 'harness default'}",
         }.get(a.arm, a.model),
         "repeats": a.repeats,
+        "split": a.split,
         "cases": len(cases),
         "llmlint_version": version,
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),

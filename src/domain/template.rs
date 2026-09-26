@@ -35,6 +35,9 @@ pub struct RuleSpec {
     /// `files` union). Drives the per-file applicability context and the
     /// wrong-file validation.
     pub files: Vec<String>,
+    /// How Jev decomposes this rule (unused by the harness template).
+    #[serde(skip)]
+    pub jev_unit: crate::domain::config::JevUnit,
 }
 
 /// One target file's changed-line diff, shown to the judge under `--diff`. Kept
@@ -170,6 +173,7 @@ mod tests {
                 relevance: None,
                 require_line_attribution: false,
                 files: vec!["src/a.rs".into(), "src/b.rs".into()],
+                jev_unit: Default::default(),
             },
             RuleSpec {
                 name: "layered".into(),
@@ -178,6 +182,7 @@ mod tests {
                 relevance: None,
                 require_line_attribution: false,
                 files: vec!["src/a.rs".into(), "src/b.rs".into()],
+                jev_unit: Default::default(),
             },
         ]
     }
@@ -392,6 +397,7 @@ mod tests {
                 relevance: None,
                 require_line_attribution: false,
                 files: vec!["src/a.rs".into()],
+                jev_unit: Default::default(),
             },
             RuleSpec {
                 name: "only_b".into(),
@@ -400,6 +406,7 @@ mod tests {
                 relevance: None,
                 require_line_attribution: false,
                 files: vec!["src/b.rs".into()],
+                jev_unit: Default::default(),
             },
         ];
         let tmpl = "{% for fr in file_rules %}{{ fr.file }}:{{ fr.mode }}:\
