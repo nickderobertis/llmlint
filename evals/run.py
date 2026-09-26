@@ -162,7 +162,12 @@ def git(cwd: Path, *args: str) -> None:
         GIT_COMMITTER_EMAIL="eval@example.invalid",
     )
     subprocess.run(
-        ["git", "-C", str(cwd), *args], env=env, check=True, capture_output=True
+        # A scratch repo must not depend on the user's git config: global commit
+        # signing (an agent prompt, a flaky signer under -j) would fail setup.
+        ["git", "-C", str(cwd), "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
+        env=env,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -433,13 +438,19 @@ def secs(v) -> str:
     return "–" if v is None else f"{v:.1f}s"
 
 
+def usd(v) -> str:
+    """Dollars, with enough precision that a sub-cent Jev run doesn't read $0.00."""
+    v = v or 0.0
+    return f"${v:.2f}" if v == 0 or v >= 0.01 else f"${v:.6f}"
+
+
 def headline_row(label: str, m: dict) -> str:
     """One headline row. Tokens stay in the JSON only: they are not comparable
     across backends (a harness counts its own cached system prompt)."""
     return (
         f"| {label} | {pct(m.get('recall'))} | {pct(m.get('precision'))} | "
         f"{pct(m.get('line_hit_rate'))} | {secs(m.get('latency_p50_s'))} / "
-        f"{secs(m.get('latency_p95_s'))} | {m.get('judge_calls', 0)} | ${m.get('cost_usd', 0.0):.2f} |"
+        f"{secs(m.get('latency_p95_s'))} | {m.get('judge_calls', 0)} | {usd(m.get('cost_usd'))} |"
     )
 
 
@@ -456,7 +467,7 @@ def delta_row(new: dict, old: dict) -> str:
         f"| Δ | {dp('recall')} | {dp('precision')} | {dp('line_hit_rate')} | "
         f"{ds('latency_p50_s')} / {ds('latency_p95_s')} | "
         f"{new.get('judge_calls', 0) - old.get('judge_calls', 0):+d} | "
-        f"{new.get('cost_usd', 0.0) - old.get('cost_usd', 0.0):+.2f} |"
+        f"{(new.get('cost_usd') or 0.0) - (old.get('cost_usd') or 0.0):+.4f} |"
     )
 
 
@@ -600,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
     result = summarize(cases, runs, a.line_tolerance)
     result["meta"] = {
         "arm": a.arm,
-        "model": a.model,
+        "model": (os.environ.get("LLMLINT_JEV_MODEL") or "jev-1.13.0") if a.arm == "jev" else a.model,
         "repeats": a.repeats,
         "cases": len(cases),
         "llmlint_version": version,

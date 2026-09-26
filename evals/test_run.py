@@ -162,8 +162,13 @@ class Markdown(unittest.TestCase):
         md = run.markdown(cur, base)
         self.assertIn("| baseline (`harness`) | 95.0% | 100.0% | 100.0% | 8.1s / 12.6s | 3 | $4.73 |", md)
         self.assertIn("| this run (`jev`) | 90.0% | 100.0% | 100.0% | 0.4s / 0.9s | 3 | $0.01 |", md)
-        self.assertIn("| Δ | -5.0pp | +0.0pp | +0.0pp | -7.7s / -11.7s | +0 | -4.72 |", md)
+        self.assertIn("| Δ | -5.0pp | +0.0pp | +0.0pp | -7.7s / -11.7s | +0 | -4.7200 |", md)
         self.assertNotIn("Tokens", md)
+
+    def test_sub_cent_costs_keep_their_digits(self):
+        self.assertEqual(run.usd(0.000123), "$0.000123")
+        self.assertEqual(run.usd(4.7348), "$4.73")
+        self.assertEqual(run.usd(None), "$0.00")
 
 if __name__ == "__main__":
     unittest.main()
