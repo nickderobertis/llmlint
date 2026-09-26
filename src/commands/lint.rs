@@ -994,6 +994,7 @@ fn execute_jev(
             relevance: r.relevance.clone(),
             unit: r.jev.unit,
             pattern: r.jev.pattern.clone(),
+            key: r.jev.key.clone(),
         })
         .collect();
 

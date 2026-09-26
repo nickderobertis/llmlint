@@ -754,6 +754,14 @@ rules:
   pattern to cover every form the rule is about (the cascade still escalates
   uncertain files). On held-out eval cases, error-context rules went from 68% to
   100% recall.
+- `yaml_entries` (with `key`) — every item of the YAML list under the top-level
+  `key` is checked on its own (block or flow style), with a violation localized
+  to a line inside the entry. The bundled config-lint plugin uses it
+  (`key: rules`), so each rule of a config is judged separately. Its threshold
+  favors precision: Jev's flags on these abstract, rule-quality checks were
+  always right on held-out cases, but it missed some on its own (57% recall), so
+  run them under **`judge: cascade`**, which sent the uncertain entries to the
+  harness and reached 100% recall and precision there.
 
 `jev.unit` only shapes Jev's questions; the harness ignores it.
 

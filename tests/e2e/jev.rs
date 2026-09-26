@@ -126,7 +126,9 @@ fn answer(request: &Value, scripts: &BTreeMap<String, Script>) -> Value {
             "holds" => json!({"type": "noul", "noul": s.holds.unwrap_or(0.95)}),
             "relevant" => json!({"type": "noul", "noul": s.relevant.unwrap_or(0.9)}),
             // Claim and site questions ask for a *violation*: p = 1 - p(holds).
-            "claim" | "site" => json!({"type": "noul", "noul": 1.0 - s.holds.unwrap_or(0.95)}),
+            "claim" | "site" | "entry" => {
+                json!({"type": "noul", "noul": 1.0 - s.holds.unwrap_or(0.95)})
+            }
             _ => {
                 let options: Vec<&String> = q["criteria"].as_object().unwrap().keys().collect();
                 let want = s.line.map(|n| format!("L{n}"));
@@ -781,6 +783,56 @@ fn a_sites_rule_needs_a_valid_pattern_and_a_pattern_needs_sites() {
         (
             "{ unit: file, pattern: 'x' }",
             "only applies to `jev.unit: sites`",
+        ),
+    ] {
+        p.write(
+            "llmlint.yml",
+            &format!("version: 1\nrules:\n  - {{ name: r, description: \"d\", jev: {jev} }}\n"),
+        );
+        p.bare()
+            .arg("validate")
+            .assert()
+            .code(2)
+            .stderr(predicates::str::contains(want));
+    }
+}
+
+// ---- jev: { unit: yaml_entries, key } --------------------------------------
+
+#[test]
+fn yaml_entries_judges_each_config_rule_on_its_own() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"team/**\"]\njudge: jev\nrules:\n  \
+         - { name: names_are_descriptive, description: \"Names describe the check.\", jev: { unit: yaml_entries, key: rules } }\n",
+    );
+    // A plain YAML file (a `llmlint.yml` here would be discovered as a subtree
+    // config and contribute rules of its own).
+    p.write(
+        "team/checks.yaml",
+        "version: 1\nrules:\n  - name: rule1\n    description: |\n      d\n  - { name: fine, description: d }\n",
+    );
+    let jev = MockJev::start(&[("names_are_descriptive", violates_at(3))], &[]);
+    let out = json_of(&run_jev(&p, &jev).code(1));
+    assert_eq!(out["rules"][0]["violations"][0]["line"], 3);
+    let entries: Vec<String> = jev
+        .requests()
+        .iter()
+        .map(|r| r.body["state"]["entry"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(entries.len(), 2, "one request per rule entry");
+    assert!(entries.iter().any(|e| e.starts_with("L3|   - name: rule1")));
+}
+
+#[test]
+fn a_yaml_entries_rule_needs_a_key_and_a_key_needs_yaml_entries() {
+    let p = Project::new();
+    for (jev, want) in [
+        ("{ unit: yaml_entries }", "needs a `jev.key`"),
+        (
+            "{ unit: file, key: rules }",
+            "only applies to `jev.unit: yaml_entries`",
         ),
     ] {
         p.write(

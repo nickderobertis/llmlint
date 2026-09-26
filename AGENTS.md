@@ -553,6 +553,15 @@ harness reads target files on-demand with its own tools.
   functions called on the site lines under `helpers` and the rule's
   "False when …" clause as the violation criterion. `doc_claims` and `sites`
   share `Request::violation_questions` (p(holds) = 1 − p, line = the question's).
+  `yaml_entries` (`jev.key`, required for it and rejected elsewhere) asks every
+  rule sharing a key once per list entry (`jevunits::yaml_entries`, text-based
+  so lines are the file's own; column-0 items allowed), localizing via a Choice
+  over the entry's lines (`Request::violation_lines`). Its 0.15 threshold is
+  precision-first: config meta-rules are abstract, so they are meant to run
+  under `cascade`. The bundled config-lint plugin carries
+  `jev: { unit: yaml_entries, key: rules }` on every rule (via a YAML anchor);
+  older binaries never see it, since the bundled URL resolves to each binary's
+  own embedded copy.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

@@ -154,6 +154,50 @@ fn calls(text: &str, name: &str) -> bool {
     })
 }
 
+/// The 1-based `(first, last)` line range of every item of the YAML list under
+/// the top-level `key` (`key:` at column 0), block (`- name: x` + indented
+/// fields) or flow (`- { name: x }`) style. Text-based, so line numbers are the
+/// file's own; trailing blank lines and comment-only lines between items are
+/// not part of an entry.
+pub fn yaml_entries(text: &str, key: &str) -> Vec<(usize, usize)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let header = format!("{key}:");
+    let Some(start) = lines.iter().position(|l| l.trim_end() == header) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut item_indent: Option<usize> = None;
+    let mut last_content = 0;
+    for (i, line) in lines.iter().enumerate().skip(start + 1) {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let ind = indent(line);
+        let is_item = t.starts_with("- ") || t == "-";
+        if ind == 0 && !is_item {
+            break; // the next top-level key ends the list
+        }
+        match item_indent {
+            None if is_item => item_indent = Some(ind),
+            _ => {}
+        }
+        if is_item && Some(ind) == item_indent {
+            if let Some(prev) = out.last_mut() {
+                prev.1 = last_content + 1;
+            }
+            out.push((i + 1, i + 1));
+        } else if item_indent.is_some_and(|it| ind < it) {
+            break;
+        }
+        last_content = i;
+    }
+    if let Some(prev) = out.last_mut() {
+        prev.1 = last_content + 1;
+    }
+    out
+}
+
 /// At most this many helpers are attached to one item, so the state stays small.
 const MAX_HELPERS: usize = 4;
 
@@ -806,6 +850,34 @@ const X: u8 = helper()?;
                     helpers: vec![]
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn yaml_entries_split_block_and_flow_items_under_the_key() {
+        let src = "\
+version: 1
+rules:
+  - name: first
+    # a comment inside
+    description: |
+      One.
+
+      Two.
+  - { name: second, description: d }
+
+  # between items
+  - name: third
+    files: { include: [\"*.py\"] }
+agents:
+  default: {}
+";
+        assert_eq!(yaml_entries(src, "rules"), [(3, 8), (9, 9), (12, 13)]);
+        assert!(yaml_entries(src, "plugins").is_empty());
+        assert_eq!(
+            yaml_entries("rules:\n- name: a\n  d: 1\n- name: b\nnext: 1\n", "rules"),
+            [(2, 3), (4, 4)],
+            "items may sit at column 0"
         );
     }
 

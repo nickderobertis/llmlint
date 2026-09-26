@@ -51,6 +51,10 @@ pub fn holds_threshold(unit: JevUnit) -> f64 {
         // Sites: clean sites scored >= 0.70 on dev while violations spread up
         // to ~0.64, so the cut sits between them.
         JevUnit::Sites => 0.65,
+        // YAML entries (config meta-rules): violations and clean entries overlap
+        // above ~0.15 on dev, so the cut keeps Jev's fails always right and
+        // leaves the uncertain middle to the cascade band.
+        JevUnit::YamlEntries => 0.15,
     }
 }
 
@@ -82,6 +86,8 @@ pub struct JevRule {
     pub unit: JevUnit,
     /// The site pattern, for `JevUnit::Sites` (validated at config load).
     pub pattern: Option<String>,
+    /// The top-level list key, for `JevUnit::YamlEntries`.
+    pub key: Option<String>,
 }
 
 /// One file to judge.
@@ -116,6 +122,9 @@ pub struct Request {
     /// with that line. The rule holds as far as its most-violated question.
     /// (`doc_claims` and `sites` requests.)
     violation_questions: BTreeMap<String, Vec<(String, usize)>>,
+    /// For a violation question, the Choice question that localizes it within
+    /// its unit (a YAML entry): the violation cites the chosen line.
+    violation_lines: BTreeMap<String, String>,
 }
 
 fn line_id(n: usize) -> String {
@@ -175,7 +184,103 @@ pub fn build_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
     for rule in rules.iter().filter(|r| r.unit == JevUnit::Sites) {
         out.extend(site_requests(unit, rule));
     }
+    // YAML-entry rules sharing a key share each entry's request.
+    let mut by_key: BTreeMap<&str, Vec<&JevRule>> = BTreeMap::new();
+    for rule in rules.iter().filter(|r| r.unit == JevUnit::YamlEntries) {
+        if let Some(key) = rule.key.as_deref() {
+            by_key.entry(key).or_default().push(rule);
+        }
+    }
+    for (key, rules) in by_key {
+        out.extend(yaml_entry_requests(unit, key, &rules));
+    }
     out
+}
+
+/// A rule's text split into the invariant and its "False when …" clause (the
+/// literal definition of a violation), when it has one.
+fn split_false_when(description: &str) -> (String, Option<String>) {
+    match description.to_lowercase().find("false when") {
+        Some(i) => (
+            description[..i].trim().to_string(),
+            Some(description[i..].trim().to_string()),
+        ),
+        None => (description.to_string(), None),
+    }
+}
+
+/// One request per YAML list entry under `key`: the state is only that entry,
+/// every rule sharing the key is one violation Noul on it, and a Choice over the
+/// entry's lines localizes each. Under `--diff`, only entries the diff touches.
+fn yaml_entry_requests(unit: &FileUnit, key: &str, rules: &[&JevRule]) -> Vec<Request> {
+    let lines: Vec<&str> = unit.text.lines().collect();
+    jevunits::yaml_entries(unit.text, key)
+        .into_iter()
+        .filter(|(a, b)| match unit.added_lines {
+            None => true,
+            Some(added) => added.iter().any(|n| (*a..=*b).contains(n)),
+        })
+        .map(|(a, b)| {
+            let entry: String = (a..=b)
+                .filter_map(|n| lines.get(n - 1).map(|l| format!("{}| {l}\n", line_id(n))))
+                .collect();
+            let mut questions = Map::new();
+            let mut violation_questions = BTreeMap::new();
+            let mut violation_lines = BTreeMap::new();
+            for rule in rules {
+                let (invariant, false_when) = split_false_when(&rule.description);
+                let breaks = match &false_when {
+                    Some(clause) => format!("The entry in `entry` breaks `rule`. {clause}"),
+                    None => "The entry in `entry` breaks `rule`.".to_string(),
+                };
+                let id = format!("entry:{}:{a}", rule.name);
+                questions.insert(
+                    id.clone(),
+                    json!({
+                        "type": "noul",
+                        "instructions": { "rule": invariant, "question": "Does the entry in `entry` violate `rule`?" },
+                        "criteria": {
+                            "true": breaks,
+                            "false": "The entry in `entry` complies with `rule`, or `rule` does not concern it.",
+                        },
+                    }),
+                );
+                if b > a {
+                    let line_id_q = format!("entryline:{}:{a}", rule.name);
+                    let criteria: Map<String, Value> =
+                        (a..=b).take(MAX_CHOICE_OPTIONS).map(|n| (line_id(n), Value::Null)).collect();
+                    questions.insert(
+                        line_id_q.clone(),
+                        json!({
+                            "type": "choice",
+                            "instructions": { "rule": invariant, "question": "Which line of `entry` most directly violates `rule`? Lines are tagged `L<n>|`." },
+                            "criteria": criteria,
+                        }),
+                    );
+                    violation_lines.insert(id.clone(), line_id_q);
+                }
+                if let Some(cond) = &rule.relevance {
+                    questions.insert(
+                        format!("relevant:{}", rule.name),
+                        json!({
+                            "type": "noul",
+                            "instructions": { "condition": cond, "question": "Is `condition` true of `entry`?" },
+                        }),
+                    );
+                }
+                violation_questions.insert(rule.name.clone(), vec![(id, a)]);
+            }
+            Request {
+                state: json!({ "path": unit.path, "entry": entry }),
+                questions,
+                line_questions: BTreeMap::new(),
+                only_line: None,
+                asked: rules.iter().map(|r| r.name.clone()).collect(),
+                violation_questions,
+                violation_lines,
+            }
+        })
+        .collect()
 }
 
 /// One request per group of sites (the function containing them): the state is
@@ -264,6 +369,7 @@ fn site_requests(unit: &FileUnit, rule: &JevRule) -> Vec<Request> {
                 only_line: None,
                 asked: vec![rule.name.clone()],
                 violation_questions: BTreeMap::from([(rule.name.clone(), ids)]),
+                violation_lines: BTreeMap::new(),
             })
         })
         .collect()
@@ -332,6 +438,7 @@ fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 only_line: None,
                 asked: rules.iter().map(|r| r.name.clone()).collect(),
                 violation_questions,
+                violation_lines: BTreeMap::new(),
             }
         })
         .collect()
@@ -426,6 +533,7 @@ fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 },
                 asked: rules.iter().map(|r| r.name.clone()).collect(),
                 violation_questions: BTreeMap::new(),
+                violation_lines: BTreeMap::new(),
             }
         })
         .collect()
@@ -542,7 +650,11 @@ pub fn read_answers(
                 // site breaking the rule); the rule holds as far as it doesn't.
                 let p = 1.0 - noul(answers, id)?;
                 if worst.is_none_or(|(w, _)| p < w) {
-                    worst = Some((p, *line));
+                    let line = match req.violation_lines.get(id) {
+                        Some(choice) => top_line(answers, choice)?.0 as usize,
+                        None => *line,
+                    };
+                    worst = Some((p, line));
                 }
             }
             if let Some((p_holds, line)) = worst {
@@ -764,6 +876,7 @@ mod tests {
             relevance: relevance.map(str::to_string),
             unit: JevUnit::File,
             pattern: None,
+            key: None,
         }
     }
 
@@ -1188,6 +1301,7 @@ mod tests {
             relevance: None,
             unit: JevUnit::DocClaims,
             pattern: None,
+            key: None,
         }
     }
 
@@ -1309,6 +1423,7 @@ fn undocumented() {}
             relevance: None,
             unit: JevUnit::Sites,
             pattern: Some(pattern.into()),
+            key: None,
         }
     }
 
@@ -1371,5 +1486,96 @@ pub fn load(p: &str) -> Result<u8> {
         let at = |p: f64| verdict(&r, &[("a.rs".into(), vec![ans(p, None, Some(6))])]);
         assert!(!at(0.6).holds);
         assert!(at(0.7).holds);
+    }
+
+    fn entry_rule(name: &str) -> JevRule {
+        JevRule {
+            name: name.into(),
+            description: "Names describe the check. False when a name is a placeholder.".into(),
+            relevance: None,
+            unit: JevUnit::YamlEntries,
+            pattern: None,
+            key: Some("rules".into()),
+        }
+    }
+
+    const CONFIG: &str = "\
+version: 1
+rules:
+  - name: rule1
+    description: |
+      Every function is documented.
+  - { name: fine, description: d }
+";
+
+    #[test]
+    fn yaml_entries_ask_every_rule_per_entry_and_localize_within_it() {
+        let rules = [entry_rule("names"), entry_rule("other")];
+        let reqs = build_requests(&file(CONFIG, None, None), &rules);
+        assert_eq!(reqs.len(), 2, "one request per entry, shared by both rules");
+        let first = &reqs[0];
+        assert_eq!(first.state["entry"], "L3|   - name: rule1\nL4|     description: |\nL5|       Every function is documented.\n");
+        assert_eq!(
+            first.questions.keys().collect::<Vec<_>>(),
+            [
+                "entry:names:3",
+                "entryline:names:3",
+                "entry:other:3",
+                "entryline:other:3"
+            ]
+        );
+        let q = &first.questions["entry:names:3"];
+        assert_eq!(q["instructions"]["rule"], "Names describe the check.");
+        assert!(q["criteria"]["true"]
+            .as_str()
+            .unwrap()
+            .ends_with("False when a name is a placeholder."));
+        let got = read_answers(
+            first,
+            &rules,
+            &answers(json!({
+                "entry:names:3": {"noul": 0.95},
+                "entryline:names:3": {"choice": "L3", "probabilities": {"L3": 0.9}},
+                "entry:other:3": {"noul": 0.02},
+                "entryline:other:3": {"choice": "L5", "probabilities": {"L5": 0.6}},
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            got["names"].line,
+            Some((3, 1.0)),
+            "the chosen line within the entry"
+        );
+        assert!((got["names"].p_holds - 0.05).abs() < 1e-9);
+        // A one-line (flow) entry needs no line question.
+        assert_eq!(
+            reqs[1].questions.keys().collect::<Vec<_>>(),
+            ["entry:names:6", "entry:other:6"]
+        );
+        assert!(
+            !verdict(
+                &rules[0],
+                &[("c.yml".into(), vec![ans(0.1, None, Some(3))])]
+            )
+            .holds
+        );
+        assert!(
+            verdict(
+                &rules[0],
+                &[("c.yml".into(), vec![ans(0.2, None, Some(3))])]
+            )
+            .holds,
+            "threshold 0.15"
+        );
+    }
+
+    #[test]
+    fn yaml_entries_under_diff_ask_only_touched_entries() {
+        let rules = [entry_rule("names")];
+        assert_eq!(
+            build_requests(&file(CONFIG, Some("d"), Some(&[6])), &rules).len(),
+            1
+        );
+        assert!(build_requests(&file(CONFIG, Some("d"), Some(&[1])), &rules).is_empty());
     }
 }

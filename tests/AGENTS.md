@@ -684,7 +684,10 @@ resolves the oneharness the test put on PATH.
   `jev: { unit: sites, pattern }` asks one site question per matched line (the
   site text in `instructions.site`) and a violation cites that line; `sites`
   without a pattern, an invalid regex, and a pattern on a non-`sites` unit each
-  fail `validate` (exit 2).
+  fail `validate` (exit 2). `jev: { unit: yaml_entries, key }` sends one request
+  per list entry of a plain YAML target (block and flow items) and a violation
+  cites the line chosen within the entry; `yaml_entries` without a `key`, and a
+  `key` on another unit, fail `validate` (exit 2).
 
 ## Live tier (`scripts/live-*.sh`)
 

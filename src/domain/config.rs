@@ -175,6 +175,10 @@ pub enum JevUnit {
     /// against the rule within the function that contains it. For rules about
     /// specific constructs (error propagation, log calls, SQL).
     Sites,
+    /// Every item of the YAML list under the top-level `key` is checked on its
+    /// own (e.g. each rule of a config under `rules`). For rules about the
+    /// entries of a YAML document.
+    YamlEntries,
 }
 
 /// A rule's Jev decomposition.
@@ -189,6 +193,10 @@ pub struct RuleJev {
     /// rejected otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
+    /// For `unit: yaml_entries`, the top-level key whose list items are the
+    /// entries (e.g. `rules`). Required for `yaml_entries`, rejected otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// How llmlint calls TypeSafe's Jev API for rules judged by `jev`. The API key
@@ -1055,6 +1063,17 @@ pub fn validate(config: &Config) -> Result<()> {
                 rule.name
             )),
             (_, None) => {}
+        }
+        match (spec.unit, &spec.key) {
+            (JevUnit::YamlEntries, None) => problems.push(format!(
+                "rule {}: `jev.unit: yaml_entries` needs a `jev.key` (the top-level list whose items are checked)",
+                rule.name
+            )),
+            (JevUnit::YamlEntries, Some(_)) | (_, None) => {}
+            (_, Some(_)) => problems.push(format!(
+                "rule {}: `jev.key` only applies to `jev.unit: yaml_entries`",
+                rule.name
+            )),
         }
     }
 

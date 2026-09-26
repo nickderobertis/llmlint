@@ -454,6 +454,13 @@
             "string",
             "null"
           ]
+        },
+        "key": {
+          "description": "For `unit: yaml_entries`, the top-level key whose list items are the\nentries (e.g. `rules`). Required for `yaml_entries`, rejected otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false
@@ -475,6 +482,11 @@
           "description": "Every line matching the rule's `pattern` is a site, checked on its own\nagainst the rule within the function that contains it. For rules about\nspecific constructs (error propagation, log calls, SQL).",
           "type": "string",
           "const": "sites"
+        },
+        {
+          "description": "Every item of the YAML list under the top-level `key` is checked on its\nown (e.g. each rule of a config under `rules`). For rules about the\nentries of a YAML document.",
+          "type": "string",
+          "const": "yaml_entries"
         }
       ]
     }
