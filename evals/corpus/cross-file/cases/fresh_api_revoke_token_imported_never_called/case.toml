@@ -1,0 +1,6 @@
+split = "test"
+description = "revoke_token is in __all__ and imported by tests/test_tokens.py, but no test ever calls it (refresh_token, a similar name, is exercised)."
+
+[[expect]]
+rule = "api_exports_are_tested"
+holds = false

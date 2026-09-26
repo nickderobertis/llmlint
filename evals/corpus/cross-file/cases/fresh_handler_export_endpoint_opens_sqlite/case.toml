@@ -1,0 +1,8 @@
+split = "test"
+description = "Flask members handlers all go through repository except export_csv, which opens sqlite3.connect(DB_PATH) and runs a SELECT itself."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = false
+file = "src/handlers/members.py"
+lines = [5, 10, 63, 65, 66]

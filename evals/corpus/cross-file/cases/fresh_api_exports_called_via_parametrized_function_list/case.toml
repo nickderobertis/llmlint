@@ -1,0 +1,6 @@
+split = "test"
+description = "Near-miss: encode/decode exports are never called by name at a call site; they are called through a parametrized (encode, decode) function list in a nested tests/unit/ dir. Every __all__ name is called."
+
+[[expect]]
+rule = "api_exports_are_tested"
+holds = true

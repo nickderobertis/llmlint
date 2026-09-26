@@ -126,7 +126,7 @@ fn answer(request: &Value, scripts: &BTreeMap<String, Script>) -> Value {
             "holds" => json!({"type": "noul", "noul": s.holds.unwrap_or(0.95)}),
             "relevant" => json!({"type": "noul", "noul": s.relevant.unwrap_or(0.9)}),
             // Claim and site questions ask for a *violation*: p = 1 - p(holds).
-            "claim" | "site" | "entry" => {
+            "claim" | "site" | "entry" | "item" | "files" => {
                 json!({"type": "noul", "noul": 1.0 - s.holds.unwrap_or(0.95)})
             }
             _ => {
@@ -845,4 +845,53 @@ fn a_yaml_entries_rule_needs_a_key_and_a_key_needs_yaml_entries() {
             .code(2)
             .stderr(predicates::str::contains(want));
     }
+}
+
+// ---- jev: { unit: multi_file } ---------------------------------------------
+
+#[test]
+fn multi_file_judges_items_across_files_together() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\njudge: jev\nrules:\n  \
+         - { name: flags_documented, description: \"Every flag is documented.\", files: { include: [\"src/cli.rs\", \"README.md\"] }, jev: { unit: multi_file, pattern: 'long = \"([^\"]+)\"' } }\n",
+    );
+    p.write(
+        "src/cli.rs",
+        "struct Cli {\n    #[arg(long = \"dry-run\")]\n    dry_run: bool,\n}\n",
+    );
+    p.write("README.md", "# cli\n");
+    let jev = MockJev::start(&[("flags_documented", holds(0.1))], &[]);
+    let out = json_of(&run_jev(&p, &jev).code(1));
+    let v = &out["rules"][0]["violations"][0];
+    assert_eq!(
+        (v["file"].clone(), v["line"].clone()),
+        (json!("src/cli.rs"), json!(2))
+    );
+    let reqs = jev.requests();
+    assert_eq!(reqs.len(), 1, "one request for the rule, not one per file");
+    let files = reqs[0].body["state"]["files"].as_object().unwrap();
+    assert_eq!(
+        files.keys().collect::<Vec<_>>(),
+        ["README.md", "src/cli.rs"]
+    );
+    assert_eq!(
+        reqs[0].body["questions"]["item:flags_documented:0"]["instructions"]["item"],
+        "dry-run"
+    );
+}
+
+#[test]
+fn a_multi_file_pattern_needs_a_capture_group() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nrules:\n  - { name: r, description: \"d\", jev: { unit: multi_file, pattern: 'long' } }\n",
+    );
+    p.bare()
+        .arg("validate")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("needs a capture group"));
 }

@@ -11,7 +11,7 @@ use indicatif::ProgressDrawTarget;
 use crate::cli::{ColorChoice, LintArgs, OutputFormat};
 use crate::commands::ignores;
 use crate::commands::progress::{LiveStatus, ProgressView};
-use crate::domain::config::{validate, Config, JudgeKind, RelevanceMode, Rule};
+use crate::domain::config::{validate, Config, JevUnit, JudgeKind, RelevanceMode, Rule};
 use crate::domain::ignore::Suppressions;
 use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
 use crate::domain::report::{JudgeUsage, Report, Usage};
@@ -1062,6 +1062,35 @@ fn execute_jev(
         }
     }
 
+    // `multi_file` rules: one request over all of the rule's files together.
+    for rule in rules.iter().filter(|r| r.unit == JevUnit::MultiFile) {
+        let spec_files: Vec<&String> = run
+            .rules
+            .iter()
+            .find(|s| s.name == rule.name)
+            .map(|s| s.files.iter().collect())
+            .unwrap_or_default();
+        let (file_usage, result) = judge_rule_files_with_jev(client, cwd, run, &spec_files, rule);
+        usage += &file_usage;
+        match result {
+            Ok(Some((first, answer))) => {
+                let file = answer.file.clone().unwrap_or(first);
+                per_rule
+                    .entry(rule.name.clone())
+                    .or_default()
+                    .push((file, vec![answer]));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return Execution {
+                    trace: None,
+                    verdicts: Err(e),
+                    usage: priced(usage, client.model()),
+                }
+            }
+        }
+    }
+
     let pairs: Vec<(String, Vec<String>)> = run
         .rules
         .iter()
@@ -1132,6 +1161,54 @@ fn judge_file_with_jev(
         }
     }
     (usage, Ok(out))
+}
+
+/// Ask Jev one `multi_file` rule over all of its (readable, text) files at
+/// once. Returns the rule's answer with the first file's path (the answer may
+/// name the file its item came from instead), or `None` when no file is text.
+fn judge_rule_files_with_jev(
+    client: &jev::Client,
+    cwd: &Path,
+    run: &JudgeRun,
+    spec_files: &[&String],
+    rule: &jevq::JevRule,
+) -> (JudgeUsage, Result<Option<(String, jevq::RuleAnswer)>>) {
+    let mut usage = JudgeUsage::default();
+    let mut texts: Vec<(String, String)> = Vec::new();
+    for path in run
+        .files
+        .iter()
+        .filter(|p| spec_files.contains(&&files::to_slash(p)))
+    {
+        match files::read_text(cwd, path) {
+            Ok(Some(t)) => texts.push((files::to_slash(path), t)),
+            Ok(None) => {}
+            Err(e) => return (usage, Err(e)),
+        }
+    }
+    let Some(first) = texts.first().map(|(p, _)| p.clone()) else {
+        return (usage, Ok(None));
+    };
+    let req = match jevq::multi_file_request(&texts, rule) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (usage, Ok(None)),
+        Err(e) => return (usage, Err(Error::Jev(e))),
+    };
+    let started = std::time::Instant::now();
+    let asked = client.ask(&req.state, &req.questions);
+    usage.calls += 1;
+    usage.duration_ms += started.elapsed().as_millis() as u64;
+    let answer = match asked {
+        Ok(a) => a,
+        Err(e) => return (usage, Err(Error::Jev(format!("{}: {e}", rule.name)))),
+    };
+    usage.input_tokens += answer.usage.input_tokens;
+    usage.output_tokens += answer.usage.output_tokens;
+    let rules = std::slice::from_ref(rule);
+    match jevq::read_answers(&req, rules, &answer.answers) {
+        Ok(mut a) => (usage, Ok(a.remove(&rule.name).map(|ans| (first, ans)))),
+        Err(e) => (usage, Err(Error::Jev(format!("{}: {e}", rule.name)))),
+    }
 }
 
 /// Price Jev usage from its input tokens (output is free), when the model's

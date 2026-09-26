@@ -1,0 +1,6 @@
+split = "test"
+description = "settings.py reads WORKER_CONCURRENCY (with a default, and it is named in a validate() message); example.env lists the sibling WORKER_* vars but not it."
+
+[[expect]]
+rule = "env_vars_listed_in_example"
+holds = false

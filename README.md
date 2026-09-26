@@ -762,6 +762,26 @@ rules:
   always right on held-out cases, but it missed some on its own (57% recall), so
   run them under **`judge: cascade`**, which sent the uncertain entries to the
   harness and reached 100% recall and precision there.
+- `multi_file` (optional `pattern` with one capture group) — all of the rule's
+  files go into one state, for rules that relate files to each other. With a
+  pattern, each distinct capture across the files is an item asked about on its
+  own (the pattern runs over each file's whole text, so it may span lines), and
+  a violation cites where the item appears:
+
+  ```yaml
+  - name: cli_flags_documented_in_readme
+    description: Every flag defined in `src/cli.rs` is documented in `README.md`.
+    files: { include: ["src/cli.rs", "README.md"] }
+    jev: { unit: multi_file, pattern: 'long = "([^"]+)"' }
+  ```
+
+  Without a pattern it is one question over the files together — pointing Jev
+  at the items (even one item, such as a whole `__all__ = [...]` list) works
+  better than asking about the files in general. As with `sites`, the pattern
+  must match every way the code writes the items; one no file matches asks
+  nothing. The files must fit one Jev
+  state (~24k tokens together); a larger set is a clear error — judge it with
+  the harness.
 
 `jev.unit` only shapes Jev's questions; the harness ignores it.
 

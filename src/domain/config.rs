@@ -179,6 +179,11 @@ pub enum JevUnit {
     /// own (e.g. each rule of a config under `rules`). For rules about the
     /// entries of a YAML document.
     YamlEntries,
+    /// All of the rule's files in one state, for rules that relate files to each
+    /// other (every flag documented in the README). With a `pattern`, each
+    /// distinct capture-group match across the files is an item checked on its
+    /// own; without one, the rule is one question over the files together.
+    MultiFile,
 }
 
 /// A rule's Jev decomposition.
@@ -1058,8 +1063,17 @@ pub fn validate(config: &Config) -> Result<()> {
                     problems.push(format!("rule {}: invalid `jev.pattern` {p:?}: {e}", rule.name));
                 }
             }
+            (JevUnit::MultiFile, None) => {}
+            (JevUnit::MultiFile, Some(p)) => match regex::Regex::new(p) {
+                Err(e) => problems.push(format!("rule {}: invalid `jev.pattern` {p:?}: {e}", rule.name)),
+                Ok(re) if re.captures_len() < 2 => problems.push(format!(
+                    "rule {}: a `multi_file` `jev.pattern` needs a capture group naming each item (e.g. `long = \"([^\"]+)\"`)",
+                    rule.name
+                )),
+                Ok(_) => {}
+            },
             (_, Some(_)) => problems.push(format!(
-                "rule {}: `jev.pattern` only applies to `jev.unit: sites`",
+                "rule {}: `jev.pattern` only applies to `jev.unit: sites` or `multi_file`",
                 rule.name
             )),
             (_, None) => {}

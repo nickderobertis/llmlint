@@ -562,6 +562,12 @@ harness reads target files on-demand with its own tools.
   `jev: { unit: yaml_entries, key: rules }` on every rule (via a YAML anchor);
   older binaries never see it, since the bundled URL resolves to each binary's
   own embedded copy.
+  `multi_file` is the one unit not built per file: `execute_jev` asks it once
+  over all of the rule's text files (`jev::multi_file_request`; `files` in the
+  state is path -> tagged text), each distinct capture of the optional `pattern`
+  (validated: one capture group) a violation Noul cited at its first occurrence,
+  so `RuleAnswer::file` can differ from the request's first file. Over the state
+  budget is an exit-2 error, never a guess.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

@@ -487,6 +487,11 @@
           "description": "Every item of the YAML list under the top-level `key` is checked on its\nown (e.g. each rule of a config under `rules`). For rules about the\nentries of a YAML document.",
           "type": "string",
           "const": "yaml_entries"
+        },
+        {
+          "description": "All of the rule's files in one state, for rules that relate files to each\nother (every flag documented in the README). With a `pattern`, each\ndistinct capture-group match across the files is an item checked on its\nown; without one, the rule is one question over the files together.",
+          "type": "string",
+          "const": "multi_file"
         }
       ]
     }

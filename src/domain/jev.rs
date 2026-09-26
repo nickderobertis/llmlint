@@ -55,6 +55,7 @@ pub fn holds_threshold(unit: JevUnit) -> f64 {
         // above ~0.15 on dev, so the cut keeps Jev's fails always right and
         // leaves the uncertain middle to the cascade band.
         JevUnit::YamlEntries => 0.15,
+        JevUnit::MultiFile => HOLDS_THRESHOLD,
     }
 }
 
@@ -125,6 +126,9 @@ pub struct Request {
     /// For a violation question, the Choice question that localizes it within
     /// its unit (a YAML entry): the violation cites the chosen line.
     violation_lines: BTreeMap<String, String>,
+    /// For a violation question about another file than the request's own (a
+    /// `multi_file` item), that file.
+    violation_files: BTreeMap<String, String>,
 }
 
 fn line_id(n: usize) -> String {
@@ -164,6 +168,7 @@ fn chunks(text: &str) -> Vec<(usize, Vec<&str>)> {
 /// Build the requests for one file: whole-file rules share one request per
 /// chunk; each unit-specific rule adds requests for its units.
 pub fn build_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
+    // `multi_file` rules are asked once over all their files, by the caller.
     let whole: Vec<JevRule> = rules
         .iter()
         .filter(|r| r.unit == JevUnit::File)
@@ -195,6 +200,123 @@ pub fn build_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
         out.extend(yaml_entry_requests(unit, key, &rules));
     }
     out
+}
+
+/// Build the request for a `multi_file` rule: every one of its files in one
+/// state (`files`, path -> tagged text). With a pattern, each distinct capture
+/// across the files is one violation Noul (cited at its first occurrence);
+/// without one, a single violation Noul over the files together. `Err` when
+/// the files exceed the state budget — too large for one Jev state, so the
+/// caller reports it rather than guessing. `Ok(None)` when a pattern names no
+/// item in the files (nothing to ask).
+pub fn multi_file_request(
+    files: &[(String, String)],
+    rule: &JevRule,
+) -> Result<Option<Request>, String> {
+    let total: usize = files.iter().map(|(_, t)| t.len() / 4).sum();
+    if total > STATE_TOKEN_BUDGET {
+        return Err(format!(
+            "rule {}'s files are ~{total} tokens together, over the ~{STATE_TOKEN_BUDGET}-token `multi_file` budget; judge it with the harness (`judge: harness` or `cascade`) or narrow its `files`",
+            rule.name
+        ));
+    }
+    let mut state_files = Map::new();
+    for (path, text) in files {
+        let tagged: String = text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| format!("{}| {l}\n", line_id(i + 1)))
+            .collect();
+        state_files.insert(path.clone(), json!(tagged));
+    }
+    let (invariant, false_when) = split_false_when(&rule.description);
+    let breaks = |what: &str| match &false_when {
+        Some(clause) => format!("{what} breaks `rule`. {clause}"),
+        None => format!("{what} breaks `rule`."),
+    };
+    let mut questions = Map::new();
+    let mut ids = Vec::new();
+    let mut violation_files = BTreeMap::new();
+    match rule
+        .pattern
+        .as_deref()
+        .and_then(|p| regex::Regex::new(p).ok())
+    {
+        Some(re) => {
+            let mut seen = std::collections::BTreeSet::new();
+            for (path, text) in files {
+                // Matched against the whole text, so a pattern may span lines
+                // (a multi-line `__all__ = [...]`); an item's line is where its
+                // capture starts.
+                for cap in re.captures_iter(text) {
+                    let Some(m) = cap.get(1) else { continue };
+                    let item = m.as_str().to_string();
+                    if !seen.insert(item.clone()) {
+                        continue;
+                    }
+                    let i = text[..m.start()].matches('\n').count();
+                    {
+                        let id = format!("item:{}:{}", rule.name, ids.len());
+                        questions.insert(
+                            id.clone(),
+                            json!({
+                                "type": "noul",
+                                "instructions": {
+                                    "rule": invariant,
+                                    "item": item,
+                                    "question": "Judging by the files in `files`, does `item` violate `rule`?",
+                                },
+                                "criteria": {
+                                    "true": breaks("`item`"),
+                                    "false": "`item` complies with `rule`, or `rule` does not concern it.",
+                                },
+                            }),
+                        );
+                        violation_files.insert(id.clone(), path.clone());
+                        ids.push((id, i + 1));
+                    }
+                }
+            }
+            if ids.is_empty() {
+                // Nothing the pattern names exists in these files: nothing to ask.
+                return Ok(None);
+            }
+        }
+        None => {
+            let id = format!("files:{}", rule.name);
+            questions.insert(
+                id.clone(),
+                json!({
+                    "type": "noul",
+                    "instructions": { "rule": invariant, "question": "Do the files in `files`, taken together, violate `rule`?" },
+                    "criteria": {
+                        "true": breaks("The files"),
+                        "false": "The files comply with `rule`.",
+                    },
+                }),
+            );
+            ids.push((id, 0));
+        }
+    }
+    if let Some(cond) = &rule.relevance {
+        questions.insert(
+            format!("relevant:{}", rule.name),
+            json!({
+                "type": "noul",
+                "instructions": { "condition": cond, "question": "Is `condition` true of the files in `files`?" },
+            }),
+        );
+    }
+    Ok(Some(Request {
+        state: json!({ "files": state_files }),
+        questions,
+        line_questions: BTreeMap::new(),
+        only_line: None,
+        asked: vec![rule.name.clone()],
+        violation_questions: BTreeMap::from([(rule.name.clone(), ids)]),
+        violation_lines: BTreeMap::new(),
+        violation_files,
+    }))
 }
 
 /// A rule's text split into the invariant and its "False when …" clause (the
@@ -278,6 +400,7 @@ fn yaml_entry_requests(unit: &FileUnit, key: &str, rules: &[&JevRule]) -> Vec<Re
                 asked: rules.iter().map(|r| r.name.clone()).collect(),
                 violation_questions,
                 violation_lines,
+                violation_files: BTreeMap::new(),
             }
         })
         .collect()
@@ -370,6 +493,7 @@ fn site_requests(unit: &FileUnit, rule: &JevRule) -> Vec<Request> {
                 asked: vec![rule.name.clone()],
                 violation_questions: BTreeMap::from([(rule.name.clone(), ids)]),
                 violation_lines: BTreeMap::new(),
+                violation_files: BTreeMap::new(),
             })
         })
         .collect()
@@ -439,6 +563,7 @@ fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 asked: rules.iter().map(|r| r.name.clone()).collect(),
                 violation_questions,
                 violation_lines: BTreeMap::new(),
+                violation_files: BTreeMap::new(),
             }
         })
         .collect()
@@ -534,6 +659,7 @@ fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 asked: rules.iter().map(|r| r.name.clone()).collect(),
                 violation_questions: BTreeMap::new(),
                 violation_lines: BTreeMap::new(),
+                violation_files: BTreeMap::new(),
             }
         })
         .collect()
@@ -594,6 +720,9 @@ pub struct RuleAnswer {
     pub p_relevant: Option<f64>,
     /// The most likely violating line and its probability, when localized.
     pub line: Option<(u64, f64)>,
+    /// The file the answer is about, when it is not the request's own file (a
+    /// `multi_file` item found in one of several files).
+    pub file: Option<String>,
 }
 
 fn noul(answers: &Map<String, Value>, id: &str) -> Result<f64, String> {
@@ -644,26 +773,27 @@ pub fn read_answers(
         // A claims request: the rule holds as far as its least-true claim, which
         // is also where a violation points.
         if let Some(claims) = req.violation_questions.get(&rule.name) {
-            let mut worst: Option<(f64, usize)> = None;
+            let mut worst: Option<(f64, usize, Option<String>)> = None;
             for (id, line) in claims {
                 // The question asks for a violation (a contradicted claim, a
                 // site breaking the rule); the rule holds as far as it doesn't.
                 let p = 1.0 - noul(answers, id)?;
-                if worst.is_none_or(|(w, _)| p < w) {
+                if worst.as_ref().is_none_or(|(w, _, _)| p < *w) {
                     let line = match req.violation_lines.get(id) {
                         Some(choice) => top_line(answers, choice)?.0 as usize,
                         None => *line,
                     };
-                    worst = Some((p, line));
+                    worst = Some((p, line, req.violation_files.get(id).cloned()));
                 }
             }
-            if let Some((p_holds, line)) = worst {
+            if let Some((p_holds, line, file)) = worst {
                 out.insert(
                     rule.name.clone(),
                     RuleAnswer {
                         p_holds,
                         p_relevant,
-                        line: Some((line as u64, 1.0)),
+                        line: (line > 0).then_some((line as u64, 1.0)),
+                        file,
                     },
                 );
             }
@@ -687,6 +817,7 @@ pub fn read_answers(
                 p_holds,
                 p_relevant,
                 line,
+                file: None,
             },
         );
     }
@@ -1038,6 +1169,7 @@ mod tests {
                 p_holds: 0.1,
                 p_relevant: Some(0.9),
                 line: Some((290, 0.8)),
+                file: None,
             }
         );
     }
@@ -1070,6 +1202,7 @@ mod tests {
             p_holds: p,
             p_relevant: rel,
             line: line.map(|n| (n, 0.7)),
+            file: None,
         }
     }
 
@@ -1577,5 +1710,106 @@ rules:
             1
         );
         assert!(build_requests(&file(CONFIG, Some("d"), Some(&[1])), &rules).is_empty());
+    }
+    fn multi_rule(pattern: Option<&str>) -> JevRule {
+        JevRule {
+            name: "flags".into(),
+            description: "Every flag is documented. False when a flag is missing from the README."
+                .into(),
+            relevance: None,
+            unit: JevUnit::MultiFile,
+            pattern: pattern.map(str::to_string),
+            key: None,
+        }
+    }
+
+    fn files2() -> Vec<(String, String)> {
+        vec![
+            ("src/cli.rs".into(), "#[arg(long = \"timeout\")]\n#[arg(long = \"dry-run\")]\n#[arg(long = \"timeout\")]\n".into()),
+            ("README.md".into(), "- `--timeout`\n".into()),
+        ]
+    }
+
+    #[test]
+    fn multi_file_puts_every_file_in_one_state_and_asks_each_distinct_item() {
+        let rule = multi_rule(Some(r#"long = "([^"]+)""#));
+        let req = multi_file_request(&files2(), &rule).unwrap().unwrap();
+        assert_eq!(req.state["files"]["README.md"], "L1| - `--timeout`\n");
+        assert!(req.state["files"]["src/cli.rs"]
+            .as_str()
+            .unwrap()
+            .starts_with("L1| #[arg("));
+        assert_eq!(
+            req.questions.keys().collect::<Vec<_>>(),
+            ["item:flags:0", "item:flags:1"],
+            "`timeout` once"
+        );
+        assert_eq!(
+            req.questions["item:flags:1"]["instructions"]["item"],
+            "dry-run"
+        );
+        let got = read_answers(
+            &req,
+            std::slice::from_ref(&rule),
+            &answers(json!({"item:flags:0": {"noul": 0.05}, "item:flags:1": {"noul": 0.9}})),
+        )
+        .unwrap();
+        let a = &got["flags"];
+        assert!((a.p_holds - 0.1).abs() < 1e-9);
+        assert_eq!(
+            (a.file.as_deref(), a.line),
+            (Some("src/cli.rs"), Some((2, 1.0)))
+        );
+    }
+
+    #[test]
+    fn multi_file_without_a_pattern_asks_once_and_rejects_oversized_sets() {
+        let rule = multi_rule(None);
+        let req = multi_file_request(&files2(), &rule).unwrap().unwrap();
+        assert_eq!(req.questions.keys().collect::<Vec<_>>(), ["files:flags"]);
+        let got = read_answers(
+            &req,
+            std::slice::from_ref(&rule),
+            &answers(json!({"files:flags": {"noul": 0.8}})),
+        )
+        .unwrap();
+        assert_eq!((got["flags"].line, got["flags"].file.clone()), (None, None));
+        let huge = vec![("a.txt".to_string(), "x".repeat(STATE_TOKEN_BUDGET * 5))];
+        let e = multi_file_request(&huge, &rule).unwrap_err();
+        assert!(
+            e.contains("over the") && e.contains("judge: harness"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn multi_file_patterns_span_lines_and_no_items_asks_nothing() {
+        let rule = JevRule {
+            pattern: Some(r"__all__\s*=\s*\[([^\]]*)\]".into()),
+            ..multi_rule(None)
+        };
+        let files = vec![(
+            "src/api/__init__.py".to_string(),
+            "import x\n\n__all__ = [\n    \"a\",\n    \"b\",\n]\n".to_string(),
+        )];
+        let req = multi_file_request(&files, &rule).unwrap().unwrap();
+        let q = &req.questions["item:flags:0"];
+        assert!(q["instructions"]["item"]
+            .as_str()
+            .unwrap()
+            .contains("\"b\""));
+        let got = read_answers(
+            &req,
+            std::slice::from_ref(&rule),
+            &answers(json!({"item:flags:0": {"noul": 0.9}})),
+        )
+        .unwrap();
+        assert_eq!(
+            got["flags"].line,
+            Some((3, 1.0)),
+            "the line the capture starts on"
+        );
+        let none = vec![("a.py".to_string(), "nothing here\n".to_string())];
+        assert_eq!(multi_file_request(&none, &rule).unwrap(), None);
     }
 }

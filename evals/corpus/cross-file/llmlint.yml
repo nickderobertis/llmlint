@@ -6,6 +6,7 @@ agents:
     harness: claude-code
 rules:
   - name: cli_flags_documented_in_readme
+    jev: { unit: multi_file, pattern: 'long = "([^"]+)"' }
     files: { include: ["src/cli.rs", "README.md"] }
     description: |
       Every command-line flag defined in `src/cli.rs` is documented in
@@ -21,12 +22,14 @@ rules:
       database connection or executes SQL itself.
 
   - name: env_vars_listed_in_example
+    jev: { unit: multi_file, pattern: '(?:getenv|environ\.get|environ\[|_env)\(?\s*"([A-Z][A-Z0-9_]+)"' }
     files: { include: ["src/settings.py", "config/example.env"] }
     description: |
       Every environment variable that `src/settings.py` reads has an entry in
       `config/example.env`.
 
   - name: api_exports_are_tested
+    jev: { unit: multi_file, pattern: '__all__\s*=\s*\[([^\]]*)\]' }
     files: { include: ["src/api/__init__.py", "tests/**/*.py"] }
     description: |
       Every name listed in `__all__` in `src/api/__init__.py` is called by at

@@ -1,0 +1,6 @@
+split = "test"
+description = "cli.rs defines --max-connections but README only documents an abbreviated --max-conns, so the real flag appears nowhere."
+
+[[expect]]
+rule = "cli_flags_documented_in_readme"
+holds = false

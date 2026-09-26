@@ -1,0 +1,6 @@
+split = "test"
+description = "Near-miss: --output-dir is missing from the options table but appears in the README usage example; a removed --auto-rotate flag survives only as commented-out code. Every live flag is in the README."
+
+[[expect]]
+rule = "cli_flags_documented_in_readme"
+holds = true

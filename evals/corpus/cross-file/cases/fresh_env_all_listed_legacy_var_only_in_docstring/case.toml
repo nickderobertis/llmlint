@@ -1,0 +1,6 @@
+split = "test"
+description = "Near-miss: settings.py reads env vars through an injected mapping (env[...] / env.get) and names removed LEGACY_DB_* vars only in its docstring; every var actually read is in example.env (one with an empty value)."
+
+[[expect]]
+rule = "env_vars_listed_in_example"
+holds = true

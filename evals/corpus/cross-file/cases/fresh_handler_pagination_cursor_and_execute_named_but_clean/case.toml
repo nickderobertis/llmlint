@@ -1,0 +1,6 @@
+split = "test"
+description = "Near-miss: aiohttp catalog handlers are named execute_search/execute_reindex and pass a pagination `cursor`, but every storage access is a src.repository call; the SQL lives only in repository.py."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = true

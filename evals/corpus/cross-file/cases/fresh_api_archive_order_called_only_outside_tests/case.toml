@@ -1,0 +1,6 @@
+split = "test"
+description = "archive_order is exported but only called from benchmarks/, not tests/; a test seeds an archived order via the store instead of calling archive_order."
+
+[[expect]]
+rule = "api_exports_are_tested"
+holds = false

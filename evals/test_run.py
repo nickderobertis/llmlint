@@ -137,6 +137,7 @@ class Corpus(unittest.TestCase):
             ('mode = "diff"\n[[expect]]\nrule = "r"\nholds = true\n', "needs base/"),
             ('description = "x"\n', r"no \[\[expect\]\]"),
             ('[[expect]]\nrule = "r"\nholds = false\nfile = "a.rs"\nlines = [1]\n', "names missing file"),
+            ('split = "prod"\n[[expect]]\nrule = "r"\nholds = true\n', "split must be"),
         ]
         for toml, msg in bad:
             with self.subTest(msg=msg), tempfile.TemporaryDirectory() as tmp:

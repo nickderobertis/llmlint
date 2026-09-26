@@ -87,6 +87,9 @@ class Case:
     mode: str  # "file" | "diff"
     description: str
     expects: tuple[Expect, ...]
+    # An explicit `split = "test"` in case.toml pins a case held out (e.g. cases
+    # written after a technique was tuned, so they were never seen while tuning).
+    pinned_split: str | None = None
 
     @property
     def id(self) -> str:
@@ -97,12 +100,16 @@ class Case:
         """`test` (held out) or `dev`, fixed by a stable hash of the case id so a
         case never changes sides and a new case lands on one automatically.
         Tune judge techniques on `dev` only; `test` is the number to report."""
+        if self.pinned_split:
+            return self.pinned_split
         return "test" if int(hashlib.sha256(self.id.encode()).hexdigest(), 16) % 3 == 0 else "dev"
 
 
 def load_case(suite_dir: Path, case_dir: Path) -> Case:
     meta = tomllib.loads((case_dir / "case.toml").read_text())
     mode = meta.get("mode", "file")
+    if meta.get("split") not in (None, "dev", "test"):
+        raise ValueError(f"{case_dir}: split must be 'dev' or 'test', got {meta.get('split')!r}")
     if mode not in ("file", "diff"):
         raise ValueError(f"{case_dir}: mode must be 'file' or 'diff', got {mode!r}")
     if not (case_dir / "files").is_dir():
@@ -141,6 +148,7 @@ def load_case(suite_dir: Path, case_dir: Path) -> Case:
         mode=mode,
         description=meta.get("description", ""),
         expects=tuple(expects),
+        pinned_split=meta.get("split"),
     )
 
 

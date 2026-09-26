@@ -687,7 +687,10 @@ resolves the oneharness the test put on PATH.
   fail `validate` (exit 2). `jev: { unit: yaml_entries, key }` sends one request
   per list entry of a plain YAML target (block and flow items) and a violation
   cites the line chosen within the entry; `yaml_entries` without a `key`, and a
-  `key` on another unit, fail `validate` (exit 2).
+  `key` on another unit, fail `validate` (exit 2). `jev: { unit: multi_file,
+  pattern }` sends one request carrying both files, asks the captured flag as
+  an item, and cites the file + line it was defined on; a pattern without a
+  capture group fails `validate` (exit 2).
 
 ## Live tier (`scripts/live-*.sh`)
 

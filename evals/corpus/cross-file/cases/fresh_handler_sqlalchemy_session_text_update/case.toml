@@ -1,0 +1,8 @@
+split = "test"
+description = "FastAPI billing change_plan handler (nested under src/handlers/billing/) opens SessionLocal.begin() and executes a raw text() UPDATE instead of calling repository."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = false
+file = "src/handlers/billing/routes.py"
+lines = [6, 9, 51, 52, 53]

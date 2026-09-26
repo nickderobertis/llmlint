@@ -1,0 +1,6 @@
+split = "test"
+description = "cli.rs defines --retry-backoff; README documents --retries and mentions exponential backoff in prose but never the --retry-backoff flag."
+
+[[expect]]
+rule = "cli_flags_documented_in_readme"
+holds = false

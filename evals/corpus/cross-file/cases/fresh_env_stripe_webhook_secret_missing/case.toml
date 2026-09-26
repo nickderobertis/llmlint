@@ -1,0 +1,6 @@
+split = "test"
+description = "settings.py lazily reads STRIPE_WEBHOOK_SECRET inside stripe_config(); example.env lists the other Stripe vars and claims to be complete but omits it."
+
+[[expect]]
+rule = "env_vars_listed_in_example"
+holds = false
