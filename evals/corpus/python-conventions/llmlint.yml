@@ -28,6 +28,7 @@ rules:
       replaces it with a fallback value that hides a real failure from the caller.
 
   - name: log_messages_are_actionable
+    jev: { unit: sites, pattern: '\b(log|logger|logging)\.(warning|warn|error|exception|critical)\(' }
     files: { include: ["src/**/*.py"] }
     require_line_attribution: true
     description: |
@@ -38,6 +39,7 @@ rules:
       entity identifier available at that point.
 
   - name: services_do_not_build_sql
+    jev: { unit: sites, pattern: '(?i)\b(select|insert|update|delete)\b|\.execute(_raw|many)?\(|\.cursor\(' }
     files: { include: ["src/services/**/*.py"] }
     require_line_attribution: true
     description: |

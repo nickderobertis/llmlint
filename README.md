@@ -736,6 +736,24 @@ rules:
   Docs on types, fields, and constants are descriptive and not checked. A
   violation cites the contradicted sentence. On the eval corpus's held-out
   cases this took doc-comment rules from 54% to 100% recall (95% precision).
+- `sites` (with `pattern`) — every line matching the regex is a site, checked
+  on its own within the function that contains it (plus the same-file functions
+  called on that line). For rules about specific constructs:
+
+  ```yaml
+  - name: errors_carry_context
+    description: >-
+      Every propagated error adds context naming the operation and its input.
+      False when an error is propagated bare with `?`.
+    jev: { unit: sites, pattern: '\?|map_err|ok_or' }
+  ```
+
+  The rule's "False when …" sentence, if it has one, is given to Jev as the
+  literal definition of a violation. A violation cites the site's line. A
+  construct the pattern does not match is never asked about, so write the
+  pattern to cover every form the rule is about (the cascade still escalates
+  uncertain files). On held-out eval cases, error-context rules went from 68% to
+  100% recall.
 
 `jev.unit` only shapes Jev's questions; the harness ignores it.
 

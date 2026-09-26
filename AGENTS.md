@@ -547,6 +547,12 @@ harness reads target files on-demand with its own tools.
   Each unit has its own fail threshold (`jev::holds_threshold`), tuned on the
   eval corpus's **dev** split only and reported on **held-out**; cascade triage
   escalates a below-band file that reported no violation rather than passing it.
+  `sites` (`jev.pattern`, a regex validated at load; required for `sites`,
+  rejected elsewhere) asks one *violation* Noul per matched non-comment line,
+  grouped per innermost function (`jevunits::site_groups`), with the same-file
+  functions called on the site lines under `helpers` and the rule's
+  "False when …" clause as the violation criterion. `doc_claims` and `sites`
+  share `Request::violation_questions` (p(holds) = 1 − p, line = the question's).
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

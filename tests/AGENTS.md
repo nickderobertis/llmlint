@@ -681,6 +681,10 @@ resolves the oneharness the test put on PATH.
   a contradicted claim fails at its doc line; 0.40 passes a claims rule (its
   threshold is 0.35) where a whole-file rule would fail; a file with no documented
   function gets no request; an unknown `jev.unit` fails `validate` (exit 2).
+  `jev: { unit: sites, pattern }` asks one site question per matched line (the
+  site text in `instructions.site`) and a violation cites that line; `sites`
+  without a pattern, an invalid regex, and a pattern on a non-`sites` unit each
+  fail `validate` (exit 2).
 
 ## Live tier (`scripts/live-*.sh`)
 

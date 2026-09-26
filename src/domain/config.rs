@@ -171,6 +171,10 @@ pub enum JevUnit {
     /// is this claim true of the item's code? For rules that doc comments must
     /// match behavior. The rule's `description` is not sent to Jev for this unit.
     DocClaims,
+    /// Every line matching the rule's `pattern` is a site, checked on its own
+    /// against the rule within the function that contains it. For rules about
+    /// specific constructs (error propagation, log calls, SQL).
+    Sites,
 }
 
 /// A rule's Jev decomposition.
@@ -180,6 +184,11 @@ pub struct RuleJev {
     /// How the rule is split into Jev questions (default `file`).
     #[serde(default)]
     pub unit: JevUnit,
+    /// For `unit: sites`, a regular expression; every line it matches is a site
+    /// (e.g. `'\?|map_err'` for Rust error propagation). Required for `sites`,
+    /// rejected otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
 }
 
 /// How llmlint calls TypeSafe's Jev API for rules judged by `jev`. The API key
@@ -374,8 +383,8 @@ impl Rule {
     /// How this rule's relevance resolves, applying the default (always evaluate
     /// when `relevance` is unset or `true`).
     /// How Jev decomposes this rule (default whole-file).
-    pub fn jev_unit(&self) -> JevUnit {
-        self.jev.as_ref().map(|j| j.unit).unwrap_or_default()
+    pub fn jev_spec(&self) -> RuleJev {
+        self.jev.clone().unwrap_or_default()
     }
 
     pub fn relevance_mode(&self) -> RelevanceMode {
@@ -1028,6 +1037,25 @@ pub fn validate(config: &Config) -> Result<()> {
         crate::domain::jev::Band::from_settings(config.jev.escalate_low, config.jev.escalate_high)
     {
         problems.push(e);
+    }
+    for rule in &config.rules {
+        let Some(spec) = &rule.jev else { continue };
+        match (spec.unit, &spec.pattern) {
+            (JevUnit::Sites, None) => problems.push(format!(
+                "rule {}: `jev.unit: sites` needs a `jev.pattern` (a regex; each matching line is a site)",
+                rule.name
+            )),
+            (JevUnit::Sites, Some(p)) => {
+                if let Err(e) = regex::Regex::new(p) {
+                    problems.push(format!("rule {}: invalid `jev.pattern` {p:?}: {e}", rule.name));
+                }
+            }
+            (_, Some(_)) => problems.push(format!(
+                "rule {}: `jev.pattern` only applies to `jev.unit: sites`",
+                rule.name
+            )),
+            (_, None) => {}
+        }
     }
 
     for rule in &config.rules {

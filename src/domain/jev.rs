@@ -48,6 +48,9 @@ pub fn holds_threshold(unit: JevUnit) -> f64 {
     match unit {
         JevUnit::File => HOLDS_THRESHOLD,
         JevUnit::DocClaims => 0.35,
+        // Sites: clean sites scored >= 0.70 on dev while violations spread up
+        // to ~0.64, so the cut sits between them.
+        JevUnit::Sites => 0.65,
     }
 }
 
@@ -77,6 +80,8 @@ pub struct JevRule {
     pub relevance: Option<String>,
     /// How the rule is decomposed into questions.
     pub unit: JevUnit,
+    /// The site pattern, for `JevUnit::Sites` (validated at config load).
+    pub pattern: Option<String>,
 }
 
 /// One file to judge.
@@ -106,9 +111,11 @@ pub struct Request {
     /// The rules this request asks about (a unit-specific request asks only
     /// the rules of that unit).
     asked: Vec<String>,
-    /// Per rule, its claim questions with the line each claim starts on
-    /// (`doc_claims` requests only).
-    claim_questions: BTreeMap<String, Vec<(String, usize)>>,
+    /// Per rule, its violation questions — each asks whether something at a
+    /// line violates the rule (a doc claim contradicted, a site breaking it) —
+    /// with that line. The rule holds as far as its most-violated question.
+    /// (`doc_claims` and `sites` requests.)
+    violation_questions: BTreeMap<String, Vec<(String, usize)>>,
 }
 
 fn line_id(n: usize) -> String {
@@ -165,7 +172,101 @@ pub fn build_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
     if !docs.is_empty() {
         out.extend(doc_claim_requests(unit, &docs));
     }
+    for rule in rules.iter().filter(|r| r.unit == JevUnit::Sites) {
+        out.extend(site_requests(unit, rule));
+    }
     out
+}
+
+/// One request per group of sites (the function containing them): the state is
+/// that function, and each site is one Noul — does the line at this site
+/// violate the rule? Under `--diff`, only sites on added lines are asked.
+fn site_requests(unit: &FileUnit, rule: &JevRule) -> Vec<Request> {
+    // The pattern was validated at config load; a failure here asks nothing.
+    let Some(re) = rule
+        .pattern
+        .as_deref()
+        .and_then(|p| regex::Regex::new(p).ok())
+    else {
+        return Vec::new();
+    };
+    let lines: Vec<&str> = unit.text.lines().collect();
+    let tag = |n: usize| lines.get(n - 1).map(|l| format!("{}| {l}", line_id(n)));
+    jevunits::site_groups(unit.path, unit.text, &re)
+        .into_iter()
+        .filter_map(|mut g| {
+            if let Some(added) = unit.added_lines {
+                g.sites.retain(|n| added.contains(n));
+            }
+            if g.sites.is_empty() {
+                return None;
+            }
+            let code: String = (g.start..=g.end).filter_map(|n| tag(n).map(|l| l + "\n")).collect();
+            let helpers: String = g
+                .helpers
+                .iter()
+                .map(|&(a, b)| (a..=b).filter_map(|n| tag(n).map(|l| l + "\n")).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let use_helpers = !helpers.is_empty();
+            // A rule's "False when …" clause, when it has one, is the literal
+            // definition of a violation: it goes in the `true` criterion (the
+            // site breaks the rule) rather than trailing the invariant.
+            let (rule_text, breaks) = match rule.description.to_lowercase().find("false when") {
+                Some(i) => (
+                    rule.description[..i].trim().to_string(),
+                    format!("The line in `site` breaks `rule`. {}", rule.description[i..].trim()),
+                ),
+                _ => (rule.description.clone(), "The line in `site` breaks `rule`.".to_string()),
+            };
+            let mut questions = Map::new();
+            let mut ids = Vec::new();
+            for &n in &g.sites {
+                let id = format!("site:{}:{n}", rule.name);
+                questions.insert(
+                    id.clone(),
+                    json!({
+                        "type": "noul",
+                        "instructions": {
+                            "rule": rule_text,
+                            "site": tag(n).unwrap_or_default(),
+                            "question": if use_helpers {
+                                "Does the line in `site` (shown in context in `code`; the functions it calls are in `helpers`) violate `rule`?"
+                            } else {
+                                "Does the line in `site` (shown in context in `code`) violate `rule`?"
+                            },
+                        },
+                        "criteria": {
+                            "true": breaks,
+                            "false": "The line in `site` complies with `rule`, or `rule` does not concern it.",
+                        },
+                    }),
+                );
+                ids.push((id, n));
+            }
+            if let Some(cond) = &rule.relevance {
+                questions.insert(
+                    format!("relevant:{}", rule.name),
+                    json!({
+                        "type": "noul",
+                        "instructions": { "condition": cond, "question": "Is `condition` true of `code`?" },
+                    }),
+                );
+            }
+            let mut state = json!({ "path": unit.path, "code": code });
+            if use_helpers {
+                state["helpers"] = json!(helpers);
+            }
+            Some(Request {
+                state,
+                questions,
+                line_questions: BTreeMap::new(),
+                only_line: None,
+                asked: vec![rule.name.clone()],
+                violation_questions: BTreeMap::from([(rule.name.clone(), ids)]),
+            })
+        })
+        .collect()
 }
 
 /// One request per documented item (per the extractor in
@@ -205,7 +306,7 @@ fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 state["helpers"] = json!(helpers);
             }
             let mut questions = Map::new();
-            let mut claim_questions = BTreeMap::new();
+            let mut violation_questions = BTreeMap::new();
             for rule in rules {
                 let mut ids = Vec::new();
                 for (k, claim) in item.claims.iter().enumerate() {
@@ -222,7 +323,7 @@ fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                         }),
                     );
                 }
-                claim_questions.insert(rule.name.clone(), ids);
+                violation_questions.insert(rule.name.clone(), ids);
             }
             Request {
                 state,
@@ -230,7 +331,7 @@ fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 line_questions: BTreeMap::new(),
                 only_line: None,
                 asked: rules.iter().map(|r| r.name.clone()).collect(),
-                claim_questions,
+                violation_questions,
             }
         })
         .collect()
@@ -324,7 +425,7 @@ fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                     _ => None,
                 },
                 asked: rules.iter().map(|r| r.name.clone()).collect(),
-                claim_questions: BTreeMap::new(),
+                violation_questions: BTreeMap::new(),
             }
         })
         .collect()
@@ -434,11 +535,11 @@ pub fn read_answers(
         };
         // A claims request: the rule holds as far as its least-true claim, which
         // is also where a violation points.
-        if let Some(claims) = req.claim_questions.get(&rule.name) {
+        if let Some(claims) = req.violation_questions.get(&rule.name) {
             let mut worst: Option<(f64, usize)> = None;
             for (id, line) in claims {
-                // The question asks for a contradiction; the rule holds as far
-                // as the claim is not contradicted.
+                // The question asks for a violation (a contradicted claim, a
+                // site breaking the rule); the rule holds as far as it doesn't.
                 let p = 1.0 - noul(answers, id)?;
                 if worst.is_none_or(|(w, _)| p < w) {
                     worst = Some((p, *line));
@@ -662,6 +763,7 @@ mod tests {
             description: format!("{name} holds"),
             relevance: relevance.map(str::to_string),
             unit: JevUnit::File,
+            pattern: None,
         }
     }
 
@@ -1085,6 +1187,7 @@ mod tests {
             description: "docs match behavior".into(),
             relevance: None,
             unit: JevUnit::DocClaims,
+            pattern: None,
         }
     }
 
@@ -1197,5 +1300,76 @@ fn undocumented() {}
             },
         );
         assert_eq!(t.escalate, ["a.rs"]);
+    }
+    fn site_rule(pattern: &str) -> JevRule {
+        JevRule {
+            name: "ctx".into(),
+            description: "Errors carry context. False when an error is propagated bare with `?`."
+                .into(),
+            relevance: None,
+            unit: JevUnit::Sites,
+            pattern: Some(pattern.into()),
+        }
+    }
+
+    const SITES: &str = "\
+fn read(p: &str) -> Result<String> {
+    fs::read_to_string(p).map_err(|e| ctx(p, e))
+}
+
+pub fn load(p: &str) -> Result<u8> {
+    let t = read(p)?;
+    let n = t.parse()?;
+    Ok(n)
+}
+";
+
+    #[test]
+    fn sites_ask_one_violation_per_matched_line_over_its_function() {
+        let rules = [site_rule(r"\?")];
+        let reqs = build_requests(&file(SITES, None, None), &rules);
+        assert_eq!(reqs.len(), 1, "both sites share their function's request");
+        let r = &reqs[0];
+        assert!(r.state["code"]
+            .as_str()
+            .unwrap()
+            .starts_with("L5| pub fn load("));
+        assert_eq!(r.state["helpers"], "L1| fn read(p: &str) -> Result<String> {\nL2|     fs::read_to_string(p).map_err(|e| ctx(p, e))\nL3| }\n");
+        assert_eq!(
+            r.questions.keys().collect::<Vec<_>>(),
+            ["site:ctx:6", "site:ctx:7"]
+        );
+        let q = &r.questions["site:ctx:6"];
+        assert_eq!(q["instructions"]["site"], "L6|     let t = read(p)?;");
+        assert_eq!(q["instructions"]["rule"], "Errors carry context.");
+        assert!(q["criteria"]["true"]
+            .as_str()
+            .unwrap()
+            .contains("False when an error is propagated bare"));
+        let got = read_answers(
+            r,
+            &rules,
+            &answers(json!({"site:ctx:6": {"noul": 0.1}, "site:ctx:7": {"noul": 0.8}})),
+        )
+        .unwrap();
+        assert!((got["ctx"].p_holds - 0.2).abs() < 1e-9);
+        assert_eq!(got["ctx"].line, Some((7, 1.0)));
+    }
+
+    #[test]
+    fn sites_under_diff_ask_only_added_lines_and_a_file_without_sites_asks_nothing() {
+        let rules = [site_rule(r"\?")];
+        let reqs = build_requests(&file(SITES, Some("d"), Some(&[7])), &rules);
+        assert_eq!(reqs[0].questions.keys().collect::<Vec<_>>(), ["site:ctx:7"]);
+        assert!(build_requests(&file(SITES, Some("d"), Some(&[2])), &rules).is_empty());
+        assert!(build_requests(&file("fn a() {}\n", None, None), &rules).is_empty());
+    }
+
+    #[test]
+    fn a_sites_rule_fails_below_its_own_threshold() {
+        let r = site_rule(r"\?");
+        let at = |p: f64| verdict(&r, &[("a.rs".into(), vec![ans(p, None, Some(6))])]);
+        assert!(!at(0.6).holds);
+        assert!(at(0.7).holds);
     }
 }

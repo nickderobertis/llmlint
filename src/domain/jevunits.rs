@@ -74,6 +74,86 @@ pub fn doc_items(path: &str, text: &str) -> Vec<DocItem> {
         .collect()
 }
 
+/// A group of sites sharing one state: the function that contains them (or a
+/// small window, for code outside any function).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteGroup {
+    pub start: usize,
+    pub end: usize,
+    /// 1-based lines the pattern matched, in order.
+    pub sites: Vec<usize>,
+    /// Same-file functions called *on the site lines*, as line ranges: whether
+    /// `load(path)?` adds context depends on what `load` does.
+    pub helpers: Vec<(usize, usize)>,
+}
+
+/// Lines of context around a site outside any function.
+const SITE_WINDOW: usize = 6;
+
+/// Every non-comment line matching `pattern`, grouped by the innermost
+/// function containing it. A site's state is its whole function, so the check
+/// sees what the matched construct is doing (which call, which value).
+pub fn site_groups(path: &str, text: &str, pattern: &regex::Regex) -> Vec<SiteGroup> {
+    let lines: Vec<&str> = text.lines().collect();
+    let functions = function_index(path, &lines);
+    let mut groups: Vec<SiteGroup> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        let comment =
+            t.starts_with("//") || t.starts_with('#') || t.starts_with('*') || t.starts_with("/*");
+        if comment || !pattern.is_match(line) {
+            continue;
+        }
+        let n = i + 1;
+        let (start, end) = functions
+            .iter()
+            .filter(|(_, s, e)| (*s..=*e).contains(&n))
+            .min_by_key(|(_, s, e)| e - s)
+            .map(|(_, s, e)| (*s, *e))
+            .unwrap_or_else(|| {
+                (
+                    n.saturating_sub(SITE_WINDOW).max(1),
+                    (n + SITE_WINDOW).min(lines.len()),
+                )
+            });
+        match groups.iter_mut().find(|g| g.start == start && g.end == end) {
+            Some(g) => g.sites.push(n),
+            None => groups.push(SiteGroup {
+                start,
+                end,
+                sites: vec![n],
+                helpers: Vec::new(),
+            }),
+        }
+    }
+    for g in &mut groups {
+        let site_text: String = g
+            .sites
+            .iter()
+            .filter_map(|n| lines.get(n - 1))
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n");
+        g.helpers = functions
+            .iter()
+            .filter(|(_, s, _)| *s != g.start)
+            .filter(|(name, _, _)| calls(&site_text, name))
+            .take(MAX_HELPERS)
+            .map(|(_, s, e)| (*s, *e))
+            .collect();
+    }
+    groups
+}
+
+/// Whether `text` calls `name(` as a whole identifier.
+fn calls(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(i, _)| {
+        let before = text[..i].chars().last();
+        let after = text[i + name.len()..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_') && after == Some('(')
+    })
+}
+
 /// At most this many helpers are attached to one item, so the state stays small.
 const MAX_HELPERS: usize = 4;
 
@@ -143,13 +223,7 @@ fn callees(
     functions
         .iter()
         .filter(|(_, start, _)| *start != item.code_start)
-        .filter(|(name, _, _)| {
-            body.match_indices(name.as_str()).any(|(i, _)| {
-                let before = body[..i].chars().last();
-                let after = body[i + name.len()..].chars().next();
-                !before.is_some_and(|c| c.is_alphanumeric() || c == '_') && after == Some('(')
-            })
-        })
+        .filter(|(name, _, _)| calls(&body, name))
         .take(MAX_HELPERS)
         .map(|(_, s, e)| (*s, *e))
         .collect()
@@ -700,6 +774,39 @@ var Limit = 1
         assert_eq!(items.len(), 1);
         assert_eq!(texts(&items[0]), [(1, "Add returns the sum.")]);
         assert_eq!(span(&items[0]), (2, 4));
+    }
+
+    #[test]
+    fn sites_group_by_their_innermost_function_and_skip_comments() {
+        let src = "\
+fn load(p: &Path) -> Result<String> {
+    // read() may fail?
+    let t = fs::read_to_string(p)?;
+    let n = parse(&t)?;
+    Ok(t)
+}
+
+const X: u8 = helper()?;
+";
+        let re = regex::Regex::new(r"\?").unwrap();
+        let groups = site_groups("a.rs", src, &re);
+        assert_eq!(
+            groups,
+            [
+                SiteGroup {
+                    start: 1,
+                    end: 6,
+                    sites: vec![3, 4],
+                    helpers: vec![]
+                },
+                SiteGroup {
+                    start: 2,
+                    end: 8,
+                    sites: vec![8],
+                    helpers: vec![]
+                },
+            ]
+        );
     }
 
     #[test]

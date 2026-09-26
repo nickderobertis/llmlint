@@ -78,6 +78,9 @@ serde_yaml_ng = "0.10"
 minijinja = "2"
 ignore = "0.4"
 globset = "0.4"
+# `jev: { unit: sites, pattern }` — a rule's site pattern (already in the tree via
+# globset/ignore, so no new download).
+regex = "1"
 thiserror = "2"
 wait-timeout = "0.2"
 tempfile = "3"

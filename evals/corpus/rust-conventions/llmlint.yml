@@ -16,6 +16,7 @@ rules:
       the code. False when a doc comment claims behavior the code contradicts.
 
   - name: errors_carry_context
+    jev: { unit: sites, pattern: '\?|map_err|ok_or' }
     files: { include: ["src/**/*.rs"] }
     require_line_attribution: true
     description: |

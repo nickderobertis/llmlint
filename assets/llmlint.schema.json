@@ -447,6 +447,13 @@
           "description": "How the rule is split into Jev questions (default `file`).",
           "$ref": "#/$defs/JevUnit",
           "default": "file"
+        },
+        "pattern": {
+          "description": "For `unit: sites`, a regular expression; every line it matches is a site\n(e.g. `'\\?|map_err'` for Rust error propagation). Required for `sites`,\nrejected otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false
@@ -463,6 +470,11 @@
           "description": "Every documented item (a function, method, struct, …) is checked on its\nown: each sentence of its doc comment or docstring becomes one question —\nis this claim true of the item's code? For rules that doc comments must\nmatch behavior. The rule's `description` is not sent to Jev for this unit.",
           "type": "string",
           "const": "doc_claims"
+        },
+        {
+          "description": "Every line matching the rule's `pattern` is a site, checked on its own\nagainst the rule within the function that contains it. For rules about\nspecific constructs (error propagation, log calls, SQL).",
+          "type": "string",
+          "const": "sites"
         }
       ]
     }

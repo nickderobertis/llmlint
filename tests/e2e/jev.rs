@@ -125,8 +125,8 @@ fn answer(request: &Value, scripts: &BTreeMap<String, Script>) -> Value {
         let a = match kind {
             "holds" => json!({"type": "noul", "noul": s.holds.unwrap_or(0.95)}),
             "relevant" => json!({"type": "noul", "noul": s.relevant.unwrap_or(0.9)}),
-            // A claim question asks for a *contradiction*: p = 1 - p(holds).
-            "claim" => json!({"type": "noul", "noul": 1.0 - s.holds.unwrap_or(0.95)}),
+            // Claim and site questions ask for a *violation*: p = 1 - p(holds).
+            "claim" | "site" => json!({"type": "noul", "noul": 1.0 - s.holds.unwrap_or(0.95)}),
             _ => {
                 let options: Vec<&String> = q["criteria"].as_object().unwrap().keys().collect();
                 let want = s.line.map(|n| format!("L{n}"));
@@ -737,4 +737,60 @@ fn an_unknown_jev_unit_is_a_config_error() {
         .assert()
         .code(2)
         .stderr(predicates::str::contains("unknown variant `sentences`"));
+}
+
+// ---- jev: { unit: sites, pattern } ----------------------------------------
+
+#[test]
+fn sites_checks_each_matched_line_and_cites_it() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\njudge: jev\nrules:\n  \
+         - { name: errors_have_context, description: \"Every error carries context.\", jev: { unit: sites, pattern: '\\?' } }\n",
+    );
+    p.write("src/a.rs", SRC);
+    let jev = MockJev::start(&[("errors_have_context", holds(0.2))], &[]);
+    let out = json_of(&run_jev(&p, &jev).code(1));
+    let v = &out["rules"][0]["violations"][0];
+    assert_eq!(
+        (v["file"].clone(), v["line"].clone()),
+        (json!("src/a.rs"), json!(2))
+    );
+    let body = &jev.requests()[0].body;
+    assert_eq!(
+        body["questions"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["site:errors_have_context:2"]
+    );
+    assert_eq!(
+        body["questions"]["site:errors_have_context:2"]["instructions"]["site"],
+        "L2|     let text = read()?;"
+    );
+}
+
+#[test]
+fn a_sites_rule_needs_a_valid_pattern_and_a_pattern_needs_sites() {
+    let p = Project::new();
+    for (jev, want) in [
+        ("{ unit: sites }", "needs a `jev.pattern`"),
+        ("{ unit: sites, pattern: '(' }", "invalid `jev.pattern`"),
+        (
+            "{ unit: file, pattern: 'x' }",
+            "only applies to `jev.unit: sites`",
+        ),
+    ] {
+        p.write(
+            "llmlint.yml",
+            &format!("version: 1\nrules:\n  - {{ name: r, description: \"d\", jev: {jev} }}\n"),
+        );
+        p.bare()
+            .arg("validate")
+            .assert()
+            .code(2)
+            .stderr(predicates::str::contains(want));
+    }
 }

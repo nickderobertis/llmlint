@@ -576,6 +576,7 @@ dependencies = [
  "indicatif",
  "minijinja",
  "predicates",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
