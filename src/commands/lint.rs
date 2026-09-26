@@ -11,16 +11,16 @@ use indicatif::ProgressDrawTarget;
 use crate::cli::{ColorChoice, LintArgs, OutputFormat};
 use crate::commands::ignores;
 use crate::commands::progress::{LiveStatus, ProgressView};
-use crate::domain::config::{validate, Config, RelevanceMode, Rule};
+use crate::domain::config::{validate, Config, JudgeKind, RelevanceMode, Rule};
 use crate::domain::ignore::Suppressions;
 use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
-use crate::domain::report::Report;
+use crate::domain::report::{JudgeUsage, Report, Usage};
 use crate::domain::template::{self};
 use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
-use crate::domain::{applicability, attribution, diffmodel, ignore, schema, vote};
+use crate::domain::{applicability, attribution, diffmodel, ignore, jev as jevq, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
-use crate::io::{assets, configfs, diff, env, files, history, oneharness};
+use crate::io::{assets, configfs, diff, env, files, history, jev, oneharness};
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const DEFAULT_TIMEOUT: u64 = 600;
@@ -138,6 +138,7 @@ pub(crate) fn run_loaded(
             rationale: rule.wants_rationale(session_rationales),
             relevance,
             require_line_attribution: rule.requires_line_attribution(),
+            judge: config.judge_for(rule),
         });
     }
 
@@ -282,10 +283,16 @@ pub(crate) fn run_loaded(
         .clone()
         .or_else(|| config.oneharness.bin.clone());
     let client = oneharness::Client::new(bin.as_deref());
+    // Each backend is a prerequisite only when some run uses it: a run whose
+    // rules are all judged by Jev needs no oneharness installed, and a harness-only
+    // run needs no Jev API key.
+    let uses = |kind: JudgeKind| the_plan.runs.iter().any(|r| r.judge == kind);
     // Pre-flight: read-only mode (so the harness never edits target files)
     // requires oneharness >= MIN_VERSION. Check once up front and fail with a
     // clear message rather than letting every judge's `--mode read-only` error.
-    client.check_min_version()?;
+    if uses(JudgeKind::Harness) {
+        client.check_min_version()?;
+    }
 
     // At `-v`, narrate the plan up front — before any judge runs — so a reader sees
     // what will be linted (the file set, the batching, any diff-excluded files)
@@ -302,6 +309,13 @@ pub(crate) fn run_loaded(
         .timeout
         .or(config.oneharness.timeout)
         .unwrap_or(DEFAULT_TIMEOUT);
+    // Built before any judge runs, so a missing key fails the run up front
+    // (exit 2) rather than after the harness half has already spent calls.
+    let jev_client = if uses(JudgeKind::Jev) {
+        Some(jev::Client::from_env(&config.jev, timeout)?)
+    } else {
+        None
+    };
     let oh_config = resolve_oneharness_config(&args, &config);
     let oh_config_ref = oh_config.as_deref();
     let global_model = config.oneharness.model.as_deref();
@@ -309,6 +323,7 @@ pub(crate) fn run_loaded(
 
     let mut verdicts: BTreeMap<String, Vec<RuleVerdict>> = BTreeMap::new();
     let mut run_errors: Vec<String> = Vec::new();
+    let mut usage = Usage::default();
     // At `-v` we collect each oneharness invocation's exact command + raw result
     // and print them to stderr (the debug view); off by default to avoid the
     // cost of formatting the full command line on every judge.
@@ -360,6 +375,7 @@ pub(crate) fn run_loaded(
     // Bind Copy references so the per-judge `move` closures capture borrows
     // (which outlive the scope) rather than moving the owned `client`/`cwd`.
     let client_ref = &client;
+    let jev_ref = jev_client.as_ref();
     let cwd_ref = cwd.as_path();
     let diffs_ref = &diffs;
     let suppressions_ref = &suppressions;
@@ -374,8 +390,16 @@ pub(crate) fn run_loaded(
             let handles: Vec<_> = wave
                 .iter()
                 .map(|run| {
-                    s.spawn(move || {
-                        execute(
+                    s.spawn(move || match (run.judge, jev_ref) {
+                        (JudgeKind::Jev, Some(jev)) => execute_jev(
+                            jev,
+                            run,
+                            cwd_ref,
+                            diffs_ref,
+                            suppressions_ref,
+                            max_parallel,
+                        ),
+                        _ => execute(
                             client_ref,
                             run,
                             cwd_ref,
@@ -385,17 +409,21 @@ pub(crate) fn run_loaded(
                             want_trace,
                             diffs_ref,
                             suppressions_ref,
-                        )
+                        ),
                     })
                 })
                 .collect();
             for (run, handle) in wave.iter().zip(handles) {
-                let (trace, result) = handle.join().expect("judge thread panicked");
-                if let Some(trace) = trace {
+                let exec = handle.join().expect("judge thread panicked");
+                if let Some(trace) = exec.trace {
                     traces.push((judge_label(run), trace));
                 }
+                match run.judge {
+                    JudgeKind::Harness => usage.harness += &exec.usage,
+                    JudgeKind::Jev => usage.jev += &exec.usage,
+                }
                 view.tick_run();
-                match result {
+                match exec.verdicts {
                     Ok(map) => {
                         for (name, verdict) in map {
                             verdicts.entry(name).or_default().push(verdict);
@@ -465,7 +493,9 @@ pub(crate) fn run_loaded(
         ));
     }
 
-    let report = Report::new(outcomes, run_errors).with_plan(the_plan.explanation.clone());
+    let report = Report::new(outcomes, run_errors)
+        .with_plan(the_plan.explanation.clone())
+        .with_usage(usage);
     Ok(finish(&report, &args, &cwd, &sources, command, &config))
 }
 
@@ -778,6 +808,182 @@ fn print_traces(traces: &[(String, oneharness::RunTrace)]) {
     }
 }
 
+/// What one judge run produced: its verdicts, what it consumed, and (at `-v`,
+/// harness runs only) the oneharness debug trace.
+struct Execution {
+    trace: Option<oneharness::RunTrace>,
+    verdicts: Result<BTreeMap<String, RuleVerdict>>,
+    usage: JudgeUsage,
+}
+
+/// Judge one Jev run: one request per file (per chunk of an oversized file),
+/// asking every rule whose effective scope includes that file. Files are judged
+/// concurrently, up to `max_parallel` at a time. A failed request fails the
+/// whole run (exit 2, like a harness failure) rather than reporting a verdict
+/// built from part of the files. The same deterministic cleanup as the harness
+/// path — out-of-scope and inline-ignored violations dropped — applies after.
+fn execute_jev(
+    client: &jev::Client,
+    run: &JudgeRun,
+    cwd: &Path,
+    diffs: &BTreeMap<PathBuf, String>,
+    suppressions: &BTreeMap<String, Suppressions>,
+    max_parallel: usize,
+) -> Execution {
+    let rules: Vec<jevq::JevRule> = run
+        .rules
+        .iter()
+        .map(|r| jevq::JevRule {
+            name: r.name.clone(),
+            description: r.description.clone(),
+            relevance: r.relevance.clone(),
+        })
+        .collect();
+
+    // Each file with the rules that apply to it.
+    let jobs: Vec<(&PathBuf, String, Vec<jevq::JevRule>)> = run
+        .files
+        .iter()
+        .map(|p| {
+            let slash = files::to_slash(p);
+            let applying = run
+                .rules
+                .iter()
+                .zip(&rules)
+                .filter(|(spec, _)| spec.files.iter().any(|f| f == &slash))
+                .map(|(_, r)| r.clone())
+                .collect();
+            (p, slash, applying)
+        })
+        .filter(|(_, _, applying): &(_, _, Vec<jevq::JevRule>)| !applying.is_empty())
+        .collect();
+
+    let mut usage = JudgeUsage::default();
+    let mut per_rule: BTreeMap<String, Vec<(String, Vec<jevq::RuleAnswer>)>> = BTreeMap::new();
+    for wave in jobs.chunks(max_parallel.max(1)) {
+        let results: Vec<_> = thread::scope(|s| {
+            let handles: Vec<_> = wave
+                .iter()
+                .map(|(path, slash, applying)| {
+                    s.spawn(move || {
+                        judge_file_with_jev(client, cwd, path, slash, applying, diffs.get(*path))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("jev thread panicked"))
+                .collect()
+        });
+        for ((_, slash, _), (file_usage, result)) in wave.iter().zip(results) {
+            usage += &file_usage;
+            match result {
+                Ok(chunks) => {
+                    // Regroup chunk answers per rule for this file.
+                    let mut by_rule: BTreeMap<String, Vec<jevq::RuleAnswer>> = BTreeMap::new();
+                    for chunk in chunks {
+                        for (name, answer) in chunk {
+                            by_rule.entry(name).or_default().push(answer);
+                        }
+                    }
+                    for (name, answers) in by_rule {
+                        per_rule
+                            .entry(name)
+                            .or_default()
+                            .push((slash.clone(), answers));
+                    }
+                }
+                Err(e) => {
+                    return Execution {
+                        trace: None,
+                        verdicts: Err(e),
+                        usage: priced(usage, client.model()),
+                    }
+                }
+            }
+        }
+    }
+
+    let pairs: Vec<(String, Vec<String>)> = run
+        .rules
+        .iter()
+        .map(|r| (r.name.clone(), r.files.clone()))
+        .collect();
+    let scope = applicability::scope_map(&pairs);
+    let empty_scope = BTreeSet::new();
+    let mut verdicts = BTreeMap::new();
+    for rule in &rules {
+        let answers = per_rule.remove(&rule.name).unwrap_or_default();
+        let mut verdict = jevq::verdict(rule, &answers);
+        let rule_scope = scope.get(rule.name.as_str()).unwrap_or(&empty_scope);
+        applicability::clean_verdict(&mut verdict, rule_scope, |file, line| {
+            suppressions
+                .get(file)
+                .is_some_and(|s| s.covers(&rule.name, line))
+        });
+        verdicts.insert(rule.name.clone(), verdict);
+    }
+    Execution {
+        trace: None,
+        verdicts: Ok(verdicts),
+        usage: priced(usage, client.model()),
+    }
+}
+
+/// Ask Jev about one file: every request (one per chunk) for the rules that
+/// apply to it. A file llmlint cannot read as text (binary) yields no answers,
+/// the same as the harness never being able to judge it. Returns what the
+/// requests consumed alongside the result, so a failure still accounts for the
+/// calls made before it.
+fn judge_file_with_jev(
+    client: &jev::Client,
+    cwd: &Path,
+    path: &Path,
+    slash: &str,
+    rules: &[jevq::JevRule],
+    diff: Option<&String>,
+) -> (JudgeUsage, Result<Vec<BTreeMap<String, jevq::RuleAnswer>>>) {
+    let mut usage = JudgeUsage::default();
+    let text = match files::read_text(cwd, path) {
+        Ok(Some(t)) => t,
+        Ok(None) => return (usage, Ok(Vec::new())),
+        Err(e) => return (usage, Err(e)),
+    };
+    let added = diff.map(|d| diffmodel::FileDiff::parse(d).added_lines());
+    let unit = jevq::FileUnit {
+        path: slash,
+        text: &text,
+        diff: diff.map(String::as_str),
+        added_lines: added.as_deref(),
+    };
+    let mut out = Vec::new();
+    for req in jevq::build_requests(&unit, rules) {
+        let started = std::time::Instant::now();
+        let asked = client.ask(&req.state, &req.questions);
+        usage.calls += 1;
+        usage.duration_ms += started.elapsed().as_millis() as u64;
+        let answer = match asked {
+            Ok(a) => a,
+            Err(e) => return (usage, Err(Error::Jev(format!("{slash}: {e}")))),
+        };
+        usage.input_tokens += answer.usage.input_tokens;
+        usage.output_tokens += answer.usage.output_tokens;
+        match jevq::read_answers(&req, rules, &answer.answers) {
+            Ok(a) => out.push(a),
+            Err(e) => return (usage, Err(Error::Jev(format!("{slash}: {e}")))),
+        }
+    }
+    (usage, Ok(out))
+}
+
+/// Price Jev usage from its input tokens (output is free), when the model's
+/// price is known.
+fn priced(mut usage: JudgeUsage, model: &str) -> JudgeUsage {
+    usage.cost_usd =
+        jevq::price_per_mtok(model).map(|p| usage.input_tokens as f64 * p / 1_000_000.0);
+    usage
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute(
     client: &oneharness::Client,
@@ -789,10 +995,7 @@ fn execute(
     want_trace: bool,
     diffs: &BTreeMap<PathBuf, String>,
     suppressions: &BTreeMap<String, Suppressions>,
-) -> (
-    Option<oneharness::RunTrace>,
-    Result<BTreeMap<String, RuleVerdict>>,
-) {
+) -> Execution {
     let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
     // Per-file diffs for this run's files, in the same order as `files_str`. Only
     // files that actually changed appear in `diffs`, so unchanged ones are skipped
@@ -852,8 +1055,14 @@ fn execute(
     ) {
         Ok(s) => s,
         // A render failure happens before any oneharness call, so there is no
-        // command to trace.
-        Err(e) => return (None, Err(e)),
+        // command to trace and nothing was spent.
+        Err(e) => {
+            return Execution {
+                trace: None,
+                verdicts: Err(e),
+                usage: JudgeUsage::default(),
+            }
+        }
     };
     let specs: Vec<schema::SchemaRule> = run
         .rules
@@ -883,6 +1092,7 @@ fn execute(
     // to deterministic cleanup.
     let mut prompt = PROMPT_TRIGGER.to_string();
     let mut last_trace;
+    let mut usage = JudgeUsage::default();
     let mut verdicts;
     let mut attempt = 0;
     loop {
@@ -898,16 +1108,20 @@ fn execute(
             oneharness_config: oh_config,
             no_config: false,
         };
-        let (trace, result) = if want_trace {
-            let (t, r) = client.run_with_trace(&req);
-            (Some(t), r)
-        } else {
-            (None, client.run(&req))
-        };
-        last_trace = trace;
+        // Always traced: the trace carries the call's usage. The command text
+        // is kept for the `-v` debug view only.
+        let (trace, result) = client.run_with_trace(&req);
+        usage += &trace.usage;
+        last_trace = want_trace.then_some(trace);
         verdicts = match result {
             Ok(v) => v,
-            Err(e) => return (last_trace, Err(e)),
+            Err(e) => {
+                return Execution {
+                    trace: last_trace,
+                    verdicts: Err(e),
+                    usage,
+                }
+            }
         };
         let problems = applicability::scope_problems(&scope, &verdicts);
         if problems.is_empty() || attempt >= MAX_REWORKS {
@@ -927,7 +1141,11 @@ fn execute(
             suppressions.get(file).is_some_and(|s| s.covers(name, line))
         });
     }
-    (last_trace, Ok(verdicts))
+    Execution {
+        trace: last_trace,
+        verdicts: Ok(verdicts),
+        usage,
+    }
 }
 
 fn emit(report: &Report, format: OutputFormat, verbosity: u8, color: ColorChoice) {
@@ -985,6 +1203,7 @@ mod tests {
             rationale: None,
             relevance: None,
             require_line_attribution: None,
+            judge: None,
         }
     }
 
@@ -1145,6 +1364,7 @@ mod tests {
             rationale: true,
             relevance: None,
             require_line_attribution: false,
+            judge: crate::domain::config::JudgeKind::Harness,
         }];
         let mut diffs: BTreeMap<PathBuf, String> = BTreeMap::new();
         diffs.insert(PathBuf::from("a.rs"), "diff a".into());
@@ -1168,6 +1388,7 @@ mod tests {
             rationale: true,
             relevance: None,
             require_line_attribution: false,
+            judge: crate::domain::config::JudgeKind::Harness,
         }];
         restrict_to_changed(&mut resolved, &BTreeMap::new(), dir.path());
         assert!(resolved[0].files.is_empty());

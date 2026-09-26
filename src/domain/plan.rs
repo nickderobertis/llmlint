@@ -26,7 +26,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::domain::config::Config;
+use crate::domain::config::{Config, JudgeKind};
 use crate::domain::cost;
 use crate::domain::ignore::Suppressions;
 use crate::domain::template::RuleSpec;
@@ -48,6 +48,8 @@ pub struct ResolvedRule {
     pub relevance: Option<String>,
     /// Whether every violation of this rule must cite a concrete file + line.
     pub require_line_attribution: bool,
+    /// The backend that judges this rule (rule > agent > session > harness).
+    pub judge: JudgeKind,
 }
 
 /// Inputs the planner consults *besides* the rules themselves:
@@ -105,6 +107,9 @@ impl<'a> PlanContext<'a> {
 #[derive(Debug, Clone)]
 pub struct JudgeRun {
     pub agent: String,
+    /// The backend that executes this run. A `jev` run is one logical judge call
+    /// the executor fans out as one Jev request per file.
+    pub judge: JudgeKind,
     /// Harness id to pass to oneharness, or `None` to let oneharness pick its
     /// own configured default (no `--harness` flag is sent).
     pub harness: Option<String>,
@@ -181,16 +186,30 @@ pub fn build(
     // when their harness/model/template are identical and merging would save
     // tokens. An agent split is user intent (isolating rules that interfere when
     // judged together), and no batching optimization may cross it.
-    let mut by_agent: BTreeMap<String, Vec<ResolvedRule>> = BTreeMap::new();
+    //
+    // Within an agent, rules split further by judge backend: a harness group
+    // batches as below, while a Jev group is one logical run the executor fans
+    // out per file (every applicable rule is a question on that file's request,
+    // so there is nothing to batch and no multi-judge vote — Jev is built to be
+    // consistent, so a repeat would only re-bill the same answer).
+    let mut by_agent: BTreeMap<(String, JudgeKind), Vec<ResolvedRule>> = BTreeMap::new();
     for r in resolved {
-        by_agent.entry(r.agent.clone()).or_default().push(r);
+        by_agent
+            .entry((r.agent.clone(), r.judge))
+            .or_default()
+            .push(r);
     }
 
-    for (agent_name, rules) in by_agent {
+    for ((agent_name, judge), rules) in by_agent {
         let agent = config.agent_or_default(&agent_name);
+        let is_jev = judge == JudgeKind::Jev;
         // No agent harness => leave it unset so oneharness uses its own default.
-        let harness = agent.harness.clone();
-        let batch_size = agent.batch_size.unwrap_or(default_batch_size).max(1);
+        let harness = if is_jev { None } else { agent.harness.clone() };
+        let batch_size = if is_jev {
+            rules.len().max(1)
+        } else {
+            agent.batch_size.unwrap_or(default_batch_size).max(1)
+        };
         let template = match &agent.prompt_template {
             Some(extra) => format!("{master_template}\n\n{extra}"),
             None => master_template.to_string(),
@@ -229,6 +248,7 @@ pub fn build(
 
         let mut agent_plan = AgentPlan {
             agent: agent_name.clone(),
+            judge,
             batch_size,
             model: agent.model.clone(),
             harness: harness.clone(),
@@ -243,7 +263,11 @@ pub fn build(
             continue;
         }
 
-        let max_judges = eligible.iter().map(|e| e.rule.judges).max().unwrap_or(1);
+        let max_judges = if is_jev {
+            1
+        } else {
+            eligible.iter().map(|e| e.rule.judges).max().unwrap_or(1)
+        };
         for j in 1..=max_judges {
             let subset: Vec<&Eligible> = eligible.iter().filter(|e| e.rule.judges >= j).collect();
             // Assign rules to batches to minimize the token cost, within the fixed
@@ -291,6 +315,7 @@ pub fn build(
 
                 plan.runs.push(JudgeRun {
                     agent: agent_name.clone(),
+                    judge,
                     harness: harness.clone(),
                     model: agent.model.clone(),
                     schema_max_retries: config.oneharness.schema_max_retries,
@@ -480,12 +505,20 @@ pub struct Optimization {
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentPlan {
     pub agent: String,
+    /// The backend judging this group; omitted from JSON for the default
+    /// harness so existing machine output is unchanged.
+    #[serde(skip_serializing_if = "is_harness")]
+    pub judge: JudgeKind,
     pub batch_size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
     pub judges: Vec<JudgePlan>,
+}
+
+fn is_harness(judge: &JudgeKind) -> bool {
+    *judge == JudgeKind::Harness
 }
 
 /// One judge index within an agent (multi-judge rules expand across indices), and
@@ -592,6 +625,22 @@ impl PlanExplanation {
             ));
         }
         for a in &self.agents {
+            if a.judge == JudgeKind::Jev {
+                out.push_str(&format!(
+                    "  agent \"{}\" (judge jev: one request per file, every applicable rule a question)\n",
+                    a.agent
+                ));
+                for j in &a.judges {
+                    for b in &j.batches {
+                        out.push_str(&format!(
+                            "    rules: {}\n    files: {}\n",
+                            b.rules.join(", "),
+                            b.files.join(", ")
+                        ));
+                    }
+                }
+                continue;
+            }
             out.push_str(&format!(
                 "  agent \"{}\" (batch_size {}{}{})\n",
                 a.agent,
@@ -741,6 +790,7 @@ mod tests {
             rationale: true,
             relevance: None,
             require_line_attribution: false,
+            judge: JudgeKind::Harness,
         }
     }
 

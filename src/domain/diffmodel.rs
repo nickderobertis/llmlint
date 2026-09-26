@@ -134,6 +134,20 @@ impl FileDiff {
         FileDiff { preamble, hunks }
     }
 
+    /// Every new-file (1-based) line the diff adds, in order — the lines a
+    /// changed-lines review may cite.
+    pub fn added_lines(&self) -> Vec<usize> {
+        self.hunks
+            .iter()
+            .flat_map(|h| &h.segments)
+            .filter_map(|s| match s {
+                Segment::Run(run) => Some(run.added_lines.iter().copied()),
+                Segment::Context(_) => None,
+            })
+            .flatten()
+            .collect()
+    }
+
     /// Render the diff back to text, replacing each run for which `omit` returns
     /// true with a one-line marker naming the omitted line span. Context, headers,
     /// preamble, and kept runs render verbatim, so a kept diff is byte-identical to
@@ -211,6 +225,12 @@ index e69de29..1c2d3e4 100644
         assert_eq!(runs[0].added_lines, vec![2, 3]);
         // The swap: `-fn old` (no new line) then `+fn new` at new line 5.
         assert_eq!(runs[1].added_lines, vec![5]);
+    }
+
+    #[test]
+    fn added_lines_lists_every_run_in_order() {
+        assert_eq!(FileDiff::parse(DIFF).added_lines(), vec![2, 3, 5]);
+        assert!(FileDiff::parse("").added_lines().is_empty());
     }
 
     #[test]

@@ -22,7 +22,7 @@
 //! case-insensitive; anything else is an exit-2 error located to the variable.
 //! Structured settings (`version`, `files`) are deliberately config-only.
 
-use crate::domain::config::{Config, Provenance};
+use crate::domain::config::{Config, JudgeKind, Provenance};
 use crate::errors::{io_err, Error, Result};
 
 /// The top-level settings that accept an `LLMLINT_` env override, each paired
@@ -49,6 +49,9 @@ pub const ENV_SETTINGS: &[(&str, &str)] = &[
     ("history.enabled", "LLMLINT_HISTORY_ENABLED"),
     ("history.max_runs", "LLMLINT_HISTORY_MAX_RUNS"),
     ("history.dir", "LLMLINT_HISTORY_DIR"),
+    ("judge", "LLMLINT_JUDGE"),
+    ("jev.model", "LLMLINT_JEV_MODEL"),
+    ("jev.url", "LLMLINT_JEV_URL"),
 ];
 
 /// Settings that are deliberately **not** env-overridable, kept as an explicit
@@ -167,6 +170,21 @@ fn apply_from(
     if let Some(v) = get("LLMLINT_HISTORY_DIR") {
         config.history.dir = Some(v);
         note(prov, "history.dir", "LLMLINT_HISTORY_DIR");
+    }
+    if let Some(v) = get("LLMLINT_JUDGE") {
+        config.judge = Some(JudgeKind::parse(&v).ok_or_else(|| Error::Env {
+            var: "LLMLINT_JUDGE".to_string(),
+            message: format!("expected `harness` or `jev`, got {v:?}"),
+        })?);
+        note(prov, "judge", "LLMLINT_JUDGE");
+    }
+    if let Some(v) = get("LLMLINT_JEV_MODEL") {
+        config.jev.model = Some(v);
+        note(prov, "jev.model", "LLMLINT_JEV_MODEL");
+    }
+    if let Some(v) = get("LLMLINT_JEV_URL") {
+        config.jev.url = Some(v);
+        note(prov, "jev.url", "LLMLINT_JEV_URL");
     }
     Ok(())
 }

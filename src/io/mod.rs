@@ -8,6 +8,7 @@ pub mod diff;
 pub mod env;
 pub mod files;
 pub mod history;
+pub mod jev;
 pub mod oneharness;
 pub mod plugins;
 pub mod terminal;

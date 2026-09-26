@@ -19,6 +19,8 @@ use predicates::prelude::*;
 use serde_json::Value;
 use tempfile::TempDir;
 
+mod jev;
+
 fn mock_path() -> PathBuf {
     cargo_bin("llmlint-mock-oneharness")
 }
@@ -27,7 +29,7 @@ fn mock_path() -> PathBuf {
 /// (the [`llmlint::io::env::ENV_SETTINGS`] table, the legacy history switches,
 /// the plugin cache, and the mock's own `LLMLINT_MOCK_*` knobs) and
 /// `ONEHARNESS_*` (what llmlint forwards to the harness it spawns).
-const STEERING_PREFIXES: [&str; 2] = ["LLMLINT_", "ONEHARNESS_"];
+const STEERING_PREFIXES: [&str; 3] = ["LLMLINT_", "ONEHARNESS_", "TYPESAFE_"];
 
 /// Clear every steering variable inherited from the ambient shell, so a command
 /// built here carries **only** the environment its test states.

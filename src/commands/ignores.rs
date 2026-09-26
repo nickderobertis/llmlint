@@ -302,6 +302,7 @@ mod tests {
             rationale: None,
             relevance: None,
             require_line_attribution: None,
+            judge: None,
         }
     }
 

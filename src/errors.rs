@@ -85,6 +85,15 @@ pub enum Error {
     )]
     ToolDeferred { harness: String, detail: String },
 
+    #[error(
+        "rules judged by `jev` need a TypeSafe API key: set TYPESAFE_API_KEY \
+         (those rules send each file's contents to TypeSafe's Jev API)"
+    )]
+    JevAuth,
+
+    #[error("jev: {0}")]
+    Jev(String),
+
     #[error("diff ({backend}): {message}")]
     Diff { backend: String, message: String },
 

@@ -13,8 +13,10 @@ out of `just check` and the `Judge eval` workflow is not a required check.
   two mock-oneharness arms over the whole corpus: **oracle** (answers from the
   labels; must score perfectly) and **blind** (never flags; must score recall 0).
   A failure means the corpus or the scoring is broken, not the judge.
-- `just eval [--suite S] [--repeats N] [--model M] [--baseline F]` — the paid
-  **harness** arm: real oneharness + claude-code. Writes
+- `just eval [--arm harness|jev] [--suite S] [--repeats N] [--model M] [--baseline F]`
+  — a paid arm: **harness** (real oneharness + claude-code, the default) or
+  **jev** (every rule judged by TypeSafe's Jev via `LLMLINT_JUDGE=jev`; needs
+  `TYPESAFE_API_KEY`, costs fractions of a cent). Writes
   `evals/results/<ts>-<arm>.{json,md}` (gitignored); `--baseline` adds a delta
   column. Needs `oneharness` + an authenticated `claude` on PATH.
 - CI (`.github/workflows/eval.yml`): `selftest` on any `evals/`/`src/` change;
@@ -89,11 +91,11 @@ An *item* is one (case, rule, repeat). *Flagged* = the rule's outcome is `fail`;
   from the ratios above, and any error makes the runner exit 1.
 - **Unstable items** — items whose repeats disagree (`--repeats N`).
 - **Latency p50/p95** — wall clock per `llmlint` invocation (one case).
-- **Judge calls / tokens / cost** — summed from oneharness's own `usage` and
-  `duration_ms`, captured by `oneharness-tap.sh` (a pass-through wrapper that logs
-  each `run` report; llmlint itself does not surface usage yet). Unix-only, like
-  the paid job. Cost is the harness's own **list-price estimate** (`cost_usd`),
-  not an invoice: on a claude.ai subscription login the calls draw on plan usage.
+- **Judge calls / tokens / cost** — summed from the `usage` block llmlint's own
+  `--format json` report carries per backend (harness: oneharness's per-result
+  `usage` + `duration_ms`; jev: requests, input tokens, and their list price).
+  A harness's cost is its own **list-price estimate** (`cost_usd`), not an
+  invoice: on a claude.ai subscription login the calls draw on plan usage.
   Tokens stay in the JSON but out of the headline table — they are not comparable
   across backends (a harness counts its own cached system prompt).
 

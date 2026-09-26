@@ -304,6 +304,9 @@ unset.
 | `history.enabled` | `LLMLINT_HISTORY_ENABLED` | `--no-history` (force off) | bool; supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch |
 | `history.max_runs` | `LLMLINT_HISTORY_MAX_RUNS` | — | ≥ 1 |
 | `history.dir` | `LLMLINT_HISTORY_DIR` | — | path |
+| `judge` | `LLMLINT_JUDGE` | — | `harness` (default) or `jev`; an agent's or rule's `judge` wins ([Judge backends](#judge-backends-harness-or-jev)) |
+| `jev.model` | `LLMLINT_JEV_MODEL` | — | default `jev-1.13.0` |
+| `jev.url` | `LLMLINT_JEV_URL` | — | default `https://api.typesafe.ai` |
 
 The env layer applies **process-wide**, after the nearest-wins config merge — it
 tunes the effective run, not any one directory's config. Two list-valued settings
@@ -664,6 +667,55 @@ verdict. `N` must be **odd** (1, 3, 5, …) so the vote can't tie — an even co
 a config error. Only rules that opt in pay the extra cost: judge 1 runs all rules,
 judge 2 only the rules with `judges >= 2`, and so on.
 
+### Judge backends: harness or Jev
+
+Every rule is judged by one of two backends, chosen by `judge:` on the rule, else
+on its agent, else session-wide (`judge:` at the top level or `LLMLINT_JUDGE`),
+else `harness`:
+
+- **`harness`** (default) — a coding harness driven through oneharness: an agentic
+  LLM that reads the files itself and writes a verdict, violations, and a
+  rationale. The right choice for anything that needs reasoning across files.
+- **`jev`** — [TypeSafe's Jev](https://docs.typesafe.ai/introduction), a
+  System One model that answers typed questions with calibrated probabilities
+  instead of generating text. llmlint sends **one request per file** (per chunk
+  of an oversized file) carrying the file's line-tagged text, and asks each
+  applicable rule as questions: *does it hold?* (a probability), *is it relevant?*
+  (for a `relevance` condition), and *which line violates it?* (a choice over the
+  candidate lines — only the added lines under `--diff`). A rule fails when its
+  probability of holding is below 0.5; the violation cites the file, the line,
+  and the probability (`jev: p(holds)=0.08, p(line)=0.80`) — **Jev writes no
+  rationale**. It bills input tokens only ($0.042 per million for
+  `jev-1.13.0`), but it cannot read other files, so keep cross-file and architectural rules on the
+  harness.
+
+```yaml
+agents:
+  fast:
+    judge: jev          # every rule on this agent is judged by Jev
+rules:
+  - name: comments_match_behavior
+    agent: fast
+    description: Every doc comment describes what its item actually does.
+  - name: follows_layering
+    judge: harness      # a rule's own judge wins over its agent's
+    description: Handlers reach the database only through repositories.
+```
+
+**Jev sends your code to TypeSafe.** A `jev` rule's files (their full text, and
+their diff under `--diff`) go to TypeSafe's API; decide whether that is acceptable
+for a repository before enabling it (TypeSafe offers zero data retention to
+enterprise customers). The API key is read **only** from `TYPESAFE_API_KEY` —
+never from config — and is required only when some rule is judged by `jev` (a
+missing key fails the run up front, exit 2). A run with only `jev` rules needs no
+oneharness installed. Rate limits and overload (`429`/`529`/`5xx`) retry with
+backoff; any other error fails the run (exit 2) rather than guessing a verdict.
+`jev.model` defaults to the pinned `jev-1.13.0`: an alias like `jev-latest` can
+move under you and shift verdicts.
+
+`--format json` (and the history record) carries a `usage` block per backend —
+calls, tokens, cost, and time — so the two can be compared on the same run.
+
 ### Cost vs performance (token usage)
 
 Defaults favor **judgment quality** over cost: rationales on, a thorough prompt,
@@ -684,6 +736,9 @@ every file read in full. Trade some back for fewer tokens, roughly by impact:
   trigger localize re-prompts.
 - **`oneharness.schema_max_retries`** — caps re-asks on a schema-invalid answer.
 - **`model`** — dollars, not tokens: a cheaper model per agent or run.
+- **`judge: jev`** — for rules a single file can decide: input tokens at
+  $0.042 per million, no output charge
+  ([Judge backends](#judge-backends-harness-or-jev)).
 
 `llmlint check-ignores` spends no tokens at all.
 

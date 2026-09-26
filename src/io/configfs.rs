@@ -513,6 +513,8 @@ fn fold_session_settings(session: &mut Config, unit: &Config) {
     session.rationales = session.rationales.or(unit.rationales);
     session.diff_base = session.diff_base.take().or_else(|| unit.diff_base.clone());
     session.history.merge_under(unit.history.clone());
+    session.judge = session.judge.or(unit.judge);
+    session.jev.merge_under(unit.jev.clone());
 }
 
 enum Node {

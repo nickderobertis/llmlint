@@ -19,6 +19,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use wait_timeout::ChildExt;
 
+use crate::domain::report::JudgeUsage;
 use crate::domain::verdict::RuleVerdict;
 use crate::errors::{io_err, Error, Result};
 
@@ -153,6 +154,9 @@ pub struct RunTrace {
     pub stdout: String,
     /// Raw stderr.
     pub stderr: String,
+    /// What the run consumed, read from oneharness's per-result `usage` and
+    /// `duration_ms` (zero calls when the binary never produced a report).
+    pub usage: JudgeUsage,
 }
 
 /// One judge invocation request.
@@ -442,6 +446,7 @@ impl Client {
         trace.exit_code = capture.status.code();
         trace.stdout = String::from_utf8_lossy(&capture.stdout).into_owned();
         trace.stderr = String::from_utf8_lossy(&capture.stderr).into_owned();
+        trace.usage = usage_of(&capture.stdout);
 
         let verdicts = parse_verdicts(&capture, harness);
         (trace, verdicts)
@@ -523,6 +528,40 @@ pub enum ProbeOutcome {
     /// deployment). The string is oneharness's actionable detail (it names the
     /// deferred tool).
     Deferred(String),
+}
+
+/// Sum what one oneharness report says every attempted harness consumed. Read
+/// leniently from the raw JSON, independent of verdict parsing, so a run whose
+/// verdict is unusable still accounts for what it cost. Unparseable output
+/// counts as one call with nothing known.
+fn usage_of(stdout: &[u8]) -> JudgeUsage {
+    let mut u = JudgeUsage {
+        calls: 1,
+        ..JudgeUsage::default()
+    };
+    let Ok(report) = serde_json::from_slice::<Value>(stdout) else {
+        return u;
+    };
+    for r in report
+        .get("results")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        u.duration_ms += r.get("duration_ms").and_then(Value::as_u64).unwrap_or(0);
+        let Some(usage) = r.get("usage") else {
+            continue;
+        };
+        let n = |k: &str| usage.get(k).and_then(Value::as_u64).unwrap_or(0);
+        u.input_tokens += n("input_tokens");
+        u.output_tokens += n("output_tokens");
+        u.cache_read_tokens += n("cache_read_tokens");
+        u.cache_write_tokens += n("cache_write_tokens");
+        if let Some(c) = usage.get("cost_usd").and_then(Value::as_f64) {
+            u.cost_usd = Some(u.cost_usd.unwrap_or(0.0) + c);
+        }
+    }
+    u
 }
 
 /// Parse one captured oneharness run into its per-rule verdicts (the verdict
@@ -714,6 +753,29 @@ fn wait_capture(mut child: Child, wall: Duration) -> Result<Option<Capture>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_sums_every_attempted_result_and_tolerates_garbage() {
+        let report = br#"{"results":[
+            {"harness":"codex","status":"unavailable"},
+            {"harness":"claude-code","duration_ms":6200,"usage":{"input_tokens":10,"output_tokens":193,
+             "cache_read_tokens":5,"cache_write_tokens":50897,"cost_usd":0.1}}]}"#;
+        let u = usage_of(report);
+        assert_eq!(
+            (
+                u.calls,
+                u.input_tokens,
+                u.output_tokens,
+                u.cache_read_tokens,
+                u.cache_write_tokens,
+                u.duration_ms
+            ),
+            (1, 10, 193, 5, 50897, 6200)
+        );
+        assert_eq!(u.cost_usd, Some(0.1));
+        let none = usage_of(b"not json");
+        assert_eq!((none.calls, none.cost_usd), (1, None));
+    }
     use serde_json::json;
     use std::path::Path;
 

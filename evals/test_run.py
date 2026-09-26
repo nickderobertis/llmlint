@@ -104,6 +104,21 @@ class Metrics(unittest.TestCase):
         self.assertEqual((m["latency_p50_s"], m["judge_calls"], m["cost_usd"], m["tokens"]), (3.0, 2, 0.75, 15))
 
 
+class UsageOf(unittest.TestCase):
+    def test_sums_every_backend_in_the_report(self):
+        report = {"usage": {
+            "harness": {"calls": 2, "input_tokens": 10, "cache_write_tokens": 500, "cost_usd": 0.3, "duration_ms": 9000},
+            "jev": {"calls": 5, "input_tokens": 2000, "output_tokens": 20, "cost_usd": 0.0001, "duration_ms": 800},
+        }}
+        u = run.usage_of(report)
+        self.assertEqual((u["calls"], u["input_tokens"], u["cache_write_tokens"], u["duration_ms"]), (7, 2010, 500, 9800))
+        self.assertAlmostEqual(u["cost_usd"], 0.3001)
+
+    def test_no_report_or_no_usage_is_zero(self):
+        for r in (None, {}, {"usage": {}}):
+            self.assertEqual(run.usage_of(r)["calls"], 0)
+
+
 class Corpus(unittest.TestCase):
     def write_case(self, root, toml, files=True):
         suite = root / "s"

@@ -111,6 +111,71 @@ impl HistoryCfg {
     }
 }
 
+/// Which backend judges a rule. `harness` (the default) drives a coding harness
+/// through oneharness: an agentic LLM that reads the files and writes a verdict
+/// with rationale. `jev` asks TypeSafe's Jev System One model typed questions
+/// over each file's text: far faster and cheaper, probabilities instead of prose
+/// (no rationale), and no tools — so a rule that must read across files belongs
+/// on the harness. Set per rule, per agent, or session-wide (`judge:` /
+/// `LLMLINT_JUDGE`); the most specific wins.
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeKind {
+    #[default]
+    Harness,
+    Jev,
+}
+
+impl JudgeKind {
+    /// The config spelling (`harness` / `jev`), for messages and the plan view.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JudgeKind::Harness => "harness",
+            JudgeKind::Jev => "jev",
+        }
+    }
+
+    /// Parse the config spelling; `None` for anything else (callers report it).
+    pub fn parse(s: &str) -> Option<JudgeKind> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "harness" => Some(JudgeKind::Harness),
+            "jev" => Some(JudgeKind::Jev),
+            _ => None,
+        }
+    }
+}
+
+/// How llmlint calls TypeSafe's Jev API for rules judged by `jev`. The API key
+/// is never config: it is read from the `TYPESAFE_API_KEY` environment variable.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct JevCfg {
+    /// Jev model id (default `jev-1.13.0`). Pin a versioned id rather than an
+    /// alias like `jev-latest`: verdict thresholds are tuned per model version,
+    /// and an alias can move under you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// API base URL (default `https://api.typesafe.ai`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl JevCfg {
+    /// Whether every field is unset (merge "is unset" test + serialization skip).
+    pub fn is_empty(&self) -> bool {
+        self.model.is_none() && self.url.is_none()
+    }
+
+    /// Fill any unset field from `other`, keeping this (nearer-root) config's own
+    /// values. Mirrors [`HistoryCfg::merge_under`].
+    pub fn merge_under(&mut self, other: JevCfg) {
+        self.model = self.model.take().or(other.model);
+        self.url = self.url.take().or(other.url);
+    }
+}
+
 /// A group of rules sharing reviewer context and harness/model/batch config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -129,6 +194,10 @@ pub struct Agent {
     /// Extra prompt text appended to the master template before rendering.
     #[serde(default)]
     pub prompt_template: Option<String>,
+    /// Backend that judges this agent's rules (a rule's own `judge` wins).
+    /// Unset inherits the session `judge`, else `harness`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<JudgeKind>,
 }
 
 /// When a rule should be evaluated. Mirrors the `description`/verdict split: a
@@ -224,6 +293,10 @@ pub struct Rule {
     /// fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub require_line_attribution: Option<bool>,
+    /// Backend that judges this rule, overriding its agent's and the session's
+    /// `judge`. Unset inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<JudgeKind>,
 }
 
 impl Rule {
@@ -306,6 +379,13 @@ pub struct Config {
     /// last 100 runs, in the platform data dir). See [`HistoryCfg`].
     #[serde(default, skip_serializing_if = "HistoryCfg::is_empty")]
     pub history: HistoryCfg,
+    /// Session-wide default judge backend (default `harness`); an agent's or a
+    /// rule's `judge` overrides it. `LLMLINT_JUDGE` overrides the config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<JudgeKind>,
+    /// How to reach TypeSafe's Jev API for `judge: jev` rules. See [`JevCfg`].
+    #[serde(default, skip_serializing_if = "JevCfg::is_empty")]
+    pub jev: JevCfg,
     /// Plugins (shared rule sets) merged in, one entry each: a local file path
     /// or a URL (`http(s)://`, `file://`), the URL optionally pinned with an
     /// `@version` suffix. Named `plugins` (not `include`) to avoid confusion
@@ -342,6 +422,8 @@ impl Config {
         self.rationales = self.rationales.or(other.rationales);
         self.diff_base = self.diff_base.take().or(other.diff_base);
         self.history.merge_under(other.history);
+        self.judge = self.judge.or(other.judge);
+        self.jev.merge_under(other.jev);
         for (name, agent) in other.agents {
             self.agents.entry(name).or_insert(agent);
         }
@@ -369,6 +451,16 @@ impl Config {
     /// value, or `100` when unset.
     pub fn history_max_runs(&self) -> usize {
         self.history.max_runs.unwrap_or(100)
+    }
+
+    /// The backend that judges `rule`: its own `judge`, else its agent's, else
+    /// the session `judge`, else `harness`.
+    pub fn judge_for(&self, rule: &Rule) -> JudgeKind {
+        let agent = self.agent_or_default(rule.agent.as_deref().unwrap_or("default"));
+        rule.judge
+            .or(agent.judge)
+            .or(self.judge)
+            .unwrap_or_default()
     }
 }
 
@@ -418,6 +510,9 @@ pub const SETTING_KEYS: &[&str] = &[
     "history.enabled",
     "history.max_runs",
     "history.dir",
+    "judge",
+    "jev.model",
+    "jev.url",
 ];
 
 /// The per-rule fields a `rules.<name>.<field>` query can name. `name` always
@@ -431,6 +526,7 @@ const RULE_FIELDS: &[&str] = &[
     "rationale",
     "relevance",
     "require_line_attribution",
+    "judge",
 ];
 
 /// Where a resolved rule, and each of its fields, comes from. A rule with no
@@ -517,6 +613,9 @@ impl ProvenanceBuilder {
             ("history.enabled", cfg.history.enabled.is_some()),
             ("history.max_runs", cfg.history.max_runs.is_some()),
             ("history.dir", cfg.history.dir.is_some()),
+            ("judge", cfg.judge.is_some()),
+            ("jev.model", cfg.jev.model.is_some()),
+            ("jev.url", cfg.jev.url.is_some()),
         ];
         for (key, present) in settings {
             if *present {
@@ -616,6 +715,11 @@ fn rule_provenance(occ: &[(String, Rule)]) -> RuleProvenance {
         "require_line_attribution",
         base.1.require_line_attribution.is_some() || w.require_line_attribution.is_some(),
         w.require_line_attribution,
+    );
+    note(
+        "judge",
+        base.1.judge.is_some() || w.judge.is_some(),
+        w.judge,
     );
     RuleProvenance {
         source: base_src.to_string(),
@@ -776,6 +880,7 @@ struct FieldWinners {
     rationale: Option<usize>,
     relevance: Option<usize>,
     require_line_attribution: Option<usize>,
+    judge: Option<usize>,
 }
 
 fn field_winners(overrides: &[&Rule]) -> FieldWinners {
@@ -791,6 +896,7 @@ fn field_winners(overrides: &[&Rule]) -> FieldWinners {
         require_line_attribution: overrides
             .iter()
             .position(|ov| ov.require_line_attribution.is_some()),
+        judge: overrides.iter().position(|ov| ov.judge.is_some()),
     }
 }
 
@@ -821,6 +927,9 @@ fn merge_override(base: &Rule, overrides: &[&Rule]) -> Rule {
     }
     if let Some(i) = w.require_line_attribution {
         out.require_line_attribution = overrides[i].require_line_attribution;
+    }
+    if let Some(i) = w.judge {
+        out.judge = overrides[i].judge;
     }
     out
 }
@@ -922,6 +1031,7 @@ mod tests {
             rationale: None,
             relevance: None,
             require_line_attribution: None,
+            judge: None,
         }
     }
 
@@ -1425,6 +1535,11 @@ mod tests {
             files: FileFilter {
                 include: vec!["x".into()],
                 exclude: vec!["y".into()],
+            },
+            judge: Some(JudgeKind::Jev),
+            jev: JevCfg {
+                model: Some("jev-x".into()),
+                url: Some("http://jev".into()),
             },
             ..Default::default()
         };

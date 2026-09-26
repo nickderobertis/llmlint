@@ -61,6 +61,21 @@
       "description": "Whether/how/where to log each run's full results to disk (default: on, the\nlast 100 runs, in the platform data dir). See [`HistoryCfg`].",
       "$ref": "#/$defs/HistoryCfg"
     },
+    "judge": {
+      "description": "Session-wide default judge backend (default `harness`); an agent's or a\nrule's `judge` overrides it. `LLMLINT_JUDGE` overrides the config.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JudgeKind"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "jev": {
+      "description": "How to reach TypeSafe's Jev API for `judge: jev` rules. See [`JevCfg`].",
+      "$ref": "#/$defs/JevCfg"
+    },
     "plugins": {
       "description": "Plugins (shared rule sets) merged in, one entry each: a local file path\nor a URL (`http(s)://`, `file://`), the URL optionally pinned with an\n`@version` suffix. Named `plugins` (not `include`) to avoid confusion\nwith `files.include`. Resolution lives in [`crate::io::plugins`].",
       "type": "array",
@@ -198,6 +213,35 @@
       },
       "additionalProperties": false
     },
+    "JudgeKind": {
+      "description": "Which backend judges a rule. `harness` (the default) drives a coding harness\nthrough oneharness: an agentic LLM that reads the files and writes a verdict\nwith rationale. `jev` asks TypeSafe's Jev System One model typed questions\nover each file's text: far faster and cheaper, probabilities instead of prose\n(no rationale), and no tools — so a rule that must read across files belongs\non the harness. Set per rule, per agent, or session-wide (`judge:` /\n`LLMLINT_JUDGE`); the most specific wins.",
+      "type": "string",
+      "enum": [
+        "harness",
+        "jev"
+      ]
+    },
+    "JevCfg": {
+      "description": "How llmlint calls TypeSafe's Jev API for rules judged by `jev`. The API key\nis never config: it is read from the `TYPESAFE_API_KEY` environment variable.",
+      "type": "object",
+      "properties": {
+        "model": {
+          "description": "Jev model id (default `jev-1.13.0`). Pin a versioned id rather than an\nalias like `jev-latest`: verdict thresholds are tuned per model version,\nand an alias can move under you.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "API base URL (default `https://api.typesafe.ai`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "Agent": {
       "description": "A group of rules sharing reviewer context and harness/model/batch config.",
       "type": "object",
@@ -235,6 +279,17 @@
             "null"
           ],
           "default": null
+        },
+        "judge": {
+          "description": "Backend that judges this agent's rules (a rule's own `judge` wins).\nUnset inherits the session `judge`, else `harness`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgeKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -312,6 +367,17 @@
           "type": [
             "boolean",
             "null"
+          ]
+        },
+        "judge": {
+          "description": "Backend that judges this rule, overriding its agent's and the session's\n`judge`. Unset inherits.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgeKind"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },

@@ -10,6 +10,8 @@ measurement. See `evals/AGENTS.md` for the corpus format and metric definitions.
 
 Arms:
   harness  real oneharness + a real harness (paid). The pre-Jev baseline.
+  jev      every rule judged by TypeSafe's Jev (`LLMLINT_JUDGE=jev`; needs
+           TYPESAFE_API_KEY; paid, fractions of a cent). No oneharness.
   oracle   the mock-oneharness fixture answering from the labels themselves: a
            perfect judge. A free, hermetic self-test of this runner — every
            metric must come out perfect, or the plumbing/scoring is broken.
@@ -38,7 +40,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 CORPUS = REPO / "evals" / "corpus"
-TAP = REPO / "evals" / "oneharness-tap.sh"
 RESULTS = REPO / "evals" / "results"
 
 # git's repository-selection variables outrank `-C` (see `AMBIENT_REPOSITORY_VARS`
@@ -56,7 +57,7 @@ GIT_AMBIENT = (
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 )
 
-ARMS = ("harness", "oracle", "blind")
+ARMS = ("harness", "jev", "oracle", "blind")
 
 
 # --- corpus ------------------------------------------------------------------
@@ -220,29 +221,25 @@ class Run:
     usage: dict = field(default_factory=dict)
 
 
-def sum_usage(tap_dir: Path) -> dict:
-    """Total tokens/cost/harness time across every oneharness report the tap saw."""
-    tot = {
-        "calls": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "cost_usd": 0.0,
-        "harness_ms": 0,
-    }
-    for f in sorted(tap_dir.glob("*.json")):
-        try:
-            rep = json.loads(f.read_text())
-        except json.JSONDecodeError:
-            continue
-        tot["calls"] += 1
-        for r in rep.get("results", []):
-            tot["harness_ms"] += r.get("duration_ms") or 0
-            u = r.get("usage") or {}
-            for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
-                tot[k] += u.get(k) or 0
-            tot["cost_usd"] += u.get("cost_usd") or 0.0
+USAGE_KEYS = (
+    "calls",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "cost_usd",
+    "duration_ms",
+)
+
+
+def usage_of(report: dict | None) -> dict:
+    """Total what every judge backend consumed, from llmlint's own `usage`
+    block (one entry per backend that made a call)."""
+    tot = {k: 0 for k in USAGE_KEYS}
+    tot["cost_usd"] = 0.0
+    for backend in ((report or {}).get("usage") or {}).values():
+        for k in USAGE_KEYS:
+            tot[k] += backend.get(k) or 0
     return tot
 
 
@@ -250,8 +247,6 @@ def run_case(case: Case, arm: str, rep: int, opts: Opts) -> Run:
     with tempfile.TemporaryDirectory(prefix="llmlint-eval-") as tmp:
         proj = Path(tmp) / "proj"
         proj.mkdir()
-        tap_dir = Path(tmp) / "tap"
-        tap_dir.mkdir()
         materialize(case, proj)
         env = {k: v for k, v in os.environ.items() if k not in GIT_AMBIENT}
         cmd = [
@@ -268,11 +263,11 @@ def run_case(case: Case, arm: str, rep: int, opts: Opts) -> Run:
         if case.mode == "diff":
             cmd.append("--diff")
         if arm == "harness":
-            env["LLMLINT_EVAL_REAL_ONEHARNESS"] = str(opts.oneharness)
-            env["LLMLINT_EVAL_TAP_DIR"] = str(tap_dir)
-            cmd += ["--oneharness-bin", str(TAP)]
+            cmd += ["--oneharness-bin", str(opts.oneharness)]
             if opts.model:
                 cmd += ["--model", opts.model]
+        elif arm == "jev":
+            env["LLMLINT_JUDGE"] = "jev"
         else:
             verdicts = Path(tmp) / "verdicts.json"
             verdicts.write_text(json.dumps(oracle_verdicts(case) if arm == "oracle" else {}))
@@ -286,7 +281,7 @@ def run_case(case: Case, arm: str, rep: int, opts: Opts) -> Run:
             report = json.loads(p.stdout) if p.stdout.strip() else None
         except json.JSONDecodeError:
             report = None
-        return Run(case.id, rep, p.returncode, seconds, report, p.stderr, sum_usage(tap_dir))
+        return Run(case.id, rep, p.returncode, seconds, report, p.stderr, usage_of(report))
 
 
 # --- scoring (pure) ----------------------------------------------------------
@@ -564,6 +559,10 @@ def main(argv: list[str] | None = None) -> int:
         oneharness = resolve_bin(a.oneharness, path_name="oneharness")
         if not oneharness:
             print("eval: oneharness not found (install it, or pass --oneharness)", file=sys.stderr)
+            return 2
+    elif a.arm == "jev":
+        if not os.environ.get("TYPESAFE_API_KEY", "").strip():
+            print("eval: the jev arm needs TYPESAFE_API_KEY set", file=sys.stderr)
             return 2
     else:
         mock = resolve_bin(a.mock, rel / f"llmlint-mock-oneharness{exe}")

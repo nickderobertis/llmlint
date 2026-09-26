@@ -44,8 +44,9 @@ logic is also covered hermetically via `file://` plugins.
 ## Environment isolation (a test states its whole environment)
 
 Every llmlint command is built through `Project::bare` / `Project::bare_external`
-(the one wiring point), which **clears every ambient `LLMLINT_*` and `ONEHARNESS_*`
-variable** before the test sets the ones it means to exercise. Build commands that
+(the one wiring point), which **clears every ambient `LLMLINT_*`, `ONEHARNESS_*`, and
+`TYPESAFE_*` variable** (an exported `TYPESAFE_API_KEY` would otherwise decide the
+Jev missing-key journeys) before the test sets the ones it means to exercise. Build commands that
 way — never a bare `Command::cargo_bin("llmlint")`.
 
 The suite runs the real binary as a child process, so it otherwise inherits the
@@ -648,6 +649,22 @@ resolves the oneharness the test put on PATH.
   that answered (`LLMLINT_MOCK_FALLBACK_NO_RAN`); and a whole-chain failure
   (nothing ran) errors naming every attempted harness rather than one skipped
   harness's "no structured output" (`+ LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
+- Jev judge (`tests/e2e/jev.rs`, against an in-test mock of `POST /v1/systemone`
+  that answers from a per-rule script and records each request): a `judge: jev`
+  rule passes with **no oneharness installed** and reports `usage.jev` (calls,
+  tokens, list-price cost) with no `usage.harness`; the request carries the
+  bearer key, the pinned model, the line-tagged file, and one Noul per rule; a
+  violation cites file, line, and `p(holds)` (JSON and human report) with no
+  rationale; a conditional rule the mock rules not relevant reports
+  `not_relevant`; a missing `TYPESAFE_API_KEY` is exit 2 before any request; a
+  `401` is a run error (exit 2) and is not retried; `429`/`529` retry and pass; an
+  inline ignore drops a Jev violation; harness, agent-level `jev`, and rule-level
+  `judge: jev` rules share one run with usage per backend and no question for the
+  harness rule; `LLMLINT_JUDGE=jev` routes every rule to Jev and an invalid value
+  is exit 2 naming the variable; `--plan-only` shows the Jev group with no request
+  and no key; `--diff` sends the diff and offers only added lines as line options;
+  an oversized file splits into several requests; `jev.url` resolves config < env
+  (and `where` reports `env:LLMLINT_JEV_URL`).
 
 ## Live tier (`scripts/live-*.sh`)
 

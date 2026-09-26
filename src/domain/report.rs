@@ -41,6 +41,66 @@ struct Counts {
     not_relevant: usize,
 }
 
+/// What one judge backend consumed during a run: calls made, tokens, the
+/// backend's own cost figure, and wall time spent inside it. Summed across
+/// every call, including ones that failed (a failed call can still be billed).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct JudgeUsage {
+    pub calls: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub cache_read_tokens: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub cache_write_tokens: u64,
+    /// The backend's cost in USD: a harness's own reported figure (for a
+    /// subscription login this is a list-price estimate, not a charge), or
+    /// Jev's input tokens at the model's list price. `None` when unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    pub duration_ms: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+impl std::ops::AddAssign<&JudgeUsage> for JudgeUsage {
+    fn add_assign(&mut self, o: &JudgeUsage) {
+        self.calls += o.calls;
+        self.input_tokens += o.input_tokens;
+        self.output_tokens += o.output_tokens;
+        self.cache_read_tokens += o.cache_read_tokens;
+        self.cache_write_tokens += o.cache_write_tokens;
+        self.cost_usd = match (self.cost_usd, o.cost_usd) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+        };
+        self.duration_ms += o.duration_ms;
+    }
+}
+
+/// Usage per judge backend. A backend that made no call is omitted from JSON.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct Usage {
+    #[serde(skip_serializing_if = "JudgeUsage::is_unused")]
+    pub harness: JudgeUsage,
+    #[serde(skip_serializing_if = "JudgeUsage::is_unused")]
+    pub jev: JudgeUsage,
+}
+
+impl JudgeUsage {
+    fn is_unused(&self) -> bool {
+        self.calls == 0
+    }
+}
+
+impl Usage {
+    fn is_empty(&self) -> bool {
+        self.harness.is_unused() && self.jev.is_unused()
+    }
+}
+
 /// The full result of a lint run.
 #[derive(Debug, Clone)]
 pub struct Report {
@@ -53,6 +113,9 @@ pub struct Report {
     /// history record all explain the batching from one source. `None` for reports
     /// built without a plan (e.g. unit tests).
     pub plan: Option<PlanExplanation>,
+    /// What each judge backend consumed. Carried in `--format json` and the
+    /// history record (not the human report); omitted when no judge ran.
+    pub usage: Usage,
 }
 
 impl Report {
@@ -62,7 +125,14 @@ impl Report {
             outcomes,
             run_errors,
             plan: None,
+            usage: Usage::default(),
         }
+    }
+
+    /// Attach per-backend usage (builder style).
+    pub fn with_usage(mut self, usage: Usage) -> Self {
+        self.usage = usage;
+        self
     }
 
     /// Attach the plan explanation (builder style), so the report can render and
@@ -232,6 +302,11 @@ impl Report {
         if let Some(plan) = &self.plan {
             if let (Value::Object(map), Ok(pv)) = (&mut obj, serde_json::to_value(plan)) {
                 map.insert("plan".to_string(), pv);
+            }
+        }
+        if !self.usage.is_empty() {
+            if let (Value::Object(map), Ok(uv)) = (&mut obj, serde_json::to_value(&self.usage)) {
+                map.insert("usage".to_string(), uv);
             }
         }
         obj
@@ -728,6 +803,7 @@ mod tests {
         let plan = PlanExplanation {
             agents: vec![AgentPlan {
                 agent: "default".into(),
+                judge: crate::domain::config::JudgeKind::Harness,
                 batch_size: 20,
                 model: None,
                 harness: None,

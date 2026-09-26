@@ -73,6 +73,7 @@ pub fn example_resolved() -> Vec<ResolvedRule> {
             rationale: true,
             relevance: None,
             require_line_attribution: false,
+            judge: llmlint::domain::config::JudgeKind::Harness,
         })
         .collect()
 }
@@ -92,6 +93,7 @@ pub fn synthetic_resolved(n: usize, judges: u32) -> Vec<ResolvedRule> {
             rationale: true,
             relevance: None,
             require_line_attribution: false,
+            judge: llmlint::domain::config::JudgeKind::Harness,
         })
         .collect()
 }

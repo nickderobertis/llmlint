@@ -509,6 +509,25 @@ harness reads target files on-demand with its own tools.
   (honored in `history::resolve` only when the canonical var is unset);
   `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into
   the same scheme. When a new session setting lands, add its `LLMLINT_` var here.
+- **Jev judge (convention):** a rule's backend is `judge: harness | jev`, resolved
+  rule > agent > session (`judge:` / `LLMLINT_JUDGE`) > `harness`
+  (`Config::judge_for`). The planner groups by **(agent, judge)**; a Jev group is
+  one logical run that `execute_jev` (`commands/lint.rs`) fans out as **one
+  request per file** (per chunk past `STATE_TOKEN_BUDGET`), every applicable rule
+  a question on it — Jev evaluates questions in isolation over one shared state,
+  so extra questions are nearly free while a bigger state costs accuracy: the
+  opposite trade to harness batching, so Jev groups skip `cost::Model` and
+  multi-judge votes. Questions and answer reading are pure
+  (`domain::jev`: a `holds` Noul worded positively, a `relevant` Noul for a
+  condition, a line Choice over `L<n>` ids — added lines only under `--diff`,
+  ≤255 per window); the HTTP client is `io::jev` (key **only** from
+  `TYPESAFE_API_KEY`; `429`/`529`/`5xx` retry, anything else fails the run).
+  Verdicts then go through the same `clean_verdict` as the harness path, so
+  ignores and scope apply identically. Each backend is a prerequisite only when
+  a run uses it (no oneharness pre-flight for a Jev-only run; no key check for a
+  harness-only one). `jev.model` defaults to the pinned `jev-1.13.0`: thresholds
+  are per model version. The `Report` carries `usage` per backend (JSON/history
+  only, never the hash-gated human view); `evals/` reads it to compare backends.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.
