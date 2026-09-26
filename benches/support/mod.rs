@@ -167,6 +167,7 @@ pub fn judge_verdicts(n: usize, dissent: bool) -> Vec<RuleVerdict> {
                 } else {
                     Some(format!("rule {i} violated"))
                 },
+                scores: Vec::new(),
             }
         })
         .collect()
@@ -185,6 +186,7 @@ pub fn outcomes(n: usize) -> Vec<RuleOutcome> {
                 votes_hold: 1,
                 judges: vec![],
                 violations: vec![],
+                scores: Vec::new(),
             },
             1 => RuleOutcome {
                 name: format!("rule_{i}"),
@@ -215,6 +217,7 @@ pub fn outcomes(n: usize) -> Vec<RuleOutcome> {
                     end_line: Some(i as u64 + 3),
                     message: Some(format!("problem {i}")),
                 }],
+                scores: Vec::new(),
             },
             _ => RuleOutcome::skipped(format!("rule_{i}")),
         })

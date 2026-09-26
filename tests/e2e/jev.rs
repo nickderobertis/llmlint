@@ -176,6 +176,10 @@ fn jev_rule_passes_without_oneharness_and_reports_usage() {
     assert_eq!(usage["input_tokens"], 250);
     assert!((usage["cost_usd"].as_f64().unwrap() - 250.0 * 0.042 / 1e6).abs() < 1e-12);
     assert!(out["usage"].get("harness").is_none(), "{}", out["usage"]);
+    // A passing rule still carries its raw probability, for offline tuning.
+    let score = &out["rules"][0]["scores"][0];
+    assert_eq!(score["file"], "src/a.rs");
+    assert_eq!(score["p_holds"], 0.93);
 
     let reqs = jev.requests();
     assert_eq!(reqs.len(), 1, "one request per file");

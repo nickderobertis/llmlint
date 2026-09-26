@@ -329,6 +329,11 @@ def judge_item(expect: Expect, run: Run, tol: int) -> dict:
         return item
     flagged = r["outcome"] == "fail"
     item.update(predicted=flagged, error=False)
+    # A probabilistic judge's raw number (the least-holding file), kept so an
+    # escalation band can be swept offline from this result file.
+    scores = r.get("scores") or []
+    if scores:
+        item["p_holds"] = min(s["p_holds"] for s in scores)
     if flagged and not expect.holds and expect.lines:
         item["line_hit"] = line_hit(expect, r.get("violations", []), tol)
     return item

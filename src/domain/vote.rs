@@ -65,6 +65,10 @@ pub fn tally(name: &str, verdicts: &[RuleVerdict]) -> RuleOutcome {
         votes_hold,
         judges,
         violations,
+        scores: verdicts
+            .iter()
+            .flat_map(|v| v.scores.iter().cloned())
+            .collect(),
     }
 }
 
@@ -124,6 +128,7 @@ mod tests {
                 }]
             },
             rationale: None,
+            scores: Vec::new(),
         }
     }
 

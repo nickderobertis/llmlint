@@ -82,6 +82,7 @@ mod tests {
             votes_hold: 0,
             judges: Vec::new(),
             violations,
+            scores: Vec::new(),
         }
     }
 
@@ -162,6 +163,7 @@ mod tests {
             votes_hold: 1,
             judges: Vec::new(),
             violations: Vec::new(),
+            scores: Vec::new(),
         };
         assert!(unlocalized_errors(&[pass], &names(&["located"])).is_empty());
     }

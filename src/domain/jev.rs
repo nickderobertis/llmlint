@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
-use crate::domain::verdict::{RuleVerdict, Violation};
+use crate::domain::verdict::{JudgeScore, RuleVerdict, Violation};
 
 /// The model llmlint pins by default: thresholds are tuned per version, and an
 /// alias (`jev-latest`) can move under a tuned threshold.
@@ -351,11 +351,34 @@ pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVe
             });
         }
     }
+    // The raw numbers for every file, passing ones included: each file's
+    // least-holding relevant chunk (else its least-holding chunk).
+    let scores = per_file
+        .iter()
+        .filter_map(|(file, answers)| {
+            let pick = answers
+                .iter()
+                .filter(|a| relevant(a))
+                .min_by(|a, b| a.p_holds.total_cmp(&b.p_holds))
+                .or_else(|| {
+                    answers
+                        .iter()
+                        .min_by(|a, b| a.p_holds.total_cmp(&b.p_holds))
+                })?;
+            Some(JudgeScore {
+                file: file.clone(),
+                p_holds: pick.p_holds,
+                p_relevant: pick.p_relevant,
+                line: pick.line.map(|(n, _)| n),
+            })
+        })
+        .collect();
     RuleVerdict {
         relevant: rule.relevance.as_ref().map(|_| any_relevant),
         holds: !any_relevant || violations.is_empty(),
         violations: if any_relevant { violations } else { Vec::new() },
         rationale: None,
+        scores,
     }
 }
 
@@ -586,6 +609,13 @@ mod tests {
             v.violations[0].message.as_deref(),
             Some("jev: p(holds)=0.20, p(line)=0.70")
         );
+        // Scores cover every file, passing ones too, at the least-holding chunk.
+        let scored: Vec<(&str, f64, Option<u64>)> = v
+            .scores
+            .iter()
+            .map(|s| (s.file.as_str(), s.p_holds, s.line))
+            .collect();
+        assert_eq!(scored, [("a.rs", 0.2, Some(40)), ("b.rs", 0.95, Some(3))]);
     }
 
     #[test]

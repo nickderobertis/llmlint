@@ -1252,6 +1252,7 @@ mod tests {
             votes_hold: 0,
             judges: vec![],
             violations: vec![],
+            scores: Vec::new(),
         };
         assert!(matches!(
             live_status(&outcome(Outcome::Pass)),

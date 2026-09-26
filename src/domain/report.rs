@@ -387,6 +387,7 @@ mod tests {
             votes_hold: 0,
             judges: vec![],
             violations: v,
+            scores: Vec::new(),
         }
     }
     fn pass(name: &str) -> RuleOutcome {
@@ -398,6 +399,7 @@ mod tests {
             votes_hold: 1,
             judges: vec![],
             violations: vec![],
+            scores: Vec::new(),
         }
     }
     fn with_rationale(mut o: RuleOutcome, why: &str) -> RuleOutcome {
@@ -420,6 +422,7 @@ mod tests {
             votes_hold: 0,
             judges: vec![],
             violations: vec![],
+            scores: Vec::new(),
         }
     }
 
@@ -579,6 +582,7 @@ mod tests {
                     votes_hold: 1,
                     judges: vec![],
                     violations: vec![],
+                    scores: Vec::new(),
                 },
                 RuleOutcome::skipped("nofiles"),
             ],

@@ -409,6 +409,7 @@ mod tests {
                 votes_hold: 1,
                 judges: vec![],
                 violations: vec![],
+                scores: Vec::new(),
             }],
             vec![],
         );

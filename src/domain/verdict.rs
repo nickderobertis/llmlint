@@ -31,10 +31,26 @@ impl Violation {
     }
 }
 
+/// What a probabilistic judge (Jev) said about one rule on one file: the raw
+/// numbers behind the verdict, so a threshold or escalation band can be tuned
+/// offline from a run's JSON without re-asking the model.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct JudgeScore {
+    pub file: String,
+    /// Probability the rule holds for this file (its least-holding chunk).
+    pub p_holds: f64,
+    /// Probability the rule's `relevance` condition holds, for a conditional rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_relevant: Option<f64>,
+    /// The most likely violating line, when one was localized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u64>,
+}
+
 /// One judge's decision for one rule, as parsed from oneharness's validated
 /// `structured` output. Lenient on extra fields the model may add (e.g. the
 /// echoed `name`, which we already know from the map key).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct RuleVerdict {
     /// Whether the rule applies to the change. `None` when the judge was not
     /// asked to decide relevance (an always-evaluated rule); `Some(false)` when
@@ -50,6 +66,10 @@ pub struct RuleVerdict {
     /// The judge's terse justification, when rationales are enabled for the rule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rationale: Option<String>,
+    /// Per-file probabilities from a probabilistic judge; empty for a harness
+    /// verdict (and never read from harness output).
+    #[serde(skip)]
+    pub scores: Vec<JudgeScore>,
 }
 
 impl RuleVerdict {
@@ -101,7 +121,7 @@ fn is_relevant(relevant: &bool) -> bool {
 /// in the same logical order the judge produced them: `name`, then the
 /// `rationale`, then the verdict (`outcome` + votes + per-judge breakdown +
 /// `violations`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RuleOutcome {
     pub name: String,
     /// A representative rationale for the winning verdict, when the rule had
@@ -118,6 +138,11 @@ pub struct RuleOutcome {
     pub judges: Vec<JudgeOpinion>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub violations: Vec<Violation>,
+    /// Per-file probabilities behind a probabilistic (Jev) verdict, for every
+    /// file judged — passing ones too — so a run's JSON can tune thresholds
+    /// offline. Empty (and omitted) for harness verdicts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scores: Vec<JudgeScore>,
 }
 
 impl RuleOutcome {
@@ -130,6 +155,7 @@ impl RuleOutcome {
             votes_hold: 0,
             judges: Vec::new(),
             violations: Vec::new(),
+            scores: Vec::new(),
         }
     }
 
@@ -144,6 +170,7 @@ impl RuleOutcome {
             votes_hold: 0,
             judges: Vec::new(),
             violations: Vec::new(),
+            scores: Vec::new(),
         }
     }
 
@@ -158,6 +185,7 @@ impl RuleOutcome {
             votes_hold: 0,
             judges: Vec::new(),
             violations: Vec::new(),
+            scores: Vec::new(),
         }
     }
 }
