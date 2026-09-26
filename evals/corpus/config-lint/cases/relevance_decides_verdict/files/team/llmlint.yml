@@ -1,0 +1,7 @@
+version: 1
+rules:
+  - name: functions_have_docstrings
+    files: { include: ["src/**/*.py"] }
+    relevance: the file defines a function with no docstring
+    description: |
+      Every function has a docstring. False when a function has none.

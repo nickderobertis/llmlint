@@ -1,0 +1,8 @@
+# Eval suite: llmlint's own config-lint plugin (the bundled copy, resolved
+# offline) judging llmlint config files with planted rule-authoring mistakes.
+version: 1
+agents:
+  default:
+    harness: claude-code
+plugins:
+  - "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1"

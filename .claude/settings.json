@@ -25,6 +25,7 @@
       "Bash(just check)",
       "Bash(just test)",
       "Bash(just test-e2e)",
+      "Bash(just eval-selftest)",
       "Bash(just lint)",
       "Bash(just lint-live)",
       "Bash(just live-claude)",

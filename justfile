@@ -156,6 +156,25 @@ doctor:
 run *ARGS:
     cargo run --quiet -- {{ARGS}}
 
+# --- Judge eval: accuracy + timing (informational; never part of `check`) -----
+# Scores the real binary's verdicts against the labeled corpus in evals/corpus/
+# (recall, precision, line hits, stability, latency, tokens, $). See
+# evals/AGENTS.md. Needs python3 >= 3.11 (stdlib only).
+
+# Paid: real oneharness + a real harness. Diff vs a committed baseline with
+# `--baseline evals/baselines/harness-sonnet.json`; `--help` lists the knobs.
+eval *ARGS: _live-build
+    python3 evals/run.py {{ARGS}}
+
+# Free + hermetic: runner unit tests, then the mock-oneharness oracle (a perfect
+# judge must score perfectly) and blind (a never-flagging judge must score recall
+# 0) arms over the whole corpus. Proves the corpus loads and the scoring is sound.
+eval-selftest:
+    @cargo build --quiet --release --locked --features {{FEATURES}} --bin llmlint --bin llmlint-mock-oneharness
+    @out="$(python3 -m unittest -q evals/test_run.py 2>&1)" || { printf '%s\n' "$out" >&2; exit 1; }
+    @d="$(mktemp -d)"; trap 'rm -rf "$d"' EXIT; python3 evals/run.py -q --arm oracle --expect-perfect --out "$d/oracle.json"; python3 evals/run.py -q --arm blind --expect-blind --out "$d/blind.json"
+    @echo "eval-selftest: ok"
+
 # --- Performance suite (informational; never part of `check` or CI's gate) ----
 # Benchmarks are non-deterministic on shared hardware, so they measure rather
 # than gate — like the live `lint-live` check. `just check`/clippy already

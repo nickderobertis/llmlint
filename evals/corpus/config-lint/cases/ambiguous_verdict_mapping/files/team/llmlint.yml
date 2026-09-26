@@ -1,0 +1,8 @@
+version: 1
+rules:
+  - name: logging_is_structured
+    files: { include: ["src/**/*.py"] }
+    description: |
+      Logging. We prefer structured logs, and print statements are
+      discouraged; f-strings in log calls should be avoided where it
+      matters.

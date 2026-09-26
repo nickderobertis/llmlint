@@ -1,0 +1,141 @@
+name: Judge eval
+
+# Accuracy + timing eval of llmlint's judge (evals/AGENTS.md). Informational,
+# like the Performance workflow: it reports, it never gates — keep both jobs out
+# of branch protection's required checks.
+#
+# - `selftest` is free and hermetic (mock oneharness): the runner's unit tests
+#   plus the oracle/blind arms, proving the corpus loads and the scoring is sound.
+# - `harness` makes real (paid, ~$5 per corpus pass on sonnet) model calls, so it
+#   runs only when something that can move a verdict changes: the judge
+#   client/prompt/schema/planner, or the eval itself. It diffs against the
+#   committed baseline and posts a sticky PR comment.
+on:
+  pull_request:
+    paths:
+      - 'evals/**'
+      - 'src/**'
+      - 'assets/default_template.md'
+      - '.github/workflows/eval.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: just eval-selftest
+
+  # Which paths can move a verdict: the judge client/prompt/schema/planner, or
+  # the eval itself. Anything else skips the paid job.
+  changes:
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR's changed files via the API
+    runs-on: ubuntu-latest
+    outputs:
+      judge: ${{ steps.filter.outputs.judge }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            judge:
+              - 'evals/**'
+              - 'assets/default_template.md'
+              - 'src/io/oneharness.rs'
+              - 'src/io/jev.rs'
+              - 'src/commands/lint.rs'
+              - 'src/domain/template.rs'
+              - 'src/domain/schema.rs'
+              - 'src/domain/plan.rs'
+              - 'src/domain/cost.rs'
+              - 'src/domain/applicability.rs'
+              - 'src/domain/diffmodel.rs'
+              - 'src/domain/vote.rs'
+              - 'src/domain/verdict.rs'
+              - '.github/workflows/eval.yml'
+
+  harness:
+    needs: [selftest, changes]
+    # Secrets exist only on the canonical repo, never for fork PRs.
+    if: >-
+      github.repository == 'nickderobertis/llmlint' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (needs.changes.outputs.judge == 'true' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    permissions:
+      contents: read
+      pull-requests: write # the sticky results comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Install oneharness + the claude-code CLI
+        run: |
+          cargo install --git https://github.com/nickderobertis/oneharness --locked
+          npm install -g @anthropic-ai/claude-code
+          oneharness --version && claude --version
+      - name: Run the eval against the committed baseline
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >-
+          just eval --arm harness --model sonnet
+          --baseline evals/baselines/harness-sonnet.json
+          --out evals/results/pr-harness.json
+      - name: Job summary
+        if: always() && hashFiles('evals/results/pr-harness.md') != ''
+        run: cat evals/results/pr-harness.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('evals/results/pr-harness.json') != ''
+        with:
+          name: eval-results
+          path: evals/results/
+      - name: Post sticky PR comment
+        if: always() && github.event_name == 'pull_request' && hashFiles('evals/results/pr-harness.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- llmlint-eval -->';
+            const body = `${marker}\n${fs.readFileSync('evals/results/pr-harness.md', 'utf8')}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

@@ -1,0 +1,11 @@
+description = "One step says to configure things appropriately."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = false
+file = "docs/deploy.md"
+lines = [10]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

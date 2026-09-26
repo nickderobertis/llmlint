@@ -28,3 +28,5 @@
 /shots/review/
 /site/
 __pycache__/
+# Eval run output (evals/run.py); committed reference numbers live in evals/baselines/.
+/evals/results/

@@ -1,0 +1,7 @@
+version: 1
+rules:
+  - name: python_functions_have_type_hints
+    relevance: the file is a Python file under src/
+    description: |
+      Every function signature annotates its parameters and return type.
+      False when a parameter or return type is unannotated.

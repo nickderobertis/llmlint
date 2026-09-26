@@ -1,0 +1,5 @@
+description = "cli.rs defines --dry-run; the README omits it."
+
+[[expect]]
+rule = "cli_flags_documented_in_readme"
+holds = false

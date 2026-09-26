@@ -1,0 +1,11 @@
+description = "Domain pricing reads an environment variable for the discount."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/pricing.rs"
+lines = [28]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

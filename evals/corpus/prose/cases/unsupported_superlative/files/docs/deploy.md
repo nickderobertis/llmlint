@@ -1,0 +1,25 @@
+# Deploying the price service
+
+The price service is blazing fast and the most reliable pricing backend
+available.
+
+## Deploy to staging
+
+1. Build the release image: run `make image TAG=staging`.
+2. Push it to the registry with `docker push registry.example.com/prices:staging`.
+3. Set `PRICES_DB_URL` in `deploy/staging.env` to the staging database URL.
+4. Apply the manifest with `kubectl apply -f deploy/staging.yaml`.
+
+## Preview a migration
+
+To see which migrations would run without applying them, pass `--dry-run`:
+
+```sh
+prices migrate --dry-run
+```
+
+To apply them, drop the flag:
+
+```sh
+prices migrate
+```

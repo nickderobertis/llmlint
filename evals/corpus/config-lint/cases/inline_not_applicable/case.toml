@@ -1,0 +1,11 @@
+description = "Description bolts on 'or not applicable' instead of relevance."
+
+[[expect]]
+rule = "relevance_scopes_conditional_rules"
+holds = false
+file = "team/llmlint.yml"
+lines = [7]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true

@@ -1,0 +1,11 @@
+description = "Doc says None for a missing key, code panics via expect."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/catalog.rs"
+lines = [11, 13]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

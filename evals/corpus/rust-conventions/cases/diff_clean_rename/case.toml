@@ -1,0 +1,14 @@
+description = "A change renames a generic local to a descriptive one; every rule holds."
+mode = "diff"
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

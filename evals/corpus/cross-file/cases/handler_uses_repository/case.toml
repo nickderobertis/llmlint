@@ -1,0 +1,5 @@
+description = "Handler goes through repository.py; the rule holds."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = true

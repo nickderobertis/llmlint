@@ -1,0 +1,42 @@
+# Eval suite: Rust coding conventions judged per file (and per diff). Rules are
+# phrased as positive invariants; each is line-localizable, so violations must
+# cite file + line (the eval scores the line).
+version: 1
+agents:
+  default:
+    harness: claude-code
+rules:
+  - name: doc_comments_match_behavior
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every `///` doc comment describes what its item actually does: the stated
+      return values, error or panic conditions, ordering, and side effects match
+      the code. False when a doc comment claims behavior the code contradicts.
+
+  - name: errors_carry_context
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every error propagated from a filesystem, network, or parsing call is
+      wrapped with context naming the failed operation and its input (for example
+      the path being read). False when such an error is propagated bare with `?`
+      or converted without adding context.
+
+  - name: domain_modules_do_no_io
+    files: { include: ["src/domain/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Code under `src/domain/` is pure: it performs no filesystem, process,
+      environment-variable, network, or clock access. False when a domain module
+      reads a file, spawns a process, reads an environment variable, opens a
+      connection, or reads the current time.
+
+  - name: names_state_intent
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Function, variable, and parameter names state what the value holds or what
+      the function does. False when an item uses a generic placeholder name such
+      as `data`, `tmp`, `val`, `thing`, `stuff`, `do_it`, or `handle2`; loop
+      indices and parameters of one-line closures are exempt.

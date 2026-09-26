@@ -1,0 +1,11 @@
+description = "Text promises a dry run; the example passes --force."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "docs/deploy.md"
+lines = [18]
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true

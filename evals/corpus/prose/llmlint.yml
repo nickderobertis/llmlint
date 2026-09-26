@@ -1,0 +1,31 @@
+# Eval suite: writing guidelines for Markdown documentation.
+version: 1
+agents:
+  default:
+    harness: claude-code
+rules:
+  - name: steps_are_actionable
+    files: { include: ["**/*.md"] }
+    require_line_attribution: true
+    description: |
+      Every numbered step in a how-to section names the concrete action to take —
+      the exact command, file, or setting. False when a step gives only a vague
+      instruction such as "configure it appropriately" or "set things up as
+      needed".
+
+  - name: claims_are_substantiated
+    files: { include: ["**/*.md"] }
+    require_line_attribution: true
+    description: |
+      Every performance or quality claim is backed by a number, a benchmark, or a
+      link in the same paragraph. False when the text makes an unsupported
+      superlative claim such as "blazing fast", "best-in-class", or "the most
+      reliable".
+
+  - name: examples_match_prose
+    files: { include: ["**/*.md"] }
+    require_line_attribution: true
+    description: |
+      Every command in a code block does what the sentence introducing it says:
+      the same subcommand, flags, and file names. False when the prose and the
+      command it introduces disagree.

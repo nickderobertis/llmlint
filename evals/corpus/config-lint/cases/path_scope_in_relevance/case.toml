@@ -1,0 +1,11 @@
+description = "A path condition expressed as relevance instead of files."
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = false
+file = "team/llmlint.yml"
+lines = [4]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true

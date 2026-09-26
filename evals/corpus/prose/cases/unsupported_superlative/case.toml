@@ -1,0 +1,11 @@
+description = "Intro claims blazing-fast, best-in-class with no evidence."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "docs/deploy.md"
+lines = [4]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

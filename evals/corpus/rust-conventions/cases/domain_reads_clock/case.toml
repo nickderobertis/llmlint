@@ -1,0 +1,11 @@
+description = "Domain module decides expiry by reading the system clock."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/coupon.rs"
+lines = [11]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

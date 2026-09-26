@@ -1,0 +1,5 @@
+# The eval corpus (evals/AGENTS.md) holds llmlint configs and files with PLANTED
+# violations. Hide it from llmlint's own walks — subtree config discovery and
+# target globbing both honor .ignore — so this repo's lint never loads the suite
+# configs or judges the planted mistakes. The eval runner copies cases out first.
+*

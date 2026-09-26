@@ -1,0 +1,7 @@
+version: 1
+rules:
+  - name: rule1
+    files: { include: ["src/**/*.rs"] }
+    description: |
+      Every public function has a doc comment explaining its purpose.
+      False when a public function has no doc comment.

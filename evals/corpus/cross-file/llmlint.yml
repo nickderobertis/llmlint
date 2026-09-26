@@ -1,0 +1,21 @@
+# Eval suite: rules that can only be judged by reading more than one file. These
+# stay on the harness under a Jev cascade; they are here to measure that routing.
+version: 1
+agents:
+  default:
+    harness: claude-code
+rules:
+  - name: cli_flags_documented_in_readme
+    files: { include: ["src/cli.rs", "README.md"] }
+    description: |
+      Every command-line flag defined in `src/cli.rs` is documented in
+      `README.md`. False when a flag declared in `src/cli.rs` appears nowhere in
+      the README.
+
+  - name: handlers_use_repository_layer
+    files: { include: ["src/handlers/**/*.py", "src/repository.py"] }
+    require_line_attribution: true
+    description: |
+      HTTP handlers under `src/handlers/` reach the database only through
+      functions defined in `src/repository.py`. False when a handler opens a
+      database connection or executes SQL itself.

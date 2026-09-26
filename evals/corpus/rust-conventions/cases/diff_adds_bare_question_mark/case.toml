@@ -1,0 +1,16 @@
+description = "A change adds a config loader that propagates a bare `?`."
+mode = "diff"
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/store.rs"
+lines = [29]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

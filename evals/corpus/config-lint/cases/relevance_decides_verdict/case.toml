@@ -1,0 +1,11 @@
+description = "Relevance names exactly the violating case."
+
+[[expect]]
+rule = "relevance_scopes_without_deciding_the_verdict"
+holds = false
+file = "team/llmlint.yml"
+lines = [5]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true

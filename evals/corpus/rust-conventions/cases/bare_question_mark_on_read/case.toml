@@ -1,0 +1,15 @@
+description = "fs::read_to_string propagated with a bare `?`; no path in the error."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/store.rs"
+lines = [11]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

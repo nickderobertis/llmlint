@@ -1,0 +1,7 @@
+description = "Handler executes SQL itself instead of via the repository."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = false
+file = "src/handlers/prices.py"
+lines = [5, 6]

@@ -1,0 +1,11 @@
+description = "A rule named rule1."
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = false
+file = "team/llmlint.yml"
+lines = [3]
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true

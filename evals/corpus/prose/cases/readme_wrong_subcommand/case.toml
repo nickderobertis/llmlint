@@ -1,0 +1,11 @@
+description = "README says `prices export` but shows `prices import`."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "README.md"
+lines = [10]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

@@ -1,0 +1,11 @@
+description = "Function and locals named data/tmp/val/do_it."
+
+[[expect]]
+rule = "names_state_intent"
+holds = false
+file = "src/report.rs"
+lines = [2, 3, 5]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

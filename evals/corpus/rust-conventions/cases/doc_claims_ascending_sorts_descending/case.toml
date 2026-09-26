@@ -1,0 +1,11 @@
+description = "Doc comment says ascending, code sorts most-expensive first."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/domain/pricing.rs"
+lines = [9]
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true

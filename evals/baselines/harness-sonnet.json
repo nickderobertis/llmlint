@@ -1,0 +1,1009 @@
+{
+  "overall": {
+    "items": 55,
+    "errors": 0,
+    "tp": 19,
+    "fn": 0,
+    "fp": 0,
+    "tn": 36,
+    "recall": 1.0,
+    "precision": 1.0,
+    "f1": 1.0,
+    "accuracy": 1.0,
+    "line_hit_rate": 1.0,
+    "unstable_items": 0,
+    "invocations": 25,
+    "latency_p50_s": 8.1369988329825,
+    "latency_p95_s": 12.59928416640032,
+    "latency_total_s": 215.5974396239908,
+    "judge_calls": 25,
+    "tokens": 2938391,
+    "cost_usd": 4.73478
+  },
+  "suites": {
+    "config-lint": {
+      "items": 15,
+      "errors": 0,
+      "tp": 5,
+      "fn": 0,
+      "fp": 0,
+      "tn": 10,
+      "recall": 1.0,
+      "precision": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "line_hit_rate": 1.0,
+      "unstable_items": 0,
+      "invocations": 6,
+      "latency_p50_s": 9.065168541492312,
+      "latency_p95_s": 13.992621865007095,
+      "latency_total_s": 62.70505958297872,
+      "judge_calls": 6,
+      "tokens": 679155,
+      "cost_usd": 1.7714128
+    },
+    "cross-file": {
+      "items": 4,
+      "errors": 0,
+      "tp": 2,
+      "fn": 0,
+      "fp": 0,
+      "tn": 2,
+      "recall": 1.0,
+      "precision": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "line_hit_rate": 1.0,
+      "unstable_items": 0,
+      "invocations": 4,
+      "latency_p50_s": 6.477412042004289,
+      "latency_p95_s": 7.5167099831669475,
+      "latency_total_s": 26.204660250019515,
+      "judge_calls": 4,
+      "tokens": 402183,
+      "cost_usd": 0.915091
+    },
+    "prose": {
+      "items": 11,
+      "errors": 0,
+      "tp": 4,
+      "fn": 0,
+      "fp": 0,
+      "tn": 7,
+      "recall": 1.0,
+      "precision": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "line_hit_rate": 1.0,
+      "unstable_items": 0,
+      "invocations": 5,
+      "latency_p50_s": 7.148101041006157,
+      "latency_p95_s": 7.992510699789273,
+      "latency_total_s": 35.03102366600069,
+      "judge_calls": 5,
+      "tokens": 535274,
+      "cost_usd": 0.287936
+    },
+    "rust-conventions": {
+      "items": 25,
+      "errors": 0,
+      "tp": 8,
+      "fn": 0,
+      "fp": 0,
+      "tn": 17,
+      "recall": 1.0,
+      "precision": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "line_hit_rate": 1.0,
+      "unstable_items": 0,
+      "invocations": 10,
+      "latency_p50_s": 8.420438792003551,
+      "latency_p95_s": 11.982944656096514,
+      "latency_total_s": 91.65669612499187,
+      "judge_calls": 10,
+      "tokens": 1321779,
+      "cost_usd": 1.7603402
+    }
+  },
+  "items": [
+    {
+      "rule": "description_yields_clear_verdict",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "config-lint/ambiguous_verdict_mapping",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "path_scoped_rules_use_files_not_relevance",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/ambiguous_verdict_mapping",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "description_yields_clear_verdict",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/clean_team_config",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "name_describes_what_the_rule_checks",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/clean_team_config",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "relevance_scopes_conditional_rules",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/clean_team_config",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "path_scoped_rules_use_files_not_relevance",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/clean_team_config",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "relevance_scopes_without_deciding_the_verdict",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/clean_team_config",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "relevance_scopes_conditional_rules",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "config-lint/inline_not_applicable",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "name_describes_what_the_rule_checks",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/inline_not_applicable",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "path_scoped_rules_use_files_not_relevance",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "config-lint/path_scope_in_relevance",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "name_describes_what_the_rule_checks",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/path_scope_in_relevance",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "name_describes_what_the_rule_checks",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "config-lint/placeholder_rule_name",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "description_yields_clear_verdict",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/placeholder_rule_name",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "relevance_scopes_without_deciding_the_verdict",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "config-lint/relevance_decides_verdict",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "name_describes_what_the_rule_checks",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "config-lint/relevance_decides_verdict",
+      "suite": "config-lint",
+      "rep": 0
+    },
+    {
+      "rule": "cli_flags_documented_in_readme",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "case": "cross-file/dry_run_flag_undocumented",
+      "suite": "cross-file",
+      "rep": 0
+    },
+    {
+      "rule": "cli_flags_documented_in_readme",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "cross-file/flags_all_documented",
+      "suite": "cross-file",
+      "rep": 0
+    },
+    {
+      "rule": "handlers_use_repository_layer",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "cross-file/handler_runs_sql_directly",
+      "suite": "cross-file",
+      "rep": 0
+    },
+    {
+      "rule": "handlers_use_repository_layer",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "cross-file/handler_uses_repository",
+      "suite": "cross-file",
+      "rep": 0
+    },
+    {
+      "rule": "steps_are_actionable",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "prose/clean_deploy_guide",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "claims_are_substantiated",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "prose/clean_deploy_guide",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "examples_match_prose",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "prose/clean_deploy_guide",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "examples_match_prose",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "prose/dry_run_example_uses_force",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "claims_are_substantiated",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "prose/dry_run_example_uses_force",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "examples_match_prose",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "prose/readme_wrong_subcommand",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "steps_are_actionable",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "prose/readme_wrong_subcommand",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "claims_are_substantiated",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "prose/unsupported_superlative",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "steps_are_actionable",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "prose/unsupported_superlative",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "steps_are_actionable",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "prose/vague_step",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "examples_match_prose",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "prose/vague_step",
+      "suite": "prose",
+      "rep": 0
+    },
+    {
+      "rule": "errors_carry_context",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/bare_question_mark_on_read",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/bare_question_mark_on_read",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "names_state_intent",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/bare_question_mark_on_read",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/clean_store_and_domain",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "errors_carry_context",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/clean_store_and_domain",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "domain_modules_do_no_io",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/clean_store_and_domain",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "names_state_intent",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/clean_store_and_domain",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "errors_carry_context",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/diff_adds_bare_question_mark",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/diff_adds_bare_question_mark",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "names_state_intent",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/diff_adds_bare_question_mark",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/diff_clean_rename",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "errors_carry_context",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/diff_clean_rename",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "names_state_intent",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/diff_clean_rename",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/diff_code_changes_doc_goes_stale",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "domain_modules_do_no_io",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/diff_code_changes_doc_goes_stale",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/doc_claims_ascending_sorts_descending",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "domain_modules_do_no_io",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/doc_claims_ascending_sorts_descending",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/doc_promises_none_but_panics",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "names_state_intent",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/doc_promises_none_but_panics",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "domain_modules_do_no_io",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/domain_reads_clock",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "names_state_intent",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/domain_reads_clock",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "domain_modules_do_no_io",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/domain_reads_env_var",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/domain_reads_env_var",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "names_state_intent",
+      "expected_violation": true,
+      "predicted": true,
+      "error": false,
+      "line_hit": true,
+      "case": "rust-conventions/generic_placeholder_names",
+      "suite": "rust-conventions",
+      "rep": 0
+    },
+    {
+      "rule": "doc_comments_match_behavior",
+      "expected_violation": false,
+      "predicted": false,
+      "error": false,
+      "case": "rust-conventions/generic_placeholder_names",
+      "suite": "rust-conventions",
+      "rep": 0
+    }
+  ],
+  "meta": {
+    "arm": "harness",
+    "model": "sonnet",
+    "repeats": 1,
+    "cases": 25,
+    "llmlint_version": "llmlint 0.4.2",
+    "timestamp": "2026-09-26T19:42:56+00:00"
+  },
+  "runs": [
+    {
+      "case": "config-lint/ambiguous_verdict_mapping",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 12.67357520799851,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 8,
+        "output_tokens": 1337,
+        "cache_read_tokens": 64590,
+        "cache_write_tokens": 73884,
+        "cost_usd": 0.32184,
+        "harness_ms": 12388
+      }
+    },
+    {
+      "case": "config-lint/clean_team_config",
+      "rep": 0,
+      "exit": 0,
+      "seconds": 14.432304084009957,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 1466,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 75979,
+        "cost_usd": 0.31858400000000003,
+        "harness_ms": 14144
+      }
+    },
+    {
+      "case": "config-lint/inline_not_applicable",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 8.910733541997615,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 732,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 72886,
+        "cost_usd": 0.298872,
+        "harness_ms": 8621
+      }
+    },
+    {
+      "case": "config-lint/path_scope_in_relevance",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 9.06649674999062,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 606,
+        "cache_read_tokens": 64252,
+        "cache_write_tokens": 64510,
+        "cost_usd": 0.2769584,
+        "harness_ms": 8780
+      }
+    },
+    {
+      "case": "config-lint/placeholder_rule_name",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 9.063840332994005,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 749,
+        "cache_read_tokens": 64273,
+        "cache_write_tokens": 64526,
+        "cost_usd": 0.2784566,
+        "harness_ms": 9020
+      }
+    },
+    {
+      "case": "config-lint/relevance_decides_verdict",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 8.558109665988013,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 582,
+        "cache_read_tokens": 64249,
+        "cache_write_tokens": 64506,
+        "cost_usd": 0.2767018,
+        "harness_ms": 8516
+      }
+    },
+    {
+      "case": "cross-file/dry_run_flag_undocumented",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 6.614665333996527,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 469,
+        "cache_read_tokens": 63478,
+        "cache_write_tokens": 64073,
+        "cost_usd": 0.27368560000000003,
+        "harness_ms": 6573
+      }
+    },
+    {
+      "case": "cross-file/flags_all_documented",
+      "rep": 0,
+      "exit": 0,
+      "seconds": 5.573941832990386,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 373,
+        "cache_read_tokens": 122387,
+        "cache_write_tokens": 5195,
+        "cost_usd": 0.04899540000000001,
+        "harness_ms": 5524
+      }
+    },
+    {
+      "case": "cross-file/handler_runs_sql_directly",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 7.675894333020551,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 729,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 72494,
+        "cost_usd": 0.297274,
+        "harness_ms": 7620
+      }
+    },
+    {
+      "case": "cross-file/handler_uses_repository",
+      "rep": 0,
+      "exit": 0,
+      "seconds": 6.340158750012051,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 542,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 72427,
+        "cost_usd": 0.295136,
+        "harness_ms": 6299
+      }
+    },
+    {
+      "case": "prose/clean_deploy_guide",
+      "rep": 0,
+      "exit": 0,
+      "seconds": 7.148101041006157,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 751,
+        "cache_read_tokens": 59450,
+        "cache_write_tokens": 14179,
+        "cost_usd": 0.076124,
+        "harness_ms": 7101
+      }
+    },
+    {
+      "case": "prose/dry_run_example_uses_force",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 8.1369988329825,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 693,
+        "cache_read_tokens": 123251,
+        "cache_write_tokens": 5373,
+        "cost_usd": 0.053080199999999994,
+        "harness_ms": 8091
+      }
+    },
+    {
+      "case": "prose/readme_wrong_subcommand",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 5.981922083999962,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 564,
+        "cache_read_tokens": 63368,
+        "cache_write_tokens": 9289,
+        "cost_usd": 0.05547760000000001,
+        "harness_ms": 5925
+      }
+    },
+    {
+      "case": "prose/unsupported_superlative",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 6.349443540995708,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 537,
+        "cache_read_tokens": 123275,
+        "cache_write_tokens": 5369,
+        "cost_usd": 0.051509000000000006,
+        "harness_ms": 6295
+      }
+    },
+    {
+      "case": "prose/vague_step",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 7.4145581670163665,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 569,
+        "cache_read_tokens": 123236,
+        "cache_write_tokens": 5350,
+        "cost_usd": 0.051745200000000005,
+        "harness_ms": 7352
+      }
+    },
+    {
+      "case": "rust-conventions/bare_question_mark_on_read",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 10.704397082998184,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 6,
+        "output_tokens": 942,
+        "cache_read_tokens": 129552,
+        "cache_write_tokens": 65324,
+        "cost_usd": 0.2966384,
+        "harness_ms": 10529
+      }
+    },
+    {
+      "case": "rust-conventions/clean_store_and_domain",
+      "rep": 0,
+      "exit": 0,
+      "seconds": 11.592841457983013,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 1201,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 75256,
+        "cost_usd": 0.313042,
+        "harness_ms": 11534
+      }
+    },
+    {
+      "case": "rust-conventions/diff_adds_bare_question_mark",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 11.286256124993088,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 998,
+        "cache_read_tokens": 124285,
+        "cache_write_tokens": 6107,
+        "cost_usd": 0.059273000000000006,
+        "harness_ms": 11207
+      }
+    },
+    {
+      "case": "rust-conventions/diff_clean_rename",
+      "rep": 0,
+      "exit": 0,
+      "seconds": 6.588180874998216,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 527,
+        "cache_read_tokens": 124329,
+        "cache_write_tokens": 5755,
+        "cost_usd": 0.0531638,
+        "harness_ms": 6480
+      }
+    },
+    {
+      "case": "rust-conventions/diff_code_changes_doc_goes_stale",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 8.212069750006776,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 654,
+        "cache_read_tokens": 64493,
+        "cache_write_tokens": 65060,
+        "cost_usd": 0.27968659999999995,
+        "harness_ms": 8108
+      }
+    },
+    {
+      "case": "rust-conventions/doc_claims_ascending_sorts_descending",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 8.106410708016483,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 683,
+        "cache_read_tokens": 123316,
+        "cache_write_tokens": 5497,
+        "cost_usd": 0.0534892,
+        "harness_ms": 8058
+      }
+    },
+    {
+      "case": "rust-conventions/doc_promises_none_but_panics",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 7.4789812919916585,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 664,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 72864,
+        "cost_usd": 0.29810400000000004,
+        "harness_ms": 7426
+      }
+    },
+    {
+      "case": "rust-conventions/domain_reads_clock",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 6.75663099999656,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 503,
+        "cache_read_tokens": 64136,
+        "cache_write_tokens": 64536,
+        "cost_usd": 0.2760092,
+        "harness_ms": 6710
+      }
+    },
+    {
+      "case": "rust-conventions/domain_reads_env_var",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 8.628807834000327,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 4,
+        "output_tokens": 717,
+        "cache_read_tokens": 123313,
+        "cache_write_tokens": 5611,
+        "cost_usd": 0.0542846,
+        "harness_ms": 8570
+      }
+    },
+    {
+      "case": "rust-conventions/generic_placeholder_names",
+      "rep": 0,
+      "exit": 1,
+      "seconds": 12.302120000007562,
+      "usage": {
+        "calls": 1,
+        "input_tokens": 6,
+        "output_tokens": 1392,
+        "cache_read_tokens": 187727,
+        "cache_write_tokens": 6293,
+        "cost_usd": 0.07664939999999999,
+        "harness_ms": 12256
+      }
+    }
+  ]
+}

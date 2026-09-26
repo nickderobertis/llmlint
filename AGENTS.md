@@ -119,6 +119,17 @@ Use the `just` recipes; do not hand-roll equivalents.
   runners, so it reports rather than blocks. The bench/profile tools (hyperfine,
   critcmp, samply) are *not* installed by `just setup` — `just bench-tools`
   installs them on demand; CI installs them via `taiki-e/install-action`.
+- **Judge eval** (`just eval`, `eval-selftest`) — *informational, never a gate*.
+  See `evals/AGENTS.md`. Measures judge **accuracy + timing** (recall, precision,
+  line hits, stability, latency, tokens, $) by driving the real binary over a
+  committed, labeled corpus (`evals/corpus/`), so a judging change — a new
+  backend, a prompt/schema/planner change, a model swap — is a measured
+  before/after. `eval-selftest` is free (mock-oneharness oracle + blind arms);
+  `eval` is paid (real oneharness + claude-code) and diffs against the committed
+  `evals/baselines/`. The `Judge eval` workflow runs the self-test on `evals/`/`src/`
+  changes and the paid arm only when a verdict-moving path changes.
+  `evals/corpus/.ignore` keeps the corpus's planted configs out of this repo's own
+  lint — don't remove it.
 - **Terminal screenshots** (`just screenshots`, `screenshots-tools`,
   `screenshots-bless`) — *informational, never a gate*. See `screenshots/AGENTS.md`.
   `scripts/screenshots.sh` drives the real binary against the **mock-oneharness

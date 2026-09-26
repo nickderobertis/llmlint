@@ -1,0 +1,12 @@
+description = "A change flips the sort order but leaves the doc comment describing the old order."
+mode = "diff"
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/domain/pricing.rs"
+lines = [9, 11]
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
