@@ -1,0 +1,15 @@
+description = "Adversarial: a comment claims the warning \"includes all the context needed\", but it names neither the SKU nor the warehouse that could not be reordered."
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = false
+file = "src/inventory/restock.py"
+lines = [32, 33]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

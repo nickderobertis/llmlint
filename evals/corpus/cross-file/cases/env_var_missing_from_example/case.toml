@@ -1,0 +1,5 @@
+description = "settings.py reads SENTRY_DSN; example.env has a comment about Sentry but no SENTRY_DSN entry."
+
+[[expect]]
+rule = "env_vars_listed_in_example"
+holds = false

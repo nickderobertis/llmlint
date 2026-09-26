@@ -1,0 +1,11 @@
+description = "A superlative speed/dependability claim whose only numbers sit in a different section, not the same paragraph."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "docs/overview.md"
+lines = [8, 9]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

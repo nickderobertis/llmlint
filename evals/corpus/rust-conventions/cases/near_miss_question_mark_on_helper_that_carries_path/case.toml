@@ -1,0 +1,13 @@
+description = "Bare `?` on a read helper whose error type already carries the path; every rule holds."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

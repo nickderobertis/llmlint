@@ -1,0 +1,11 @@
+description = "to_minor_units() documents conversion to cents but rounds the major-unit amount to a whole number without multiplying by 100."
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = false
+file = "src/billing/stripe_amounts.py"
+lines = [16, 23, 27, 29]
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

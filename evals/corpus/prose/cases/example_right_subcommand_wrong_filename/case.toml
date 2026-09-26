@@ -1,0 +1,7 @@
+description = "The prose restores the 09-14 dump; the command uses the right subcommand but restores the 09-04 dump."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "docs/backups.md"
+lines = [8, 9, 12]

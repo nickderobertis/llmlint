@@ -1,0 +1,13 @@
+version: 1
+rules:
+  # config-lint: kept deliberately concise.
+  - name: http_calls_set_timeouts
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Background: in March a production outage was traced to a retry loop that
+      hammered the payments API for forty minutes because nothing timed out.
+      After a long retrospective the team agreed this must never happen again,
+      and several engineers spent a week auditing every client we own. This
+      rule is the outcome of that effort, and we thank everyone who helped.
+      Every outbound HTTP request passes an explicit `timeout` argument.

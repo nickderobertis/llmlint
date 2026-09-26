@@ -1,0 +1,13 @@
+description = "Near-miss: a purge step carries its warning inline and a queue delete is preceded by an \"Irreversible\" callout."
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = true
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

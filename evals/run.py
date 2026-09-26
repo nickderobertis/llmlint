@@ -106,6 +106,16 @@ def load_case(suite_dir: Path, case_dir: Path) -> Case:
             raise ValueError(f"{case_dir}: rule {e['rule']} holds but lists violation lines")
         if not holds and lines and not e.get("file"):
             raise ValueError(f"{case_dir}: rule {e['rule']} lists lines without a file")
+        if e.get("file"):
+            target = case_dir / "files" / e["file"]
+            if not target.is_file():
+                raise ValueError(f"{case_dir}: rule {e['rule']} names missing file {e['file']}")
+            n_lines = len(target.read_text().splitlines())
+            bad = [n for n in lines if not 1 <= n <= n_lines]
+            if bad:
+                raise ValueError(
+                    f"{case_dir}: rule {e['rule']} cites line(s) {bad} outside {e['file']} (1..{n_lines})"
+                )
         expects.append(Expect(e["rule"], holds, lines, e.get("file")))
     if not expects:
         raise ValueError(f"{case_dir}: no [[expect]] entries")

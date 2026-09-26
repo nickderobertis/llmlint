@@ -1,0 +1,17 @@
+description = "Idiomatic order service over a repository; every rule holds."
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = true

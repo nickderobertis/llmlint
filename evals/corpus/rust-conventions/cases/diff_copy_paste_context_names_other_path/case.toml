@@ -1,0 +1,16 @@
+description = "A new fn wraps the remove_file error with context that labels the source path as the stale mirror, naming the wrong input."
+mode = "diff"
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/sync.rs"
+lines = [22]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

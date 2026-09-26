@@ -1,0 +1,7 @@
+description = "Multi-hop: the prose says \"write to the nightly file\" (defined earlier as orders-nightly.parquet); the command writes orders-nightly.csv."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "docs/nightly-export.md"
+lines = [5, 15, 16, 19]

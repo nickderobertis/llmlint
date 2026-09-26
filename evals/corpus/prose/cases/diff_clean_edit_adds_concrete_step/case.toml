@@ -1,0 +1,14 @@
+description = "Clean change: adds two concrete setup steps and a matching upload example."
+mode = "diff"
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true

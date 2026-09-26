@@ -1,0 +1,6 @@
+description = "Near-miss diff: a new changelog entry says \"much faster\" and backs it with before/after numbers and a benchmark link in the same paragraph."
+mode = "diff"
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true

@@ -1,0 +1,10 @@
+description = "Near-miss change: a missing page_size now falls back to a default via `except KeyError: return DEFAULT_PAGE_SIZE`, and the docstring is updated to document it."
+mode = "diff"
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

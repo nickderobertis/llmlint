@@ -1,0 +1,12 @@
+description = "A change renames the descriptive `escaped_customer` local to `tmp`."
+mode = "diff"
+
+[[expect]]
+rule = "names_state_intent"
+holds = false
+file = "src/export.rs"
+lines = [5, 6]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

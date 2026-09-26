@@ -1,0 +1,15 @@
+description = "260-line inventory module where every I/O and parse error carries context except one bare `?` on a parse deep in load_rules."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/inventory.rs"
+lines = [200]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

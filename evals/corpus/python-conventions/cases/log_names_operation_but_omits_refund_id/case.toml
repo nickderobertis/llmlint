@@ -1,0 +1,15 @@
+description = "A declined refund is logged at error level naming the operation and decline code but not the refund or payment id, though both are in scope."
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = false
+file = "src/payments/refunds.py"
+lines = [45]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

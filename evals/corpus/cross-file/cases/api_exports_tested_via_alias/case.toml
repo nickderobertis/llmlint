@@ -1,0 +1,5 @@
+description = "Near-miss: every __all__ name is called in tests, one only through an import alias in a second test file."
+
+[[expect]]
+rule = "api_exports_are_tested"
+holds = true

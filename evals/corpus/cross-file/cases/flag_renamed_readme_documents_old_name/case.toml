@@ -1,0 +1,5 @@
+description = "cli.rs renamed --endpoint to --service-url (field still `endpoint`); the README only documents --endpoint."
+
+[[expect]]
+rule = "cli_flags_documented_in_readme"
+holds = false

@@ -1,0 +1,15 @@
+description = "\"Independent tests have shown\" it is the most accurate OCR engine, with no number, named benchmark, or link."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "README.md"
+lines = [8, 9]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

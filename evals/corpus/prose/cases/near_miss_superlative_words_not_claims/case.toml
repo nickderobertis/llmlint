@@ -1,0 +1,13 @@
+description = "Near-miss: \"most recent\", \"latest\", \"best starting point\", \"fastest to get wrong\" are not performance or quality claims."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

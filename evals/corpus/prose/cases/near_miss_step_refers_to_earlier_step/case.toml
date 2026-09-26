@@ -1,0 +1,9 @@
+description = "Near-miss: a step says \"Repeat steps 1 and 2 on the replica\" — concrete by reference to concrete earlier steps."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

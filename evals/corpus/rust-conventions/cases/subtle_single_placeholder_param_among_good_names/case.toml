@@ -1,0 +1,11 @@
+description = "Every name is descriptive except one parameter, `val`, in merge_counters (its sibling is `earlier`)."
+
+[[expect]]
+rule = "names_state_intent"
+holds = false
+file = "src/metrics.rs"
+lines = [21, 23, 24, 25]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

@@ -1,0 +1,9 @@
+description = "Doc comments are informal and terse but every claim they make is true of the code; every rule holds."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

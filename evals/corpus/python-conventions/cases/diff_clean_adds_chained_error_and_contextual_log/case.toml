@@ -1,0 +1,14 @@
+description = "Clean change: storage errors are now logged with the user id and key and re-raised as a documented, chained AvatarStorageError."
+mode = "diff"
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

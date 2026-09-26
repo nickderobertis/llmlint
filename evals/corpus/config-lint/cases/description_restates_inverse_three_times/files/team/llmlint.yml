@@ -1,0 +1,10 @@
+version: 1
+rules:
+  - name: tests_avoid_sleep
+    files: { include: ["tests/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      No test calls `time.sleep`. A test that calls `time.sleep` fails this
+      rule, and a test that never calls `time.sleep` passes it. Put another
+      way, `time.sleep` must not appear in any test, and tests without it are
+      fine.

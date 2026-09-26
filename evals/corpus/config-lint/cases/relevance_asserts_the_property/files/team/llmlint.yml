@@ -1,0 +1,9 @@
+version: 1
+rules:
+  - name: queries_use_bound_parameters
+    files: { include: ["src/**/*.py"] }
+    relevance: every SQL query in the file passes user input as bound parameters
+    require_line_attribution: true
+    description: |
+      Every SQL query passes user input as bound parameters, never string
+      formatting.

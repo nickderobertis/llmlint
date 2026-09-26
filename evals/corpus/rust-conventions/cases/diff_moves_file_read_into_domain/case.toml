@@ -1,0 +1,16 @@
+description = "A consolidation change moves the file-reading loader from src/promos_io.rs into the domain module (context kept, but the domain now does I/O)."
+mode = "diff"
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/promo.rs"
+lines = [1, 24, 25]
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

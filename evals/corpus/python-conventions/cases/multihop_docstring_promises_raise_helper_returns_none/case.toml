@@ -1,0 +1,11 @@
+description = "Multi-hop: load_profile() documents ProfileNotFound on 404, but its helpers turn a 404 into a None return; nothing raises it."
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = false
+file = "src/profiles.py"
+lines = [45, 47, 48, 51, 52, 27, 28, 34, 35]
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

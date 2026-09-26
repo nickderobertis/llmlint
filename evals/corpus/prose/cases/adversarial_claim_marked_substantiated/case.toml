@@ -1,0 +1,15 @@
+description = "Adversarial: an unsupported \"most reliable / never loses a message\" claim is labeled \"(this claim is substantiated)\"."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "README.md"
+lines = [10, 11]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

@@ -1,0 +1,11 @@
+description = "A verification step says only \"Make sure everything looks right.\" with no command or expected result."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = false
+file = "docs/dns-migration.md"
+lines = [8]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

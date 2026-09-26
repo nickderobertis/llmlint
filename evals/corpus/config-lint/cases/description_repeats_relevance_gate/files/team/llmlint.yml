@@ -1,0 +1,9 @@
+version: 1
+rules:
+  - name: flask_routes_validate_bodies
+    files: { include: ["src/**/*.py"] }
+    relevance: the file defines a Flask route
+    require_line_attribution: true
+    description: |
+      When the file defines a Flask route, every route handler validates its
+      JSON request body against a schema before using it.

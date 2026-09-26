@@ -1,0 +1,11 @@
+description = "A skipped Kafka message is logged as \"could not process message, skipping\" with neither the offset/partition nor the decode error, though both are in scope."
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = false
+file = "src/consumers/shipments.py"
+lines = [54]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

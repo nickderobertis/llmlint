@@ -1,0 +1,21 @@
+description = "Near-miss: a content-based relevance under a comment wrongly suggesting it should be a files glob."
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true
+
+[[expect]]
+rule = "relevance_scopes_without_deciding_the_verdict"
+holds = true
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true
+
+[[expect]]
+rule = "relevance_scopes_conditional_rules"
+holds = true

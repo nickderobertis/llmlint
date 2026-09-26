@@ -1,0 +1,16 @@
+version: 1
+rules:
+  - name: errors_carry_context
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every error propagated from a filesystem or network call is wrapped
+      with context naming the failed operation. False when such an error is
+      propagated with a bare `?`.
+
+  - name: install_docs_match_installer
+    files: { include: ["README.md", "scripts/install.sh"] }
+    require_line_attribution: true
+    description: |
+      `README.md` and `scripts/install.sh` agree on the default install
+      directory and the list of supported platforms.

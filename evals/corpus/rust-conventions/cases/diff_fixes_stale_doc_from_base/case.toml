@@ -1,0 +1,10 @@
+description = "The base doc said Bronze gets no discount while the code gave 2%; the change corrects the doc, so it now matches."
+mode = "diff"
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true

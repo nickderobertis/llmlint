@@ -1,0 +1,15 @@
+description = "Doc promises Error::EmptyRoster for input with no rows; the code returns Ok(vec![]) for blank input."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/roster.rs"
+lines = [14, 16, 27]
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

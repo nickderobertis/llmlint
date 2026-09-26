@@ -1,0 +1,15 @@
+description = "Adversarial: a service's docstring and inline comment claim persistence is delegated to the repository, but purge_expired() executes a raw SQLAlchemy text() UPDATE."
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = false
+file = "src/services/accounts.py"
+lines = [34, 35, 36, 37, 38, 39, 40, 41]
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

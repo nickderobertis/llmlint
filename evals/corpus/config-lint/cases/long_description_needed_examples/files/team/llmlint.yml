@@ -1,0 +1,20 @@
+version: 1
+rules:
+  - name: crypto_uses_approved_primitives
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every hash, cipher, and random-token call uses an approved primitive.
+      False when code calls any of these unapproved ones:
+      - `hashlib.md5` or `hashlib.sha1` for integrity checks or passwords
+      - `Crypto.Cipher.DES`, `Crypto.Cipher.ARC4`, or `Crypto.Cipher.Blowfish`
+      - any cipher constructed with `MODE_ECB`
+      - `random.random`, `random.randint`, or `random.choice` to build a
+        token, nonce, or password-reset code
+
+  - name: sql_uses_bound_parameters
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every SQL query passes user-supplied values as bound parameters, never
+      interpolated into the query string with f-strings, `%`, or `.format()`.

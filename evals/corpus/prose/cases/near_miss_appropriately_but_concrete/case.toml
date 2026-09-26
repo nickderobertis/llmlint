@@ -1,0 +1,9 @@
+description = "Near-miss: steps contain \"appropriately\" and \"as needed\" but each then gives the exact setting, value, and file."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

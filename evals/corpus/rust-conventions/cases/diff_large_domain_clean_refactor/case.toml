@@ -1,0 +1,14 @@
+description = "A behavior-preserving refactor of a 157-line pure search module (combinator-style filter, a renamed local, an extracted start_index helper with an accurate doc); every rule holds."
+mode = "diff"
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

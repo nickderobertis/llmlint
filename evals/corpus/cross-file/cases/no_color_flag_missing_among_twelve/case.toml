@@ -1,0 +1,5 @@
+description = "Twelve flags in cli.rs; the long README documents eleven and mentions NO_COLOR but never --no-color."
+
+[[expect]]
+rule = "cli_flags_documented_in_readme"
+holds = false

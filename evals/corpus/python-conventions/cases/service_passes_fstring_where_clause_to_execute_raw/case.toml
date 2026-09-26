@@ -1,0 +1,15 @@
+description = "A triage service composes an f-string SQL WHERE clause and hands it to the repository's execute_raw() helper instead of calling a named repository query."
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = false
+file = "src/services/triage.py"
+lines = [27, 28, 29, 30, 31]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

@@ -1,0 +1,12 @@
+description = "A change wraps the webhook POST so a TransportError returns status 0 without a log, where it used to propagate to the retry queue; the failure is now invisible."
+mode = "diff"
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = false
+file = "src/webhooks/outbound.py"
+lines = [42, 43]
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

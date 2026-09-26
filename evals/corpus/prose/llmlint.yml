@@ -17,10 +17,11 @@ rules:
     files: { include: ["**/*.md"] }
     require_line_attribution: true
     description: |
-      Every performance or quality claim is backed by a number, a benchmark, or a
-      link in the same paragraph. False when the text makes an unsupported
-      superlative claim such as "blazing fast", "best-in-class", or "the most
-      reliable".
+      Every performance or quality claim is backed, in the same paragraph, by a
+      number, benchmark, or link that measures the claimed property itself. False
+      when a claim such as "blazing fast", "best-in-class", or "the most
+      reliable" has no such evidence, or only evidence of something else (for
+      example star counts cited for reliability).
 
   - name: examples_match_prose
     files: { include: ["**/*.md"] }
@@ -29,3 +30,21 @@ rules:
       Every command in a code block does what the sentence introducing it says:
       the same subcommand, flags, and file names. False when the prose and the
       command it introduces disagree.
+
+  - name: terms_are_used_consistently
+    files: { include: ["**/*.md"] }
+    require_line_attribution: true
+    description: |
+      Each concept in a document is referred to by one name throughout. False
+      when the same concept is called by two different names in one document —
+      for example "workspace" in one section and "project" in another for the
+      same thing — so a reader could take them for two different things.
+
+  - name: warnings_precede_destructive_steps
+    files: { include: ["**/*.md"] }
+    require_line_attribution: true
+    description: |
+      Every step or command that deletes data or cannot be undone — dropping a
+      table, deleting a bucket, force-pushing, purging a queue — is preceded or
+      accompanied by a warning that says what will be lost. False when such a
+      step appears with no warning before it or in it.

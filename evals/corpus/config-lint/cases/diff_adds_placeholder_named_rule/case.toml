@@ -1,0 +1,16 @@
+description = "A change appends a rule named foo to five well-named rules."
+mode = "diff"
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = false
+file = "team/llmlint.yml"
+lines = [37]
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true

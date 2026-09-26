@@ -1,0 +1,15 @@
+description = "A one-clause check restated as its inverse and paraphrased again."
+
+[[expect]]
+rule = "description_and_relevance_are_concise"
+holds = false
+file = "team/llmlint.yml"
+lines = [7, 8, 9, 10]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true

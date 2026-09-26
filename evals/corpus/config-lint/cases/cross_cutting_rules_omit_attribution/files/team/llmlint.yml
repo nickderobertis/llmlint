@@ -1,0 +1,21 @@
+version: 1
+rules:
+  - name: errors_carry_context
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every error propagated from a filesystem or network call is wrapped
+      with context naming the failed operation. False when such an error is
+      propagated with a bare `?`.
+
+  - name: cli_flags_documented_in_readme
+    files: { include: ["src/cli.rs", "README.md"] }
+    description: |
+      Every command-line flag defined in `src/cli.rs` is documented in
+      `README.md`.
+
+  - name: migrations_are_reversible
+    files: { include: ["migrations/**/*.sql"] }
+    description: |
+      Every schema migration has a matching down migration that restores the
+      previous schema.

@@ -1,0 +1,75 @@
+version: 1
+rules:
+  - name: errors_carry_context
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every error propagated from a filesystem or network call is wrapped
+      with context naming the failed operation. False when such an error is
+      propagated with a bare `?`.
+
+  - name: library_code_avoids_unwrap
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      No `unwrap()` or `expect()` call appears outside a `#[cfg(test)]` module.
+
+  - name: sql_uses_bound_parameters
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every SQL query passes user-supplied values as bound parameters, never
+      interpolated into the query string with f-strings, `%`, or `.format()`.
+
+  - name: http_calls_set_timeouts
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every outbound HTTP request passes an explicit `timeout` argument.
+
+  - name: migrations_are_reversible
+    files: { include: ["migrations/**/*.sql"] }
+    description: |
+      Every schema migration has a matching down migration that restores the
+      previous schema.
+
+  - name: public_items_documented
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every `pub` function, struct, and enum has a `///` doc comment.
+
+  - name: react_props_are_typed
+    files: { include: ["web/src/**/*.tsx"] }
+    require_line_attribution: true
+    description: |
+      Every React component declares its props with a named TypeScript type or
+      interface, never `any`.
+
+  - name: logs_exclude_secrets
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    # config-lint reviewed: this description is clear and yields a verdict.
+    description: |
+      Secrets and logging. Logging tokens is discouraged, and passwords in
+      messages should be avoided where it matters.
+
+  - name: route_handlers_check_auth
+    files: { include: ["src/**/*.py"] }
+    relevance: the file defines an HTTP route handler
+    require_line_attribution: true
+    description: |
+      Every HTTP route handler verifies the caller is authenticated before it
+      reads the request body.
+
+  - name: feature_flags_have_owners
+    files: { include: ["config/flags/*.yml"] }
+    require_line_attribution: true
+    description: |
+      Every feature flag entry declares an `owner` key naming a team.
+
+  - name: cli_flags_documented_in_readme
+    files: { include: ["src/cli.rs", "README.md"] }
+    description: |
+      Every command-line flag defined in `src/cli.rs` is documented in
+      `README.md`.

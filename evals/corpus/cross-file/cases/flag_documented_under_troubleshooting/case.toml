@@ -1,0 +1,5 @@
+description = "Near-miss: --dry-run is missing from the Options list but documented in prose under Troubleshooting."
+
+[[expect]]
+rule = "cli_flags_documented_in_readme"
+holds = true

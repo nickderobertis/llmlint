@@ -1,0 +1,46 @@
+# Eval suite: Python coding conventions judged per file (and per diff). Each rule
+# is semantic — a regex or ruff cannot decide it — and phrased as a positive
+# invariant; each is line-localizable, so violations must cite file + line (the
+# eval scores the line).
+version: 1
+agents:
+  default:
+    harness: claude-code
+rules:
+  - name: docstrings_match_behavior
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every docstring describes what its function, method, or class actually
+      does: the stated return values, raised exceptions, units, ordering, and
+      side effects match the code, including behavior delegated to helpers in
+      the same file. False when a docstring claims behavior the code contradicts.
+
+  - name: exceptions_are_handled_or_reported
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every caught exception is handled deliberately: it is recovered from in a
+      way the surrounding code documents, re-raised (with or without added
+      context), or logged with enough detail to diagnose it. False when an
+      `except` block (or `contextlib.suppress`) silently discards the error or
+      replaces it with a fallback value that hides a real failure from the caller.
+
+  - name: log_messages_are_actionable
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every log call at warning level or above (`warning`, `error`,
+      `exception`, `critical`) states which operation failed and includes the
+      identifier of the affected entity when one is in scope. False when such a
+      message is vague ("something went wrong", "error", "failed") or omits an
+      entity identifier available at that point.
+
+  - name: services_do_not_build_sql
+    files: { include: ["src/services/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Modules under `src/services/` reach the database only through functions
+      in `src/repositories/`. False when a service module writes, composes, or
+      executes SQL itself, including building a SQL fragment it passes to a
+      repository helper.

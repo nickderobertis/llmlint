@@ -1,0 +1,11 @@
+description = "A casual \"start fresh\" section runs TRUNCATE on the events table with no warning that every event row is lost."
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = false
+file = "docs/analytics-local.md"
+lines = [16, 19]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

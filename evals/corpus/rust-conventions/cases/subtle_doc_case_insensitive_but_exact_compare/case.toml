@@ -1,0 +1,11 @@
+description = "Doc promises a case-insensitive domain match (with an example); the stored set is lowercased but the email's domain is looked up as-is."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/allowlist.rs"
+lines = [15, 16, 19]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

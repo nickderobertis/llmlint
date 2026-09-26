@@ -1,0 +1,15 @@
+description = "In a ~210-line checkout service that otherwise delegates to repositories, reserve_stock() runs its own SELECT ... FOR UPDATE on the connection."
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = false
+file = "src/services/checkout.py"
+lines = [143, 144, 145, 146, 147]
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

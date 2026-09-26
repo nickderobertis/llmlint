@@ -1,0 +1,21 @@
+version: 1
+rules:
+  - name: errors_carry_context
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every error propagated from a filesystem or network call is wrapped
+      with context naming the failed operation. False when such an error is
+      propagated with a bare `?`.
+
+  - name: public_items_documented
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every `pub` function, struct, and enum has a `///` doc comment.
+
+  - name: library_code_avoids_unwrap
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      No `unwrap()` or `expect()` call appears outside a `#[cfg(test)]` module.

@@ -1,0 +1,16 @@
+version: 1
+rules:
+  - name: functions_have_type_hints
+    files: { include: ["**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every function signature annotates its parameters and return type.
+      Non-Python files are exempt.
+
+  - name: errors_carry_context
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every error propagated from a filesystem or network call is wrapped
+      with context naming the failed operation. False when such an error is
+      propagated with a bare `?`.

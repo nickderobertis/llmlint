@@ -1,0 +1,13 @@
+description = "Near-miss: a service calls repository functions named query_*/select_*/execute_* and shows \"Select a ...\" UI copy, but writes no SQL itself (the SQL lives in the repository)."
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

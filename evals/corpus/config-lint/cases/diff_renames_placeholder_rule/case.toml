@@ -1,0 +1,14 @@
+description = "A change renames rule1 to public_items_documented; every rule is now well named."
+mode = "diff"
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true

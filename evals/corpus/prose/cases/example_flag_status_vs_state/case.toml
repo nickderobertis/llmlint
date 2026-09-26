@@ -1,0 +1,11 @@
+description = "The prose says to add `--status failed`; the command passes `--state failed`."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "README.md"
+lines = [13, 16]
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true

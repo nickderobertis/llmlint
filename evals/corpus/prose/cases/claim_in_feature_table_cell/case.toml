@@ -1,0 +1,11 @@
+description = "In a feature table where other rows carry numbers, one cell claims \"industry-leading inbox placement\" with nothing behind it."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "README.md"
+lines = [12]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

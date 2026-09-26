@@ -1,0 +1,16 @@
+description = "A change swaps a **/*.go files glob for a 'the file is a Go source file' relevance."
+mode = "diff"
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = false
+file = "team/llmlint.yml"
+lines = [11]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true

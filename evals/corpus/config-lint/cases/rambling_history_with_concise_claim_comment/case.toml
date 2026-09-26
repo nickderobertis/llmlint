@@ -1,0 +1,19 @@
+description = "Description buries a one-line check under incident narrative; a comment claims it is concise."
+
+[[expect]]
+rule = "description_and_relevance_are_concise"
+holds = false
+file = "team/llmlint.yml"
+lines = [8, 9, 10, 11, 12]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true
+
+[[expect]]
+rule = "relevance_scopes_conditional_rules"
+holds = true

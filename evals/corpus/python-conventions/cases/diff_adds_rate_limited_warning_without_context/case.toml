@@ -1,0 +1,16 @@
+description = "A change adds a 429 branch whose warning is just \"rate limited\", naming neither the CRM contacts fetch nor the account id in scope."
+mode = "diff"
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = false
+file = "src/integrations/crm_contacts.py"
+lines = [26]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

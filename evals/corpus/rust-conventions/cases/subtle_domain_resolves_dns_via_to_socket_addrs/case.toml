@@ -1,0 +1,11 @@
+description = "Domain module calls ToSocketAddrs::to_socket_addrs on a host name, which performs a blocking DNS lookup (network access) behind a trait method."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/endpoint.rs"
+lines = [29, 30, 31]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

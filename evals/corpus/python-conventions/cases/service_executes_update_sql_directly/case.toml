@@ -1,0 +1,15 @@
+description = "pause() in a service that otherwise uses the repository issues its own UPDATE statement on the connection."
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = false
+file = "src/services/subscriptions.py"
+lines = [47, 48, 49, 50, 51]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

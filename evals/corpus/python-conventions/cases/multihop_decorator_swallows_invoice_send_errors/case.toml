@@ -1,0 +1,11 @@
+description = "Multi-hop: send_invoice() looks unguarded, but its same-file @best_effort decorator catches every Exception and returns None with no log, so failed invoice emails vanish."
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = false
+file = "src/billing/invoice_mailer.py"
+lines = [23, 24]
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

@@ -1,0 +1,7 @@
+version: 1
+rules:
+  - name: modules_declare_owner
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      The module docstring, if present, names the team that owns the module.

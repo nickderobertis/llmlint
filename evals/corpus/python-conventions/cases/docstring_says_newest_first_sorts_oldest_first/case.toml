@@ -1,0 +1,11 @@
+description = "recent_events() documents newest-first but sorts ascending (and so truncates away the newest)."
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = false
+file = "src/activity_feed.py"
+lines = [31, 39, 40]
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

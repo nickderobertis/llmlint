@@ -1,0 +1,16 @@
+description = "A change adds transfer_ownership() to a repository-backed service, but it issues its own UPDATE ... CASE statement on the connection."
+mode = "diff"
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = false
+file = "src/services/team_membership.py"
+lines = [44, 45, 46, 47, 48, 49]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

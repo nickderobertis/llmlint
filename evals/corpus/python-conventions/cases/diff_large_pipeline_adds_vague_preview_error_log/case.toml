@@ -1,0 +1,12 @@
+description = "In a ~220-line upload pipeline, a change adds error handling to preview extraction whose log line is just \"Error: %s\" with no operation or upload id."
+mode = "diff"
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = false
+file = "src/uploads/pipeline.py"
+lines = [174]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

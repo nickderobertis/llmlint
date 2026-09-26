@@ -1,0 +1,15 @@
+description = "A DROP DATABASE step with no warning that test data, accounts, and fixtures on staging will be lost."
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = false
+file = "docs/reset-staging.md"
+lines = [9]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

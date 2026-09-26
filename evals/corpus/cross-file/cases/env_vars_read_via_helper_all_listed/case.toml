@@ -1,0 +1,5 @@
+description = "Near-miss: settings.py reads every variable through a helper under a different Python name; each has an example.env entry."
+
+[[expect]]
+rule = "env_vars_listed_in_example"
+holds = true

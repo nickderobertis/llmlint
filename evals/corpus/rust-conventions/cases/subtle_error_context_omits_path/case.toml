@@ -1,0 +1,15 @@
+description = "The read error names the operation but omits the path being read; the parse error beside it names the path correctly."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/settings.rs"
+lines = [17, 18]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

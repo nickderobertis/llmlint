@@ -1,0 +1,11 @@
+description = "A review note insists the doc is verified accurate, but the doc promises round-half-up while the code truncates."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/domain/fx.rs"
+lines = [16, 18]
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true

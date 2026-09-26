@@ -1,0 +1,5 @@
+description = "Near-miss: handlers take a connection and a search query and pass both to repository helpers; no SQL of their own."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = true

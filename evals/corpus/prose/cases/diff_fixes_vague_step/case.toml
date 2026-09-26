@@ -1,0 +1,10 @@
+description = "A change fixes a vague \"configure appropriately\" step present in base by naming the exact variable, file, and value."
+mode = "diff"
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true

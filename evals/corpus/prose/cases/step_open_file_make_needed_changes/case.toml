@@ -1,0 +1,11 @@
+description = "A step names the exact file but not what to change in it (\"make whatever edits your environment needs\")."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = false
+file = "docs/setup.md"
+lines = [11]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

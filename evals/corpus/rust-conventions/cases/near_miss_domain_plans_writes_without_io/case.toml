@@ -1,0 +1,13 @@
+description = "Domain module talks about files and paths (plans writes, inspects extensions) but only manipulates values; pure, every rule holds."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

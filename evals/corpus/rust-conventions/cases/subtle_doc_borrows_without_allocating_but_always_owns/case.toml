@@ -1,0 +1,11 @@
+description = "Doc says an already-canonical SKU is borrowed without allocating; the code always returns Cow::Owned."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/normalize.rs"
+lines = [12, 13, 15]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

@@ -1,0 +1,15 @@
+description = "A warning box sits on a harmless service stop; the later `s3 rb --force` that deletes every archived object has none."
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = false
+file = "docs/decommission.md"
+lines = [16]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

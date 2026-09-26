@@ -1,0 +1,7 @@
+description = "The prose promises the last 20 lines; the command prints the last 200."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "docs/debugging.md"
+lines = [8, 11]

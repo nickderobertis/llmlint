@@ -1,0 +1,19 @@
+description = "One rule of twelve tells the judge non-Dockerfiles are exempt, which its files glob already guarantees."
+
+[[expect]]
+rule = "description_omits_already_excluded_situations"
+holds = false
+file = "team/llmlint.yml"
+lines = [66, 67]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true
+
+[[expect]]
+rule = "relevance_scopes_without_deciding_the_verdict"
+holds = true

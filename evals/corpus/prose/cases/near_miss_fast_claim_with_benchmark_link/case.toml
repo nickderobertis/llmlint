@@ -1,0 +1,13 @@
+description = "Near-miss: \"fast\" and \"cheaper\" are each backed by numbers and a benchmark link in the same paragraph."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

@@ -1,0 +1,8 @@
+description = "A change edits only the command to `--closed-for 14d`; the unchanged sentence above it still says seven days / `7d`."
+mode = "diff"
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "docs/cleanup.md"
+lines = [8, 9, 12]

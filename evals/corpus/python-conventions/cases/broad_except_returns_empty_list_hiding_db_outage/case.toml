@@ -1,0 +1,11 @@
+description = "`except Exception: return []` around the invoices query turns a database outage into an empty (all-clear) overdue dashboard."
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = false
+file = "src/dashboards/overdue.py"
+lines = [28, 29]
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

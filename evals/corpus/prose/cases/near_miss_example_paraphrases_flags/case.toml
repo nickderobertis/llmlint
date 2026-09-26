@@ -1,0 +1,5 @@
+description = "Near-miss: prose paraphrases each flag's meaning (follow redirects, keep remote name, verbose extract) instead of naming it; every command matches."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

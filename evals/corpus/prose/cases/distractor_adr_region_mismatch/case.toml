@@ -1,0 +1,15 @@
+description = "Distractor-heavy 135-line ADR: the prose copies build output from the US bucket into the EU bucket; the sync command has source and destination swapped."
+
+[[expect]]
+rule = "examples_match_prose"
+holds = false
+file = "docs/adr/0014-move-assets-to-eu-bucket.md"
+lines = [89, 90, 93]
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

@@ -1,0 +1,12 @@
+description = "A change deletes the numbers and benchmark link, leaving the unchanged \"fastest streaming JSON parser\" claim unsupported."
+mode = "diff"
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "README.md"
+lines = [7]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

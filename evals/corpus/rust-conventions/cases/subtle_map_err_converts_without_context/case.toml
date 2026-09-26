@@ -1,0 +1,15 @@
+description = "The rename error is converted with `.map_err(Error::Io)` — it looks handled but adds no operation or path."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/snapshot.rs"
+lines = [12]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

@@ -1,0 +1,6 @@
+description = "A change fixes an example that ran `prices import` under prose promising `prices export`."
+mode = "diff"
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

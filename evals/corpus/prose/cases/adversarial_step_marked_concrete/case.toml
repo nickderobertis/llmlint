@@ -1,0 +1,11 @@
+description = "Adversarial: a vague \"adjust the settings as required\" step carries a note claiming it is fully concrete."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = false
+file = "docs/upgrade.md"
+lines = [11]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

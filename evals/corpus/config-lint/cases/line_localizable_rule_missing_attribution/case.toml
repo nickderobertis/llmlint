@@ -1,0 +1,19 @@
+description = "A rule whose every violation is a concrete call omits require_line_attribution."
+
+[[expect]]
+rule = "line_localizable_rules_require_attribution"
+holds = false
+file = "team/llmlint.yml"
+lines = [3, 4, 5, 6]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true

@@ -1,0 +1,5 @@
+description = "refund_order is exported in __all__ but tests only mention it in a comment and call the similarly named refund_quote."
+
+[[expect]]
+rule = "api_exports_are_tested"
+holds = false

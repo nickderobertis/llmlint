@@ -1,0 +1,11 @@
+description = "A failed SMTP send is logged as \"Something went wrong\" although the message id and recipient are in scope."
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = false
+file = "src/notifications/email_sender.py"
+lines = [36]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

@@ -1,0 +1,7 @@
+description = "A step force-pushes to `main` (rewriting shared history) with no warning — the prose says \"push the rebased branch\"."
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = false
+file = "CONTRIBUTING.md"
+lines = [11]

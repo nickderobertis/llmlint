@@ -1,0 +1,14 @@
+description = "Near-miss change: an inline UPDATE is REMOVED from the service and moved into a repository function; the diff shows SQL only as deleted service lines and added repository lines."
+mode = "diff"
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

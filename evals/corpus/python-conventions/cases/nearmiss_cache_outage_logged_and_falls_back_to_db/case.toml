@@ -1,0 +1,13 @@
+description = "Near-miss: Redis ConnectionError is caught and replaced by a database read, but it is logged with the SKU and the fallback is the documented design."
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

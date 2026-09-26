@@ -1,0 +1,9 @@
+version: 1
+rules:
+  - name: uploaded_paths_stay_in_root
+    files: { include: ["src/**/*.py"] }
+    relevance: the file builds a filesystem path from a request parameter
+    require_line_attribution: true
+    description: |
+      Every path built from request input is resolved and checked to stay
+      under `UPLOAD_ROOT` before the file is opened.

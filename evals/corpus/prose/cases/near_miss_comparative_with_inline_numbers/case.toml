@@ -1,0 +1,5 @@
+description = "Near-miss: \"much faster\", \"more reliable\", \"smaller\" claims each carry their before/after numbers in the same paragraph."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true

@@ -1,0 +1,10 @@
+description = "A change extracts a shared load_pairs helper; the read error keeps its operation and path, and the callers' plain delegation needs no extra context. Every rule holds."
+mode = "diff"
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

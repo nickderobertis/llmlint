@@ -1,0 +1,11 @@
+description = "A real `llmlint: ignore` directive sits above a bare `?` on fs::read_to_string, but it suppresses names_state_intent, not errors_carry_context."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/templates.rs"
+lines = [10]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

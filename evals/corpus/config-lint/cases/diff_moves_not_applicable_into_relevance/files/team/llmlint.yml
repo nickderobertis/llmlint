@@ -1,0 +1,23 @@
+version: 1
+rules:
+  - name: errors_carry_context
+    files: { include: ["src/**/*.rs"] }
+    require_line_attribution: true
+    description: |
+      Every error propagated from a filesystem or network call is wrapped
+      with context naming the failed operation. False when such an error is
+      propagated with a bare `?`.
+
+  - name: sql_uses_bound_parameters
+    files: { include: ["src/**/*.py"] }
+    relevance: the file executes SQL queries
+    require_line_attribution: true
+    description: |
+      Every SQL query passes user input as bound parameters rather than string
+      formatting.
+
+  - name: http_calls_set_timeouts
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every outbound HTTP request passes an explicit `timeout` argument.

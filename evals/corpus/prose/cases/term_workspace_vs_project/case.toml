@@ -1,0 +1,11 @@
+description = "The container is a \"workspace\" throughout except the CLI section, which calls the same thing a \"project\"."
+
+[[expect]]
+rule = "terms_are_used_consistently"
+holds = false
+file = "docs/getting-started.md"
+lines = [20, 21, 24, 27]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

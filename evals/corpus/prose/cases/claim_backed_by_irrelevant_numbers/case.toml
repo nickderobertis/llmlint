@@ -1,0 +1,11 @@
+description = "A \"most reliable\" claim sits beside numbers (stars, contributors, PRs) that say nothing about reliability."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "README.md"
+lines = [8, 9]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

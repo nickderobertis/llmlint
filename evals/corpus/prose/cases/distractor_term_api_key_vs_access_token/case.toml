@@ -1,0 +1,15 @@
+description = "Distractor-heavy API auth page says \"API key\" throughout, but the rotation section calls the same credential an \"access token\"."
+
+[[expect]]
+rule = "terms_are_used_consistently"
+holds = false
+file = "docs/api/authentication.md"
+lines = [86, 89, 90, 93]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = true

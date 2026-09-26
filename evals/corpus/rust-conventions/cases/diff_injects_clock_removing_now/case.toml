@@ -1,0 +1,14 @@
+description = "The base read SystemTime::now() in a domain fn; the change injects `now` as a parameter instead, so the module is pure."
+mode = "diff"
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

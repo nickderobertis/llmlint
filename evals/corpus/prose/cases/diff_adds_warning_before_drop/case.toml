@@ -1,0 +1,10 @@
+description = "A change fixes a DROP DATABASE step present in base by adding a warning, before the list, that names what is lost."
+mode = "diff"
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = true
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

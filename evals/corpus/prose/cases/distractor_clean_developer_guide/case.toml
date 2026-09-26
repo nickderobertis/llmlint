@@ -1,0 +1,21 @@
+description = "Distractor-heavy clean developer guide: concrete steps, matching examples, warned deletions, one number-backed timing claim, consistent terms."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = true
+
+[[expect]]
+rule = "terms_are_used_consistently"
+holds = true

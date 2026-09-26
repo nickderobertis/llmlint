@@ -1,0 +1,9 @@
+description = "Domain functions named read_feed / download_path / write_feed / sync_entries sound like I/O but only transform values; pure, every rule holds."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

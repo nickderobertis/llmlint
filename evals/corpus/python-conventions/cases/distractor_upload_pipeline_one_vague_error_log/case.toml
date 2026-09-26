@@ -1,0 +1,11 @@
+description = "In a ~220-line upload pipeline full of contextual logs, the preview-extraction failure is logged as \"Error: %s\" with no operation or upload id."
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = false
+file = "src/uploads/pipeline.py"
+lines = [174]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

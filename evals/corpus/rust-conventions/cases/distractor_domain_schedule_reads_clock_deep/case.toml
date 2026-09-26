@@ -1,0 +1,11 @@
+description = "217-line pure scheduling module (every fn takes `now`) with one helper deep in the file that reads SystemTime::now() itself."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/schedule.rs"
+lines = [172, 173, 174]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

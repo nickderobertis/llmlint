@@ -1,0 +1,11 @@
+description = "In a ~230-line reconciliation module, `except ProviderError: continue` drops a payout from every bucket, so the report can claim full reconciliation over a provider failure."
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = false
+file = "src/finance/reconcile.py"
+lines = [188, 189]
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

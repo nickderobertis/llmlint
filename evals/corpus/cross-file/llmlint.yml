@@ -19,3 +19,15 @@ rules:
       HTTP handlers under `src/handlers/` reach the database only through
       functions defined in `src/repository.py`. False when a handler opens a
       database connection or executes SQL itself.
+
+  - name: env_vars_listed_in_example
+    files: { include: ["src/settings.py", "config/example.env"] }
+    description: |
+      Every environment variable that `src/settings.py` reads has an entry in
+      `config/example.env`.
+
+  - name: api_exports_are_tested
+    files: { include: ["src/api/__init__.py", "tests/**/*.py"] }
+    description: |
+      Every name listed in `__all__` in `src/api/__init__.py` is called by at
+      least one test under `tests/`.

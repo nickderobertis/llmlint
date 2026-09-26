@@ -1,0 +1,15 @@
+description = "Doc promises alphabetically sorted, run-stable output; the code collects straight from a HashMap with no sort."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/domain/tally.rs"
+lines = [12, 13, 15, 19]
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

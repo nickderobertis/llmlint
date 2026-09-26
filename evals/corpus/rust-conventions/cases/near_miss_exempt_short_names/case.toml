@@ -1,0 +1,9 @@
+description = "Only short names are loop indices and one-line closure params (exempt); every other name is descriptive. Every rule holds."
+
+[[expect]]
+rule = "names_state_intent"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

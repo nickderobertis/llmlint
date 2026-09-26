@@ -1,0 +1,9 @@
+description = "Near-miss: \"workspace\" and \"project\" both appear but are defined as two distinct, nested concepts and used that way."
+
+[[expect]]
+rule = "terms_are_used_consistently"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

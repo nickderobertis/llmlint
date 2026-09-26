@@ -1,0 +1,11 @@
+description = "The doc defines the cluster member as a \"broker\", then the removal section calls the same thing a \"node\"."
+
+[[expect]]
+rule = "terms_are_used_consistently"
+holds = false
+file = "docs/cluster.md"
+lines = [18, 20, 21, 27]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

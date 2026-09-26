@@ -1,0 +1,12 @@
+version: 1
+rules:
+  - name: library_code_avoids_unwrap
+    files: { include: ["src/**/*.rs"] }
+    description: |
+      No `unwrap()` or `expect()` call appears outside a `#[cfg(test)]` module.
+
+  - name: cli_flags_documented_in_readme
+    files: { include: ["src/cli.rs", "README.md"] }
+    description: |
+      Every command-line flag defined in `src/cli.rs` is documented in
+      `README.md`.

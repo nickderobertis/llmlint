@@ -1,0 +1,21 @@
+description = "Near-miss: a long description whose length is concrete examples that define the verdict; every rule holds."
+
+[[expect]]
+rule = "description_and_relevance_are_concise"
+holds = true
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true
+
+[[expect]]
+rule = "line_localizable_rules_require_attribution"
+holds = true

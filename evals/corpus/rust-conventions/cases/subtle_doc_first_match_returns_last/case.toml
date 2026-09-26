@@ -1,0 +1,11 @@
+description = "Doc promises the first matching route in insertion order; the code filters and takes `.last()`."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/routes.rs"
+lines = [15, 20, 21, 26]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

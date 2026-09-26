@@ -1,0 +1,11 @@
+description = "Multi-hop: \"Do the same for the other services that use it\" never names which services."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = false
+file = "docs/rotate-secrets.md"
+lines = [12]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

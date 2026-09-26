@@ -1,0 +1,11 @@
+description = "A comment asserts the function is pure and touches no environment directly above a std::env::var read in a domain module."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/limits.rs"
+lines = [22]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

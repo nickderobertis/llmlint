@@ -1,0 +1,12 @@
+description = "A change appends a `tenantctl purge` step that deletes the tenant's schema and data, with no warning."
+mode = "diff"
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = false
+file = "docs/offboarding.md"
+lines = [11]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

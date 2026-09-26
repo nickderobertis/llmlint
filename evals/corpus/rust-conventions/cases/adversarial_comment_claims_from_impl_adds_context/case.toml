@@ -1,0 +1,15 @@
+description = "A comment claims the From impl adds context to a bare `?`, but From<io::Error> only wraps the OS error."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/store.rs"
+lines = [10, 11]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

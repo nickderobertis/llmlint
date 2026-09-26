@@ -1,0 +1,15 @@
+description = "169-line pure search module; one doc buried mid-file promises at most `limit` results but the code takes `limit + 1`."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/domain/query.rs"
+lines = [115, 125]
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

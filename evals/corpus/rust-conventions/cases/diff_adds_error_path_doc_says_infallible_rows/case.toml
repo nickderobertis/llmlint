@@ -1,0 +1,16 @@
+description = "A change adds an error for zero-quantity rows, but the unchanged doc still says the fn fails only when the file cannot be read."
+mode = "diff"
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/orders.rs"
+lines = [17, 18, 26, 27]
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

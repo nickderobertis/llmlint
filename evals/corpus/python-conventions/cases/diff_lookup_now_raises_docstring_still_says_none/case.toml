@@ -1,0 +1,12 @@
+description = "A change makes find_by_email() raise UserNotFound instead of returning None, leaving the docstring's \"Returns None\" (and missing Raises entry) stale."
+mode = "diff"
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = false
+file = "src/users/directory.py"
+lines = [37, 39, 40, 45, 46]
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

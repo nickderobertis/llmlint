@@ -1,0 +1,16 @@
+description = "A change to a 280-line inventory module adds a safety_csv path and a load_safety_stock fn whose integer parse is propagated with a bare `?`."
+mode = "diff"
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/inventory.rs"
+lines = [225]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

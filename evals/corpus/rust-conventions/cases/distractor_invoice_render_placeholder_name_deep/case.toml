@@ -1,0 +1,11 @@
+description = "198-line invoice renderer with descriptive names throughout except one `tmp` local deep in render_summary."
+
+[[expect]]
+rule = "names_state_intent"
+holds = false
+file = "src/invoice.rs"
+lines = [165, 171]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

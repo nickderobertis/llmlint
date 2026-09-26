@@ -1,0 +1,12 @@
+description = "A rename from \"project\" to \"workspace\" updates the intro and setup but leaves \"project\" in the unchanged Members and Billing sections."
+mode = "diff"
+
+[[expect]]
+rule = "terms_are_used_consistently"
+holds = false
+file = "docs/getting-started.md"
+lines = [4, 7, 10, 16, 20]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true

@@ -1,0 +1,17 @@
+description = "261-line ledger: a doc near the top claims an empty entry is unbalanced (0 == 0 balances), and a `stuff` local near the bottom; errors are all contextual."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/ledger.rs"
+lines = [56, 57, 60]
+
+[[expect]]
+rule = "names_state_intent"
+holds = false
+file = "src/ledger.rs"
+lines = [234, 237, 240]
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true

@@ -1,0 +1,15 @@
+description = "Doc calls total_cents a read-only query that leaves the lines as they were; the code retains (drops) zero-quantity lines."
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = false
+file = "src/domain/cart.rs"
+lines = [25, 26, 27, 28]
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

@@ -1,0 +1,13 @@
+description = "Domain expiry logic takes `now: SystemTime` as a parameter (clock injected); pure, every rule holds."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

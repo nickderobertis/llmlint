@@ -1,0 +1,17 @@
+description = "Near-miss: cross-file and whole-file rules correctly omit require_line_attribution; a line-level rule sets it."
+
+[[expect]]
+rule = "line_localizable_rules_require_attribution"
+holds = true
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "description_yields_clear_verdict"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true

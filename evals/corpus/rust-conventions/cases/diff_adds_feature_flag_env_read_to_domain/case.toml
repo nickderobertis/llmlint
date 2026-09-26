@@ -1,0 +1,12 @@
+description = "A change adds a kill switch to a pure domain fn by reading an environment variable inline."
+mode = "diff"
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/shipping.rs"
+lines = [22]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

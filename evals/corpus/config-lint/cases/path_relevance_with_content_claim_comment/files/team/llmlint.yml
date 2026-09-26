@@ -1,0 +1,22 @@
+version: 1
+rules:
+  - name: base_images_are_pinned
+    files: { include: ["**/Dockerfile"] }
+    require_line_attribution: true
+    description: |
+      Every `FROM` instruction pins its base image to a version tag or digest,
+      never `latest` or an untagged name.
+
+  # relevance below is content-based, so it belongs in relevance, not files.
+  - name: go_errors_are_wrapped
+    relevance: the file's name ends in `.go` and is not a `_test.go` file
+    require_line_attribution: true
+    description: |
+      Every returned error is wrapped with `fmt.Errorf` and `%w`, naming the
+      operation that failed.
+
+  - name: shell_scripts_avoid_eval
+    files: { include: ["scripts/**/*.sh"] }
+    require_line_attribution: true
+    description: |
+      No shell script invokes `eval`.

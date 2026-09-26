@@ -1,0 +1,15 @@
+description = "reserve() documents ValueError on insufficient stock but raises KeyError."
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = false
+file = "src/inventory.py"
+lines = [29, 30, 34]
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

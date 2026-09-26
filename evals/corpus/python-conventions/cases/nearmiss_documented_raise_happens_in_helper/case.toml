@@ -1,0 +1,9 @@
+description = "Near-miss: verify_webhook() documents InvalidSignature/StaleWebhook, which are raised by same-file helpers, not in its own body."
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

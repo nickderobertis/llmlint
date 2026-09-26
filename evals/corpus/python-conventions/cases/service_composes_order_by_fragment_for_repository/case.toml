@@ -1,0 +1,15 @@
+description = "A search service maps sort keys to column expressions and composes an ORDER BY fragment (\"lower(title) DESC, product_id\") that it passes to the repository."
+
+[[expect]]
+rule = "services_do_not_build_sql"
+holds = false
+file = "src/services/catalog_search.py"
+lines = [12, 34, 38]
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true

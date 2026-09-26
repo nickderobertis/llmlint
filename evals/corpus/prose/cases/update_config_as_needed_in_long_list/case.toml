@@ -1,0 +1,11 @@
+description = "Step 9 of a twelve-step concrete procedure just says \"Update the config as needed.\""
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = false
+file = "docs/cutover.md"
+lines = [17]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

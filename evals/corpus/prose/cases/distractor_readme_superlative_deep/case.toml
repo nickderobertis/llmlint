@@ -1,0 +1,15 @@
+description = "Distractor-heavy 225-line README: every claim is backed except one \"most efficient storage design available\" deep in Architecture."
+
+[[expect]]
+rule = "claims_are_substantiated"
+holds = false
+file = "README.md"
+lines = [151, 152]
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = true
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true

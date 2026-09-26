@@ -1,0 +1,13 @@
+description = "Bare `?` only on a business-rule error (not fs/network/parse); the one file read is wrapped with its path. Every rule holds."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

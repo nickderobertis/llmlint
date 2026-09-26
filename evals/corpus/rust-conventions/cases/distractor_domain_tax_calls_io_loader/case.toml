@@ -1,0 +1,11 @@
+description = "128-line pure tax module; one convenience fn deep in the file calls crate::io::rates::load_rate_table, which reads a file (I/O one hop away)."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/tax.rs"
+lines = [96, 97]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

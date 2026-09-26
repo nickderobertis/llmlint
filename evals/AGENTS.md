@@ -73,6 +73,9 @@ exit 2) or judging planted mistakes. git ignores it, so the corpus stays tracked
 - **Cross-file rules** (`cross-file` suite) measure routing: under a Jev cascade
   they stay on the harness.
 - Case names say what is planted; `description` restates it for the report.
+- The loader rejects a malformed case up front (a `file` missing from `files/`, a
+  line outside the file, lines on a holding rule), so a label typo is a corpus
+  error, never a silent line miss.
 
 ## Metrics (per arm; also per suite)
 

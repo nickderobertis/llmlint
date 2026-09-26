@@ -1,0 +1,11 @@
+description = "Chrono-based billing math is pure everywhere except trial_active, which reads the clock via Utc::now()."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/billing.rs"
+lines = [39, 40]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

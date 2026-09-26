@@ -1,0 +1,7 @@
+description = "Five order handlers; four go through the repository, cancel_order runs an UPDATE through its own cursor."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = false
+file = "src/handlers/orders.py"
+lines = [43, 44, 45, 46, 47, 48]

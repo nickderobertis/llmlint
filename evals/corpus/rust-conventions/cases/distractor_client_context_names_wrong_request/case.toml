@@ -1,0 +1,15 @@
+description = "144-line HTTP client where every request error names its URL, except fetch_inventory, whose copy-pasted context names the prices endpoint instead of the inventory URL it requested."
+
+[[expect]]
+rule = "errors_carry_context"
+holds = false
+file = "src/client.rs"
+lines = [102]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

@@ -1,0 +1,23 @@
+version: 1
+rules:
+  - name: sql_uses_bound_parameters
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      Every SQL query passes user-supplied values as bound parameters, never
+      interpolated into the query string with f-strings, `%`, or `.format()`.
+
+  - name: route_handlers_check_auth
+    files: { include: ["src/**/*.py"] }
+    relevance: the file defines an HTTP route handler
+    require_line_attribution: true
+    description: |
+      Every HTTP route handler verifies the caller is authenticated before it
+      reads the request body.
+
+  - name: logs_exclude_secrets
+    files: { include: ["src/**/*.py"] }
+    require_line_attribution: true
+    description: |
+      No log call includes a password, API key, access token, or session
+      cookie value in its message or arguments.

@@ -1,0 +1,13 @@
+description = "Near-miss: a broad `except Exception` that logs with context and re-raises, plus a documented suppress(FileNotFoundError) on idempotent temp-file cleanup."
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = true
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true
+
+[[expect]]
+rule = "docstrings_match_behavior"
+holds = true

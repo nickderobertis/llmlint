@@ -1,0 +1,15 @@
+description = "Distractor-heavy 200-line on-call runbook: five procedures of concrete steps, one \"restart the dependent services appropriately\" deep in the fourth."
+
+[[expect]]
+rule = "steps_are_actionable"
+holds = false
+file = "runbooks/checkout.md"
+lines = [129]
+
+[[expect]]
+rule = "examples_match_prose"
+holds = true
+
+[[expect]]
+rule = "warnings_precede_destructive_steps"
+holds = true

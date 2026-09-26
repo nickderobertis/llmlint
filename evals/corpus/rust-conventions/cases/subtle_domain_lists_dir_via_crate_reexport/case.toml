@@ -1,0 +1,11 @@
+description = "Domain module lists a directory through crate::util::list_entries, a re-export of std::fs::read_dir (I/O hidden behind a crate alias)."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/assets.rs"
+lines = [1, 18, 19]
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

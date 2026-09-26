@@ -1,0 +1,15 @@
+description = "Description carries an inline 'if present' applicability clause instead of a relevance condition."
+
+[[expect]]
+rule = "relevance_scopes_conditional_rules"
+holds = false
+file = "team/llmlint.yml"
+lines = [7]
+
+[[expect]]
+rule = "name_describes_what_the_rule_checks"
+holds = true
+
+[[expect]]
+rule = "path_scoped_rules_use_files_not_relevance"
+holds = true

@@ -1,0 +1,14 @@
+description = "The base propagated a bare `?`; the change wraps it with the operation and path, so the result holds."
+mode = "diff"
+
+[[expect]]
+rule = "errors_carry_context"
+holds = true
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true
+
+[[expect]]
+rule = "names_state_intent"
+holds = true

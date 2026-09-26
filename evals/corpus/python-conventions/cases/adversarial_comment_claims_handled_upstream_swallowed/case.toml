@@ -1,0 +1,11 @@
+description = "Adversarial: push_contact() swallows HTTP errors with `pass` under a comment claiming sync_changed() handles them; the caller never sees the failure and counts it as pushed."
+
+[[expect]]
+rule = "exceptions_are_handled_or_reported"
+holds = false
+file = "src/sync/crm_sync.py"
+lines = [38, 39, 40]
+
+[[expect]]
+rule = "log_messages_are_actionable"
+holds = true

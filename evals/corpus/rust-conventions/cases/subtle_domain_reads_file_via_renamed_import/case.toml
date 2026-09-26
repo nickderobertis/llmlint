@@ -1,0 +1,11 @@
+description = "Domain module reads a file through `use std::fs::read_to_string as load_source`, so the call site never says `fs`."
+
+[[expect]]
+rule = "domain_modules_do_no_io"
+holds = false
+file = "src/domain/manifest.rs"
+lines = [1, 38]
+
+[[expect]]
+rule = "doc_comments_match_behavior"
+holds = true

@@ -1,0 +1,7 @@
+description = "The handler looks clean but calls a private helper in the handler module that executes SQL itself."
+
+[[expect]]
+rule = "handlers_use_repository_layer"
+holds = false
+file = "src/handlers/prices.py"
+lines = [7, 8, 9, 10, 11]
