@@ -69,7 +69,7 @@ pub struct ProgressView {
     mp: MultiProgress,
     header: ProgressBar,
     rules: HashMap<String, ProgressBar>,
-    total_runs: usize,
+    total_runs: Cell<usize>,
     done_runs: Cell<usize>,
 }
 
@@ -106,7 +106,7 @@ impl ProgressView {
             mp,
             header,
             rules,
-            total_runs,
+            total_runs: Cell::new(total_runs),
             done_runs: Cell::new(0),
         };
         if animate {
@@ -134,11 +134,20 @@ impl ProgressView {
     }
 
     /// Record that one judge call finished; bumps the header count.
+    /// Grow the expected call count mid-run (a cascade's escalations are only
+    /// known after its Jev pass).
+    pub fn add_runs(&self, n: usize) {
+        self.total_runs.set(self.total_runs.get() + n);
+        let done = self.done_runs.get();
+        self.header
+            .set_message(format!("{done}/{} judge calls", self.total_runs.get()));
+    }
+
     pub fn tick_run(&self) {
         let n = self.done_runs.get() + 1;
         self.done_runs.set(n);
         self.header
-            .set_message(format!("{n}/{} judge calls", self.total_runs));
+            .set_message(format!("{n}/{} judge calls", self.total_runs.get()));
         self.header.tick();
     }
 

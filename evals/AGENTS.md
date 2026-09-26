@@ -16,7 +16,12 @@ out of `just check` and the `Judge eval` workflow is not a required check.
 - `just eval [--arm harness|jev] [--suite S] [--repeats N] [--model M] [--baseline F]`
   — a paid arm: **harness** (real oneharness + claude-code, the default) or
   **jev** (every rule judged by TypeSafe's Jev via `LLMLINT_JUDGE=jev`; needs
-  `TYPESAFE_API_KEY`, costs fractions of a cent). Writes
+  `TYPESAFE_API_KEY`, costs fractions of a cent), or **cascade** (Jev first, the
+  uncertain band re-judged by the harness; needs both).
+- **Tuning the cascade band offline:** the `jev` arm's result file keeps each
+  item's `p_holds` (the report's per-file `scores`), so a band can be swept
+  against the harness baseline without another model call. The shipped default
+  [0.15, 0.90) is the narrowest band that met the recall bar on the corpus. Writes
   `evals/results/<ts>-<arm>.{json,md}` (gitignored); `--baseline` adds a delta
   column. Needs `oneharness` + an authenticated `claude` on PATH.
 - CI (`.github/workflows/eval.yml`): `selftest` on any `evals/`/`src/` change;

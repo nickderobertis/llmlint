@@ -52,6 +52,8 @@ pub const ENV_SETTINGS: &[(&str, &str)] = &[
     ("judge", "LLMLINT_JUDGE"),
     ("jev.model", "LLMLINT_JEV_MODEL"),
     ("jev.url", "LLMLINT_JEV_URL"),
+    ("jev.escalate_low", "LLMLINT_JEV_ESCALATE_LOW"),
+    ("jev.escalate_high", "LLMLINT_JEV_ESCALATE_HIGH"),
 ];
 
 /// Settings that are deliberately **not** env-overridable, kept as an explicit
@@ -174,7 +176,7 @@ fn apply_from(
     if let Some(v) = get("LLMLINT_JUDGE") {
         config.judge = Some(JudgeKind::parse(&v).ok_or_else(|| Error::Env {
             var: "LLMLINT_JUDGE".to_string(),
-            message: format!("expected `harness` or `jev`, got {v:?}"),
+            message: format!("expected `harness`, `jev`, or `cascade`, got {v:?}"),
         })?);
         note(prov, "judge", "LLMLINT_JUDGE");
     }
@@ -185,6 +187,14 @@ fn apply_from(
     if let Some(v) = get("LLMLINT_JEV_URL") {
         config.jev.url = Some(v);
         note(prov, "jev.url", "LLMLINT_JEV_URL");
+    }
+    if let Some(v) = get("LLMLINT_JEV_ESCALATE_LOW") {
+        config.jev.escalate_low = Some(parse_probability("LLMLINT_JEV_ESCALATE_LOW", &v)?);
+        note(prov, "jev.escalate_low", "LLMLINT_JEV_ESCALATE_LOW");
+    }
+    if let Some(v) = get("LLMLINT_JEV_ESCALATE_HIGH") {
+        config.jev.escalate_high = Some(parse_probability("LLMLINT_JEV_ESCALATE_HIGH", &v)?);
+        note(prov, "jev.escalate_high", "LLMLINT_JEV_ESCALATE_HIGH");
     }
     Ok(())
 }
@@ -216,6 +226,18 @@ fn parse_int(var: &str, val: &str, min: u64) -> Result<u64> {
         });
     }
     Ok(n)
+}
+
+/// Parse a probability in `0..=1`, erroring (located to `var`) otherwise.
+fn parse_probability(var: &str, val: &str) -> Result<f64> {
+    val.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|p| (0.0..=1.0).contains(p))
+        .ok_or_else(|| Error::Env {
+            var: var.to_string(),
+            message: format!("expected a probability between 0 and 1, got {val:?}"),
+        })
 }
 
 /// Split a `LIST_SEP`-separated glob list, trimming whitespace and dropping empty

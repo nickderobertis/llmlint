@@ -304,9 +304,11 @@ unset.
 | `history.enabled` | `LLMLINT_HISTORY_ENABLED` | `--no-history` (force off) | bool; supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch |
 | `history.max_runs` | `LLMLINT_HISTORY_MAX_RUNS` | — | ≥ 1 |
 | `history.dir` | `LLMLINT_HISTORY_DIR` | — | path |
-| `judge` | `LLMLINT_JUDGE` | — | `harness` (default) or `jev`; an agent's or rule's `judge` wins ([Judge backends](#judge-backends-harness-or-jev)) |
+| `judge` | `LLMLINT_JUDGE` | — | `harness` (default), `jev`, or `cascade`; an agent's or rule's `judge` wins ([Judge backends](#judge-backends-harness-jev-or-cascade)) |
 | `jev.model` | `LLMLINT_JEV_MODEL` | — | default `jev-1.13.0` |
 | `jev.url` | `LLMLINT_JEV_URL` | — | default `https://api.typesafe.ai` |
+| `jev.escalate_low` | `LLMLINT_JEV_ESCALATE_LOW` | — | cascade: Jev fails below this stand (default 0.15; 0–0.5) |
+| `jev.escalate_high` | `LLMLINT_JEV_ESCALATE_HIGH` | — | cascade: Jev passes at/above this stand (default 0.90; 0.5–1) |
 
 The env layer applies **process-wide**, after the nearest-wins config merge — it
 tunes the effective run, not any one directory's config. Two list-valued settings
@@ -667,9 +669,9 @@ verdict. `N` must be **odd** (1, 3, 5, …) so the vote can't tie — an even co
 a config error. Only rules that opt in pay the extra cost: judge 1 runs all rules,
 judge 2 only the rules with `judges >= 2`, and so on.
 
-### Judge backends: harness or Jev
+### Judge backends: harness, Jev, or cascade
 
-Every rule is judged by one of two backends, chosen by `judge:` on the rule, else
+Every rule is judged by one of three backends, chosen by `judge:` on the rule, else
 on its agent, else session-wide (`judge:` at the top level or `LLMLINT_JUDGE`),
 else `harness`:
 
@@ -686,8 +688,19 @@ else `harness`:
   probability of holding is below 0.5; the violation cites the file, the line,
   and the probability (`jev: p(holds)=0.08, p(line)=0.80`) — **Jev writes no
   rationale**. It bills input tokens only ($0.042 per million for
-  `jev-1.13.0`), but it cannot read other files, so keep cross-file and architectural rules on the
-  harness.
+  `jev-1.13.0`), but it cannot read other files, so keep cross-file and
+  architectural rules on the harness.
+- **`cascade`** — Jev first, then the harness only where Jev is unsure. For each
+  rule and file, Jev's probability that the rule holds decides: below
+  `jev.escalate_low` (default 0.15) its fail stands, at or above
+  `jev.escalate_high` (default 0.90) its pass stands, and in between the file is
+  re-judged by the harness — batched like any harness rule, on the rule's agent's
+  harness and model. The rule fails if either half found a violation. On
+  llmlint's labeled eval corpus, Jev alone caught 83% of planted violations and
+  every mistake it made scored inside the default band; replaying that run with
+  the band recovered 98.5% recall at 100% precision (see `evals/`). What it saves
+  depends on how often Jev is unsure: where Jev's passes are confident, the
+  harness is never called.
 
 ```yaml
 agents:
@@ -714,7 +727,10 @@ backoff; any other error fails the run (exit 2) rather than guessing a verdict.
 move under you and shift verdicts.
 
 `--format json` (and the history record) carries a `usage` block per backend —
-calls, tokens, cost, and time — so the two can be compared on the same run.
+calls, tokens, cost, and time — so they can be compared on the same run. Jev and
+cascade rules also carry their per-file `scores` (`p_holds`, `p_relevant`,
+`line`), and a cascade run lists what it escalated under `plan.escalated`, so a
+band can be tuned from a run's JSON.
 
 ### Cost vs performance (token usage)
 
@@ -738,7 +754,7 @@ every file read in full. Trade some back for fewer tokens, roughly by impact:
 - **`model`** — dollars, not tokens: a cheaper model per agent or run.
 - **`judge: jev`** — for rules a single file can decide: input tokens at
   $0.042 per million, no output charge
-  ([Judge backends](#judge-backends-harness-or-jev)).
+  ([Judge backends](#judge-backends-harness-jev-or-cascade)).
 
 `llmlint check-ignores` spends no tokens at all.
 

@@ -253,6 +253,13 @@ pub(crate) fn run_loaded(
         .map(|r| r.name.clone())
         .collect();
 
+    // Cascade rules, kept whole so their uncertain files can be re-planned for
+    // the harness after the Jev pass.
+    let cascade_rules: BTreeMap<String, plan::ResolvedRule> = resolved
+        .iter()
+        .filter(|r| r.judge == JudgeKind::Cascade)
+        .map(|r| (r.name.clone(), r.clone()))
+        .collect();
     let plan_ctx = PlanContext::new(&suppressions).with_weights(&file_tokens);
     let mut the_plan = plan::build(
         &config,
@@ -311,24 +318,24 @@ pub(crate) fn run_loaded(
         .unwrap_or(DEFAULT_TIMEOUT);
     // Built before any judge runs, so a missing key fails the run up front
     // (exit 2) rather than after the harness half has already spent calls.
-    let jev_client = if uses(JudgeKind::Jev) {
+    let asks_jev = the_plan.runs.iter().any(|r| r.judge.asks_jev());
+    let jev_client = if asks_jev {
         Some(jev::Client::from_env(&config.jev, timeout)?)
     } else {
         None
     };
+    // The cascade's escalation band, validated before any judge runs.
+    let band = jevq::Band::from_settings(config.jev.escalate_low, config.jev.escalate_high)
+        .map_err(Error::InvalidConfig)?;
     let oh_config = resolve_oneharness_config(&args, &config);
     let oh_config_ref = oh_config.as_deref();
     let global_model = config.oneharness.model.as_deref();
     let max_parallel = args.max_parallel.unwrap_or(DEFAULT_MAX_PARALLEL).max(1);
 
-    let mut verdicts: BTreeMap<String, Vec<RuleVerdict>> = BTreeMap::new();
-    let mut run_errors: Vec<String> = Vec::new();
-    let mut usage = Usage::default();
     // At `-v` we collect each oneharness invocation's exact command + raw result
     // and print them to stderr (the debug view); off by default to avoid the
     // cost of formatting the full command line on every judge.
     let want_trace = args.verbose >= 1;
-    let mut traces: Vec<(String, oneharness::RunTrace)> = Vec::new();
 
     // The live-progress view (rules resolving as their judges return), drawn to
     // stderr for an interactive human. Decide whether to animate from the audience
@@ -372,87 +379,109 @@ pub(crate) fn run_loaded(
         view.finish_rule(name, LiveStatus::NotRelevant);
     }
 
-    // Bind Copy references so the per-judge `move` closures capture borrows
-    // (which outlive the scope) rather than moving the owned `client`/`cwd`.
-    let client_ref = &client;
-    let jev_ref = jev_client.as_ref();
-    let cwd_ref = cwd.as_path();
-    let diffs_ref = &diffs;
-    let suppressions_ref = &suppressions;
-    for wave in the_plan.runs.chunks(max_parallel) {
-        // The wave's rules are now in flight — spin their lines.
-        for run in wave {
-            for rs in &run.rules {
-                view.set_running(&rs.name);
-            }
-        }
-        thread::scope(|s| {
-            let handles: Vec<_> = wave
+    let engine = Engine {
+        client: &client,
+        jev: jev_client.as_ref(),
+        cwd: cwd.as_path(),
+        timeout,
+        oh_config: oh_config_ref,
+        global_model,
+        want_trace,
+        diffs: &diffs,
+        suppressions: &suppressions,
+        max_parallel,
+    };
+    // Cascade rules are not final after their Jev pass, so the view holds their
+    // lines until the escalations below resolve.
+    let cascade: BTreeSet<String> = cascade_rules.keys().cloned().collect();
+    let mut st = RunState::default();
+    engine.run(&the_plan.runs, &view, &cascade, &mut st);
+
+    // Cascade, phase 2: every rule/file whose Jev probability fell inside the
+    // band is re-judged by the harness, through the same planner as any harness
+    // rule (batching, agents, scope); confident Jev answers stand.
+    let mut decided: BTreeMap<String, RuleVerdict> = BTreeMap::new();
+    let mut escalated: Vec<plan::ResolvedRule> = Vec::new();
+    for (name, rule) in &cascade_rules {
+        let Some(v) = st
+            .verdicts
+            .remove(name)
+            .and_then(|vs| vs.into_iter().next())
+        else {
+            continue; // its Jev run errored; the error is already recorded
+        };
+        let t = jevq::triage(&v, band);
+        if !t.escalate.is_empty() {
+            let files: Vec<PathBuf> = rule
+                .files
                 .iter()
-                .map(|run| {
-                    s.spawn(move || match (run.judge, jev_ref) {
-                        (JudgeKind::Jev, Some(jev)) => execute_jev(
-                            jev,
-                            run,
-                            cwd_ref,
-                            diffs_ref,
-                            suppressions_ref,
-                            max_parallel,
-                        ),
-                        _ => execute(
-                            client_ref,
-                            run,
-                            cwd_ref,
-                            timeout,
-                            oh_config_ref,
-                            global_model,
-                            want_trace,
-                            diffs_ref,
-                            suppressions_ref,
-                        ),
-                    })
-                })
+                .filter(|p| t.escalate.contains(&files::to_slash(p)))
+                .cloned()
                 .collect();
-            for (run, handle) in wave.iter().zip(handles) {
-                let exec = handle.join().expect("judge thread panicked");
-                if let Some(trace) = exec.trace {
-                    traces.push((judge_label(run), trace));
-                }
-                match run.judge {
-                    JudgeKind::Harness => usage.harness += &exec.usage,
-                    JudgeKind::Jev => usage.jev += &exec.usage,
-                }
-                view.tick_run();
-                match exec.verdicts {
-                    Ok(map) => {
-                        for (name, verdict) in map {
-                            verdicts.entry(name).or_default().push(verdict);
-                        }
-                    }
-                    Err(e) => run_errors.push(format!("{}: {}", judge_label(run), e)),
-                }
-                // Resolve each of this run's rules whose judges are now all in:
-                // tally with the same `vote::tally` the report uses, so the live
-                // ✓/✗ can never disagree with the final verdict. A rule with no
-                // usable verdict (all its runs errored) shows an error glyph.
-                for rs in &run.rules {
-                    let remaining = expected.get_mut(rs.name.as_str());
-                    if let Some(remaining) = remaining {
-                        *remaining = remaining.saturating_sub(1);
-                        if *remaining == 0 {
-                            let status = match verdicts.get(rs.name.as_str()) {
-                                Some(vs) if !vs.is_empty() => {
-                                    live_status(&vote::tally(&rs.name, vs))
-                                }
-                                _ => LiveStatus::Error,
-                            };
-                            view.finish_rule(&rs.name, status);
-                        }
-                    }
-                }
-            }
-        });
+            escalated.push(plan::ResolvedRule {
+                files,
+                judge: JudgeKind::Harness,
+                ..rule.clone()
+            });
+        }
+        decided.insert(name.clone(), t.decided);
     }
+    let mut harness_verdicts: BTreeMap<String, Vec<RuleVerdict>> = BTreeMap::new();
+    if !escalated.is_empty() {
+        the_plan.explanation.escalated = escalated
+            .iter()
+            .map(|r| {
+                (
+                    r.name.clone(),
+                    r.files.iter().map(|p| files::to_slash(p)).collect(),
+                )
+            })
+            .collect();
+        let second = plan::build(
+            &config,
+            &master_template,
+            DEFAULT_BATCH_SIZE,
+            escalated,
+            &plan_ctx,
+        );
+        // The harness may not have been needed until now.
+        let preflight = if uses(JudgeKind::Harness) {
+            Ok(())
+        } else {
+            client.check_min_version().map(|_| ())
+        };
+        match preflight {
+            Ok(()) => {
+                view.add_runs(second.runs.len());
+                let mut esc = RunState::default();
+                engine.run(&second.runs, &view, &cascade, &mut esc);
+                harness_verdicts = esc.verdicts;
+                st.run_errors.extend(esc.run_errors);
+                st.usage.harness += &esc.usage.harness;
+                st.traces.extend(esc.traces);
+            }
+            Err(e) => st.run_errors.push(format!("cascade escalation: {e}")),
+        }
+    }
+    for (name, d) in decided {
+        let vs: Vec<RuleVerdict> = match harness_verdicts.remove(&name) {
+            Some(hvs) if !hvs.is_empty() => hvs.iter().map(|h| jevq::merge(&d, h)).collect(),
+            _ => vec![d],
+        };
+        view.finish_rule(&name, live_status(&vote::tally(&name, &vs)));
+        st.verdicts.insert(name, vs);
+    }
+    for name in &cascade {
+        if !st.verdicts.contains_key(name) {
+            view.finish_rule(name, LiveStatus::Error);
+        }
+    }
+    let RunState {
+        verdicts,
+        mut run_errors,
+        usage,
+        traces,
+    } = st;
     // Clear the whole view from stderr before any report/trace output, so nothing
     // is interleaved with progress fragments.
     view.finish();
@@ -804,6 +833,131 @@ fn print_traces(traces: &[(String, oneharness::RunTrace)]) {
         let stderr = trace.stderr.trim();
         if !stderr.is_empty() {
             eprintln!("stderr:\n{stderr}");
+        }
+    }
+}
+
+/// Everything a judge run needs besides the run itself, shared by both cascade
+/// phases so they execute identically.
+struct Engine<'a> {
+    client: &'a oneharness::Client,
+    jev: Option<&'a jev::Client>,
+    cwd: &'a Path,
+    timeout: u64,
+    oh_config: Option<&'a Path>,
+    global_model: Option<&'a str>,
+    want_trace: bool,
+    diffs: &'a BTreeMap<PathBuf, String>,
+    suppressions: &'a BTreeMap<String, Suppressions>,
+    max_parallel: usize,
+}
+
+/// What executing a set of runs accumulated.
+#[derive(Default)]
+struct RunState {
+    verdicts: BTreeMap<String, Vec<RuleVerdict>>,
+    run_errors: Vec<String>,
+    usage: Usage,
+    traces: Vec<(String, oneharness::RunTrace)>,
+}
+
+impl Engine<'_> {
+    /// Execute `runs` in waves of `max_parallel`, collecting verdicts, errors,
+    /// usage, and traces into `st` and driving the live view. A rule in `hold`
+    /// is not finished in the view here — its verdict is not final yet.
+    fn run(
+        &self,
+        runs: &[JudgeRun],
+        view: &ProgressView,
+        hold: &BTreeSet<String>,
+        st: &mut RunState,
+    ) {
+        let mut expected: BTreeMap<&str, usize> = BTreeMap::new();
+        for run in runs {
+            for rs in &run.rules {
+                *expected.entry(rs.name.as_str()).or_default() += 1;
+            }
+        }
+        for wave in runs.chunks(self.max_parallel) {
+            // The wave's rules are now in flight — spin their lines.
+            for run in wave {
+                for rs in &run.rules {
+                    view.set_running(&rs.name);
+                }
+            }
+            thread::scope(|s| {
+                let handles: Vec<_> = wave
+                    .iter()
+                    .map(|run| s.spawn(move || self.execute(run)))
+                    .collect();
+                for (run, handle) in wave.iter().zip(handles) {
+                    let exec = handle.join().expect("judge thread panicked");
+                    if let Some(trace) = exec.trace {
+                        st.traces.push((judge_label(run), trace));
+                    }
+                    if run.judge.asks_jev() {
+                        st.usage.jev += &exec.usage;
+                    } else {
+                        st.usage.harness += &exec.usage;
+                    }
+                    view.tick_run();
+                    match exec.verdicts {
+                        Ok(map) => {
+                            for (name, verdict) in map {
+                                st.verdicts.entry(name).or_default().push(verdict);
+                            }
+                        }
+                        Err(e) => st.run_errors.push(format!("{}: {}", judge_label(run), e)),
+                    }
+                    // Resolve each of this run's rules whose judges are now all
+                    // in: tally with the same `vote::tally` the report uses, so the
+                    // live ✓/✗ can never disagree with the final verdict. A rule
+                    // with no usable verdict (all its runs errored) shows an error
+                    // glyph.
+                    for rs in &run.rules {
+                        if hold.contains(&rs.name) {
+                            continue;
+                        }
+                        if let Some(remaining) = expected.get_mut(rs.name.as_str()) {
+                            *remaining = remaining.saturating_sub(1);
+                            if *remaining == 0 {
+                                let status = match st.verdicts.get(rs.name.as_str()) {
+                                    Some(vs) if !vs.is_empty() => {
+                                        live_status(&vote::tally(&rs.name, vs))
+                                    }
+                                    _ => LiveStatus::Error,
+                                };
+                                view.finish_rule(&rs.name, status);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /// Execute one run on its backend.
+    fn execute(&self, run: &JudgeRun) -> Execution {
+        match (run.judge.asks_jev(), self.jev) {
+            (true, Some(jev)) => execute_jev(
+                jev,
+                run,
+                self.cwd,
+                self.diffs,
+                self.suppressions,
+                self.max_parallel,
+            ),
+            _ => execute(
+                self.client,
+                run,
+                self.cwd,
+                self.timeout,
+                self.oh_config,
+                self.global_model,
+                self.want_trace,
+                self.diffs,
+                self.suppressions,
+            ),
         }
     }
 }

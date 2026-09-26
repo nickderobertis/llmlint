@@ -665,6 +665,16 @@ resolves the oneharness the test put on PATH.
   and no key; `--diff` sends the diff and offers only added lines as line options;
   an oversized file splits into several requests; `jev.url` resolves config < env
   (and `where` reports `env:LLMLINT_JEV_URL`).
+- Cascade judge (`tests/e2e/jev.rs`, mock Jev + mock oneharness with a run log):
+  confident Jev answers (a fail at 0.08, a pass at 0.97) never call the harness
+  and the Jev violation stands; an unsure rule (0.40) escalates alone — one
+  harness call judging only it, `plan.escalated` naming the file, the harness's
+  pass winning, Jev's `scores` kept, usage for both backends; the harness can
+  overturn an unsure pass (0.70) with its own violation; escalation is per file
+  (a confident fail on one file stands while another file escalates); a
+  zero-width band from `LLMLINT_JEV_ESCALATE_*` trusts Jev everywhere; a band
+  that doesn't straddle 0.5 (config or env) fails `validate` with exit 2;
+  `--plan-only` names the cascade group.
 
 ## Live tier (`scripts/live-*.sh`)
 

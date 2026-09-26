@@ -262,8 +262,8 @@ mod tests {
 
     fn client(url: &str) -> Client {
         let cfg = JevCfg {
-            model: None,
             url: Some(url.into()),
+            ..JevCfg::default()
         };
         Client::new(&cfg, Some("k".into()), 5, Duration::from_millis(1)).unwrap()
     }
@@ -367,8 +367,8 @@ mod tests {
         let e = Client::new(&cfg, None, 5, Duration::ZERO).err().unwrap();
         assert!(e.to_string().contains(API_KEY_ENV), "{e}");
         let bad = JevCfg {
-            model: None,
             url: Some("ftp://x".into()),
+            ..JevCfg::default()
         };
         let e = Client::new(&bad, Some("k".into()), 5, Duration::ZERO)
             .err()

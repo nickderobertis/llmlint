@@ -382,6 +382,109 @@ pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVe
     }
 }
 
+/// The cascade's default escalation band, from the eval sweep (`evals/`): on
+/// the labeled corpus every Jev mistake scored inside it, while nothing below
+/// 0.10 or at/above 0.95 was ever wrong.
+pub const DEFAULT_ESCALATE_LOW: f64 = 0.15;
+pub const DEFAULT_ESCALATE_HIGH: f64 = 0.90;
+
+/// Where a cascade trusts Jev: below `low` Jev's fail stands, at or above
+/// `high` its pass stands, and in between the harness decides. It must straddle
+/// [`HOLDS_THRESHOLD`] so every confident fail is one Jev actually reported.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Band {
+    pub low: f64,
+    pub high: f64,
+}
+
+impl Band {
+    /// The band from optional settings, defaulting each side; an error message
+    /// when it is outside 0..1 or does not straddle the pass/fail threshold.
+    pub fn from_settings(low: Option<f64>, high: Option<f64>) -> Result<Band, String> {
+        let band = Band {
+            low: low.unwrap_or(DEFAULT_ESCALATE_LOW),
+            high: high.unwrap_or(DEFAULT_ESCALATE_HIGH),
+        };
+        if !(0.0..=HOLDS_THRESHOLD).contains(&band.low)
+            || !(HOLDS_THRESHOLD..=1.0).contains(&band.high)
+        {
+            return Err(format!(
+                "jev.escalate_low ({}) must be in 0..={HOLDS_THRESHOLD} and jev.escalate_high ({}) in {HOLDS_THRESHOLD}..=1",
+                band.low, band.high
+            ));
+        }
+        Ok(band)
+    }
+}
+
+/// A cascade rule's Jev verdict split by confidence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Triage {
+    /// Jev's verdict over the files it decided confidently: violations only
+    /// from files below the band (and still standing after ignore cleanup).
+    pub decided: RuleVerdict,
+    /// Files whose probability fell inside the band, for the harness to judge.
+    pub escalate: Vec<String>,
+}
+
+/// Split a Jev verdict (with its per-file scores) by the band. A file where a
+/// conditional rule is not relevant is decided (not relevant), never escalated.
+pub fn triage(v: &RuleVerdict, band: Band) -> Triage {
+    let mut escalate = Vec::new();
+    let mut failing = std::collections::BTreeSet::new();
+    let mut any_decided_relevant = false;
+    for s in &v.scores {
+        if s.p_relevant.is_some_and(|p| p < RELEVANT_THRESHOLD) {
+            continue;
+        }
+        if s.p_holds < band.low {
+            failing.insert(s.file.as_str());
+            any_decided_relevant = true;
+        } else if s.p_holds < band.high {
+            escalate.push(s.file.clone());
+        } else {
+            any_decided_relevant = true;
+        }
+    }
+    let violations: Vec<Violation> = v
+        .violations
+        .iter()
+        .filter(|x| x.file.as_deref().is_some_and(|f| failing.contains(f)))
+        .cloned()
+        .collect();
+    Triage {
+        decided: RuleVerdict {
+            relevant: v.relevant.map(|_| any_decided_relevant),
+            holds: violations.is_empty(),
+            violations,
+            rationale: None,
+            scores: v.scores.clone(),
+        },
+        escalate,
+    }
+}
+
+/// Combine a cascade rule's confident Jev verdict with one harness verdict on
+/// its escalated files: it holds only when both halves hold, and it is
+/// relevant when either half found it relevant.
+pub fn merge(decided: &RuleVerdict, harness: &RuleVerdict) -> RuleVerdict {
+    let harness_counts = harness.is_relevant() && !harness.holds;
+    let mut violations = decided.violations.clone();
+    if harness_counts {
+        violations.extend(harness.violations.iter().cloned());
+    }
+    RuleVerdict {
+        relevant: match (decided.relevant, harness.relevant) {
+            (None, None) => None,
+            (d, _) => Some(d == Some(true) || harness.is_relevant()),
+        },
+        holds: decided.violations.is_empty() && !harness_counts,
+        violations,
+        rationale: harness.rationale.clone(),
+        scores: decided.scores.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,5 +757,158 @@ mod tests {
     fn prices_are_known_only_for_pinned_models() {
         assert_eq!(price_per_mtok("jev-1.13.0"), Some(0.042));
         assert_eq!(price_per_mtok("jev-latest"), None);
+    }
+    fn scored(file: &str, p: f64, rel: Option<f64>) -> JudgeScore {
+        JudgeScore {
+            file: file.into(),
+            p_holds: p,
+            p_relevant: rel,
+            line: Some(1),
+        }
+    }
+
+    fn jev_verdict(scores: Vec<JudgeScore>, conditional: bool) -> RuleVerdict {
+        let violations = scores
+            .iter()
+            .filter(|s| s.p_holds < HOLDS_THRESHOLD && s.p_relevant.is_none_or(|p| p >= 0.5))
+            .map(|s| Violation {
+                file: Some(s.file.clone()),
+                line: s.line,
+                ..Violation::default()
+            })
+            .collect::<Vec<_>>();
+        RuleVerdict {
+            relevant: conditional.then_some(true),
+            holds: violations.is_empty(),
+            violations,
+            rationale: None,
+            scores,
+        }
+    }
+
+    const BAND: Band = Band {
+        low: 0.15,
+        high: 0.9,
+    };
+
+    #[test]
+    fn triage_keeps_confident_answers_and_escalates_the_middle() {
+        let v = jev_verdict(
+            vec![
+                scored("fail.rs", 0.05, None),
+                scored("unsure_fail.rs", 0.3, None),
+                scored("unsure_pass.rs", 0.7, None),
+                scored("pass.rs", 0.95, None),
+            ],
+            false,
+        );
+        let t = triage(&v, BAND);
+        assert_eq!(t.escalate, ["unsure_fail.rs", "unsure_pass.rs"]);
+        assert!(!t.decided.holds);
+        let files: Vec<_> = t
+            .decided
+            .violations
+            .iter()
+            .map(|v| v.file.clone().unwrap())
+            .collect();
+        assert_eq!(files, ["fail.rs"], "an unsure fail is the harness's call");
+        assert_eq!(t.decided.scores.len(), 4);
+    }
+
+    #[test]
+    fn triage_never_escalates_a_file_where_the_rule_is_not_relevant() {
+        let v = jev_verdict(
+            vec![
+                scored("a.rs", 0.5, Some(0.1)),
+                scored("b.rs", 0.97, Some(0.9)),
+            ],
+            true,
+        );
+        let t = triage(&v, BAND);
+        assert!(t.escalate.is_empty());
+        assert_eq!((t.decided.relevant, t.decided.holds), (Some(true), true));
+        let none = triage(
+            &jev_verdict(vec![scored("a.rs", 0.5, Some(0.1))], true),
+            BAND,
+        );
+        assert_eq!(none.decided.relevant, Some(false));
+    }
+
+    #[test]
+    fn merge_needs_both_halves_to_hold() {
+        let decided = triage(&jev_verdict(vec![scored("ok.rs", 0.99, None)], false), BAND).decided;
+        let harness_fail = RuleVerdict {
+            holds: false,
+            violations: vec![Violation {
+                file: Some("unsure.rs".into()),
+                line: Some(4),
+                ..Violation::default()
+            }],
+            rationale: Some("bare ?".into()),
+            ..RuleVerdict::default()
+        };
+        let m = merge(&decided, &harness_fail);
+        assert!(!m.holds);
+        assert_eq!(m.violations[0].file.as_deref(), Some("unsure.rs"));
+        assert_eq!(m.rationale.as_deref(), Some("bare ?"));
+        assert_eq!(m.scores.len(), 1);
+
+        let harness_pass = RuleVerdict {
+            holds: true,
+            ..RuleVerdict::default()
+        };
+        assert!(merge(&decided, &harness_pass).holds);
+        let jev_fail = triage(
+            &jev_verdict(vec![scored("bad.rs", 0.02, None)], false),
+            BAND,
+        )
+        .decided;
+        let m = merge(&jev_fail, &harness_pass);
+        assert!(!m.holds && m.violations.len() == 1);
+    }
+
+    #[test]
+    fn merge_is_relevant_when_either_half_is() {
+        let decided = triage(
+            &jev_verdict(vec![scored("a.rs", 0.5, Some(0.1))], true),
+            BAND,
+        )
+        .decided;
+        let not_rel = RuleVerdict {
+            relevant: Some(false),
+            holds: true,
+            ..RuleVerdict::default()
+        };
+        assert_eq!(merge(&decided, &not_rel).relevant, Some(false));
+        let rel_fail = RuleVerdict {
+            relevant: Some(true),
+            holds: false,
+            ..RuleVerdict::default()
+        };
+        let m = merge(&decided, &rel_fail);
+        assert_eq!((m.relevant, m.holds), (Some(true), false));
+        // An irrelevant harness half never contributes a failure.
+        let irrelevant_fail = RuleVerdict {
+            relevant: Some(false),
+            holds: false,
+            ..RuleVerdict::default()
+        };
+        assert!(merge(&decided, &irrelevant_fail).holds);
+    }
+
+    #[test]
+    fn the_band_defaults_and_must_straddle_the_threshold() {
+        assert_eq!(Band::from_settings(None, None).unwrap(), BAND);
+        assert_eq!(
+            Band::from_settings(Some(0.3), Some(0.7)).unwrap(),
+            Band {
+                low: 0.3,
+                high: 0.7
+            }
+        );
+        for (lo, hi) in [(0.6, 0.9), (0.1, 0.4), (-0.1, 0.9), (0.1, 1.2)] {
+            let e = Band::from_settings(Some(lo), Some(hi)).unwrap_err();
+            assert!(e.contains("jev.escalate_low"), "{e}");
+        }
     }
 }

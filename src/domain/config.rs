@@ -126,6 +126,10 @@ pub enum JudgeKind {
     #[default]
     Harness,
     Jev,
+    /// Jev first; a rule/file whose probability of holding falls inside the
+    /// escalation band (`jev.escalate_low`..`jev.escalate_high`) is re-judged
+    /// by the harness. Confident Jev answers stand.
+    Cascade,
 }
 
 impl JudgeKind {
@@ -134,7 +138,13 @@ impl JudgeKind {
         match self {
             JudgeKind::Harness => "harness",
             JudgeKind::Jev => "jev",
+            JudgeKind::Cascade => "cascade",
         }
+    }
+
+    /// Whether this backend asks Jev (alone, or as a cascade's first pass).
+    pub fn asks_jev(self) -> bool {
+        matches!(self, JudgeKind::Jev | JudgeKind::Cascade)
     }
 
     /// Parse the config spelling; `None` for anything else (callers report it).
@@ -142,6 +152,7 @@ impl JudgeKind {
         match s.trim().to_ascii_lowercase().as_str() {
             "harness" => Some(JudgeKind::Harness),
             "jev" => Some(JudgeKind::Jev),
+            "cascade" => Some(JudgeKind::Cascade),
             _ => None,
         }
     }
@@ -149,7 +160,7 @@ impl JudgeKind {
 
 /// How llmlint calls TypeSafe's Jev API for rules judged by `jev`. The API key
 /// is never config: it is read from the `TYPESAFE_API_KEY` environment variable.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct JevCfg {
     /// Jev model id (default `jev-1.13.0`). Pin a versioned id rather than an
@@ -160,12 +171,26 @@ pub struct JevCfg {
     /// API base URL (default `https://api.typesafe.ai`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// `judge: cascade` escalates a rule/file to the harness when Jev's
+    /// probability that it holds is at least this (default 0.15) — below it,
+    /// Jev's fail stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub escalate_low: Option<f64>,
+    /// `judge: cascade` escalates when Jev's probability that the rule holds is
+    /// below this (default 0.90) — at or above it, Jev's pass stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub escalate_high: Option<f64>,
 }
 
 impl JevCfg {
     /// Whether every field is unset (merge "is unset" test + serialization skip).
     pub fn is_empty(&self) -> bool {
-        self.model.is_none() && self.url.is_none()
+        self.model.is_none()
+            && self.url.is_none()
+            && self.escalate_low.is_none()
+            && self.escalate_high.is_none()
     }
 
     /// Fill any unset field from `other`, keeping this (nearer-root) config's own
@@ -173,6 +198,8 @@ impl JevCfg {
     pub fn merge_under(&mut self, other: JevCfg) {
         self.model = self.model.take().or(other.model);
         self.url = self.url.take().or(other.url);
+        self.escalate_low = self.escalate_low.or(other.escalate_low);
+        self.escalate_high = self.escalate_high.or(other.escalate_high);
     }
 }
 
@@ -335,7 +362,7 @@ impl Rule {
 /// `JsonSchema` derive (post-processed in [`crate::domain::config_schema`])
 /// generates `assets/llmlint.schema.json`, so the schema can never drift from
 /// the model. Field doc comments become the schema's property descriptions.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[schemars(
     title = "llmlint configuration",
     description = "Configuration for llmlint, an LLM-as-judge linter for code-quality checks \
@@ -513,6 +540,8 @@ pub const SETTING_KEYS: &[&str] = &[
     "judge",
     "jev.model",
     "jev.url",
+    "jev.escalate_low",
+    "jev.escalate_high",
 ];
 
 /// The per-rule fields a `rules.<name>.<field>` query can name. `name` always
@@ -616,6 +645,8 @@ impl ProvenanceBuilder {
             ("judge", cfg.judge.is_some()),
             ("jev.model", cfg.jev.model.is_some()),
             ("jev.url", cfg.jev.url.is_some()),
+            ("jev.escalate_low", cfg.jev.escalate_low.is_some()),
+            ("jev.escalate_high", cfg.jev.escalate_high.is_some()),
         ];
         for (key, present) in settings {
             if *present {
@@ -952,6 +983,12 @@ pub fn is_valid_rule_name(name: &str) -> bool {
 pub fn validate(config: &Config) -> Result<()> {
     let mut problems: Vec<String> = Vec::new();
     let mut seen: BTreeSet<&str> = BTreeSet::new();
+
+    if let Err(e) =
+        crate::domain::jev::Band::from_settings(config.jev.escalate_low, config.jev.escalate_high)
+    {
+        problems.push(e);
+    }
 
     for rule in &config.rules {
         if !is_valid_rule_name(&rule.name) {
@@ -1540,6 +1577,8 @@ mod tests {
             jev: JevCfg {
                 model: Some("jev-x".into()),
                 url: Some("http://jev".into()),
+                escalate_low: Some(0.2),
+                escalate_high: Some(0.8),
             },
             ..Default::default()
         };

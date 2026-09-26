@@ -12,6 +12,8 @@ Arms:
   harness  real oneharness + a real harness (paid). The pre-Jev baseline.
   jev      every rule judged by TypeSafe's Jev (`LLMLINT_JUDGE=jev`; needs
            TYPESAFE_API_KEY; paid, fractions of a cent). No oneharness.
+  cascade  Jev first, uncertain rule/files re-judged by the harness
+           (`LLMLINT_JUDGE=cascade`; needs both; the band is `jev.escalate_*`).
   oracle   the mock-oneharness fixture answering from the labels themselves: a
            perfect judge. A free, hermetic self-test of this runner — every
            metric must come out perfect, or the plumbing/scoring is broken.
@@ -57,7 +59,7 @@ GIT_AMBIENT = (
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 )
 
-ARMS = ("harness", "jev", "oracle", "blind")
+ARMS = ("harness", "jev", "cascade", "oracle", "blind")
 
 
 # --- corpus ------------------------------------------------------------------
@@ -273,6 +275,11 @@ def run_case(case: Case, arm: str, rep: int, opts: Opts) -> Run:
                 cmd += ["--model", opts.model]
         elif arm == "jev":
             env["LLMLINT_JUDGE"] = "jev"
+        elif arm == "cascade":
+            env["LLMLINT_JUDGE"] = "cascade"
+            cmd += ["--oneharness-bin", str(opts.oneharness)]
+            if opts.model:
+                cmd += ["--model", opts.model]
         else:
             verdicts = Path(tmp) / "verdicts.json"
             verdicts.write_text(json.dumps(oracle_verdicts(case) if arm == "oracle" else {}))
@@ -571,15 +578,16 @@ def main(argv: list[str] | None = None) -> int:
         print("eval: llmlint binary not found (build it: cargo build --release)", file=sys.stderr)
         return 2
     oneharness = mock = None
-    if a.arm == "harness":
+    if a.arm in ("jev", "cascade") and not os.environ.get("TYPESAFE_API_KEY", "").strip():
+        print(f"eval: the {a.arm} arm needs TYPESAFE_API_KEY set", file=sys.stderr)
+        return 2
+    if a.arm in ("harness", "cascade"):
         oneharness = resolve_bin(a.oneharness, path_name="oneharness")
         if not oneharness:
             print("eval: oneharness not found (install it, or pass --oneharness)", file=sys.stderr)
             return 2
     elif a.arm == "jev":
-        if not os.environ.get("TYPESAFE_API_KEY", "").strip():
-            print("eval: the jev arm needs TYPESAFE_API_KEY set", file=sys.stderr)
-            return 2
+        pass
     else:
         mock = resolve_bin(a.mock, rel / f"llmlint-mock-oneharness{exe}")
         if not mock:
@@ -616,7 +624,10 @@ def main(argv: list[str] | None = None) -> int:
     result = summarize(cases, runs, a.line_tolerance)
     result["meta"] = {
         "arm": a.arm,
-        "model": (os.environ.get("LLMLINT_JEV_MODEL") or "jev-1.13.0") if a.arm == "jev" else a.model,
+        "model": {
+            "jev": os.environ.get("LLMLINT_JEV_MODEL") or "jev-1.13.0",
+            "cascade": f"{os.environ.get('LLMLINT_JEV_MODEL') or 'jev-1.13.0'} + {a.model or 'harness default'}",
+        }.get(a.arm, a.model),
         "repeats": a.repeats,
         "cases": len(cases),
         "llmlint_version": version,

@@ -528,6 +528,16 @@ harness reads target files on-demand with its own tools.
   harness-only one). `jev.model` defaults to the pinned `jev-1.13.0`: thresholds
   are per model version. The `Report` carries `usage` per backend (JSON/history
   only, never the hash-gated human view); `evals/` reads it to compare backends.
+  **Cascade** (`judge: cascade`) is two phases in `run_loaded` sharing one
+  `Engine`: the Jev pass runs cascade rules like `jev` (their view lines held);
+  `jev::triage` splits each rule's per-file `scores` by the band
+  (`jev.escalate_low`/`high`, default [0.15, 0.90), which must straddle 0.5 —
+  validated at load), keeps confident Jev fails, and re-plans the in-band
+  rule/files as ordinary harness `ResolvedRule`s through `plan::build`; each
+  harness verdict is `jev::merge`d with the confident half. The oneharness
+  pre-flight runs only if something escalates. `plan.escalated` records what went
+  to the harness; the default band comes from the `evals/` sweep — re-derive it
+  there, not by feel.
 - **oneharness `--config` is single-file** today; llmlint forwards the first
   `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
   `--config` repeatable, then drop the warning.

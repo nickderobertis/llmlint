@@ -215,10 +215,19 @@
     },
     "JudgeKind": {
       "description": "Which backend judges a rule. `harness` (the default) drives a coding harness\nthrough oneharness: an agentic LLM that reads the files and writes a verdict\nwith rationale. `jev` asks TypeSafe's Jev System One model typed questions\nover each file's text: far faster and cheaper, probabilities instead of prose\n(no rationale), and no tools — so a rule that must read across files belongs\non the harness. Set per rule, per agent, or session-wide (`judge:` /\n`LLMLINT_JUDGE`); the most specific wins.",
-      "type": "string",
-      "enum": [
-        "harness",
-        "jev"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "harness",
+            "jev"
+          ]
+        },
+        {
+          "description": "Jev first; a rule/file whose probability of holding falls inside the\nescalation band (`jev.escalate_low`..`jev.escalate_high`) is re-judged\nby the harness. Confident Jev answers stand.",
+          "type": "string",
+          "const": "cascade"
+        }
       ]
     },
     "JevCfg": {
@@ -238,6 +247,26 @@
             "string",
             "null"
           ]
+        },
+        "escalate_low": {
+          "description": "`judge: cascade` escalates a rule/file to the harness when Jev's\nprobability that it holds is at least this (default 0.15) — below it,\nJev's fail stands.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "escalate_high": {
+          "description": "`judge: cascade` escalates when Jev's probability that the rule holds is\nbelow this (default 0.90) — at or above it, Jev's pass stands.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "minimum": 0.0,
+          "maximum": 1.0
         }
       },
       "additionalProperties": false

@@ -12,7 +12,7 @@ use std::thread;
 
 use serde_json::{json, Map, Value};
 
-use super::{git, init_repo, mock_path, Project};
+use super::{git, init_repo, mock_path, runlog_calls, Project};
 
 /// How the mock answers one rule. Unset fields mean "holds, relevant, no line".
 #[derive(Clone, Copy, Default)]
@@ -112,10 +112,16 @@ impl MockJev {
 /// Answer every question in `request` from the scripts.
 fn answer(request: &Value, scripts: &BTreeMap<String, Script>) -> Value {
     let mut answers = Map::new();
+    let path = request["state"]["path"].as_str().unwrap_or_default();
     for (id, q) in request["questions"].as_object().unwrap() {
         let mut parts = id.split(':');
         let (kind, rule) = (parts.next().unwrap(), parts.next().unwrap());
-        let s = scripts.get(rule).copied().unwrap_or_default();
+        // A `rule@path` script answers for that file only, else the rule's.
+        let s = scripts
+            .get(&format!("{rule}@{path}"))
+            .or_else(|| scripts.get(rule))
+            .copied()
+            .unwrap_or_default();
         let a = match kind {
             "holds" => json!({"type": "noul", "noul": s.holds.unwrap_or(0.95)}),
             "relevant" => json!({"type": "noul", "noul": s.relevant.unwrap_or(0.9)}),
@@ -366,7 +372,7 @@ fn llmlint_judge_env_routes_every_rule_to_jev() {
     bad.assert()
         .code(2)
         .stderr(predicates::str::contains("LLMLINT_JUDGE"))
-        .stderr(predicates::str::contains("`harness` or `jev`"));
+        .stderr(predicates::str::contains("`harness`, `jev`, or `cascade`"));
 }
 
 #[test]
@@ -447,4 +453,189 @@ fn jev_settings_resolve_through_config_and_env() {
         .assert()
         .code(0)
         .stdout(predicates::str::contains("env:LLMLINT_JEV_URL"));
+}
+
+// ---- judge: cascade -------------------------------------------------------
+
+/// A cascade project: every rule on the `default` agent, two source files.
+fn cascade_project() -> Project {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nagents:\n  default:\n    judge: cascade\nrules:\n  \
+         - { name: errors_have_context, description: \"Every error carries context.\" }\n  \
+         - { name: names_are_clear, description: \"Names state intent.\" }\n",
+    );
+    p.write("src/a.rs", SRC);
+    p
+}
+
+/// Run a cascade project: Jev from `jev`, the harness from the mock oneharness
+/// answering `verdicts` and logging each call's rules under `runlog`.
+fn run_cascade(
+    p: &Project,
+    jev: &MockJev,
+    verdicts: &str,
+    extra_env: &[(&str, &str)],
+) -> (assert_cmd::assert::Assert, Vec<String>) {
+    let runlog = p.path().join("runlog");
+    std::fs::create_dir_all(&runlog).unwrap();
+    let v = p.write_verdicts(verdicts);
+    let mut c = p.bare();
+    c.args(["--format", "json", "--oneharness-bin"])
+        .arg(mock_path())
+        .env("LLMLINT_JEV_URL", &jev.url)
+        .env("TYPESAFE_API_KEY", "k")
+        .env("LLMLINT_MOCK_VERDICTS", v)
+        .env("LLMLINT_MOCK_RUNLOG", &runlog);
+    for (k, val) in extra_env {
+        c.env(k, val);
+    }
+    let a = c.assert();
+    let calls = runlog_calls(&runlog);
+    (a, calls)
+}
+
+#[test]
+fn cascade_confident_answers_never_call_the_harness() {
+    let p = cascade_project();
+    let jev = MockJev::start(
+        &[
+            ("errors_have_context", violates_at(2)),
+            ("names_are_clear", holds(0.97)),
+        ],
+        &[],
+    );
+    let (a, calls) = run_cascade(&p, &jev, "{}", &[]);
+    let out = json_of(&a.code(1));
+    assert!(calls.is_empty(), "no harness call: {calls:?}");
+    assert_eq!(out["rules"][0]["name"], "errors_have_context");
+    assert_eq!(out["rules"][0]["outcome"], "fail");
+    assert_eq!(
+        out["rules"][0]["violations"][0]["message"],
+        "jev: p(holds)=0.08, p(line)=0.80"
+    );
+    assert_eq!(out["rules"][1]["outcome"], "pass");
+    assert!(out["plan"].get("escalated").is_none());
+    assert!(out["usage"].get("harness").is_none());
+}
+
+#[test]
+fn cascade_escalates_only_the_uncertain_rule_and_the_harness_decides() {
+    let p = cascade_project();
+    // An unsure fail (0.40) the harness overturns, and a confident pass.
+    let jev = MockJev::start(
+        &[
+            ("errors_have_context", holds(0.40)),
+            ("names_are_clear", holds(0.97)),
+        ],
+        &[],
+    );
+    let (a, calls) = run_cascade(&p, &jev, r#"{"errors_have_context": true}"#, &[]);
+    let out = json_of(&a.code(0));
+    assert_eq!(
+        calls,
+        ["errors_have_context"],
+        "one harness call, for the unsure rule only"
+    );
+    assert_eq!(out["rules"][0]["outcome"], "pass");
+    assert_eq!(
+        out["rules"][0]["scores"][0]["p_holds"], 0.4,
+        "Jev's number is kept"
+    );
+    assert_eq!(
+        out["plan"]["escalated"]["errors_have_context"],
+        json!(["src/a.rs"])
+    );
+    assert_eq!(out["usage"]["jev"]["calls"], 1);
+    assert_eq!(out["usage"]["harness"]["calls"], 1);
+}
+
+#[test]
+fn cascade_harness_can_overturn_an_unsure_pass() {
+    let p = cascade_project();
+    let jev = MockJev::start(&[("errors_have_context", holds(0.70))], &[]);
+    let verdicts = r#"{"errors_have_context": {"holds": false, "violations": [{"file": "src/a.rs", "line": 2, "message": "bare ?"}]}}"#;
+    let (a, calls) = run_cascade(&p, &jev, verdicts, &[]);
+    let out = json_of(&a.code(1));
+    assert_eq!(calls, ["errors_have_context"]);
+    let v = &out["rules"][0]["violations"][0];
+    assert_eq!(
+        (v["line"].clone(), v["message"].clone()),
+        (json!(2), json!("bare ?"))
+    );
+}
+
+#[test]
+fn cascade_escalates_per_file_and_keeps_confident_fails() {
+    let p = cascade_project();
+    p.write("src/b.rs", SRC);
+    let jev = MockJev::start(
+        &[
+            ("errors_have_context@src/a.rs", violates_at(2)),
+            ("errors_have_context@src/b.rs", holds(0.6)),
+        ],
+        &[],
+    );
+    let (a, calls) = run_cascade(&p, &jev, r#"{"errors_have_context": true}"#, &[]);
+    let out = json_of(&a.code(1));
+    assert_eq!(calls, ["errors_have_context"]);
+    assert_eq!(
+        out["plan"]["escalated"]["errors_have_context"],
+        json!(["src/b.rs"])
+    );
+    let rule = &out["rules"][0];
+    assert_eq!(
+        rule["outcome"], "fail",
+        "a.rs's confident fail stands despite b.rs passing"
+    );
+    assert_eq!(rule["violations"].as_array().unwrap().len(), 1);
+    assert_eq!(rule["violations"][0]["file"], "src/a.rs");
+}
+
+#[test]
+fn cascade_band_comes_from_settings_and_is_validated() {
+    let p = cascade_project();
+    let jev = MockJev::start(&[("errors_have_context", holds(0.40))], &[]);
+    // A zero-width band at the threshold trusts Jev everywhere.
+    let (a, calls) = run_cascade(
+        &p,
+        &jev,
+        "{}",
+        &[
+            ("LLMLINT_JEV_ESCALATE_LOW", "0.5"),
+            ("LLMLINT_JEV_ESCALATE_HIGH", "0.5"),
+        ],
+    );
+    a.code(1);
+    assert!(calls.is_empty(), "{calls:?}");
+
+    // A band that does not straddle 0.5 is a config error, even for `validate`.
+    p.write(
+        "llmlint.yml",
+        "version: 1\njev:\n  escalate_low: 0.6\nrules:\n  - { name: r, description: \"d\" }\n",
+    );
+    p.bare()
+        .arg("validate")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("jev.escalate_low (0.6)"));
+    p.bare()
+        .env("LLMLINT_JEV_ESCALATE_HIGH", "1.5")
+        .arg("validate")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("LLMLINT_JEV_ESCALATE_HIGH"));
+}
+
+#[test]
+fn cascade_plan_only_names_the_cascade_group() {
+    let p = cascade_project();
+    p.bare()
+        .arg("--plan-only")
+        .assert()
+        .code(0)
+        .stdout(predicates::str::contains(
+            "judge cascade: Jev per file first",
+        ));
 }

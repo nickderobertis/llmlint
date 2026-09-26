@@ -202,7 +202,7 @@ pub fn build(
 
     for ((agent_name, judge), rules) in by_agent {
         let agent = config.agent_or_default(&agent_name);
-        let is_jev = judge == JudgeKind::Jev;
+        let is_jev = judge.asks_jev();
         // No agent harness => leave it unset so oneharness uses its own default.
         let harness = if is_jev { None } else { agent.harness.clone() };
         let batch_size = if is_jev {
@@ -480,6 +480,11 @@ pub struct PlanExplanation {
     /// Rules that were not judged, each with the reason.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<SkipEntry>,
+    /// Cascade escalations: each rule whose Jev probability fell inside the band
+    /// on some file, with those files — re-judged by the harness. Filled after
+    /// the Jev pass, so absent from `--plan-only`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub escalated: BTreeMap<String, Vec<String>>,
     /// The batching cost outcome: the file-load total the chosen layout pays vs the
     /// order-based baseline, and what grouping saved.
     pub optimization: Optimization,
@@ -625,11 +630,13 @@ impl PlanExplanation {
             ));
         }
         for a in &self.agents {
-            if a.judge == JudgeKind::Jev {
-                out.push_str(&format!(
-                    "  agent \"{}\" (judge jev: one request per file, every applicable rule a question)\n",
-                    a.agent
-                ));
+            if a.judge.asks_jev() {
+                let how = if a.judge == JudgeKind::Cascade {
+                    "judge cascade: Jev per file first, uncertain files re-judged by the harness"
+                } else {
+                    "judge jev: one request per file, every applicable rule a question"
+                };
+                out.push_str(&format!("  agent \"{}\" ({how})\n", a.agent));
                 for j in &a.judges {
                     for b in &j.batches {
                         out.push_str(&format!(
