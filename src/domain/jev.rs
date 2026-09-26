@@ -67,8 +67,13 @@ pub const MAX_CHOICE_OPTIONS: usize = 255;
 
 /// Estimated-token budget for one request's `state`. Jev's limit is 32k for the
 /// state plus the longest question; the headroom covers the question text and
-/// the estimate's slack (≈ 4 bytes per token).
+/// the estimate's slack.
 pub const STATE_TOKEN_BUDGET: usize = 24_000;
+
+/// Bytes per token assumed when estimating. Source code tokenizes densely (short
+/// identifiers, punctuation, line tags): an 80KB Rust file estimated at 4
+/// bytes/token was sent whole and exceeded Jev's limit, so estimate at 3.
+pub const BYTES_PER_TOKEN: usize = 3;
 
 /// Input price per million tokens for the models llmlint knows (output is
 /// free). `None` for an unknown model, so a report never invents a cost.
@@ -144,7 +149,7 @@ fn parse_line_id(id: &str) -> Option<u64> {
 /// single line longer than the budget still forms its own chunk (Jev reports
 /// the overflow as a 422, which surfaces as a clear error).
 fn chunks(text: &str) -> Vec<(usize, Vec<&str>)> {
-    let budget_bytes = STATE_TOKEN_BUDGET * 4;
+    let budget_bytes = STATE_TOKEN_BUDGET * BYTES_PER_TOKEN;
     let mut out: Vec<(usize, Vec<&str>)> = Vec::new();
     let mut cur: Vec<&str> = Vec::new();
     let mut cur_bytes = 0;
@@ -213,7 +218,7 @@ pub fn multi_file_request(
     files: &[(String, String)],
     rule: &JevRule,
 ) -> Result<Option<Request>, String> {
-    let total: usize = files.iter().map(|(_, t)| t.len() / 4).sum();
+    let total: usize = files.iter().map(|(_, t)| t.len() / BYTES_PER_TOKEN).sum();
     if total > STATE_TOKEN_BUDGET {
         return Err(format!(
             "rule {}'s files are ~{total} tokens together, over the ~{STATE_TOKEN_BUDGET}-token `multi_file` budget; judge it with the harness (`judge: harness` or `cascade`) or narrow its `files`",
@@ -1811,5 +1816,22 @@ rules:
         );
         let none = vec![("a.py".to_string(), "nothing here\n".to_string())];
         assert_eq!(multi_file_request(&none, &rule).unwrap(), None);
+    }
+
+    #[test]
+    fn an_80kb_source_file_is_split_so_each_state_fits() {
+        // The shape that overflowed Jev in a real run: ~2000 lines of ~40-byte
+        // code lines (80KB) sent as one chunk.
+        let line = "    let resolved = cache.lookup(&key)?;\n";
+        let text: String = line.repeat(2000);
+        let reqs = build_requests(&file(&text, None, None), &[rule("r", None)]);
+        assert!(reqs.len() >= 2, "{} chunk(s)", reqs.len());
+        for r in &reqs {
+            let bytes = r.state["content"].as_str().unwrap().len();
+            assert!(
+                bytes <= STATE_TOKEN_BUDGET * BYTES_PER_TOKEN,
+                "{bytes} bytes in one state"
+            );
+        }
     }
 }
