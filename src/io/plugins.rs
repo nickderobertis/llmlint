@@ -355,7 +355,7 @@ pub fn load_remote(url: &str, req: &Option<VersionReq>, opts: &ResolveOpts) -> R
 
 /// The cached half of [`load_remote`]: pick the newest entry satisfying the pin,
 /// revalidate it when stale, and fall back to fetching when the cache holds
-/// nothing usable (or `--refresh` forces it).
+/// nothing usable (or `LLMLINT_PLUGIN_REFRESH` forces it).
 fn load_cached(url: &str, req: &VersionReq, dir: &Path, opts: &ResolveOpts) -> Result<Resolution> {
     let entries = if opts.refresh {
         Vec::new()

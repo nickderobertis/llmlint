@@ -53,8 +53,8 @@ pub struct FileDiff {
 }
 
 /// Parse the new-file start line from a hunk header `@@ -a,b +c,d @@` (the `c`).
-/// Returns `None` for an unparseable header, so the caller can pass it through
-/// untouched rather than mis-number lines.
+/// Returns `None` for an unparseable header; the caller then numbers the hunk
+/// from line 1.
 fn parse_new_start(header: &str) -> Option<usize> {
     // Find the `+c,d` (or `+c`) token.
     let plus = header.split('+').nth(1)?;

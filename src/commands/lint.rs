@@ -653,9 +653,9 @@ fn join_or_none(names: &[&str]) -> String {
 /// Reject an explicit `FILES` argument that names no file llmlint can read — the
 /// same false green [`validate_filters`] guards against, one layer down. Without
 /// this a mistyped path (or a *ref* mistaken for one, `llmlint lint --diff
-/// origin/master`) silently shrinks what is judged: rules with their own `files`
-/// filter ignore CLI files and keep running on their globs, rules without one
-/// resolve to nothing and are skipped, and the run reports a confident pass over
+/// origin/master`) silently shrinks what is judged: explicit files intersect
+/// every rule's globs, so an unreadable path falls out of every rule's set, the
+/// rules it was meant for are skipped, and the run reports a confident pass over
 /// a fraction of the ruleset. Checked here — before rule selection, planning, or
 /// any judge call — so a bad invocation costs no model tokens.
 ///
