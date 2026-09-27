@@ -208,6 +208,14 @@ pub fn clean_verdict(
         }
         keep
     });
+    // Warnings follow the same scope and ignore rules as violations (they only
+    // inform, so dropping one never changes the verdict).
+    verdict.warnings.retain(|v| {
+        v.file.as_ref().is_none_or(|f| {
+            let nf = norm(f);
+            scope.contains(&nf) && !is_suppressed(&nf, v.line)
+        })
+    });
     // Flip a fail to a pass only when its entire basis was removed: the rule is
     // relevant, it had violations, all are gone, and at least one was dropped
     // (rather than the judge having reported `holds=false` with no violations).
@@ -418,6 +426,24 @@ mod tests {
             v.holds,
             "suppressing the only violation flips the fail to pass"
         );
+    }
+
+    #[test]
+    fn clean_prunes_warnings_like_violations_without_touching_the_verdict() {
+        let scope: BTreeSet<String> = ["src/x.rs".to_string()].into_iter().collect();
+        let mut v = RuleVerdict {
+            holds: true,
+            warnings: vec![
+                viol(Some("src/x.rs"), Some(2)),
+                viol(Some("src/x.rs"), Some(7)),
+                viol(Some("oops.rs"), Some(9)),
+            ],
+            ..Default::default()
+        };
+        let dropped = clean_verdict(&mut v, &scope, |_, l| l == Some(7));
+        assert!(!dropped, "only violations count as out-of-scope problems");
+        assert_eq!(v.warnings, vec![viol(Some("src/x.rs"), Some(2))]);
+        assert!(v.holds);
     }
 
     #[test]

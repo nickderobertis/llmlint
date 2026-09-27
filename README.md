@@ -684,10 +684,13 @@ else `harness`:
   of an oversized file) carrying the file's line-tagged text, and asks each
   applicable rule as questions: *does it hold?* (a probability), *is it relevant?*
   (for a `relevance` condition), and *which line violates it?* (a choice over the
-  candidate lines — only the added lines under `--diff`). A rule fails when its
-  probability of holding is below 0.5; the violation cites the file, the line,
-  and the probability (`jev: p(holds)=0.08, p(line)=0.80`) — **Jev writes no
-  rationale**. It bills input tokens only ($0.042 per million for
+  candidate lines — only the added lines under `--diff`). A file fails a rule
+  when its probability of holding is below the unit's **fail** cut; the
+  violation cites the file, the line, and the probability
+  (`jev: p(holds)=0.08, p(line)=0.80`) — **Jev writes no rationale**. Between the
+  fail cut and a higher **warn** cut Jev is unsure, and the file is reported as
+  a **warning** (`WARN`, listed under `warnings` in JSON): shown for review at
+  every verbosity, never failing the rule or the run. It bills input tokens only ($0.042 per million for
   `jev-1.13.0`), but it cannot read other files, so keep cross-file and
   architectural rules on the harness.
 - **`cascade`** — Jev first, then the harness only where Jev is unsure. For each
@@ -757,11 +760,10 @@ rules:
 - `yaml_entries` (with `key`) — every item of the YAML list under the top-level
   `key` is checked on its own (block or flow style), with a violation localized
   to a line inside the entry. The bundled config-lint plugin uses it
-  (`key: rules`), so each rule of a config is judged separately. Its threshold
-  favors precision: Jev's flags on these abstract, rule-quality checks were
-  always right on held-out cases, but it missed some on its own (57% recall), so
-  run them under **`judge: cascade`**, which sent the uncertain entries to the
-  harness and reached 100% recall and precision there.
+  (`key: rules`), so each rule of a config is judged separately. These abstract,
+  rule-quality checks are where Jev needs the most help: on their own question
+  it caught 57% of held-out violations, while with the plugin's own `checks` and
+  `examples` (below) it caught all of them with no false alarm.
 - `multi_file` (optional `pattern` with one capture group) — all of the rule's
   files go into one state, for rules that relate files to each other. With a
   pattern, each distinct capture across the files is an item asked about on its
@@ -783,7 +785,41 @@ rules:
   state (~24k tokens together); a larger set is a clear error — judge it with
   the harness.
 
-`jev.unit` only shapes Jev's questions; the harness ignores it.
+**Atomic checks and examples (`jev.checks`, `jev.examples`).** Jev answers a
+narrow, literal question far better than a whole rule, so a rule can list the
+concrete ways it is broken; Jev asks each one on its own in place of the rule's
+question (on every unit — each site, claim, entry, or file), and the rule is
+violated as far as its most-violated check. Fold the look-alikes that comply
+into a check with "unless …":
+
+```yaml
+  - name: errors_carry_context
+    description: Every propagated error adds context naming the operation and its input.
+    jev:
+      unit: sites
+      pattern: '\?|map_err|ok_or'
+      checks:
+        - "The line in `site` propagates a filesystem, network, or parsing error with a bare `?`, unless the called function is a same-file helper that already adds context."
+        - "The line in `site` adds a context message that omits the input (the path, URL, or value) the failed call used, although it is in scope."
+        - "The added message names a different input than the call on this line used (a copy-pasted variable)."
+```
+
+`examples` (`violations` and `compliant` snippets — near-misses that comply are
+the most useful) are attached to the question's criteria; they help most on
+abstract rules, such as the config-lint plugin's, and with both, the two views
+are averaged. **`llmlint jev-checks`** drafts checks for every rule that has
+none (or `--rule <name>`) in one harness call and prints them as YAML to review
+and paste — it never edits a config. On the eval corpus, checks drafted from the
+rule text alone took Jev's held-out results to 100% recall and 100% precision on
+every unit (from 91.8% / 98.1%), with 3.5% of items warned; a unit's cuts differ
+with and without checks, and were fitted on the corpus's dev split. At most 8
+checks per rule; each is one more question per unit, so Jev's (tiny) cost grows
+with them. What still needs the harness is reasoning Jev can't do in one step —
+tracing a mutation through a shallow copy, or deciding whether every violation
+a rule allows is line-localizable.
+
+`jev.unit`, `jev.checks`, and `jev.examples` only shape Jev's questions; the
+harness ignores them.
 
 **Jev sends your code to TypeSafe.** A `jev` rule's files (their full text, and
 their diff under `--diff`) go to TypeSafe's API; decide whether that is acceptable
@@ -851,7 +887,7 @@ Inspect what was logged with `llmlint history`:
 llmlint history                       # list recent runs (most recent first)
 llmlint history latest                # full results of the most recent run
 llmlint history <id>                  # full results of a specific run
-llmlint history <id> --status fail    # only the failing rules
+llmlint history <id> --status fail    # only the failing rules (or `warn`, …)
 llmlint history <id> --rule my_rule   # only one rule
 llmlint history <id> --path           # just the JSON record's path (for scripting)
 llmlint history <id> --format json    # the raw record

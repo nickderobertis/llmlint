@@ -461,6 +461,24 @@
             "string",
             "null"
           ]
+        },
+        "checks": {
+          "description": "Atomic violation checks: each names one concrete way the rule can be\nbroken (\"the line in `site` propagates a filesystem error with a bare\n`?`…\"), with look-alikes that comply folded in (\"…unless …\"). Jev asks\neach one on its own instead of the whole rule, and the rule fails where\nany check fires — narrow, literal questions are what Jev answers well.\n`llmlint jev-checks` drafts them from the rule's description.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "examples": {
+          "description": "Short snippets that violate and comply with the rule, shown to Jev\nbeside the question. Most useful for abstract rules (e.g. about how a\nconfig is written), where a concrete instance says what the words don't.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JevExamples"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -494,6 +512,29 @@
           "const": "multi_file"
         }
       ]
+    },
+    "JevExamples": {
+      "description": "Few-shot examples for a rule's Jev questions.",
+      "type": "object",
+      "properties": {
+        "violations": {
+          "description": "Snippets that violate the rule.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "compliant": {
+          "description": "Snippets that comply with the rule — near-misses are the most useful.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$id": "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/llmlint.schema.json"

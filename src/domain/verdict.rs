@@ -70,6 +70,10 @@ pub struct RuleVerdict {
     /// verdict (and never read from harness output).
     #[serde(skip)]
     pub scores: Vec<JudgeScore>,
+    /// Likely-but-uncertain violations from a probabilistic judge: flagged for
+    /// review, never failing the rule. Empty for a harness verdict.
+    #[serde(skip)]
+    pub warnings: Vec<Violation>,
 }
 
 impl RuleVerdict {
@@ -86,6 +90,10 @@ impl RuleVerdict {
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     Pass,
+    /// The rule holds, but a probabilistic judge (Jev) was unsure about some
+    /// file(s): each is listed under `warnings` for review. Not a violation —
+    /// exits clean.
+    Warn,
     Fail,
     Skipped,
     /// Every file the rule would cover is suppressed by a whole-file `ignore-file`
@@ -138,6 +146,10 @@ pub struct RuleOutcome {
     pub judges: Vec<JudgeOpinion>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub violations: Vec<Violation>,
+    /// Uncertain findings flagged for review (a Jev score between the rule's
+    /// fail and warn thresholds). They never fail the rule.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<Violation>,
     /// Per-file probabilities behind a probabilistic (Jev) verdict, for every
     /// file judged — passing ones too — so a run's JSON can tune thresholds
     /// offline. Empty (and omitted) for harness verdicts.
@@ -155,6 +167,7 @@ impl RuleOutcome {
             votes_hold: 0,
             judges: Vec::new(),
             violations: Vec::new(),
+            warnings: Vec::new(),
             scores: Vec::new(),
         }
     }
@@ -170,6 +183,7 @@ impl RuleOutcome {
             votes_hold: 0,
             judges: Vec::new(),
             violations: Vec::new(),
+            warnings: Vec::new(),
             scores: Vec::new(),
         }
     }
@@ -185,6 +199,7 @@ impl RuleOutcome {
             votes_hold: 0,
             judges: Vec::new(),
             violations: Vec::new(),
+            warnings: Vec::new(),
             scores: Vec::new(),
         }
     }

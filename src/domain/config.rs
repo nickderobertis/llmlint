@@ -202,6 +202,31 @@ pub struct RuleJev {
     /// entries (e.g. `rules`). Required for `yaml_entries`, rejected otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+    /// Atomic violation checks: each names one concrete way the rule can be
+    /// broken ("the line in `site` propagates a filesystem error with a bare
+    /// `?`…"), with look-alikes that comply folded in ("…unless …"). Jev asks
+    /// each one on its own instead of the whole rule, and the rule fails where
+    /// any check fires — narrow, literal questions are what Jev answers well.
+    /// `llmlint jev-checks` drafts them from the rule's description.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<String>,
+    /// Short snippets that violate and comply with the rule, shown to Jev
+    /// beside the question. Most useful for abstract rules (e.g. about how a
+    /// config is written), where a concrete instance says what the words don't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub examples: Option<JevExamples>,
+}
+
+/// Few-shot examples for a rule's Jev questions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct JevExamples {
+    /// Snippets that violate the rule.
+    #[serde(default)]
+    pub violations: Vec<String>,
+    /// Snippets that comply with the rule — near-misses are the most useful.
+    #[serde(default)]
+    pub compliant: Vec<String>,
 }
 
 /// How llmlint calls TypeSafe's Jev API for rules judged by `jev`. The API key
@@ -1088,6 +1113,39 @@ pub fn validate(config: &Config) -> Result<()> {
                 "rule {}: `jev.key` only applies to `jev.unit: yaml_entries`",
                 rule.name
             )),
+        }
+        if spec.checks.iter().any(|c| c.trim().is_empty()) {
+            problems.push(format!(
+                "rule {}: `jev.checks` has an empty check",
+                rule.name
+            ));
+        }
+        if spec.checks.len() > crate::domain::jev::MAX_CHECKS {
+            problems.push(format!(
+                "rule {}: `jev.checks` has {} checks; at most {} (each is a question on every unit)",
+                rule.name,
+                spec.checks.len(),
+                crate::domain::jev::MAX_CHECKS
+            ));
+        }
+        if let Some(ex) = &spec.examples {
+            if ex.violations.is_empty() || ex.compliant.is_empty() {
+                problems.push(format!(
+                    "rule {}: `jev.examples` needs at least one `violations` and one `compliant` example",
+                    rule.name
+                ));
+            }
+            if ex
+                .violations
+                .iter()
+                .chain(&ex.compliant)
+                .any(|e| e.trim().is_empty())
+            {
+                problems.push(format!(
+                    "rule {}: `jev.examples` has an empty example",
+                    rule.name
+                ));
+            }
         }
     }
 

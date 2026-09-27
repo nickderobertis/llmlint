@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod history;
 pub mod ignores;
 pub mod init;
+pub mod jev_checks;
 pub mod lint;
 pub mod lint_config;
 pub mod plugins;
@@ -29,6 +30,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Config(args)) => config::run(args),
         Some(Command::Where(args)) => where_::run(args),
         Some(Command::Doctor(args)) => doctor::run(args),
+        Some(Command::JevChecks(args)) => jev_checks::run(args),
         Some(Command::History(args)) => history::run(args),
         Some(Command::Plugins(args)) => plugins::run(args),
         None => lint::run(cli.lint),

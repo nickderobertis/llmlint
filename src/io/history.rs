@@ -410,6 +410,7 @@ mod tests {
                 judges: vec![],
                 violations: vec![],
                 scores: Vec::new(),
+                warnings: Vec::new(),
             }],
             vec![],
         );

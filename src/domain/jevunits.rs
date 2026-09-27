@@ -90,6 +90,25 @@ pub struct SiteGroup {
 /// Lines of context around a site outside any function.
 const SITE_WINDOW: usize = 6;
 
+/// Whether `line` is a comment-only line in `path`'s language: `//`, `/*`,
+/// `*` for Rust and C-like sources (where `#` starts an attribute or a
+/// preprocessor line), `#` for Python, and either for other config/script
+/// files. Prose files (Markdown, reStructuredText, plain text) have no
+/// comments — a `#` there is a heading.
+pub fn is_comment_line(path: &str, line: &str) -> bool {
+    let t = line.trim_start();
+    let c_style = t.starts_with("//") || t.starts_with("/*") || t.starts_with('*');
+    match lang(path) {
+        Some(Lang::Rust | Lang::CLike) => c_style,
+        Some(Lang::Python) => t.starts_with('#'),
+        None => {
+            let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+            !matches!(ext.as_str(), "md" | "markdown" | "rst" | "txt")
+                && (t.starts_with('#') || c_style)
+        }
+    }
+}
+
 /// Every non-comment line matching `pattern`, grouped by the innermost
 /// function containing it. A site's state is its whole function, so the check
 /// sees what the matched construct is doing (which call, which value).
@@ -98,10 +117,7 @@ pub fn site_groups(path: &str, text: &str, pattern: &regex::Regex) -> Vec<SiteGr
     let functions = function_index(path, &lines);
     let mut groups: Vec<SiteGroup> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let t = line.trim_start();
-        let comment =
-            t.starts_with("//") || t.starts_with('#') || t.starts_with('*') || t.starts_with("/*");
-        if comment || !pattern.is_match(line) {
+        if is_comment_line(path, line) || !pattern.is_match(line) {
             continue;
         }
         let n = i + 1;
@@ -889,5 +905,21 @@ agents:
             texts(&doc_items("a.rs", src)[0]),
             [(2, "Options: fast mode"), (3, "Options: `safe` mode")]
         );
+    }
+
+    #[test]
+    fn comment_lines_follow_the_file_language() {
+        assert!(is_comment_line("a.rs", "   // gone"));
+        assert!(
+            !is_comment_line("a.rs", "#[arg(long = \"x\")]"),
+            "a Rust attribute"
+        );
+        assert!(is_comment_line("a.py", "  # note"));
+        assert!(is_comment_line("config/example.env", "# FOO=1"));
+        assert!(
+            !is_comment_line("README.md", "## Flags"),
+            "a Markdown heading"
+        );
+        assert!(!is_comment_line("a.py", "x = 1  # trailing"));
     }
 }

@@ -116,6 +116,10 @@ fn answer(request: &Value, scripts: &BTreeMap<String, Script>) -> Value {
     for (id, q) in request["questions"].as_object().unwrap() {
         let mut parts = id.split(':');
         let (kind, rule) = (parts.next().unwrap(), parts.next().unwrap());
+        // A rule's `checks` / `examples` replace its question with
+        // `<id>#check<n>` / `<id>#examples` (the suffix rides on the last part).
+        let variant = id.split_once('#').map(|(_, v)| v);
+        let rule = rule.split('#').next().unwrap();
         // A `rule@path` script answers for that file only, else the rule's.
         let s = scripts
             .get(&format!("{rule}@{path}"))
@@ -123,6 +127,10 @@ fn answer(request: &Value, scripts: &BTreeMap<String, Script>) -> Value {
             .copied()
             .unwrap_or_default();
         let a = match kind {
+            // Every check asks whether its violation happens.
+            _ if variant.is_some_and(|v| v.starts_with("check")) => {
+                json!({"type": "noul", "noul": 1.0 - s.holds.unwrap_or(0.95)})
+            }
             "holds" => json!({"type": "noul", "noul": s.holds.unwrap_or(0.95)}),
             "relevant" => json!({"type": "noul", "noul": s.relevant.unwrap_or(0.9)}),
             // Claim and site questions ask for a *violation*: p = 1 - p(holds).
@@ -716,8 +724,9 @@ fn doc_claims_passes_above_its_threshold_and_skips_undocumented_files() {
     );
     p.write("src/a.rs", DOCUMENTED);
     p.write("src/b.rs", "fn undocumented() {}\n");
-    // 0.40 fails a whole-file rule but passes a claims rule (threshold 0.35).
-    let jev = MockJev::start(&[("docs_match_code", holds(0.40))], &[]);
+    // 0.65 would warn on a whole-file rule (below its 0.75 warn cut) but
+    // clears a claims rule's (0.6).
+    let jev = MockJev::start(&[("docs_match_code", holds(0.65))], &[]);
     let out = json_of(&run_jev(&p, &jev).code(0));
     assert_eq!(out["rules"][0]["outcome"], "pass");
     assert_eq!(
@@ -894,4 +903,154 @@ fn a_multi_file_pattern_needs_a_capture_group() {
         .assert()
         .code(2)
         .stderr(predicates::str::contains("needs a capture group"));
+}
+
+// ---- jev: { checks, examples } + `llmlint jev-checks` ----------------------
+
+const CHECKED_RULE: &str = "  - name: errors_have_context\n    description: \"Every error carries context.\"\n    require_line_attribution: true\n    jev:\n      checks:\n        - \"An error is propagated with a bare `?`.\"\n        - \"A context message omits the path.\"\n      examples:\n        violations: [\"let t = read(p)?;\"]\n        compliant: [\"let t = read(p).context(p)?;\"]\n";
+
+#[test]
+fn checks_and_examples_replace_the_rules_question_and_a_firing_check_fails_it() {
+    let p = jev_project(CHECKED_RULE);
+    let jev = MockJev::start(&[("errors_have_context", violates_at(2))], &[]);
+    let out = json_of(&run_jev(&p, &jev).code(1));
+    let v = &out["rules"][0]["violations"][0];
+    assert_eq!(
+        (v["file"].clone(), v["line"].clone()),
+        (json!("src/a.rs"), json!(2))
+    );
+
+    let q = jev.requests()[0].body["questions"]
+        .as_object()
+        .unwrap()
+        .clone();
+    assert!(!q.contains_key("holds:errors_have_context"), "replaced");
+    let c0 = &q["holds:errors_have_context#check0"];
+    assert_eq!(
+        c0["criteria"]["true"],
+        "An error is propagated with a bare `?`."
+    );
+    assert_eq!(
+        c0["instructions"]["question"],
+        "Does `content` violate `rule`?"
+    );
+    assert!(q.contains_key("holds:errors_have_context#check1"));
+    let ex = &q["holds:errors_have_context#examples"];
+    assert_eq!(
+        ex["criteria"]["false"]["examples"],
+        json!(["let t = read(p)?;"])
+    );
+    assert_eq!(
+        ex["criteria"]["true"]["examples"],
+        json!(["let t = read(p).context(p)?;"])
+    );
+}
+
+#[test]
+fn a_rule_passes_when_no_check_fires() {
+    let p = jev_project(CHECKED_RULE);
+    let jev = MockJev::start(&[("errors_have_context", holds(0.97))], &[]);
+    assert_eq!(
+        json_of(&run_jev(&p, &jev).code(0))["rules"][0]["outcome"],
+        "pass"
+    );
+}
+
+#[test]
+fn empty_checks_or_one_sided_examples_are_config_errors() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nrules:\n  - { name: a, description: d, jev: { checks: [\" \"] } }\n  - { name: b, description: d, jev: { examples: { violations: [x] } } }\n",
+    );
+    p.bare()
+        .arg("validate")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "rule a: `jev.checks` has an empty check",
+        ))
+        .stderr(predicates::str::contains(
+            "rule b: `jev.examples` needs at least one `violations` and one `compliant` example",
+        ));
+}
+
+#[test]
+fn jev_checks_drafts_checks_for_rules_without_them_and_prints_yaml() {
+    let p = jev_project(&format!(
+        "{ONE_RULE}  - {{ name: already, description: \"d\", jev: {{ checks: [\"x\"] }} }}\n"
+    ));
+    p.write(
+        "answer.json",
+        r#"{"errors_have_context": {"checks": ["A bare `?` propagates an error.", "  "]}}"#,
+    );
+    let dump = p.path().join("args.txt");
+    let a = p
+        .bare()
+        .args(["jev-checks", "--oneharness-bin"])
+        .arg(mock_path())
+        .env("LLMLINT_MOCK_STRUCTURED", p.path().join("answer.json"))
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .code(0);
+    assert_eq!(
+        String::from_utf8_lossy(&a.get_output().stdout),
+        "# rule `errors_have_context` — paste under its `jev:` block\nchecks:\n  - \"A bare `?` propagates an error.\"\n"
+    );
+    // One read-only harness call whose prompt briefs only the rule without checks.
+    let args = std::fs::read_to_string(&dump).unwrap();
+    assert!(args.contains("read-only"));
+    assert!(args.contains("- name: errors_have_context"));
+    assert!(!args.contains("- name: already"));
+}
+
+#[test]
+fn jev_checks_rejects_an_unknown_rule_before_any_model_call() {
+    let p = jev_project(ONE_RULE);
+    p.bare()
+        .args(["jev-checks", "--rule", "nope", "--oneharness-bin"])
+        .arg(p.path().join("no-such-oneharness"))
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "no rule named nope; available rules: errors_have_context",
+        ));
+}
+
+#[test]
+fn an_unsure_score_is_a_warning_that_is_shown_but_never_fails_the_run() {
+    let p = jev_project(ONE_RULE);
+    // Between the whole-file unit's fail (0.5) and warn (0.75) cuts.
+    let unsure = Script {
+        holds: Some(0.6),
+        relevant: None,
+        line: Some(2),
+    };
+    let jev = MockJev::start(&[("errors_have_context", unsure)], &[]);
+    let out = json_of(&run_jev(&p, &jev).code(0));
+    let r = &out["rules"][0];
+    assert_eq!(r["outcome"], "warn");
+    assert_eq!(
+        (
+            r["warnings"][0]["file"].clone(),
+            r["warnings"][0]["line"].clone()
+        ),
+        (json!("src/a.rs"), json!(2))
+    );
+    assert!(r.get("violations").is_none());
+    assert_eq!(out["summary"]["warned"], 1);
+
+    let mut c = p.bare();
+    c.args(["--oneharness-bin"])
+        .arg(p.path().join("no-such-oneharness"))
+        .env("LLMLINT_JEV_URL", &jev.url)
+        .env("TYPESAFE_API_KEY", "test-key");
+    c.assert()
+        .code(0)
+        .stdout(predicates::str::contains(
+            "WARN errors_have_context\n     src/a.rs:2",
+        ))
+        .stdout(predicates::str::contains(
+            "1 rules: 0 passed, 0 failed, 0 skipped, 1 warned",
+        ));
 }

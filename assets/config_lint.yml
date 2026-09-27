@@ -20,19 +20,36 @@
 # A minor bump (new rule, backward-compatible) still satisfies an existing `@1`
 # pin, so consumers pick it up with no pin change; bump the major only on an
 # incompatible change (see AGENTS.md).
-version: 1.5
+version: 1.6
 
 # Every check localizes its findings to the offending rule (require_line_attribution:
 # true) — a config-lint violation always points at a concrete file + line, which is
 # itself the best practice these rules enforce for the configs they lint. Each rule
 # below is phrased to pass its own checks (llmlint dogfoods this plugin).
+# Under `judge: jev` / `cascade`, Jev checks each rule entry of a config on its
+# own rather than the whole file (the harness ignores `jev:` blocks). Every rule
+# merges this unit (`<<: *config_entries`) and adds its own atomic `checks` and
+# `examples` — drafted from the rule text (`llmlint jev-checks`), they are what
+# lets Jev judge these abstract rules as well as the harness on the eval corpus.
+x-config-entries: &config_entries { unit: yaml_entries, key: rules }
 rules:
   - name: description_yields_clear_verdict
     # The first rule anchors the config-file globs; the others alias it (`*config_files`)
     # so the scope stays in one place.
-    # Under `judge: jev` / `cascade`, Jev checks each rule entry of a config on
-    # its own rather than the whole file (the harness ignores this block).
-    jev: &config_entries { unit: yaml_entries, key: rules }
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry`'s `description` names the failing case with verdict-hiding prose such as \"is a violation\", \"is not allowed\", \"should be avoided\", \"is discouraged\", \"must not\", or \"is bad\" instead of stating a plain invariant or a direct \"False when <condition>\"."
+        - "The `entry`'s `description` states more than one independent property (for example two unrelated requirements joined by \"and also\") so it is unclear which property's truth is the verdict."
+        - "The `entry`'s `description` gives a holding condition and a violating condition that overlap, so some case satisfies both (for example \"passes when X\" and \"fails when X and Y\" with no statement for X alone), or leaves a clause whose pass/fail mapping must be inferred."
+        - "The `entry`'s `description` is a question, recommendation, or vague goal (for example \"Is the code clean?\", \"Prefer good names\", \"Code should be high quality\") rather than a checkable property."
+      examples:
+        violations:
+          - "- name: no_print_statements\n  description: Using print() for output in library code is not allowed and should be avoided."
+          - "- name: functions_are_short\n  description: Functions are short. Long functions are discouraged, and functions over 40 lines may be a violation depending on context."
+        compliant:
+          - "- name: no_print_in_library\n  description: Library modules emit output only through the logging module. False when a library function calls print()."
+          - "- name: public_functions_have_docstrings\n  description: Every public function has a docstring that states its return value, for example `Returns the parsed config`."
     files: &config_files
       include:
         - "**/llmlint.yml"
@@ -54,7 +71,19 @@ rules:
       overlap.
 
   - name: name_describes_what_the_rule_checks
-    jev: *config_entries
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry`'s `name` is a placeholder or nonsense token such as `rule1`, `rule_2`, `foo`, `bar`, `baz`, `test`, `todo`, `asdf`, `temp`, `thing`, `xxx`, `check`, or `my_rule`."
+        - "The `entry`'s `name` refers to a different property, subject, or construct than its `description` evaluates (for example `no_todos` for a rule about error handling, or `tests_exist` for a rule about docs)."
+        - "The `entry`'s `name` is too generic to convey the property checked, such as `quality`, `style`, `general`, `misc`, or `good_code`, even if it is a real word."
+      examples:
+        violations:
+          - "- name: rule1\n  description: Every public function has a docstring."
+          - "- name: log_levels_correct\n  description: Every HTTP handler validates its request body before using it."
+        compliant:
+          - "- name: public_functions_have_docstrings\n  description: Every public function has a docstring."
+          - "- name: todo_comments_link_an_issue\n  description: Every TODO comment references a tracker issue number, for example `TODO(#123)`."
     files: *config_files
     require_line_attribution: true
     description: |
@@ -64,7 +93,18 @@ rules:
       that names the same thing the description evaluates.
 
   - name: relevance_scopes_conditional_rules
-    jev: *config_entries
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry`'s `description` contains an inline applicability clause such as \"or not applicable\", \"if present\", \"if any\", \"when relevant\", \"where applicable\", \"if the file has ...\", or \"N/A otherwise\" instead of putting that condition in a `relevance:` key."
+        - "The `entry`'s `description` says the rule passes or is exempt when a situation does not occur (for example \"true if the file has no SQL\" or \"files without handlers pass\") instead of expressing that situation as a `relevance:` condition."
+      examples:
+        violations:
+          - "- name: migrations_are_reversible\n  description: Every database migration defines a down step, or the rule is not applicable if the file contains no migration."
+          - "- name: retry_has_backoff\n  description: When relevant, every retry loop waits with exponential backoff between attempts."
+        compliant:
+          - "- name: migrations_are_reversible\n  relevance: the file defines a database migration\n  description: Every migration defines a down step that undoes its up step."
+          - "- name: public_functions_have_docstrings\n  description: Every public function has a docstring."
     files: *config_files
     require_line_attribution: true
     description: |
@@ -74,7 +114,19 @@ rules:
       relevant"), keeping the verdict a clean pass/fail.
 
   - name: path_scoped_rules_use_files_not_relevance
-    jev: *config_entries
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry`'s `relevance` condition names a file type or extension (for example \"when the file is a Python file\", \"for .ts files\", \"only Markdown files\") that a `files` glob such as `**/*.py` could express."
+        - "The `entry`'s `relevance` condition names a directory or path (for example \"files under src/api\", \"test files in tests/\", \"when the file is in the migrations folder\") that a `files` glob could express."
+        - "The `entry`'s `description` restricts the rule to a file type, extension, or directory (for example \"In Python files, ...\" or \"Files under src/handlers must ...\") while the entry has no `files` glob declaring that subset."
+      examples:
+        violations:
+          - "- name: python_functions_have_type_hints\n  relevance: the file is a Python (.py) file\n  description: Every function annotates its parameters and return type."
+          - "- name: handlers_validate_input\n  relevance: the file is located under src/handlers/\n  description: Every handler validates its request body before using it."
+        compliant:
+          - "- name: python_functions_have_type_hints\n  files:\n    include: ['**/*.py']\n  description: Every function annotates its parameters and return type."
+          - "- name: retry_has_backoff\n  files:\n    include: ['src/**/*.py']\n  relevance: the file contains a retry loop\n  description: Every retry loop waits with exponential backoff between attempts."
     files: *config_files
     require_line_attribution: true
     description: |
@@ -86,7 +138,18 @@ rules:
       conditions on a file's content or changes that a glob cannot express.
 
   - name: description_omits_already_excluded_situations
-    jev: *config_entries
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry`'s `description` mentions an exemption or property for files that its own `files` globs already exclude (for example a `*.py`-scoped rule saying \"non-Python files are exempt\", or a `src/**` rule mentioning test files outside `src/`)."
+        - "The `entry`'s `description` repeats or restates its `relevance` condition (for example relevance \"the file defines an HTTP handler\" and description \"If the file defines an HTTP handler, ...\" or \"files without handlers pass\")."
+      examples:
+        violations:
+          - "- name: python_functions_have_type_hints\n  files:\n    include: ['**/*.py']\n  description: Every Python function annotates its parameters; non-Python files are exempt."
+          - "- name: migrations_are_reversible\n  relevance: the file defines a database migration\n  description: If the file defines a migration, every migration defines a down step; files without migrations pass."
+        compliant:
+          - "- name: python_functions_have_type_hints\n  files:\n    include: ['**/*.py']\n  description: Every function annotates its parameters and return type; `self` and `cls` are exempt."
+          - "- name: migrations_are_reversible\n  relevance: the file defines a database migration\n  description: Every migration defines a down step that undoes its up step, including data migrations."
     files: *config_files
     require_line_attribution: true
     # Complement to `relevance_scopes_conditional_rules`: that rule catches a
@@ -103,7 +166,18 @@ rules:
       redundant clause only spends tokens and blurs the verdict.
 
   - name: relevance_scopes_without_deciding_the_verdict
-    jev: *config_entries
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry`'s `relevance` condition asserts the property the `description` checks, so every file it admits would pass (for example relevance \"the file logs errors with context\" for a rule requiring errors be logged with context)."
+        - "The `entry`'s `relevance` condition names exactly the violating case, so every file it admits would fail (for example relevance \"the file contains a bare except\" for a rule forbidding bare excepts, or \"the file has a hardcoded secret\" for a no-secrets rule)."
+      examples:
+        violations:
+          - "- name: public_functions_have_docstrings\n  relevance: the file defines a public function with no docstring\n  description: Every public function has a docstring."
+          - "- name: retry_has_backoff\n  relevance: the file contains a retry loop that uses exponential backoff\n  description: Every retry loop waits with exponential backoff between attempts."
+        compliant:
+          - "- name: retry_has_backoff\n  relevance: the file contains a retry loop\n  description: Every retry loop waits with exponential backoff between attempts."
+          - "- name: migrations_are_reversible\n  relevance: the file defines a database migration, with or without a down step\n  description: Every migration defines a down step that undoes its up step."
     files: *config_files
     require_line_attribution: true
     # Complement to `description_omits_already_excluded_situations`: there the
@@ -120,7 +194,19 @@ rules:
       `description: every function has a docstring`.
 
   - name: description_and_relevance_are_concise
-    jev: *config_entries
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry`'s `description` or `relevance` contains filler or narrative beyond the check, such as motivation, history, or phrases like \"It is important that\", \"In order to ensure\", \"as we all know\", or \"This rule helps maintain\"."
+        - "The `entry`'s `description` restates its own property as the inverse (for example \"X holds. False when X does not hold.\" or \"Must have tests; lacking tests fails\") without adding any new detail."
+        - "The `entry`'s `description` or `relevance` repeats the same point in different words (for example two sentences that say the same requirement), unless the extra text is a clarifying example or edge case."
+      examples:
+        violations:
+          - "- name: public_functions_have_docstrings\n  description: It is very important for the maintainability of our codebase, as the team has learned over many years, that every public function should really have a docstring, because a function without a docstring is a function that does not have a docstring, which is bad."
+          - "- name: retry_has_backoff\n  relevance: the file contains some kind of retry loop, meaning a loop that retries an operation, i.e. any loop in which an operation is attempted again after it fails\n  description: Every retry loop waits with exponential backoff."
+        compliant:
+          - "- name: public_functions_have_docstrings\n  description: Every public function has a docstring."
+          - "- name: errors_carry_context\n  description: Every error propagated from a filesystem, network, or parsing call is wrapped with context naming the operation and its input, for example `reading config.yml`. A `map_err` that only changes the error type does not add context."
     files: *config_files
     require_line_attribution: true
     description: |
@@ -132,7 +218,18 @@ rules:
       lacks, such as concrete examples or easily-confused edge cases.
 
   - name: line_localizable_rules_require_attribution
-    jev: *config_entries
+    jev:
+      <<: *config_entries
+      checks:
+        - "The `entry` omits `require_line_attribution: true` (or sets it `false`) even though every violation its `description` permits is a concrete token, statement, declaration, or key on specific line(s) (for example a banned call, a bare `?`, a vague log message, a placeholder name, a missing field on a declaration)."
+        - "The `entry` sets `require_line_attribution: true` even though its `description` permits a violation that cannot be pinned to a specific line, such as agreement across files (something missing from another file), a whole-file property, an absence (something never appears), or an architectural/cross-cutting property."
+      examples:
+        violations:
+          - "- name: todo_comments_link_an_issue\n  description: Every TODO comment references a tracker issue, for example `TODO(#123)`."
+          - "- name: cli_flags_documented_in_readme\n  require_line_attribution: true\n  description: Every command-line flag defined in src/cli.rs is documented in README.md."
+        compliant:
+          - "- name: todo_comments_link_an_issue\n  require_line_attribution: true\n  description: Every TODO comment references a tracker issue, for example `TODO(#123)`."
+          - "- name: module_has_single_responsibility\n  description: Each module groups code serving one cohesive responsibility."
     files: *config_files
     require_line_attribution: true
     description: |

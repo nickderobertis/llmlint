@@ -796,6 +796,7 @@ fn progress_target(show: bool) -> ProgressDrawTarget {
 fn live_status(o: &RuleOutcome) -> LiveStatus {
     match o.outcome {
         Outcome::Pass => LiveStatus::Pass,
+        Outcome::Warn => LiveStatus::Warn,
         Outcome::Fail => LiveStatus::Fail,
         Outcome::Skipped => LiveStatus::Skipped,
         Outcome::Ignored => LiveStatus::Ignored,
@@ -995,6 +996,8 @@ fn execute_jev(
             unit: r.jev.unit,
             pattern: r.jev.pattern.clone(),
             key: r.jev.key.clone(),
+            checks: r.jev.checks.clone(),
+            examples: r.jev.examples.clone(),
         })
         .collect();
 
@@ -1489,6 +1492,7 @@ mod tests {
             judges: vec![],
             violations: vec![],
             scores: Vec::new(),
+            warnings: Vec::new(),
         };
         assert!(matches!(
             live_status(&outcome(Outcome::Pass)),

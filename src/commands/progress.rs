@@ -28,6 +28,8 @@ const TICK: Duration = Duration::from_millis(120);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveStatus {
     Pass,
+    /// Held, with uncertain findings flagged for review.
+    Warn,
     Fail,
     NotRelevant,
     Skipped,
@@ -46,6 +48,7 @@ impl LiveStatus {
     fn glyph_word(self) -> (&'static str, &'static str) {
         match self {
             LiveStatus::Pass => ("✓", "passed"),
+            LiveStatus::Warn => ("!", "passed with warnings"),
             LiveStatus::Fail => ("✗", "failed"),
             LiveStatus::NotRelevant => ("–", "not relevant"),
             LiveStatus::Skipped => ("–", "skipped"),
@@ -58,7 +61,10 @@ impl LiveStatus {
         match self {
             LiveStatus::Pass => "green",
             LiveStatus::Fail | LiveStatus::Error => "red",
-            LiveStatus::NotRelevant | LiveStatus::Skipped | LiveStatus::Ignored => "yellow",
+            LiveStatus::Warn
+            | LiveStatus::NotRelevant
+            | LiveStatus::Skipped
+            | LiveStatus::Ignored => "yellow",
         }
     }
 }

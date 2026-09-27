@@ -21,10 +21,24 @@ pub fn tally(name: &str, verdicts: &[RuleVerdict]) -> RuleOutcome {
 
     let relevant = votes_relevant * 2 > total;
     let passes = relevant && votes_hold * 2 > votes_relevant;
+    // Warnings come from the judges that held (a failing rule already
+    // reports its violations; a warning beside them adds nothing to act on).
+    let warnings = if relevant && passes {
+        dedup(
+            verdicts
+                .iter()
+                .filter(|v| v.is_relevant() && v.holds)
+                .flat_map(|v| v.warnings.iter().cloned()),
+        )
+    } else {
+        Vec::new()
+    };
     let outcome = if !relevant {
         Outcome::NotRelevant
-    } else if passes {
+    } else if passes && warnings.is_empty() {
         Outcome::Pass
+    } else if passes {
+        Outcome::Warn
     } else {
         Outcome::Fail
     };
@@ -65,6 +79,7 @@ pub fn tally(name: &str, verdicts: &[RuleVerdict]) -> RuleOutcome {
         votes_hold,
         judges,
         violations,
+        warnings,
         scores: verdicts
             .iter()
             .flat_map(|v| v.scores.iter().cloned())
@@ -88,7 +103,7 @@ fn clean_rationale(v: &RuleVerdict) -> Option<String> {
 fn pick_rationale(verdicts: &[RuleVerdict], outcome: Outcome) -> Option<String> {
     let agrees = |v: &&RuleVerdict| match outcome {
         Outcome::NotRelevant => !v.is_relevant(),
-        Outcome::Pass => v.is_relevant() && v.holds,
+        Outcome::Pass | Outcome::Warn => v.is_relevant() && v.holds,
         Outcome::Fail => v.is_relevant() && !v.holds,
         // Skipped/Ignored rules never run a judge, so no verdict can agree.
         Outcome::Skipped | Outcome::Ignored => false,
@@ -129,6 +144,7 @@ mod tests {
             },
             rationale: None,
             scores: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -296,5 +312,34 @@ mod tests {
         // No rationales at all (disabled) -> none on the outcome.
         let o = tally("r", &[v(true, ""), v(true, "")]);
         assert_eq!(o.rationale, None);
+    }
+
+    #[test]
+    fn a_holding_verdict_with_warnings_is_a_warn_outcome_carrying_them() {
+        let warn = Violation {
+            file: Some("a.rs".into()),
+            message: Some("jev: p(holds)=0.62".into()),
+            ..Default::default()
+        };
+        let o = tally(
+            "r",
+            &[RuleVerdict {
+                warnings: vec![warn.clone()],
+                ..v(true, "")
+            }],
+        );
+        assert_eq!(o.outcome, Outcome::Warn);
+        assert_eq!(o.warnings, vec![warn.clone()]);
+        assert!(o.violations.is_empty());
+        // A failing rule reports its violations; its warnings add nothing.
+        let o = tally(
+            "r",
+            &[RuleVerdict {
+                warnings: vec![warn],
+                ..v(false, "bad")
+            }],
+        );
+        assert_eq!(o.outcome, Outcome::Fail);
+        assert!(o.warnings.is_empty());
     }
 }

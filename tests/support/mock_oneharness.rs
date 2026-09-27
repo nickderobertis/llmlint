@@ -11,6 +11,8 @@
 //!   bool (`holds`), an object (`{holds, violations}`), or an array of specs
 //!   (one per judge call, advanced via a per-rule counter under
 //!   `LLMLINT_MOCK_STATE`). Unlisted rules default to `holds=true`.
+//! - `LLMLINT_MOCK_STRUCTURED=<path>` — emit that file's JSON as `structured`
+//!   verbatim (for a caller whose schema is not the verdict map).
 //! - `LLMLINT_MOCK_FAIL_SCHEMA=1` — emit `schema_valid=false` (validation fail).
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
@@ -325,7 +327,21 @@ fn main() {
         return;
     }
 
-    let result = if flag("LLMLINT_MOCK_BAD_SHAPE") {
+    let result = if let Some(path) = env::var_os("LLMLINT_MOCK_STRUCTURED") {
+        // A caller whose schema is not the verdict map (`llmlint jev-checks`):
+        // the file's JSON is the structured answer, verbatim.
+        let structured: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        json!({
+            "harness": harness,
+            "status": "ok",
+            "exit_code": 0,
+            "structured": structured,
+            "schema_valid": true,
+            "schema_attempts": 1,
+            "schema_error": null,
+            "error": null,
+        })
+    } else if flag("LLMLINT_MOCK_BAD_SHAPE") {
         // Valid JSON, valid against no schema check here, but not a verdict map.
         json!({
             "harness": harness,

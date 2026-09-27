@@ -19,6 +19,8 @@ const SKIP_STYLE: Style = AnsiColor::Yellow.on_default().dimmed();
 const ERROR_STYLE: Style = AnsiColor::Red.on_default().bold();
 // Not-relevant rules are neither pass nor fail; de-emphasized like skips.
 const NA_STYLE: Style = AnsiColor::Yellow.on_default().dimmed();
+// Warnings are for review, not failures: bold yellow, between PASS and FAIL.
+const WARN_STYLE: Style = AnsiColor::Yellow.on_default().bold();
 
 /// Wrap `text` in `style`'s SGR codes when `color` is on, else return it plain.
 /// anstyle renders the prefix via `Display` and the reset via the alternate
@@ -35,6 +37,7 @@ fn paint(text: &str, style: Style, color: bool) -> String {
 #[derive(Debug, Default, Clone, Copy)]
 struct Counts {
     pass: usize,
+    warn: usize,
     fail: usize,
     skip: usize,
     ignored: usize,
@@ -147,6 +150,7 @@ impl Report {
         for o in &self.outcomes {
             match o.outcome {
                 Outcome::Pass => c.pass += 1,
+                Outcome::Warn => c.warn += 1,
                 Outcome::Fail => c.fail += 1,
                 Outcome::Skipped => c.skip += 1,
                 Outcome::Ignored => c.ignored += 1,
@@ -197,6 +201,16 @@ impl Report {
                 }
                 // Passing and skipped rules are only itemized at `-v`; at the
                 // default level the summary alone accounts for them.
+                // Warnings are shown at every level — they are why the rule
+                // needs a human look — but never change the exit code.
+                Outcome::Warn => {
+                    let label = paint("WARN", WARN_STYLE, color);
+                    out.push_str(&format!("{label} {}{}\n", o.name, votes_suffix(o)));
+                    push_reasoning(&mut out, o);
+                    for v in &o.warnings {
+                        out.push_str(&format!("     {}\n", format_violation(v)));
+                    }
+                }
                 Outcome::Pass if verbosity >= 1 => {
                     let label = paint("PASS", PASS_STYLE, color);
                     out.push_str(&format!("{label} {}{}\n", o.name, votes_suffix(o)));
@@ -233,6 +247,7 @@ impl Report {
         }
         let Counts {
             pass,
+            warn,
             fail,
             skip,
             ignored,
@@ -251,6 +266,13 @@ impl Report {
             "{} rules: {passed}, {failed}, {skip} skipped",
             self.outcomes.len(),
         ));
+        // Like ignored / not relevant: only when there are any.
+        if warn > 0 {
+            out.push_str(&format!(
+                ", {}",
+                paint(&format!("{warn} warned"), WARN_STYLE, color)
+            ));
+        }
         // Append the ignored and not-relevant counts only when there are any, so a
         // run with neither keeps the familiar three-part summary unchanged.
         if ignored > 0 {
@@ -279,6 +301,7 @@ impl Report {
     pub fn to_json(&self) -> Value {
         let Counts {
             pass,
+            warn,
             fail,
             skip,
             ignored,
@@ -288,6 +311,7 @@ impl Report {
             "summary": {
                 "total": self.outcomes.len(),
                 "passed": pass,
+                "warned": warn,
                 "failed": fail,
                 "skipped": skip,
                 "ignored": ignored,
@@ -388,6 +412,7 @@ mod tests {
             judges: vec![],
             violations: v,
             scores: Vec::new(),
+            warnings: Vec::new(),
         }
     }
     fn pass(name: &str) -> RuleOutcome {
@@ -400,6 +425,7 @@ mod tests {
             judges: vec![],
             violations: vec![],
             scores: Vec::new(),
+            warnings: Vec::new(),
         }
     }
     fn with_rationale(mut o: RuleOutcome, why: &str) -> RuleOutcome {
@@ -423,6 +449,7 @@ mod tests {
             judges: vec![],
             violations: vec![],
             scores: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -583,6 +610,7 @@ mod tests {
                     judges: vec![],
                     violations: vec![],
                     scores: Vec::new(),
+                    warnings: Vec::new(),
                 },
                 RuleOutcome::skipped("nofiles"),
             ],
@@ -838,5 +866,36 @@ mod tests {
         let j = r.to_json();
         assert_eq!(j["plan"]["agents"][0]["agent"], "default");
         assert_eq!(j["plan"]["agents"][0]["judges"][0]["batches"][0]["id"], 1);
+    }
+
+    #[test]
+    fn a_warn_outcome_is_shown_at_every_level_counted_and_exits_clean() {
+        let mut w = pass("maybe");
+        w.outcome = Outcome::Warn;
+        w.warnings = vec![Violation {
+            file: Some("src/a.rs".into()),
+            line: Some(4),
+            end_line: None,
+            message: Some("jev: p(holds)=0.62".into()),
+        }];
+        let r = Report::new(vec![pass("ok"), w], vec![]);
+        let text = r.to_human(0, false);
+        assert!(text.contains("WARN maybe\n"), "{text}");
+        assert!(text.contains("src/a.rs:4"), "{text}");
+        assert!(
+            text.ends_with("2 rules: 1 passed, 0 failed, 0 skipped, 1 warned\n"),
+            "{text}"
+        );
+        assert_eq!(r.exit_code(), 0);
+        let json = r.to_json();
+        assert_eq!(json["summary"]["warned"], 1);
+        assert_eq!(json["rules"][0]["outcome"], "warn");
+        assert_eq!(json["rules"][0]["warnings"][0]["line"], 4);
+        // No warnings: the familiar summary, unchanged.
+        let plain = Report::new(vec![pass("ok")], vec![]).to_human(0, false);
+        assert!(
+            plain.ends_with("1 rules: 1 passed, 0 failed, 0 skipped\n"),
+            "{plain}"
+        );
     }
 }

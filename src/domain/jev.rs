@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
-use crate::domain::config::JevUnit;
+use crate::domain::config::{JevExamples, JevUnit};
 use crate::domain::jevunits;
 use crate::domain::verdict::{JudgeScore, RuleVerdict, Violation};
 
@@ -55,8 +55,46 @@ pub fn holds_threshold(unit: JevUnit) -> f64 {
         // above ~0.15 on dev, so the cut keeps Jev's fails always right and
         // leaves the uncertain middle to the cascade band.
         JevUnit::YamlEntries => 0.15,
-        JevUnit::MultiFile => HOLDS_THRESHOLD,
+        // Multi-file items: every dev violation scored below 0.6 and every
+        // clean item above ~0.9; a flag documented only by an abbreviation sat
+        // at ~0.5, so the cut sits above it.
+        JevUnit::MultiFile => 0.6,
     }
+}
+
+/// Where a unit's p(holds) splits into outcomes: below `fail` a file violates
+/// the rule; from `fail` up to `warn` Jev is unsure, and the file is a warning
+/// (flagged for review, never failing); at or above `warn` it passes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cuts {
+    pub fail: f64,
+    pub warn: f64,
+}
+
+/// A rule's cuts: per unit, and per whether the rule's own `checks` /
+/// `examples` replace its question (their probabilities run differently).
+///
+/// Fitted on the eval corpus's **dev** split and reported on held-out
+/// (`evals/`, `jev` arm): each `fail` is the widest cut that kept every dev
+/// fail right; each `warn` caps the warnings at ~5-10% of dev items. With
+/// checks, held-out errors were 100% precise with 100% recall on every unit.
+/// Re-derive them there (dev only) when a question, unit, or model changes.
+pub fn cuts(rule: &JevRule) -> Cuts {
+    let checked = !rule.checks.is_empty() || rule.examples.is_some();
+    let (fail, warn) = match (rule.unit, checked) {
+        (JevUnit::File, _) => (0.5, 0.75),
+        (JevUnit::DocClaims, true) => (0.32, 0.55),
+        (JevUnit::DocClaims, false) => (holds_threshold(JevUnit::DocClaims), 0.6),
+        // Checked sites: violations scored <= 0.32 and clean sites >= 0.34 on
+        // dev — a narrow gap, so the warn band sits well above it.
+        (JevUnit::Sites, true) => (0.33, 0.5),
+        (JevUnit::Sites, false) => (holds_threshold(JevUnit::Sites), 0.8),
+        (JevUnit::YamlEntries, true) => (0.23, 0.4),
+        (JevUnit::YamlEntries, false) => (holds_threshold(JevUnit::YamlEntries), 0.4),
+        (JevUnit::MultiFile, true) => (0.55, 0.75),
+        (JevUnit::MultiFile, false) => (holds_threshold(JevUnit::MultiFile), 0.75),
+    };
+    Cuts { fail, warn }
 }
 
 /// A conditional rule is relevant when Jev's probability reaches this.
@@ -94,6 +132,10 @@ pub struct JevRule {
     pub pattern: Option<String>,
     /// The top-level list key, for `JevUnit::YamlEntries`.
     pub key: Option<String>,
+    /// Atomic violation checks asked in place of the rule's own question.
+    pub checks: Vec<String>,
+    /// Few-shot examples attached to the rule's question.
+    pub examples: Option<JevExamples>,
 }
 
 /// One file to judge.
@@ -134,6 +176,21 @@ pub struct Request {
     /// For a violation question about another file than the request's own (a
     /// `multi_file` item), that file.
     violation_files: BTreeMap<String, String>,
+    /// Verdict questions a rule's `checks`/`examples` replaced: how to read the
+    /// original question's answer back from its replacements.
+    folds: BTreeMap<String, Fold>,
+}
+
+/// How a replaced verdict question is answered (see [`with_techniques`]).
+#[derive(Debug, Clone, PartialEq)]
+struct Fold {
+    /// Whether "yes" to the original question means the rule holds (a
+    /// `holds:` question) rather than that something violates it.
+    yes_holds: bool,
+    /// One question per check; each answers "does this violation happen?".
+    checks: Vec<String>,
+    /// The original question with the rule's examples attached (same polarity).
+    examples: Option<String>,
 }
 
 fn line_id(n: usize) -> String {
@@ -204,7 +261,130 @@ pub fn build_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
     for (key, rules) in by_key {
         out.extend(yaml_entry_requests(unit, key, &rules));
     }
-    out
+    out.into_iter().map(|r| with_techniques(r, rules)).collect()
+}
+
+/// At most this many checks per rule: each is one more question on every unit.
+pub const MAX_CHECKS: usize = 8;
+
+/// The verdict question kinds (the id prefix), and what a check's `false`
+/// criterion says for each: the check's violation does not happen here.
+fn check_negation(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "holds" => "Nothing in `content` does this.",
+        "claim" => "Nothing in the code goes against `claim` in this way.",
+        "site" => "This does not happen on the line in `site`.",
+        "entry" => "The entry in `entry` does not do this.",
+        "item" => "This is not the case for `item`.",
+        "files" => "This is not the case in `files`.",
+        _ => return None,
+    })
+}
+
+/// Replace each verdict question of a rule with `checks` / `examples` by the
+/// questions that measured better on the eval corpus (`evals/`):
+///
+/// - **checks** — one Noul per check, identical to the original except that
+///   its `true` criterion is the check (the violation it names), so Jev
+///   answers one narrow, literal question at a time; the rule is violated as
+///   far as its most-violated check.
+/// - **examples** — the original question with each criterion carrying the
+///   rule's violating / compliant snippets (`{what, examples}`).
+///
+/// With both, the two views are averaged (neither alone was as reliable on the
+/// abstract config-lint rules). Relevance and line questions are untouched.
+fn with_techniques(mut req: Request, rules: &[JevRule]) -> Request {
+    let ids: Vec<String> = req.questions.keys().cloned().collect();
+    for id in ids {
+        let mut parts = id.splitn(3, ':');
+        let (Some(kind), Some(name)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        let Some(neg) = check_negation(kind) else {
+            continue;
+        };
+        let Some(rule) = rules.iter().find(|r| r.name == name) else {
+            continue;
+        };
+        if rule.checks.is_empty() && rule.examples.is_none() {
+            continue;
+        }
+        let Some(q) = req.questions.remove(&id) else {
+            continue;
+        };
+        let yes_holds = kind == "holds";
+        let mut fold = Fold {
+            yes_holds,
+            checks: Vec::new(),
+            examples: None,
+        };
+        for (i, check) in rule.checks.iter().enumerate() {
+            let mut c = q.clone();
+            if yes_holds {
+                if let Some(question) = c.pointer_mut("/instructions/question") {
+                    let text = question
+                        .as_str()
+                        .unwrap_or_default()
+                        .replace("satisfy", "violate");
+                    *question = json!(text);
+                }
+            }
+            c["criteria"] = json!({ "true": check.trim(), "false": neg });
+            let cid = format!("{id}#check{i}");
+            req.questions.insert(cid.clone(), c);
+            fold.checks.push(cid);
+        }
+        if let Some(ex) = &rule.examples {
+            let mut e = q.clone();
+            let crit = |key: &str| {
+                e.pointer(&format!("/criteria/{key}"))
+                    .cloned()
+                    .unwrap_or(json!(key))
+            };
+            let (t, f) = (crit("true"), crit("false"));
+            // `true` is the violation for every kind but `holds`.
+            let (bad, good) = if yes_holds { (&f, &t) } else { (&t, &f) };
+            let bad = json!({ "what": bad, "examples": ex.violations });
+            let good = json!({ "what": good, "examples": ex.compliant });
+            e["criteria"] = if yes_holds {
+                json!({ "true": good, "false": bad })
+            } else {
+                json!({ "true": bad, "false": good })
+            };
+            let eid = format!("{id}#examples");
+            req.questions.insert(eid.clone(), e);
+            fold.examples = Some(eid);
+        }
+        req.folds.insert(id, fold);
+    }
+    req
+}
+
+/// The answer to verdict question `id`: its Noul, or — when a rule's
+/// techniques replaced it — the probability folded back from its replacements,
+/// in the original question's polarity.
+fn verdict_p(req: &Request, answers: &Map<String, Value>, id: &str) -> Result<f64, String> {
+    let Some(fold) = req.folds.get(id) else {
+        return noul(answers, id);
+    };
+    let mut views = Vec::new();
+    if !fold.checks.is_empty() {
+        let mut worst: f64 = 0.0;
+        for c in &fold.checks {
+            worst = worst.max(noul(answers, c)?);
+        }
+        views.push(worst);
+    }
+    if let Some(e) = &fold.examples {
+        let p = noul(answers, e)?;
+        views.push(if fold.yes_holds { 1.0 - p } else { p });
+    }
+    let p_violation = views.iter().sum::<f64>() / views.len().max(1) as f64;
+    Ok(if fold.yes_holds {
+        1.0 - p_violation
+    } else {
+        p_violation
+    })
 }
 
 /// Build the request for a `multi_file` rule: every one of its files in one
@@ -255,6 +435,15 @@ pub fn multi_file_request(
                 // capture starts.
                 for cap in re.captures_iter(text) {
                     let Some(m) = cap.get(1) else { continue };
+                    // A match on a comment line (a commented-out flag, a
+                    // removed export) is not an item the code declares.
+                    let line_start = text[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+                    let line_end = text[m.start()..]
+                        .find('\n')
+                        .map_or(text.len(), |i| m.start() + i);
+                    if jevunits::is_comment_line(path, &text[line_start..line_end]) {
+                        continue;
+                    }
                     let item = m.as_str().to_string();
                     if !seen.insert(item.clone()) {
                         continue;
@@ -312,16 +501,20 @@ pub fn multi_file_request(
             }),
         );
     }
-    Ok(Some(Request {
-        state: json!({ "files": state_files }),
-        questions,
-        line_questions: BTreeMap::new(),
-        only_line: None,
-        asked: vec![rule.name.clone()],
-        violation_questions: BTreeMap::from([(rule.name.clone(), ids)]),
-        violation_lines: BTreeMap::new(),
-        violation_files,
-    }))
+    Ok(Some(with_techniques(
+        Request {
+            state: json!({ "files": state_files }),
+            questions,
+            line_questions: BTreeMap::new(),
+            only_line: None,
+            asked: vec![rule.name.clone()],
+            violation_questions: BTreeMap::from([(rule.name.clone(), ids)]),
+            violation_lines: BTreeMap::new(),
+            violation_files,
+            folds: BTreeMap::new(),
+        },
+        std::slice::from_ref(rule),
+    )))
 }
 
 /// A rule's text split into the invariant and its "False when …" clause (the
@@ -406,6 +599,7 @@ fn yaml_entry_requests(unit: &FileUnit, key: &str, rules: &[&JevRule]) -> Vec<Re
                 violation_questions,
                 violation_lines,
                 violation_files: BTreeMap::new(),
+                folds: BTreeMap::new(),
             }
         })
         .collect()
@@ -499,6 +693,7 @@ fn site_requests(unit: &FileUnit, rule: &JevRule) -> Vec<Request> {
                 violation_questions: BTreeMap::from([(rule.name.clone(), ids)]),
                 violation_lines: BTreeMap::new(),
                 violation_files: BTreeMap::new(),
+                folds: BTreeMap::new(),
             })
         })
         .collect()
@@ -569,6 +764,7 @@ fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 violation_questions,
                 violation_lines: BTreeMap::new(),
                 violation_files: BTreeMap::new(),
+                folds: BTreeMap::new(),
             }
         })
         .collect()
@@ -665,6 +861,7 @@ fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 violation_questions: BTreeMap::new(),
                 violation_lines: BTreeMap::new(),
                 violation_files: BTreeMap::new(),
+                folds: BTreeMap::new(),
             }
         })
         .collect()
@@ -782,7 +979,7 @@ pub fn read_answers(
             for (id, line) in claims {
                 // The question asks for a violation (a contradicted claim, a
                 // site breaking the rule); the rule holds as far as it doesn't.
-                let p = 1.0 - noul(answers, id)?;
+                let p = 1.0 - verdict_p(req, answers, id)?;
                 if worst.as_ref().is_none_or(|(w, _, _)| p < *w) {
                     let line = match req.violation_lines.get(id) {
                         Some(choice) => top_line(answers, choice)?.0 as usize,
@@ -804,7 +1001,7 @@ pub fn read_answers(
             }
             continue;
         }
-        let p_holds = noul(answers, &format!("holds:{}", rule.name))?;
+        let p_holds = verdict_p(req, answers, &format!("holds:{}", rule.name))?;
         // Across windows, keep the option the model is most sure of.
         let mut line: Option<(u64, f64)> = None;
         for id in req.line_questions.get(&rule.name).into_iter().flatten() {
@@ -840,14 +1037,16 @@ pub fn read_answers(
 pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVerdict {
     let relevant = |a: &RuleAnswer| a.p_relevant.is_none_or(|p| p >= RELEVANT_THRESHOLD);
     let any_relevant = per_file.iter().flat_map(|(_, v)| v).any(relevant);
+    let cut = cuts(rule);
     let mut violations = Vec::new();
+    let mut warnings = Vec::new();
     for (file, answers) in per_file {
         let worst = answers
             .iter()
             .filter(|a| relevant(a))
             .min_by(|a, b| a.p_holds.total_cmp(&b.p_holds));
-        if let Some(a) = worst.filter(|a| a.p_holds < holds_threshold(rule.unit)) {
-            violations.push(Violation {
+        if let Some(a) = worst.filter(|a| a.p_holds < cut.warn) {
+            let finding = Violation {
                 file: Some(file.clone()),
                 line: a.line.map(|(n, _)| n),
                 end_line: None,
@@ -858,7 +1057,12 @@ pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVe
                         .map(|(_, p)| format!(", p(line)={p:.2}"))
                         .unwrap_or_default()
                 )),
-            });
+            };
+            if a.p_holds < cut.fail {
+                violations.push(finding);
+            } else {
+                warnings.push(finding);
+            }
         }
     }
     // The raw numbers for every file, passing ones included: each file's
@@ -889,6 +1093,7 @@ pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVe
         violations: if any_relevant { violations } else { Vec::new() },
         rationale: None,
         scores,
+        warnings: if any_relevant { warnings } else { Vec::new() },
     }
 }
 
@@ -975,6 +1180,7 @@ pub fn triage(v: &RuleVerdict, band: Band) -> Triage {
             violations,
             rationale: None,
             scores: v.scores.clone(),
+            warnings: Vec::new(),
         },
         escalate,
     }
@@ -998,6 +1204,7 @@ pub fn merge(decided: &RuleVerdict, harness: &RuleVerdict) -> RuleVerdict {
         violations,
         rationale: harness.rationale.clone(),
         scores: decided.scores.clone(),
+        warnings: Vec::new(),
     }
 }
 
@@ -1013,6 +1220,8 @@ mod tests {
             unit: JevUnit::File,
             pattern: None,
             key: None,
+            checks: Vec::new(),
+            examples: None,
         }
     }
 
@@ -1304,6 +1513,7 @@ mod tests {
             violations,
             rationale: None,
             scores,
+            warnings: Vec::new(),
         }
     }
 
@@ -1440,6 +1650,8 @@ mod tests {
             unit: JevUnit::DocClaims,
             pattern: None,
             key: None,
+            checks: Vec::new(),
+            examples: None,
         }
     }
 
@@ -1562,6 +1774,8 @@ fn undocumented() {}
             unit: JevUnit::Sites,
             pattern: Some(pattern.into()),
             key: None,
+            checks: Vec::new(),
+            examples: None,
         }
     }
 
@@ -1619,6 +1833,148 @@ pub fn load(p: &str) -> Result<u8> {
     }
 
     #[test]
+    fn checks_replace_a_whole_file_question_with_one_narrow_question_each() {
+        let mut r = rule("r", Some("cond"));
+        r.checks = vec![
+            "A function panics on bad input.".into(),
+            " A TODO is left in. ".into(),
+        ];
+        let reqs = build_requests(&file("fn a() {}\nfn b() {}\n", None, None), &[r.clone()]);
+        let q = &reqs[0].questions;
+        assert!(
+            !q.contains_key("holds:r"),
+            "the rule's own question is replaced"
+        );
+        assert!(
+            q.contains_key("relevant:r") && q.contains_key("line:r:0"),
+            "others untouched"
+        );
+        let c1 = &q["holds:r#check1"];
+        assert_eq!(
+            c1["instructions"]["question"],
+            "Does `content` violate `rule`?"
+        );
+        assert_eq!(c1["criteria"]["true"], "A TODO is left in.");
+        assert_eq!(c1["criteria"]["false"], "Nothing in `content` does this.");
+        // The rule holds as far as its most-violated check.
+        let got = read_answers(
+            &reqs[0],
+            &[r],
+            &answers(json!({
+                "holds:r#check0": {"noul": 0.1}, "holds:r#check1": {"noul": 0.7},
+                "relevant:r": {"noul": 0.9},
+                "line:r:0": {"choice": "L2", "probabilities": {"L2": 0.6}},
+            })),
+        )
+        .unwrap();
+        assert!((got["r"].p_holds - 0.3).abs() < 1e-9);
+        assert_eq!(got["r"].line, Some((2, 0.6)));
+    }
+
+    #[test]
+    fn checks_on_a_violation_question_keep_its_state_and_polarity() {
+        let mut r = site_rule(r"\?");
+        r.checks = vec!["The line in `site` propagates an error with a bare `?`.".into()];
+        let reqs = build_requests(&file(SITES, None, None), &[r.clone()]);
+        let q = &reqs[0].questions["site:ctx:6#check0"];
+        assert_eq!(q["instructions"]["site"], "L6|     let t = read(p)?;");
+        assert_eq!(
+            q["criteria"]["false"],
+            "This does not happen on the line in `site`."
+        );
+        let got = read_answers(
+            &reqs[0],
+            &[r],
+            &answers(
+                json!({"site:ctx:6#check0": {"noul": 0.2}, "site:ctx:7#check0": {"noul": 0.9}}),
+            ),
+        )
+        .unwrap();
+        assert!((got["ctx"].p_holds - 0.1).abs() < 1e-9);
+        assert_eq!(got["ctx"].line, Some((7, 1.0)));
+    }
+
+    #[test]
+    fn examples_ride_on_the_criteria_and_average_with_checks() {
+        let mut r = rule("r", None);
+        r.examples = Some(JevExamples {
+            violations: vec!["let data = 1;".into()],
+            compliant: vec!["let total_cents = 1;".into()],
+        });
+        let reqs = build_requests(&file("fn a() {}\n", None, None), &[r.clone()]);
+        let e = &reqs[0].questions["holds:r#examples"];
+        // For a `holds` question `true` is compliance, so the compliant
+        // examples go there and the violating ones under `false`.
+        assert_eq!(
+            e["criteria"]["true"]["examples"],
+            json!(["let total_cents = 1;"])
+        );
+        assert_eq!(e["criteria"]["false"]["examples"], json!(["let data = 1;"]));
+        assert_eq!(
+            e["criteria"]["true"]["what"],
+            "Nothing in `content` violates `rule`."
+        );
+        let read = |r: &JevRule, a: Value| {
+            read_answers(
+                &build_requests(&file("fn a() {}\n", None, None), std::slice::from_ref(r))[0],
+                std::slice::from_ref(r),
+                &answers(a),
+            )
+            .unwrap()["r"]
+                .p_holds
+        };
+        assert!((read(&r, json!({"holds:r#examples": {"noul": 0.8}})) - 0.8).abs() < 1e-9);
+        // Both: p(violation) is the mean of the checks' max (0.6) and the
+        // examples view (1 - 0.8).
+        r.checks = vec!["x".into()];
+        let p = read(
+            &r,
+            json!({"holds:r#examples": {"noul": 0.8}, "holds:r#check0": {"noul": 0.6}}),
+        );
+        assert!((p - 0.6).abs() < 1e-9, "{p}");
+    }
+
+    #[test]
+    fn a_missing_check_answer_is_an_error_not_a_pass() {
+        let mut r = rule("r", None);
+        r.checks = vec!["x".into(), "y".into()];
+        let reqs = build_requests(&file("fn a() {}\n", None, None), &[r.clone()]);
+        let err = read_answers(
+            &reqs[0],
+            &[r],
+            &answers(json!({"holds:r#check0": {"noul": 0.1}})),
+        )
+        .unwrap_err();
+        assert!(err.contains("holds:r#check1"), "{err}");
+    }
+
+    #[test]
+    fn between_the_fail_and_warn_cuts_a_file_is_a_warning_not_a_violation() {
+        let r = rule("r", None);
+        let cut = cuts(&r);
+        assert!(cut.fail < cut.warn);
+        let at = |p: f64| verdict(&r, &[("a.rs".into(), vec![ans(p, None, Some(3))])]);
+        let unsure = at((cut.fail + cut.warn) / 2.0);
+        assert!(unsure.holds && unsure.violations.is_empty());
+        assert_eq!(unsure.warnings[0].file.as_deref(), Some("a.rs"));
+        assert_eq!(unsure.warnings[0].line, Some(3));
+        assert!(
+            at(cut.warn).warnings.is_empty(),
+            "at the warn cut it passes cleanly"
+        );
+        let fail = at(cut.fail - 0.01);
+        assert!(!fail.holds && fail.warnings.is_empty());
+    }
+
+    #[test]
+    fn checked_rules_use_their_own_cuts() {
+        let mut r = site_rule(r"\?");
+        let plain = cuts(&r);
+        r.checks = vec!["x".into()];
+        assert!(cuts(&r).fail < plain.fail, "checks run lower on sites");
+    }
+
+    #[test]
     fn a_sites_rule_fails_below_its_own_threshold() {
         let r = site_rule(r"\?");
         let at = |p: f64| verdict(&r, &[("a.rs".into(), vec![ans(p, None, Some(6))])]);
@@ -1634,6 +1990,8 @@ pub fn load(p: &str) -> Result<u8> {
             unit: JevUnit::YamlEntries,
             pattern: None,
             key: Some("rules".into()),
+            checks: Vec::new(),
+            examples: None,
         }
     }
 
@@ -1725,6 +2083,8 @@ rules:
             unit: JevUnit::MultiFile,
             pattern: pattern.map(str::to_string),
             key: None,
+            checks: Vec::new(),
+            examples: None,
         }
     }
 
@@ -1784,6 +2144,29 @@ rules:
         assert!(
             e.contains("over the") && e.contains("judge: harness"),
             "{e}"
+        );
+    }
+
+    #[test]
+    fn multi_file_skips_items_matched_only_on_comment_lines() {
+        let rule = multi_rule(Some(r#"long = "([^"]+)""#));
+        let files = vec![
+            (
+                "src/cli.rs".into(),
+                "#[arg(long = \"timeout\")]\n// #[arg(long = \"auto-rotate\")]\n".into(),
+            ),
+            ("README.md".into(), "## long = \"heading\"\n".into()),
+        ];
+        let req = multi_file_request(&files, &rule).unwrap().unwrap();
+        let items: Vec<&str> = req
+            .questions
+            .values()
+            .map(|q| q["instructions"]["item"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            items,
+            ["timeout", "heading"],
+            "a Markdown `#` is a heading, not a comment"
         );
     }
 

@@ -308,6 +308,19 @@ impl Client {
         &self,
         req: &RunRequest,
     ) -> (RunTrace, Result<BTreeMap<String, RuleVerdict>>) {
+        let harness = req.harness.unwrap_or("oneharness default");
+        let (trace, structured) = self.run_raw(req);
+        (trace, structured.and_then(|v| verdicts_of(v, harness)))
+    }
+
+    /// Run the harness and return its schema-validated `structured` value as
+    /// is — for a caller whose schema is not the verdict map (e.g.
+    /// `llmlint jev-checks`).
+    pub fn run_structured(&self, req: &RunRequest) -> Result<Value> {
+        self.run_raw(req).1
+    }
+
+    fn run_raw(&self, req: &RunRequest) -> (RunTrace, Result<Value>) {
         // A human-readable harness label for error messages; when unset, the
         // harness is whichever default oneharness resolves from its own config.
         let harness = req.harness.unwrap_or("oneharness default");
@@ -448,8 +461,8 @@ impl Client {
         trace.stderr = String::from_utf8_lossy(&capture.stderr).into_owned();
         trace.usage = usage_of(&capture.stdout);
 
-        let verdicts = parse_verdicts(&capture, harness);
-        (trace, verdicts)
+        let structured = parse_structured(&capture, harness);
+        (trace, structured)
     }
 
     /// Confirm the harness actually *executes* tools, not merely that its binary
@@ -566,7 +579,14 @@ fn usage_of(stdout: &[u8]) -> JudgeUsage {
 
 /// Parse one captured oneharness run into its per-rule verdicts (the verdict
 /// extraction split out so `run_with_trace` can keep the trace on every path).
-fn parse_verdicts(capture: &Capture, harness: &str) -> Result<BTreeMap<String, RuleVerdict>> {
+/// Read a `structured` value as the per-rule verdict map.
+fn verdicts_of(structured: Value, harness: &str) -> Result<BTreeMap<String, RuleVerdict>> {
+    serde_json::from_value(structured).map_err(|e| {
+        Error::Oneharness(format!("invalid verdict shape from harness {harness}: {e}"))
+    })
+}
+
+fn parse_structured(capture: &Capture, harness: &str) -> Result<Value> {
     let report: Report = serde_json::from_slice(&capture.stdout).map_err(|e| {
         Error::Oneharness(format!(
             "could not parse oneharness output ({e}); exit {:?}; stderr: {}",
@@ -624,21 +644,15 @@ fn parse_verdicts(capture: &Capture, harness: &str) -> Result<BTreeMap<String, R
         )));
     }
 
-    let structured = match result.structured {
-        Some(v) if !v.is_null() => v,
-        _ => {
-            return Err(Error::Oneharness(format!(
-                "harness {} returned no structured output (status {:?}): {}",
-                harness,
-                result.status.as_deref().unwrap_or("?"),
-                result.error.unwrap_or_else(|| "no error reported".into())
-            )))
-        }
-    };
-
-    serde_json::from_value(structured).map_err(|e| {
-        Error::Oneharness(format!("invalid verdict shape from harness {harness}: {e}"))
-    })
+    match result.structured {
+        Some(v) if !v.is_null() => Ok(v),
+        _ => Err(Error::Oneharness(format!(
+            "harness {} returned no structured output (status {:?}): {}",
+            harness,
+            result.status.as_deref().unwrap_or("?"),
+            result.error.unwrap_or_else(|| "no error reported".into())
+        ))),
+    }
 }
 
 /// Choose the index of the `results` entry that carries the run's verdict.
@@ -941,7 +955,8 @@ mod tests {
             stdout: serde_json::to_vec(body).unwrap(),
             stderr: Vec::new(),
         };
-        parse_verdicts(&capture, "oneharness default")
+        parse_structured(&capture, "oneharness default")
+            .and_then(|v| verdicts_of(v, "oneharness default"))
     }
 
     /// A dummy successful exit status (any real process; we only use `.code()`).

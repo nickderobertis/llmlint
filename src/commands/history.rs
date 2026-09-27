@@ -22,7 +22,7 @@ use crate::io::{configfs, history};
 
 /// Rule outcomes that `--status` accepts, matching the `outcome` field in a
 /// stored record (see [`crate::domain::verdict::Outcome`]).
-const VALID_STATUSES: &[&str] = &["pass", "fail", "skipped", "ignored", "not_relevant"];
+const VALID_STATUSES: &[&str] = &["pass", "warn", "fail", "skipped", "ignored", "not_relevant"];
 
 pub fn run(args: HistoryArgs) -> Result<i32> {
     let cwd = match &args.cwd {
@@ -238,6 +238,7 @@ fn push_rule(out: &mut String, rule: &Value) {
     let outcome = rule.get("outcome").and_then(Value::as_str).unwrap_or("");
     let label = match outcome {
         "pass" => "PASS",
+        "warn" => "WARN",
         "fail" => "FAIL",
         "skipped" => "SKIP",
         "ignored" => "IGN ",
@@ -275,8 +276,13 @@ fn push_rule(out: &mut String, rule: &Value) {
             }
         }
     }
-    if let Some(violations) = rule.get("violations").and_then(Value::as_array) {
-        for v in violations {
+    for key in ["violations", "warnings"] {
+        for v in rule
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             out.push_str(&format!("       {}\n", format_violation(v)));
         }
     }
@@ -318,6 +324,9 @@ fn counts_summary(summary: &Value) -> String {
         g("failed"),
         g("skipped")
     );
+    if g("warned") > 0 {
+        s.push_str(&format!(", {} warned", g("warned")));
+    }
     if g("ignored") > 0 {
         s.push_str(&format!(", {} ignored", g("ignored")));
     }
@@ -414,5 +423,19 @@ mod tests {
         assert!(out.contains("judge 1 violated: raw SQL"));
         assert!(out.contains("judge 2 held: query layer"));
         assert!(out.contains("judge 3 not relevant"));
+    }
+
+    #[test]
+    fn a_warned_rule_shows_its_label_locations_and_count() {
+        let mut out = String::new();
+        push_rule(
+            &mut out,
+            &json!({"name": "maybe", "outcome": "warn",
+                    "warnings": [{"file": "a.rs", "line": 3, "message": "jev: p(holds)=0.62"}]}),
+        );
+        assert_eq!(out, "  WARN maybe\n       a.rs:3: jev: p(holds)=0.62\n");
+        let s = counts_summary(&json!({"total": 2, "passed": 1, "warned": 1}));
+        assert_eq!(s, "2 rules: 1 passed, 0 failed, 0 skipped, 1 warned");
+        assert!(VALID_STATUSES.contains(&"warn"));
     }
 }

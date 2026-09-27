@@ -544,9 +544,27 @@ harness reads target files on-demand with its own tools.
   misses is simply not asked about, never judged wrong. `doc_claims` asks one
   *contradiction* Noul per doc sentence over the documented function (plus the
   same-file functions it calls, under `helpers`), function-like items only.
-  Each unit has its own fail threshold (`jev::holds_threshold`), tuned on the
-  eval corpus's **dev** split only and reported on **held-out**; cascade triage
-  escalates a below-band file that reported no violation rather than passing it.
+  Each unit has its own **cuts** (`jev::cuts`, per unit and per whether the rule
+  has checks/examples): below `fail` a file violates, from `fail` to `warn` it is
+  a **warning** (`Outcome::Warn` — `RuleVerdict.warnings`, pruned by
+  `clean_verdict` like violations, shown at every verbosity, never failing or
+  changing the exit code), at/above `warn` it passes. Cuts are fitted on the eval
+  corpus's **dev** split only and reported on **held-out**; cascade triage
+  escalates a below-band file that reported no violation rather than passing it
+  (a cascade verdict carries no warnings — its middle goes to the harness).
+  **Checks and examples (convention):** a rule's `jev.checks` (atomic violation
+  checks, ≤ `MAX_CHECKS`) and `jev.examples` are applied by one pure rewrite
+  layer (`jev::with_techniques`, over every built request of every unit): each
+  verdict question (`holds:`/`claim:`/`site:`/`entry:`/`item:`/`files:`) is
+  replaced by `<id>#check<n>` questions (the check as the `true` criterion) and an
+  `<id>#examples` question (`{what, examples}` criteria), and `verdict_p` folds
+  the answers back (max over checks; averaged with the examples view). Question
+  *type* (Choice/Score/ensembles) measured no better than Noul — keep Noul.
+  `llmlint jev-checks` (`commands/jev_checks.rs`, pure prompt/schema/render in
+  `domain::jevchecks`) drafts checks with one harness call and only prints them:
+  checks are part of the rule, reviewed and committed like it. The corpus's and
+  the bundled plugin's checks were drafted blind from rule text; keep it that
+  way (never write checks from the eval cases).
   `sites` (`jev.pattern`, a regex validated at load; required for `sites`,
   rejected elsewhere) asks one *violation* Noul per matched non-comment line,
   grouped per innermost function (`jevunits::site_groups`), with the same-file
@@ -556,12 +574,13 @@ harness reads target files on-demand with its own tools.
   `yaml_entries` (`jev.key`, required for it and rejected elsewhere) asks every
   rule sharing a key once per list entry (`jevunits::yaml_entries`, text-based
   so lines are the file's own; column-0 items allowed), localizing via a Choice
-  over the entry's lines (`Request::violation_lines`). Its 0.15 threshold is
-  precision-first: config meta-rules are abstract, so they are meant to run
-  under `cascade`. The bundled config-lint plugin carries
-  `jev: { unit: yaml_entries, key: rules }` on every rule (via a YAML anchor);
-  older binaries never see it, since the bundled URL resolves to each binary's
-  own embedded copy.
+  over the entry's lines (`Request::violation_lines`). Config meta-rules are
+  abstract: without checks/examples Jev caught 57% of held-out violations, with
+  the plugin's own checks + examples all of them. The bundled config-lint plugin
+  merges `jev: { unit: yaml_entries, key: rules }` into every rule
+  (`<<: *config_entries`, anchored at a top-level `x-config-entries`) beside that
+  rule's own `checks` and `examples`; older binaries never see them, since the
+  bundled URL resolves to each binary's own embedded copy.
   `multi_file` is the one unit not built per file: `execute_jev` asks it once
   over all of the rule's text files (`jev::multi_file_request`; `files` in the
   state is path -> tagged text), each distinct capture of the optional `pattern`

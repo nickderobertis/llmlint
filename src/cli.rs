@@ -75,6 +75,13 @@ pub enum Command {
     /// tools inline rather than deferring them to a controller — the
     /// bridged/managed-session trap where llmlint's judge silently dead-ends.
     Doctor(DoctorArgs),
+    /// Draft `jev.checks` for rules judged by Jev: one harness call compiles
+    /// each rule's description into atomic violation checks — the narrow,
+    /// literal questions Jev answers well — printed as YAML to review and
+    /// paste under the rule's `jev:` block. Never edits a config. Makes a real
+    /// (billed) model call. Default: every rule without checks.
+    #[command(name = "jev-checks")]
+    JevChecks(JevChecksArgs),
     /// Inspect logged run results. With no id, list recent runs; with an id (or
     /// `latest`), show that run's full results — the complete per-rule detail the
     /// terminal report omits. Drill in with `--status`/`--rule` filters, print the
@@ -663,14 +670,48 @@ pub struct DoctorArgs {
 }
 
 #[derive(Args, Debug, Default)]
+pub struct JevChecksArgs {
+    /// Rule(s) to draft checks for; repeatable. Default: every rule that has no
+    /// `jev.checks` yet.
+    #[arg(long = "rule", value_name = "NAME")]
+    pub rule: Vec<String>,
+
+    /// llmlint config file(s); repeatable. Replaces nested upward discovery.
+    #[arg(long = "config", short = 'c', value_name = "PATH")]
+    pub config: Vec<PathBuf>,
+
+    /// Directory to resolve config discovery from. Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+
+    /// Harness id (else the default agent's, else oneharness's default).
+    #[arg(long = "harness", value_name = "ID")]
+    pub harness: Option<String>,
+
+    /// Model (else the default agent's, else `oneharness.model`).
+    #[arg(long = "model", value_name = "MODEL")]
+    pub model: Option<String>,
+
+    /// Timeout in seconds (default 600).
+    #[arg(long = "timeout", value_name = "SECS", default_value_t = 600)]
+    pub timeout: u64,
+
+    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN`, the
+    /// config's `oneharness.bin`, PATH, or a `oneharness` beside the llmlint
+    /// executable).
+    #[arg(long = "oneharness-bin", value_name = "PATH")]
+    pub oneharness_bin: Option<String>,
+}
+
+#[derive(Args, Debug, Default)]
 pub struct HistoryArgs {
     /// The run id to show (or `latest` for the most recent run). Omit to list
     /// recent runs instead.
     #[arg(value_name = "ID")]
     pub id: Option<String>,
 
-    /// Show only rules with this outcome: `pass`, `fail`, `skipped`, or
-    /// `not_relevant`. Repeatable (any match is shown). Requires an id.
+    /// Show only rules with this outcome: `pass`, `warn`, `fail`, `skipped`,
+    /// `ignored`, or `not_relevant`. Repeatable (any match is shown). Requires an id.
     #[arg(long = "status", value_name = "STATUS")]
     pub status: Vec<String>,
 

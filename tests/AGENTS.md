@@ -678,8 +678,8 @@ resolves the oneharness the test put on PATH.
 - Jev units (`tests/e2e/jev.rs`): `jev: { unit: doc_claims }` sends one request
   per documented function (not a documented const) whose state is that function
   plus its same-file callee under `helpers`, one claim question per doc sentence;
-  a contradicted claim fails at its doc line; 0.40 passes a claims rule (its
-  threshold is 0.35) where a whole-file rule would fail; a file with no documented
+  a contradicted claim fails at its doc line; 0.65 passes a claims rule (its
+  warn cut is 0.6) where a whole-file rule would warn; a file with no documented
   function gets no request; an unknown `jev.unit` fails `validate` (exit 2).
   `jev: { unit: sites, pattern }` asks one site question per matched line (the
   site text in `instructions.site`) and a violation cites that line; `sites`
@@ -691,6 +691,18 @@ resolves the oneharness the test put on PATH.
   pattern }` sends one request carrying both files, asks the captured flag as
   an item, and cites the file + line it was defined on; a pattern without a
   capture group fails `validate` (exit 2).
+- Jev checks, examples, warnings (`tests/e2e/jev.rs`): a rule's `jev.checks`
+  replace its question with one `<id>#check<n>` question per check (the check as
+  the `true` criterion, a `holds` question reworded to "violate") and
+  `jev.examples` add an `<id>#examples` question carrying the snippets on its
+  criteria; a firing check fails the rule at the localized line, none firing
+  passes it; an empty check or one-sided examples fail `validate` (exit 2). A
+  score between a unit's fail and warn cuts is a `warn` outcome — listed under
+  `warnings`, counted as `summary.warned`, printed as `WARN` with its location
+  at the default verbosity, exit 0. `llmlint jev-checks` (against the mock's
+  `LLMLINT_MOCK_STRUCTURED`) makes one read-only harness call briefing only the
+  rules without checks and prints each rule's checks as YAML; an unknown
+  `--rule` is exit 2 before any model call.
 
 ## Live tier (`scripts/live-*.sh`)
 
