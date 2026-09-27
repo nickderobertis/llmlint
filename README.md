@@ -698,9 +698,13 @@ else `harness`:
   `jev.escalate_low` (default 0.15) its fail stands; every other file Jev
   failed or warned on is re-judged by the harness — batched like any harness
   rule, on the rule's agent's harness and model — and Jev's passes stand. The
-  rule fails if either half found a violation. So the harness reads only the
-  handful of files Jev flagged, and confirms or overturns each: the harness's
-  precision at close to Jev's cost. Set `jev.escalate_high` to also escalate
+  rule fails if either half found a violation. The harness reads only the files
+  Jev flagged and confirms or overturns each. What that saves depends on how
+  many there are: on a whole repository most files land in some rule's warning
+  band, so the harness call can cost as much as judging everything; on a
+  PR-sized `--diff` the harness only ever sees the changed files anyway, and
+  for construct-level rules plain `judge: jev` agreed with it there at a
+  fraction of the time and cost. Set `jev.escalate_high` to also escalate
   passes below it (a fixed band, e.g. 0.90) when Jev's misses matter more than
   the harness bill.
 

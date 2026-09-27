@@ -64,7 +64,7 @@ fn lang(path: &str) -> Option<Lang> {
 }
 
 /// Every documented *function-like* item in `text` (a function, method, or
-/// closure-bearing declaration), in file order — the items whose docs describe
+/// closure-bearing declaration) outside a Rust test module, in file order — the items whose docs describe
 /// behavior code can confirm or contradict. Docs on types, fields, variants, and
 /// constants are descriptive: the code cannot confirm "a parse error whose
 /// message names the file" on an enum variant, so asking would only produce
@@ -127,7 +127,8 @@ pub fn is_comment_line(path: &str, line: &str) -> bool {
     }
 }
 
-/// Every non-comment line matching `pattern`, grouped by the innermost
+/// Every non-comment line outside a Rust test module matching `pattern`,
+/// grouped by the innermost
 /// function containing it. A site's state is its whole function, so the check
 /// sees what the matched construct is doing (which call, which value).
 pub fn site_groups(
@@ -317,8 +318,9 @@ fn call_names(code: &str) -> Vec<(Option<String>, String)> {
     out
 }
 
-/// 1-based inclusive line ranges of test code Jev should not judge: every
-/// Rust `#[cfg(test)]` module. (Other languages keep tests in their own files,
+/// 1-based inclusive line ranges of test code Jev should not judge: each Rust
+/// `#[cfg(test)]` attribute on its own line whose item (past any further
+/// attributes) is a `mod`. (Other languages keep tests in their own files,
 /// which a rule's `files` globs already decide about.)
 pub fn test_ranges(path: &str, lines: &[&str]) -> Vec<(usize, usize)> {
     if lang(path) != Some(Lang::Rust) {

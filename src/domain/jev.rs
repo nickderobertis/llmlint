@@ -426,7 +426,8 @@ fn verdict_p(req: &Request, answers: &Map<String, Value>, id: &str) -> Result<f6
 
 /// Build the request for a `multi_file` rule: every one of its files in one
 /// state (`files`, path -> tagged text). With a pattern, each distinct capture
-/// across the files is one violation Noul (cited at its first occurrence);
+/// across the files (outside comment lines and Rust test modules) is one
+/// violation Noul (cited at its first occurrence);
 /// without one, a single violation Noul over the files together. `Err` when
 /// the files exceed the state budget — too large for one Jev state, so the
 /// caller reports it rather than guessing. `Ok(None)` when a pattern names no
@@ -839,6 +840,8 @@ fn claim_question(claim: &str, with_helpers: bool) -> Value {
 }
 
 /// One request per chunk of the file, each asking every (whole-file) rule.
+/// Rust test modules are elided from the content (and a chunk wholly inside
+/// one is not asked about).
 fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
     let parts = chunks(unit.text);
     let total_lines = unit.text.lines().count();
