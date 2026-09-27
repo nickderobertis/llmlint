@@ -673,7 +673,9 @@ resolves the oneharness the test put on PATH.
   overturn an unsure pass (0.70) with its own violation; escalation is per file
   (a confident fail on one file stands while another file escalates); a
   zero-width band from `LLMLINT_JEV_ESCALATE_*` trusts Jev everywhere; a band
-  that doesn't straddle 0.5 (config or env) fails `validate` with exit 2;
+  that doesn't straddle 0.5 (config or env) fails `validate` with exit 2; with
+  no `escalate_high` only Jev's fails and warnings escalate (a warned file goes
+  to the harness, a 0.80 pass stands);
   `--plan-only` names the cascade group.
 - Jev units (`tests/e2e/jev.rs`): `jev: { unit: doc_claims }` sends one request
   per documented function (not a documented const) whose state is that function

@@ -80,8 +80,15 @@ pub struct Cuts {
 /// checks, held-out errors were 100% precise with 100% recall on every unit.
 /// Re-derive them there (dev only) when a question, unit, or model changes.
 pub fn cuts(rule: &JevRule) -> Cuts {
-    let checked = !rule.checks.is_empty() || rule.examples.is_some();
-    let (fail, warn) = match (rule.unit, checked) {
+    cuts_for(
+        rule.unit,
+        !rule.checks.is_empty() || rule.examples.is_some(),
+    )
+}
+
+/// [`cuts`] by unit and whether the rule carries checks or examples.
+pub fn cuts_for(unit: JevUnit, checked: bool) -> Cuts {
+    let (fail, warn) = match (unit, checked) {
         (JevUnit::File, _) => (0.5, 0.75),
         (JevUnit::DocClaims, true) => (0.32, 0.55),
         (JevUnit::DocClaims, false) => (holds_threshold(JevUnit::DocClaims), 0.6),
@@ -1158,35 +1165,38 @@ pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVe
     }
 }
 
-/// The cascade's default escalation band, from the eval sweep (`evals/`): on
-/// the labeled corpus every Jev mistake scored inside it, while nothing below
-/// 0.10 or at/above 0.95 was ever wrong.
+/// The cascade's default confident-fail cut, from the eval sweep (`evals/`):
+/// nothing Jev scored below 0.10 was ever wrong.
 pub const DEFAULT_ESCALATE_LOW: f64 = 0.15;
-pub const DEFAULT_ESCALATE_HIGH: f64 = 0.90;
 
 /// Where a cascade trusts Jev: below `low` Jev's fail stands, at or above
-/// `high` its pass stands, and in between the harness decides. It must straddle
-/// [`HOLDS_THRESHOLD`] so every confident fail is one Jev actually reported.
+/// `high` its pass stands, and in between the harness decides. `high` unset
+/// means each rule's own warn cut ([`cuts`]): the harness re-judges exactly
+/// what Jev failed or warned on and never a confident pass — on real code
+/// that is a few files, not every file Jev was less than sure about. A set
+/// `high` must straddle [`HOLDS_THRESHOLD`] with `low`, so every confident
+/// fail is one Jev actually reported.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Band {
     pub low: f64,
-    pub high: f64,
+    pub high: Option<f64>,
 }
 
 impl Band {
-    /// The band from optional settings, defaulting each side; an error message
-    /// when it is outside 0..1 or does not straddle the pass/fail threshold.
+    /// The band from optional settings; an error message when a side is
+    /// outside its range.
     pub fn from_settings(low: Option<f64>, high: Option<f64>) -> Result<Band, String> {
         let band = Band {
             low: low.unwrap_or(DEFAULT_ESCALATE_LOW),
-            high: high.unwrap_or(DEFAULT_ESCALATE_HIGH),
+            high,
         };
         if !(0.0..=HOLDS_THRESHOLD).contains(&band.low)
-            || !(HOLDS_THRESHOLD..=1.0).contains(&band.high)
+            || high.is_some_and(|h| !(HOLDS_THRESHOLD..=1.0).contains(&h))
         {
             return Err(format!(
                 "jev.escalate_low ({}) must be in 0..={HOLDS_THRESHOLD} and jev.escalate_high ({}) in {HOLDS_THRESHOLD}..=1",
-                band.low, band.high
+                band.low,
+                high.map_or("unset".to_string(), |h| h.to_string())
             ));
         }
         Ok(band)
@@ -1205,7 +1215,8 @@ pub struct Triage {
 
 /// Split a Jev verdict (with its per-file scores) by the band. A file where a
 /// conditional rule is not relevant is decided (not relevant), never escalated.
-pub fn triage(v: &RuleVerdict, band: Band) -> Triage {
+pub fn triage(v: &RuleVerdict, band: Band, rule_cuts: Cuts) -> Triage {
+    let high = band.high.unwrap_or(rule_cuts.warn);
     let mut escalate = Vec::new();
     let mut failing = std::collections::BTreeSet::new();
     let mut any_decided_relevant = false;
@@ -1222,7 +1233,7 @@ pub fn triage(v: &RuleVerdict, band: Band) -> Triage {
         if s.p_holds < band.low && reported {
             failing.insert(s.file.as_str());
             any_decided_relevant = true;
-        } else if s.p_holds < band.high {
+        } else if s.p_holds < high {
             escalate.push(s.file.clone());
         } else {
             any_decided_relevant = true;
@@ -1581,7 +1592,11 @@ mod tests {
 
     const BAND: Band = Band {
         low: 0.15,
-        high: 0.9,
+        high: Some(0.9),
+    };
+    const FILE_CUTS: Cuts = Cuts {
+        fail: 0.5,
+        warn: 0.75,
     };
 
     #[test]
@@ -1595,7 +1610,7 @@ mod tests {
             ],
             false,
         );
-        let t = triage(&v, BAND);
+        let t = triage(&v, BAND, FILE_CUTS);
         assert_eq!(t.escalate, ["unsure_fail.rs", "unsure_pass.rs"]);
         assert!(!t.decided.holds);
         let files: Vec<_> = t
@@ -1617,19 +1632,40 @@ mod tests {
             ],
             true,
         );
-        let t = triage(&v, BAND);
+        let t = triage(&v, BAND, FILE_CUTS);
         assert!(t.escalate.is_empty());
         assert_eq!((t.decided.relevant, t.decided.holds), (Some(true), true));
         let none = triage(
             &jev_verdict(vec![scored("a.rs", 0.5, Some(0.1))], true),
             BAND,
+            FILE_CUTS,
         );
         assert_eq!(none.decided.relevant, Some(false));
     }
 
     #[test]
+    fn an_unset_high_escalates_exactly_jevs_fails_and_warnings() {
+        let v = jev_verdict(
+            vec![
+                scored("sure_fail.rs", 0.05, None),
+                scored("fail.rs", 0.4, None),
+                scored("warn.rs", 0.6, None),
+                scored("pass.rs", 0.8, None),
+            ],
+            false,
+        );
+        let band = Band::from_settings(None, None).unwrap();
+        assert_eq!(triage(&v, band, FILE_CUTS).escalate, ["fail.rs", "warn.rs"]);
+    }
+
+    #[test]
     fn merge_needs_both_halves_to_hold() {
-        let decided = triage(&jev_verdict(vec![scored("ok.rs", 0.99, None)], false), BAND).decided;
+        let decided = triage(
+            &jev_verdict(vec![scored("ok.rs", 0.99, None)], false),
+            BAND,
+            FILE_CUTS,
+        )
+        .decided;
         let harness_fail = RuleVerdict {
             holds: false,
             violations: vec![Violation {
@@ -1654,6 +1690,7 @@ mod tests {
         let jev_fail = triage(
             &jev_verdict(vec![scored("bad.rs", 0.02, None)], false),
             BAND,
+            FILE_CUTS,
         )
         .decided;
         let m = merge(&jev_fail, &harness_pass);
@@ -1665,6 +1702,7 @@ mod tests {
         let decided = triage(
             &jev_verdict(vec![scored("a.rs", 0.5, Some(0.1))], true),
             BAND,
+            FILE_CUTS,
         )
         .decided;
         let not_rel = RuleVerdict {
@@ -1691,12 +1729,18 @@ mod tests {
 
     #[test]
     fn the_band_defaults_and_must_straddle_the_threshold() {
-        assert_eq!(Band::from_settings(None, None).unwrap(), BAND);
+        assert_eq!(
+            Band::from_settings(None, None).unwrap(),
+            Band {
+                low: 0.15,
+                high: None
+            }
+        );
         assert_eq!(
             Band::from_settings(Some(0.3), Some(0.7)).unwrap(),
             Band {
                 low: 0.3,
-                high: 0.7
+                high: Some(0.7)
             }
         );
         for (lo, hi) in [(0.6, 0.9), (0.1, 0.4), (-0.1, 0.9), (0.1, 1.2)] {
@@ -1822,8 +1866,9 @@ fn undocumented() {}
             &v,
             Band {
                 low: 0.4,
-                high: 0.9,
+                high: Some(0.9),
             },
+            FILE_CUTS,
         );
         assert_eq!(t.escalate, ["a.rs"]);
     }

@@ -401,7 +401,8 @@ pub(crate) fn run_loaded(
     engine.run(&the_plan.runs, &view, &cascade, &mut st);
 
     // Cascade, phase 2: every rule/file whose Jev probability fell inside the
-    // band is re-judged by the harness, through the same planner as any harness
+    // band (by default: every file Jev failed or warned on) is re-judged by the
+    // harness, through the same planner as any harness
     // rule (batching, agents, scope); confident Jev answers stand.
     let mut decided: BTreeMap<String, RuleVerdict> = BTreeMap::new();
     let mut escalated: Vec<plan::ResolvedRule> = Vec::new();
@@ -413,7 +414,8 @@ pub(crate) fn run_loaded(
         else {
             continue; // its Jev run errored; the error is already recorded
         };
-        let t = jevq::triage(&v, band);
+        let checked = !rule.jev.checks.is_empty() || rule.jev.examples.is_some();
+        let t = jevq::triage(&v, band, jevq::cuts_for(rule.jev.unit, checked));
         if !t.escalate.is_empty() {
             let files: Vec<PathBuf> = rule
                 .files

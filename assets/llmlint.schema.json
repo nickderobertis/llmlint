@@ -224,7 +224,7 @@
           ]
         },
         {
-          "description": "Jev first; a rule/file whose probability of holding falls inside the\nescalation band (`jev.escalate_low`..`jev.escalate_high`) is re-judged\nby the harness. Confident Jev answers stand.",
+          "description": "Jev first; a rule/file whose probability of holding falls inside the\nescalation band (`jev.escalate_low` up to `jev.escalate_high`, by default\nthe rule's warn cut — every file Jev failed or warned on) is re-judged by\nthe harness. Confident Jev answers stand.",
           "type": "string",
           "const": "cascade"
         }
@@ -259,7 +259,7 @@
           "maximum": 1.0
         },
         "escalate_high": {
-          "description": "`judge: cascade` escalates when Jev's probability that the rule holds is\nbelow this (default 0.90) — at or above it, Jev's pass stands.",
+          "description": "`judge: cascade` escalates when Jev's probability that the rule holds is\nbelow this — at or above it, Jev's pass stands. Unset (the default), it\nis each rule's own warn cut, so the harness re-judges exactly what Jev\nfailed or warned on.",
           "type": [
             "number",
             "null"

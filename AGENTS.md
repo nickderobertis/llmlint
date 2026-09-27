@@ -531,13 +531,15 @@ harness reads target files on-demand with its own tools.
   **Cascade** (`judge: cascade`) is two phases in `run_loaded` sharing one
   `Engine`: the Jev pass runs cascade rules like `jev` (their view lines held);
   `jev::triage` splits each rule's per-file `scores` by the band
-  (`jev.escalate_low`/`high`, default [0.15, 0.90), which must straddle 0.5 —
-  validated at load), keeps confident Jev fails, and re-plans the in-band
+  (`jev.escalate_low`, default 0.15, up to `jev.escalate_high`, **default each
+  rule's warn cut** — so exactly Jev's fails and warnings escalate and its
+  passes stand; a set `high` must be ≥ 0.5, validated at load), keeps confident
+  Jev fails, and re-plans the in-band
   rule/files as ordinary harness `ResolvedRule`s through `plan::build`; each
   harness verdict is `jev::merge`d with the confident half. The oneharness
   pre-flight runs only if something escalates. `plan.escalated` records what went
-  to the harness; the default band comes from the `evals/` sweep — re-derive it
-  there, not by feel.
+  to the harness; the default low cut comes from the `evals/` sweep — re-derive
+  it there, not by feel.
   **Jev units (convention):** a rule's `jev: { unit }` picks how Jev decomposes
   it (`JevUnit`; default `file`). Extraction is pure, heuristic, per-language
   (`domain::jevunits`, no parser): it only scopes the state — a construct it

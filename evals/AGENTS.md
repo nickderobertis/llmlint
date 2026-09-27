@@ -26,7 +26,8 @@ out of `just check` and the `Judge eval` workflow is not a required check.
 - **Tuning the cascade band offline:** the `jev` arm's result file keeps each
   item's `p_holds` (the report's per-file `scores`), so a band can be swept
   against the harness baseline without another model call. The shipped default
-  [0.15, 0.90) is the narrowest band that met the recall bar on the corpus. Writes
+  escalates Jev's fails and warnings (from 0.15 up to each rule's warn cut);
+  a fixed `jev.escalate_high` widens it to Jev's unsure passes too. Writes
   `evals/results/<ts>-<arm>.{json,md}` (gitignored); `--baseline` adds a delta
   column. Needs `oneharness` + an authenticated `claude` on PATH.
 - CI (`.github/workflows/eval.yml`): `selftest` on any `evals/`/`src/` change;

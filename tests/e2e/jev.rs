@@ -564,6 +564,33 @@ fn cascade_escalates_only_the_uncertain_rule_and_the_harness_decides() {
 }
 
 #[test]
+fn cascade_by_default_sends_only_jevs_fails_and_warnings_to_the_harness() {
+    let p = cascade_project();
+    // 0.80 clears the whole-file warn cut (0.75): a pass that stands. 0.60 is a
+    // warning: the harness decides it.
+    let jev = MockJev::start(
+        &[
+            ("errors_have_context", holds(0.60)),
+            ("names_are_clear", holds(0.80)),
+        ],
+        &[],
+    );
+    let (a, calls) = run_cascade(&p, &jev, r#"{"errors_have_context": false}"#, &[]);
+    let out = json_of(&a.code(1));
+    assert_eq!(
+        calls,
+        ["errors_have_context"],
+        "only the warned rule escalates"
+    );
+    assert_eq!(
+        out["rules"][0]["outcome"], "fail",
+        "the harness confirmed it"
+    );
+    assert_eq!(out["rules"][1]["outcome"], "pass");
+    assert!(out["plan"]["escalated"].get("names_are_clear").is_none());
+}
+
+#[test]
 fn cascade_harness_can_overturn_an_unsure_pass() {
     let p = cascade_project();
     let jev = MockJev::start(&[("errors_have_context", holds(0.70))], &[]);

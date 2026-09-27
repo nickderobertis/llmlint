@@ -127,8 +127,9 @@ pub enum JudgeKind {
     Harness,
     Jev,
     /// Jev first; a rule/file whose probability of holding falls inside the
-    /// escalation band (`jev.escalate_low`..`jev.escalate_high`) is re-judged
-    /// by the harness. Confident Jev answers stand.
+    /// escalation band (`jev.escalate_low` up to `jev.escalate_high`, by default
+    /// the rule's warn cut — every file Jev failed or warned on) is re-judged by
+    /// the harness. Confident Jev answers stand.
     Cascade,
 }
 
@@ -249,7 +250,9 @@ pub struct JevCfg {
     #[schemars(range(min = 0.0, max = 1.0))]
     pub escalate_low: Option<f64>,
     /// `judge: cascade` escalates when Jev's probability that the rule holds is
-    /// below this (default 0.90) — at or above it, Jev's pass stands.
+    /// below this — at or above it, Jev's pass stands. Unset (the default), it
+    /// is each rule's own warn cut, so the harness re-judges exactly what Jev
+    /// failed or warned on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 0.0, max = 1.0))]
     pub escalate_high: Option<f64>,

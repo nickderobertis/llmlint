@@ -308,7 +308,7 @@ unset.
 | `jev.model` | `LLMLINT_JEV_MODEL` | — | default `jev-1.13.0` |
 | `jev.url` | `LLMLINT_JEV_URL` | — | default `https://api.typesafe.ai` |
 | `jev.escalate_low` | `LLMLINT_JEV_ESCALATE_LOW` | — | cascade: Jev fails below this stand (default 0.15; 0–0.5) |
-| `jev.escalate_high` | `LLMLINT_JEV_ESCALATE_HIGH` | — | cascade: Jev passes at/above this stand (default 0.90; 0.5–1) |
+| `jev.escalate_high` | `LLMLINT_JEV_ESCALATE_HIGH` | — | cascade: Jev passes at/above this stand (default: each rule's warn cut, so only Jev's fails and warnings escalate; 0.5–1) |
 
 The env layer applies **process-wide**, after the nearest-wins config merge — it
 tunes the effective run, not any one directory's config. Two list-valued settings
@@ -693,17 +693,16 @@ else `harness`:
   every verbosity, never failing the rule or the run. It bills input tokens only ($0.042 per million for
   `jev-1.13.0`), but it cannot read other files, so keep cross-file and
   architectural rules on the harness.
-- **`cascade`** — Jev first, then the harness only where Jev is unsure. For each
-  rule and file, Jev's probability that the rule holds decides: below
-  `jev.escalate_low` (default 0.15) its fail stands, at or above
-  `jev.escalate_high` (default 0.90) its pass stands, and in between the file is
-  re-judged by the harness — batched like any harness rule, on the rule's agent's
-  harness and model. The rule fails if either half found a violation. On
-  llmlint's labeled eval corpus, Jev alone caught 83% of planted violations and
-  every mistake it made scored inside the default band; replaying that run with
-  the band recovered 98.5% recall at 100% precision (see `evals/`). What it saves
-  depends on how often Jev is unsure: where Jev's passes are confident, the
-  harness is never called.
+- **`cascade`** — Jev first, then the harness only for what Jev flagged. For
+  each rule and file, Jev's probability that the rule holds decides: below
+  `jev.escalate_low` (default 0.15) its fail stands; every other file Jev
+  failed or warned on is re-judged by the harness — batched like any harness
+  rule, on the rule's agent's harness and model — and Jev's passes stand. The
+  rule fails if either half found a violation. So the harness reads only the
+  handful of files Jev flagged, and confirms or overturns each: the harness's
+  precision at close to Jev's cost. Set `jev.escalate_high` to also escalate
+  passes below it (a fixed band, e.g. 0.90) when Jev's misses matter more than
+  the harness bill.
 
 ```yaml
 agents:
