@@ -1030,10 +1030,11 @@ pub fn read_answers(
 /// `per_file` pairs each file (slash path) with its chunks' answers.
 ///
 /// A conditional rule is relevant when any chunk is; not-relevant chunks never
-/// count toward the verdict. The rule holds when every relevant chunk reaches
-/// its unit's [`holds_threshold`]; each failing file contributes one violation at the line
-/// of its least-holding chunk (when localized), whose message carries the
-/// probability — Jev writes no rationale, so the number *is* the explanation.
+/// count toward the verdict. Each file is judged by its least-holding relevant
+/// chunk against the rule's [`cuts`]: below `fail` it contributes one violation,
+/// from `fail` up to `warn` one warning (the rule still holds), both at that
+/// chunk's line (when localized) with a message carrying the probability — Jev
+/// writes no rationale, so the number *is* the explanation.
 pub fn verdict(rule: &JevRule, per_file: &[(String, Vec<RuleAnswer>)]) -> RuleVerdict {
     let relevant = |a: &RuleAnswer| a.p_relevant.is_none_or(|p| p >= RELEVANT_THRESHOLD);
     let any_relevant = per_file.iter().flat_map(|(_, v)| v).any(relevant);

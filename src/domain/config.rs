@@ -418,13 +418,13 @@ impl Rule {
         self.require_line_attribution.unwrap_or(false)
     }
 
-    /// How this rule's relevance resolves, applying the default (always evaluate
-    /// when `relevance` is unset or `true`).
     /// How Jev decomposes this rule (default whole-file).
     pub fn jev_spec(&self) -> RuleJev {
         self.jev.clone().unwrap_or_default()
     }
 
+    /// How this rule's relevance resolves, applying the default (always evaluate
+    /// when `relevance` is unset or `true`).
     pub fn relevance_mode(&self) -> RelevanceMode {
         match &self.relevance {
             None | Some(Relevance::Always(true)) => RelevanceMode::Always,

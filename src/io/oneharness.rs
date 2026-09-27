@@ -577,8 +577,6 @@ fn usage_of(stdout: &[u8]) -> JudgeUsage {
     u
 }
 
-/// Parse one captured oneharness run into its per-rule verdicts (the verdict
-/// extraction split out so `run_with_trace` can keep the trace on every path).
 /// Read a `structured` value as the per-rule verdict map.
 fn verdicts_of(structured: Value, harness: &str) -> Result<BTreeMap<String, RuleVerdict>> {
     serde_json::from_value(structured).map_err(|e| {
@@ -586,6 +584,9 @@ fn verdicts_of(structured: Value, harness: &str) -> Result<BTreeMap<String, Rule
     })
 }
 
+/// Extract the winning result's schema-validated `structured` value from one
+/// captured oneharness run (split out so `run_raw` can keep the trace on every
+/// path).
 fn parse_structured(capture: &Capture, harness: &str) -> Result<Value> {
     let report: Report = serde_json::from_slice(&capture.stdout).map_err(|e| {
         Error::Oneharness(format!(

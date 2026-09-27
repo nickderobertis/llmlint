@@ -139,7 +139,6 @@ impl ProgressView {
         }
     }
 
-    /// Record that one judge call finished; bumps the header count.
     /// Grow the expected call count mid-run (a cascade's escalations are only
     /// known after its Jev pass).
     pub fn add_runs(&self, n: usize) {
@@ -149,6 +148,7 @@ impl ProgressView {
             .set_message(format!("{done}/{} judge calls", self.total_runs.get()));
     }
 
+    /// Record that one judge call finished; bumps the header count.
     pub fn tick_run(&self) {
         let n = self.done_runs.get() + 1;
         self.done_runs.set(n);

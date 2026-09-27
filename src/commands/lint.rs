@@ -550,8 +550,8 @@ fn finish(
 /// Write this run's full results as a JSON record and, for the human report,
 /// print the run id + how to retrieve it. Logging is best-effort: any failure is
 /// a stderr warning, never a change to the lint's exit code — a broken history
-/// dir must not fail an otherwise-good run. Suppressed entirely when logging is
-/// off or no history directory can be determined.
+/// dir must not fail an otherwise-good run. Does nothing when logging is off;
+/// warns and skips when no history directory can be determined.
 fn log_history(
     report: &Report,
     args: &LintArgs,
