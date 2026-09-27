@@ -5,6 +5,11 @@ agents:
     harness: claude-code
 rules:
   - name: steps_are_actionable
+    jev:
+      checks:
+        - "A numbered step in a how-to section gives only a vague instruction such as \"configure it appropriately\", \"set things up as needed\", \"adjust the settings\", or \"make the necessary changes\" without naming the exact command, file, or setting."
+        - "A numbered step tells the reader to run, install, or execute something without giving the exact command (for example \"install the dependencies\" or \"run the migrations\" with no command shown in or directly under the step)."
+        - "A numbered step tells the reader to edit a file or change a setting without naming which file, key, or value (for example \"update the config file\" or \"set the right environment variables\")."
     files: { include: ["**/*.md"] }
     require_line_attribution: true
     description: |
@@ -14,6 +19,11 @@ rules:
       needed".
 
   - name: claims_are_substantiated
+    jev:
+      checks:
+        - "The file contains a performance or quality claim (for example \"blazing fast\", \"lightning-fast\", \"best-in-class\", \"the most reliable\", \"highly scalable\", \"production-grade\", \"efficient\") with no number, benchmark, or link in the same paragraph."
+        - "The file contains a performance or quality claim whose only supporting evidence in the same paragraph measures something else, for example GitHub stars, download counts, or user counts cited for speed or reliability, or a benchmark of a different property than the one claimed."
+        - "The file contains a comparative claim (for example \"faster than X\", \"10x better\", \"more accurate than\") with no benchmark, figure, or link in the same paragraph that measures that comparison."
     files: { include: ["**/*.md"] }
     require_line_attribution: true
     description: |
@@ -24,6 +34,11 @@ rules:
       example star counts cited for reliability).
 
   - name: examples_match_prose
+    jev:
+      checks:
+        - "A code block contains a command whose subcommand differs from the one the introducing sentence says to use (for example the prose says \"run `build`\" but the command is `tool test`)."
+        - "A code block contains a command whose flags disagree with the introducing sentence, for example the prose mentions `--verbose` or \"in dry-run mode\" but the command lacks that flag, or includes a flag (such as `--force`) the prose does not describe or contradicts."
+        - "A code block contains a command whose file, path, or argument names differ from the ones the introducing sentence names (for example the prose says `config.yaml` but the command uses `settings.yml`)."
     files: { include: ["**/*.md"] }
     require_line_attribution: true
     description: |
@@ -32,6 +47,11 @@ rules:
       command it introduces disagree.
 
   - name: terms_are_used_consistently
+    jev:
+      checks:
+        - "The file refers to the same concept by two different names in different places (for example \"workspace\" in one section and \"project\" in another, or \"token\" and \"API key\" for the same credential), unless the text explicitly states the two names are synonyms or aliases."
+        - "The file names a command, component, or setting one way in prose and a different way elsewhere (for example \"the server\" vs \"the daemon\", or \"config file\" vs \"settings file\") for the same thing, so a reader could take them for two different things."
+        - "The file switches between a full name and an unexplained different abbreviation or alternate term for the same concept (for example \"repository\" then \"store\"), without defining the alternate term as the same thing."
     files: { include: ["**/*.md"] }
     require_line_attribution: true
     description: |
@@ -41,6 +61,12 @@ rules:
       same thing — so a reader could take them for two different things.
 
   - name: warnings_precede_destructive_steps
+    jev:
+      checks:
+        - "The file contains a command or step that drops or truncates database data (for example `DROP TABLE`, `DROP DATABASE`, `TRUNCATE`, `DELETE FROM` without a narrow filter) with no warning before or within it stating what data will be lost."
+        - "The file contains a command or step that deletes files, buckets, or resources (for example `rm -rf`, `aws s3 rb --force`, `gsutil rm -r`, `kubectl delete namespace`, `terraform destroy`) with no warning before or within it stating what will be lost."
+        - "The file contains a command or step that rewrites or discards history or queued data irreversibly (for example `git push --force`, `git reset --hard`, purging a queue, deleting a branch) with no warning before or within it stating what will be lost."
+        - "The file warns about a destructive step only generically (for example \"be careful\") or only after the step, without saying what will be lost."
     files: { include: ["**/*.md"] }
     require_line_attribution: true
     description: |

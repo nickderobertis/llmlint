@@ -8,7 +8,13 @@ agents:
     harness: claude-code
 rules:
   - name: docstrings_match_behavior
-    jev: { unit: doc_claims }
+    jev:
+      unit: doc_claims
+      checks:
+        - "The `claim` states a return value (for example \"returns None if not found\", \"returns a list of ids\", \"returns True on success\") that the function's code, including same-file helpers it calls, does not return in that situation."
+        - "The `claim` states that a specific exception is raised (for example \"Raises ValueError if ...\") or not raised, and the code, including same-file helpers it calls, raises a different exception, raises none, or catches it and returns instead."
+        - "The `claim` states a unit (for example seconds vs milliseconds, bytes vs kilobytes, percent vs fraction) or an ordering (for example \"sorted by date\", \"descending\") that the code contradicts."
+        - "The `claim` states a side effect or the absence of one (for example \"does not mutate the input\", \"saves to the database\", \"sends an email\") that the code, including same-file helpers it calls, contradicts."
     files: { include: ["src/**/*.py"] }
     require_line_attribution: true
     description: |
@@ -18,6 +24,12 @@ rules:
       the same file. False when a docstring claims behavior the code contradicts.
 
   - name: exceptions_are_handled_or_reported
+    jev:
+      checks:
+        - "The file has an `except` block whose body is only `pass`, `...`, or `continue`, or uses `contextlib.suppress(...)`, discarding the caught exception without logging, re-raising, or a comment explaining why ignoring it is a deliberate, documented recovery."
+        - "The file has an `except` block that returns or assigns a fallback value (for example `return None`, `return []`, `return {}`, `return 0`, `return False`) for an error that signals a real failure (for example an I/O, network, database, or parse error), so the caller cannot tell the operation failed, unless the fallback is the documented contract (for example a `get_or_default` or a docstring saying it returns None on missing input)."
+        - "The file has an `except` block that logs the exception without enough detail to diagnose it, such as `print(\"error\")` or `logger.error(\"failed\")` that omits the exception object, traceback (`exc_info` / `logger.exception`), and what operation failed."
+        - "The file has a bare `except:` or `except Exception:`/`except BaseException:` that swallows the error without re-raising or logging it."
     files: { include: ["src/**/*.py"] }
     require_line_attribution: true
     description: |
@@ -28,7 +40,13 @@ rules:
       replaces it with a fallback value that hides a real failure from the caller.
 
   - name: log_messages_are_actionable
-    jev: { unit: sites, pattern: '\b(log|logger|logging)\.(warning|warn|error|exception|critical)\(' }
+    jev:
+      unit: sites
+      pattern: '\b(log|logger|logging)\.(warning|warn|error|exception|critical)\('
+      checks:
+        - "The line in `site` is a `logger.warning`, `logger.error`, `logger.exception`, or `logger.critical` call whose message is vague, such as \"something went wrong\", \"error\", \"failed\", \"oops\", or \"unexpected error\", and does not name the specific operation that failed."
+        - "The line in `site` is a warning-or-above log call that omits an identifier of the affected entity (for example a `user_id`, `order_id`, file path, or request id) even though a variable holding that identifier is in scope in the enclosing function."
+        - "The line in `site` is a warning-or-above log call whose only content is the exception object or `str(e)` (for example `logger.error(e)` or `logger.exception(\"%s\", e)`) with no words stating which operation failed."
     files: { include: ["src/**/*.py"] }
     require_line_attribution: true
     description: |
@@ -39,7 +57,13 @@ rules:
       entity identifier available at that point.
 
   - name: services_do_not_build_sql
-    jev: { unit: sites, pattern: '(?i)\b(select|insert|update|delete)\b|\.execute(_raw|many)?\(|\.cursor\(' }
+    jev:
+      unit: sites
+      pattern: '(?i)\b(select|insert|update|delete)\b|\.execute(_raw|many)?\(|\.cursor\('
+      checks:
+        - "The line in `site` contains a SQL statement or keyword string (for example a string containing `SELECT`, `INSERT INTO`, `UPDATE ... SET`, `DELETE FROM`, `WHERE`, or `JOIN`) written in a module under `src/services/`, unless the word appears only as a plain English word, a method name, or a non-SQL string such as a log message or UI label."
+        - "The line in `site` calls `.execute(`, `.executemany(`, `.cursor(`, or `.fetchall()`/`.fetchone()` on a database connection or cursor directly inside a module under `src/services/`, rather than calling a function imported from `src/repositories/`."
+        - "The line in `site` builds or concatenates a SQL fragment (for example an f-string or `+`/`.format` producing `\"WHERE status = ...\"` or `\"ORDER BY ...\"`) that is then passed as an argument to a repository function, so the service composes SQL even though a repository executes it."
     files: { include: ["src/services/**/*.py"] }
     require_line_attribution: true
     description: |

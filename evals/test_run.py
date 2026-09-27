@@ -84,6 +84,14 @@ class Metrics(unittest.TestCase):
         self.assertEqual((m["tp"], m["fp"], m["fn"], m["tn"]), (1, 1, 0, 0))
         self.assertEqual((m["recall"], m["precision"], m["line_hit_rate"]), (1.0, 0.5, 0.0))
 
+    def test_warnings_never_count_as_flags_but_are_reported(self):
+        cases = [self.case(VIOLATED, name="v"), self.case(HOLDS, name="h"), self.case(VIOLATED, name="w")]
+        runs = [mk_run("s/v", "warn"), mk_run("s/h", "warn"), mk_run("s/w", "fail")]
+        m = run.summarize(cases, runs, 1)["overall"]
+        self.assertEqual((m["tp"], m["fn"], m["fp"]), (1, 1, 0))
+        self.assertEqual((m["warned_items"], m["recall_with_warnings"]), (2, 1.0))
+        self.assertAlmostEqual(m["warn_rate"], 2 / 3)
+
     def test_errors_are_excluded_from_ratios_but_counted(self):
         cases = [self.case(VIOLATED)]
         m = run.summarize(cases, [mk_run(outcome="pass", exit_code=2)], 1)["overall"]

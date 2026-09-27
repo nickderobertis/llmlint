@@ -6,7 +6,12 @@ agents:
     harness: claude-code
 rules:
   - name: cli_flags_documented_in_readme
-    jev: { unit: multi_file, pattern: 'long = "([^"]+)"' }
+    jev:
+      unit: multi_file
+      pattern: 'long = "([^"]+)"'
+      checks:
+        - "The `item` is a command-line flag declared in `src/cli.rs` (for example via `#[arg(long)]`, `#[arg(short, long)]`, or `Arg::new(...).long(...)`) whose long name (such as `--dry-run`) does not appear anywhere in `README.md`."
+        - "The `item` is a flag declared in `src/cli.rs` that has only a short form (such as `-q`) or whose long name is derived from its field name (a field `dry_run` becomes `--dry-run`), and that spelling appears nowhere in `README.md`, unless the flag is hidden (`hide = true`)."
     files: { include: ["src/cli.rs", "README.md"] }
     description: |
       Every command-line flag defined in `src/cli.rs` is documented in
@@ -14,6 +19,11 @@ rules:
       the README.
 
   - name: handlers_use_repository_layer
+    jev:
+      checks:
+        - "The file under `src/handlers/` opens a database connection itself, for example calling `sqlite3.connect`, `psycopg2.connect`, `create_engine`, `SessionLocal()`, `engine.connect()`, or a `get_connection()` not imported from `src/repository.py`."
+        - "The file under `src/handlers/` executes SQL itself, for example calling `.execute(`, `.executemany(`, `.cursor(`, `.fetchall()`, `session.query(`, or `session.execute(` on a connection, cursor, or session."
+        - "The file under `src/handlers/` contains a raw SQL string (for example text containing `SELECT ... FROM`, `INSERT INTO`, `UPDATE ... SET`, or `DELETE FROM`) that it builds or runs, rather than calling a function defined in `src/repository.py`."
     files: { include: ["src/handlers/**/*.py", "src/repository.py"] }
     require_line_attribution: true
     description: |
@@ -22,14 +32,24 @@ rules:
       database connection or executes SQL itself.
 
   - name: env_vars_listed_in_example
-    jev: { unit: multi_file, pattern: '(?:getenv|environ\.get|environ\[|_env)\(?\s*"([A-Z][A-Z0-9_]+)"' }
+    jev:
+      unit: multi_file
+      pattern: '(?:getenv|environ\.get|environ\[|_env)\(?\s*"([A-Z][A-Z0-9_]+)"'
+      checks:
+        - "The `item` is an environment variable read in `src/settings.py` (for example via `os.environ[...]`, `os.environ.get(...)`, `os.getenv(...)`, or a pydantic `BaseSettings` field with its env prefix) that has no line defining it (such as `NAME=` or a commented `# NAME=`) in `config/example.env`."
+        - "The `item` is an environment variable whose name in `config/example.env` is spelled differently from how `src/settings.py` reads it (for example a different prefix, case, or underscores), so the variable that is actually read has no entry."
     files: { include: ["src/settings.py", "config/example.env"] }
     description: |
       Every environment variable that `src/settings.py` reads has an entry in
       `config/example.env`.
 
   - name: api_exports_are_tested
-    jev: { unit: multi_file, pattern: '__all__\s*=\s*\[([^\]]*)\]' }
+    jev:
+      unit: multi_file
+      pattern: '__all__\s*=\s*\[([^\]]*)\]'
+      checks:
+        - "The `item` is a name listed in `__all__` in `src/api/__init__.py` that no file under `tests/` calls or instantiates (for example `name(`, `api.name(`, or `module.name(`), even if it is imported."
+        - "The `item` is a name listed in `__all__` that appears under `tests/` only in an import statement, a comment, a string, or a mock/patch target, never actually invoked by a test."
     files: { include: ["src/api/__init__.py", "tests/**/*.py"] }
     description: |
       Every name listed in `__all__` in `src/api/__init__.py` is called by at

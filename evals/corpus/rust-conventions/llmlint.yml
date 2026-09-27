@@ -7,7 +7,13 @@ agents:
     harness: claude-code
 rules:
   - name: doc_comments_match_behavior
-    jev: { unit: doc_claims }
+    jev:
+      unit: doc_claims
+      checks:
+        - "The `claim` states a return value or result (for example \"returns `None` when missing\", \"returns the number of items\", \"returns an empty vec\") that the function's code does not produce in that situation."
+        - "The `claim` states an error or panic condition (for example \"returns an error if the file is missing\", \"never panics\", \"panics if empty\") that the code contradicts, such as the code unwrapping where it says it never panics or returning `Ok` where it says it errors."
+        - "The `claim` states an ordering or sorting guarantee (for example \"sorted ascending\", \"in insertion order\", \"newest first\") that the code does not provide."
+        - "The `claim` states a side effect or the absence of one (for example \"does not modify the input\", \"writes to disk\", \"caches the result\", \"logs a warning\") that the code contradicts."
     files: { include: ["src/**/*.rs"] }
     require_line_attribution: true
     description: |
@@ -16,7 +22,14 @@ rules:
       the code. False when a doc comment claims behavior the code contradicts.
 
   - name: errors_carry_context
-    jev: { unit: sites, pattern: '\?|map_err|ok_or' }
+    jev:
+      unit: sites
+      pattern: '\?|map_err|ok_or'
+      checks:
+        - "The line in `site` propagates the result of a filesystem, network, or parsing call (for example `fs::read_to_string`, `File::open`, `serde_json::from_str`, `str::parse`, an HTTP request) with a bare `?`, without `.context(...)`, `.with_context(...)`, or `.map_err(...)` adding a message first, unless that result was already wrapped with context earlier in the same expression or the called function is a same-file helper that itself adds context."
+        - "The line in `site` uses `.map_err(...)` on a filesystem, network, or parsing error but the replacement error carries no description of the failed operation (for example `map_err(|_| Error::Io)`, `map_err(Error::from)`, `map_err(|e| e.into())`), dropping what was being attempted."
+        - "The line in `site` adds context to a filesystem or network error that omits the input the operation acted on (for example says \"failed to read file\" without the path, or \"request failed\" without the URL) even though that path, URL, or input value is in scope in the enclosing function."
+        - "The line in `site` uses `.ok_or(...)`, `.ok_or_else(...)`, or `.ok()?` to turn a failed filesystem, network, or parsing result into an error or `None` that discards the original error and names neither the operation nor its input."
     files: { include: ["src/**/*.rs"] }
     require_line_attribution: true
     description: |
@@ -26,6 +39,12 @@ rules:
       or converted without adding context.
 
   - name: domain_modules_do_no_io
+    jev:
+      checks:
+        - "The file under `src/domain/` uses filesystem access, such as `std::fs`, `File::open`, `File::create`, `read_to_string`, `read_dir`, `create_dir`, or `Path::exists`/`metadata`, unless it appears only in a `#[cfg(test)]` test module."
+        - "The file under `src/domain/` spawns or queries a process or reads the environment, such as `std::process::Command`, `std::env::var`, `env::current_dir`, `env::args`, or `std::process::exit`, unless it appears only in a `#[cfg(test)]` test module."
+        - "The file under `src/domain/` performs network access, such as `TcpStream`, `UdpSocket`, `reqwest`, `ureq`, `hyper`, or any HTTP client call, unless it appears only in a `#[cfg(test)]` test module."
+        - "The file under `src/domain/` reads the clock or randomness from the system, such as `SystemTime::now`, `Instant::now`, `chrono::Utc::now`, `Local::now`, or `std::thread::sleep`, unless it appears only in a `#[cfg(test)]` test module."
     files: { include: ["src/domain/**/*.rs"] }
     require_line_attribution: true
     description: |
@@ -35,6 +54,11 @@ rules:
       connection, or reads the current time.
 
   - name: names_state_intent
+    jev:
+      checks:
+        - "The file declares a function named with a generic placeholder such as `do_it`, `handle2`, `process`, `run2`, `foo`, `helper`, or `stuff`, which does not say what the function does."
+        - "The file declares a variable (`let`) or struct field named with a generic placeholder such as `data`, `tmp`, `temp`, `val`, `thing`, `stuff`, `x2`, or `res2`, unless it is a loop index (for example `i`, `j`) or a parameter of a one-line closure."
+        - "The file declares a function parameter named with a generic placeholder such as `data`, `val`, `thing`, `stuff`, or `arg`, unless the parameter belongs to a one-line closure."
     files: { include: ["src/**/*.rs"] }
     require_line_attribution: true
     description: |

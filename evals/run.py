@@ -351,7 +351,9 @@ def judge_item(expect: Expect, run: Run, tol: int) -> dict:
         item.update(predicted=None, error=True)
         return item
     flagged = r["outcome"] == "fail"
-    item.update(predicted=flagged, error=False)
+    # A warning (a Jev score in the unsure band) never fails the rule; it is
+    # counted apart so the report shows what a reviewer would be asked to look at.
+    item.update(predicted=flagged, warned=r["outcome"] == "warn", error=False)
     # A probabilistic judge's raw number (the least-holding file), kept so an
     # escalation band can be swept offline from this result file.
     scores = r.get("scores") or []
@@ -400,6 +402,8 @@ def metrics(items: list[dict], runs: list[Run]) -> dict:
         else 2 * recall * precision / (recall + precision)
     )
     located = [i for i in done if "line_hit" in i]
+    warned = [i for i in done if i.get("warned")]
+    warned_tp = sum(1 for i in warned if i["expected_violation"])
 
     # Stability: an item is unstable when its completed repeats disagree.
     seen: dict[tuple[str, str], set] = {}
@@ -425,6 +429,11 @@ def metrics(items: list[dict], runs: list[Run]) -> dict:
         "precision": precision,
         "f1": f1,
         "accuracy": ratio(tp + tn, len(done)),
+        # Warnings: share of items flagged for review, and recall when a warned
+        # violation counts as caught (a reviewer sees it).
+        "warned_items": len(warned),
+        "warn_rate": ratio(len(warned), len(done)),
+        "recall_with_warnings": ratio(tp + warned_tp, tp + fn),
         "line_hit_rate": ratio(sum(1 for i in located if i["line_hit"]), len(located)),
         "unstable_items": unstable,
         "invocations": len(runs),
@@ -521,10 +530,21 @@ def markdown(result: dict, baseline: dict | None) -> str:
         lines.append(delta_row(m, b))
     else:
         lines.append(headline_row(f"`{meta['arm']}`", m))
-    lines += ["", "| Suite | Recall | Precision | Line hit | Latency p50 |", "|---|---|---|---|---|"]
+    if m.get("warned_items"):
+        lines += [
+            "",
+            f"Warnings (flagged for review, never failing): {pct(m.get('warn_rate'))} of items; "
+            f"recall counting warned violations: {pct(m.get('recall_with_warnings'))}.",
+        ]
+    lines += [
+        "",
+        "| Suite | Recall | Precision | Recall +warn | Warned | Line hit | Latency p50 |",
+        "|---|---|---|---|---|---|---|",
+    ]
     for suite, sm in result["suites"].items():
         lines.append(
             f"| {suite} | {pct(sm['recall'])} | {pct(sm['precision'])} | "
+            f"{pct(sm.get('recall_with_warnings'))} | {pct(sm.get('warn_rate'))} | "
             f"{pct(sm['line_hit_rate'])} | {secs(sm['latency_p50_s'])} |"
         )
     misses = [
