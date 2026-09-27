@@ -1023,17 +1023,19 @@ fn execute_jev(
         .filter(|(_, _, applying): &(_, _, Vec<jevq::JevRule>)| !applying.is_empty())
         .collect();
 
-    // Every function the run's files define, so a doc claim or site that calls
-    // into another module can be shown what that call does. (Under `--diff`
-    // this is only the changed files.)
+    // Every function defined in the repository's files of the same languages
+    // as the judged ones — not only the judged files, so a `--diff` run still
+    // sees what an unchanged helper does.
     let mut library = jevunits::Library::default();
     if rules
         .iter()
         .any(|r| matches!(r.unit, JevUnit::DocClaims | JevUnit::Sites))
     {
-        for (path, slash, _) in &jobs {
-            if let Ok(Some(text)) = files::read_text(cwd, path) {
-                library.add(slash, &text);
+        for (path, slash) in library_files(cwd, &jobs) {
+            if let Ok(Some(text)) = files::read_text(cwd, &path) {
+                if text.len() <= MAX_LIBRARY_FILE_BYTES {
+                    library.add(&slash, &text);
+                }
             }
         }
     }
@@ -1145,6 +1147,43 @@ fn execute_jev(
         trace: None,
         verdicts: Ok(verdicts),
         usage: priced(usage, client.model()),
+    }
+}
+
+/// Library files larger than this are skipped (generated code, vendored
+/// bundles): their functions would rarely be the helper a call means.
+const MAX_LIBRARY_FILE_BYTES: usize = 200_000;
+/// At most this many files feed the helper library.
+const MAX_LIBRARY_FILES: usize = 5_000;
+
+/// The files whose functions the helper library indexes: every file under
+/// `cwd` (gitignore-aware) with an extension one of the judged files has,
+/// falling back to the judged files themselves when the walk fails.
+fn library_files(
+    cwd: &Path,
+    jobs: &[(&PathBuf, String, Vec<jevq::JevRule>)],
+) -> Vec<(PathBuf, String)> {
+    let exts: BTreeSet<String> = jobs
+        .iter()
+        .filter_map(|(p, _, _)| p.extension().map(|e| e.to_string_lossy().into_owned()))
+        .collect();
+    let filter = crate::domain::config::FileFilter {
+        include: exts.iter().map(|e| format!("**/*.{e}")).collect(),
+        exclude: Vec::new(),
+    };
+    match files::resolve(cwd, &filter) {
+        Ok(found) if !exts.is_empty() => found
+            .into_iter()
+            .take(MAX_LIBRARY_FILES)
+            .map(|p| {
+                let slash = files::to_slash(&p);
+                (p, slash)
+            })
+            .collect(),
+        _ => jobs
+            .iter()
+            .map(|(p, slash, _)| ((*p).clone(), slash.clone()))
+            .collect(),
     }
 }
 

@@ -205,7 +205,10 @@ impl Library {
         let lines: Vec<&str> = text.lines().collect();
         let tests = test_ranges(path, &lines);
         for (name, start, end) in function_index(path, &lines) {
-            if in_ranges(&tests, start) || end + 1 - start > MAX_EXTERNAL_LINES {
+            // A bodiless declaration (a trait method's signature) explains
+            // nothing, and would make its implementation look ambiguous.
+            let bodiless = start == end && lines[start - 1].trim_end().ends_with(';');
+            if bodiless || in_ranges(&tests, start) || end + 1 - start > MAX_EXTERNAL_LINES {
                 continue;
             }
             self.defs.entry(name).or_default().push(External {
@@ -277,9 +280,84 @@ fn module_of(path: &str) -> &str {
     }
 }
 
+/// Method names so common in standard libraries that a same-named function
+/// elsewhere in the repo is almost never what a `.name(` call means.
+const COMMON_METHODS: &[&str] = &[
+    "map",
+    "map_err",
+    "and_then",
+    "or_else",
+    "ok_or",
+    "ok_or_else",
+    "unwrap",
+    "unwrap_or",
+    "unwrap_or_else",
+    "unwrap_or_default",
+    "expect",
+    "get",
+    "get_mut",
+    "insert",
+    "remove",
+    "contains",
+    "contains_key",
+    "push",
+    "pop",
+    "len",
+    "is_empty",
+    "iter",
+    "iter_mut",
+    "into_iter",
+    "collect",
+    "clone",
+    "to_string",
+    "to_owned",
+    "as_str",
+    "as_ref",
+    "into",
+    "from",
+    "parse",
+    "join",
+    "split",
+    "trim",
+    "filter",
+    "find",
+    "any",
+    "all",
+    "sort",
+    "extend",
+    "entry",
+    "or_default",
+    "keys",
+    "values",
+    "lines",
+    "chars",
+    "starts_with",
+    "ends_with",
+    "replace",
+    "format",
+    "write",
+    "read",
+    "flush",
+    "append",
+    "update",
+    "items",
+    "strip",
+    "lower",
+    "upper",
+    "encode",
+    "decode",
+    "close",
+    "open",
+    "send",
+    "call",
+    "run",
+    "new",
+];
+
 /// Every call in `code`, as `(qualifier, name)`: `a::b::name(` gives
-/// `(Some("b"), "name")`, a bare `name(` gives `(None, "name")`. Method calls
-/// (`.name(`) and macros (`name!(`) are not calls to a known definition.
+/// `(Some("b"), "name")`, a bare `name(` or a method `.name(` gives
+/// `(None, "name")` (a method only when its name is not a common library one).
+/// Macros (`name!(`) are not calls to a known definition.
 fn call_names(code: &str) -> Vec<(Option<String>, String)> {
     let mut out: Vec<(Option<String>, String)> = Vec::new();
     let bytes = code.as_bytes();
@@ -294,11 +372,10 @@ fn call_names(code: &str) -> Vec<(Option<String>, String)> {
         }
         let name = code[j..i].to_string();
         let before = code[..j].trim_end_matches(' ');
-        if before.ends_with('.')
-            || matches!(
-                name.as_str(),
-                "if" | "while" | "for" | "match" | "return" | "fn" | "def" | "Some" | "Ok" | "Err"
-            )
+        if matches!(
+            name.as_str(),
+            "if" | "while" | "for" | "match" | "return" | "fn" | "def" | "Some" | "Ok" | "Err"
+        ) || (before.ends_with('.') && COMMON_METHODS.contains(&name.as_str()))
         {
             continue;
         }
@@ -1187,14 +1264,17 @@ pub fn broken() {}
 
     #[test]
     fn calls_are_parsed_with_their_module_qualifier() {
-        let calls =
-            call_names("let t = files::read_text(cwd, p)?; x.len(); vec![1]; run(a); if (b) {}");
+        let calls = call_names(
+            "let t = files::read_text(cwd, p)?; x.len(); vec![1]; run2(a); if (b) {} p.diffs(r)?",
+        );
         assert_eq!(
             calls,
             [
                 (Some("files".to_string()), "read_text".to_string()),
-                (None, "run".to_string())
-            ]
+                (None, "run2".to_string()),
+                (None, "diffs".to_string()),
+            ],
+            "a method call counts unless its name is a common library one (`len`)"
         );
     }
 
@@ -1249,5 +1329,20 @@ pub fn broken() {}
             &lib,
         );
         assert_eq!(d[0].external[0].start, 1);
+    }
+
+    #[test]
+    fn a_method_call_resolves_to_its_one_implementation_not_the_trait_signature() {
+        let mut lib = Library::default();
+        lib.add(
+            "src/io/diff.rs",
+            "pub trait Provider {\n    fn diffs(&self, root: &Path) -> Result<Map>;\n}\nimpl Provider for Git {\n    fn diffs(&self, root: &Path) -> Result<Map> {\n        Err(Error::Diff { backend: \"git\".into() })\n    }\n}\n",
+        );
+        let got = lib.resolve("src/lint.rs", "let d = provider.diffs(cwd)?;", &[], 4);
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0].start, 5,
+            "the implementation, not the signature on line 2"
+        );
     }
 }
