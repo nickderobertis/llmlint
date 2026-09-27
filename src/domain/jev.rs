@@ -149,6 +149,36 @@ pub struct FileUnit<'a> {
     /// New-file lines the diff adds (`None` without `--diff`). Localization
     /// options are limited to these, since only changed lines are under review.
     pub added_lines: Option<&'a [usize]>,
+    /// Functions defined in the run's other files, so a call into another
+    /// module can be shown as a helper (`None`: same-file helpers only).
+    pub lib: Option<&'a jevunits::Library>,
+}
+
+/// Cross-file helpers as state text: each under a line naming its file, its
+/// lines tagged with that file's own numbers.
+fn external_text(external: &[jevunits::External]) -> String {
+    external
+        .iter()
+        .map(|e| {
+            let body: String = e
+                .lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| format!("{}| {l}\n", line_id(e.start + i)))
+                .collect();
+            format!("(defined in {})\n{body}", e.path)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Join non-empty helper texts with a blank line.
+fn join_helpers(parts: [String; 2]) -> String {
+    parts
+        .into_iter()
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// One Jev request: a state and its questions, plus what our code needs to read
@@ -441,7 +471,13 @@ pub fn multi_file_request(
                     let line_end = text[m.start()..]
                         .find('\n')
                         .map_or(text.len(), |i| m.start() + i);
-                    if jevunits::is_comment_line(path, &text[line_start..line_end]) {
+                    let at_line = text[..m.start()].matches('\n').count() + 1;
+                    if jevunits::is_comment_line(path, &text[line_start..line_end])
+                        || jevunits::in_ranges(
+                            &jevunits::test_ranges(path, &text.lines().collect::<Vec<_>>()),
+                            at_line,
+                        )
+                    {
                         continue;
                     }
                     let item = m.as_str().to_string();
@@ -619,7 +655,8 @@ fn site_requests(unit: &FileUnit, rule: &JevRule) -> Vec<Request> {
     };
     let lines: Vec<&str> = unit.text.lines().collect();
     let tag = |n: usize| lines.get(n - 1).map(|l| format!("{}| {l}", line_id(n)));
-    jevunits::site_groups(unit.path, unit.text, &re)
+    let empty = jevunits::Library::default();
+    jevunits::site_groups(unit.path, unit.text, &re, unit.lib.unwrap_or(&empty))
         .into_iter()
         .filter_map(|mut g| {
             if let Some(added) = unit.added_lines {
@@ -629,12 +666,13 @@ fn site_requests(unit: &FileUnit, rule: &JevRule) -> Vec<Request> {
                 return None;
             }
             let code: String = (g.start..=g.end).filter_map(|n| tag(n).map(|l| l + "\n")).collect();
-            let helpers: String = g
+            let local: String = g
                 .helpers
                 .iter()
                 .map(|&(a, b)| (a..=b).filter_map(|n| tag(n).map(|l| l + "\n")).collect::<String>())
                 .collect::<Vec<_>>()
                 .join("\n");
+            let helpers = join_helpers([local, external_text(&g.external)]);
             let use_helpers = !helpers.is_empty();
             // A rule's "False when …" clause, when it has one, is the literal
             // definition of a violation: it goes in the `true` criterion (the
@@ -705,7 +743,8 @@ fn site_requests(unit: &FileUnit, rule: &JevRule) -> Vec<Request> {
 /// `--diff`, only items whose doc or code the diff touches are asked.
 fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
     let lines: Vec<&str> = unit.text.lines().collect();
-    jevunits::doc_items(unit.path, unit.text)
+    let empty = jevunits::Library::default();
+    jevunits::doc_items(unit.path, unit.text, unit.lib.unwrap_or(&empty))
         .into_iter()
         .filter(|item| !item.claims.is_empty())
         .filter(|item| match unit.added_lines {
@@ -725,14 +764,15 @@ fn doc_claim_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                     .collect()
             };
             let mut state = json!({ "path": unit.path, "code": code });
-            let with_helpers = !item.helpers.is_empty();
+            let local: String = item
+                .helpers
+                .iter()
+                .map(|&(a, b)| tagged(a, b))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let helpers = join_helpers([local, external_text(&item.external)]);
+            let with_helpers = !helpers.is_empty();
             if with_helpers {
-                let helpers: String = item
-                    .helpers
-                    .iter()
-                    .map(|&(a, b)| tagged(a, b))
-                    .collect::<Vec<_>>()
-                    .join("\n");
                 state["helpers"] = json!(helpers);
             }
             let mut questions = Map::new();
@@ -796,14 +836,34 @@ fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
     let parts = chunks(unit.text);
     let total_lines = unit.text.lines().count();
     let multi = parts.len() > 1;
+    // Test modules are not judged: they are elided (one untagged marker line,
+    // so the real line numbers around them survive) and never a candidate.
+    let all: Vec<&str> = unit.text.lines().collect();
+    let tests = jevunits::test_ranges(unit.path, &all);
+    let is_test = |n: usize| jevunits::in_ranges(&tests, n);
     parts
         .into_iter()
+        .filter(|(first, lines)| lines.is_empty() || (0..lines.len()).any(|i| !is_test(first + i)))
         .map(|(first, lines)| {
             let last = first + lines.len().saturating_sub(1);
             let content: String = lines
                 .iter()
                 .enumerate()
-                .map(|(i, l)| format!("{}| {l}\n", line_id(first + i)))
+                .filter_map(|(i, l)| {
+                    let n = first + i;
+                    // A test range starts here, or was already open when this
+                    // chunk began: mark it once.
+                    let opens =
+                        |&&(a, b): &&(usize, usize)| a == n || (n == first && a < n && n <= b);
+                    match tests.iter().find(opens) {
+                        Some(&(_, b)) => Some(format!(
+                            "(lines {n}-{}: a `#[cfg(test)]` module, not judged)\n",
+                            b.min(last)
+                        )),
+                        None if is_test(n) => None,
+                        None => Some(format!("{}| {l}\n", line_id(n))),
+                    }
+                })
                 .collect();
             let mut state = Map::new();
             state.insert("path".into(), json!(unit.path));
@@ -824,9 +884,9 @@ fn file_requests(unit: &FileUnit, rules: &[JevRule]) -> Vec<Request> {
                 Some(added) => added
                     .iter()
                     .copied()
-                    .filter(|n| (first..=last).contains(n))
+                    .filter(|n| (first..=last).contains(n) && !is_test(*n))
                     .collect(),
-                None => (first..=last).collect(),
+                None => (first..=last).filter(|n| !is_test(*n)).collect(),
             };
 
             let mut questions = Map::new();
@@ -1232,6 +1292,7 @@ mod tests {
             text,
             diff,
             added_lines: added,
+            lib: None,
         }
     }
 
@@ -1973,6 +2034,38 @@ pub fn load(p: &str) -> Result<u8> {
         let plain = cuts(&r);
         r.checks = vec!["x".into()];
         assert!(cuts(&r).fail < plain.fail, "checks run lower on sites");
+    }
+
+    #[test]
+    fn a_whole_file_state_elides_test_modules_but_keeps_real_line_numbers() {
+        let text = "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\nfn b() {}\n";
+        let reqs = build_requests(&file(text, None, None), &[rule("r", None)]);
+        assert_eq!(
+            reqs[0].state["content"],
+            "L1| fn a() {}\n(lines 2-5: a `#[cfg(test)]` module, not judged)\nL6| fn b() {}\n"
+        );
+        let opts: Vec<&String> = reqs[0].questions["line:r:0"]["criteria"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        assert_eq!(opts, ["L1", "L6"]);
+    }
+
+    #[test]
+    fn a_site_state_carries_the_other_module_helper_under_its_path() {
+        let mut lib = jevunits::Library::default();
+        lib.add("src/io/files.rs", "pub fn read_text(p: &str) -> Result<String> {\n    fs::read(p).map_err(|e| ctx(p, e))\n}\n");
+        let text = "pub fn load(p: &str) -> Result<u8> {\n    let t = files::read_text(p)?;\n    Ok(1)\n}\n";
+        let unit = FileUnit {
+            lib: Some(&lib),
+            ..file(text, None, None)
+        };
+        let reqs = build_requests(&unit, &[site_rule(r"\?")]);
+        assert_eq!(
+            reqs[0].state["helpers"],
+            "(defined in src/io/files.rs)\nL1| pub fn read_text(p: &str) -> Result<String> {\nL2|     fs::read(p).map_err(|e| ctx(p, e))\nL3| }\n"
+        );
     }
 
     #[test]

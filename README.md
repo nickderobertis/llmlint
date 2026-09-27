@@ -737,6 +737,8 @@ rules:
   claim?* — with the same-file functions it calls included, so "raises
   `NotFound` on a 404" can be checked when the 404 handling lives in a helper.
   Docs on types, fields, and constants are descriptive and not checked. A
+  function called from another file of the run (`files::read_text(path)`) is
+  included too, under the file it is defined in. A
   violation cites the contradicted sentence. On the eval corpus's held-out
   cases this took doc-comment rules from 54% to 100% recall (95% precision).
 - `sites` (with `pattern`) — every line matching the regex is a site, checked
@@ -819,7 +821,9 @@ tracing a mutation through a shallow copy, or deciding whether every violation
 a rule allows is line-localizable.
 
 `jev.unit`, `jev.checks`, and `jev.examples` only shape Jev's questions; the
-harness ignores them.
+harness ignores them. Jev never judges code inside a Rust `#[cfg(test)]`
+module: test fixtures (a deliberately wrong doc comment in a test string) read
+as real code and were false alarms.
 
 **Jev sends your code to TypeSafe.** A `jev` rule's files (their full text, and
 their diff under `--diff`) go to TypeSafe's API; decide whether that is acceptable

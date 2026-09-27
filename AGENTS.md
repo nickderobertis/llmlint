@@ -552,6 +552,17 @@ harness reads target files on-demand with its own tools.
   corpus's **dev** split only and reported on **held-out**; cascade triage
   escalates a below-band file that reported no violation rather than passing it
   (a cascade verdict carries no warnings — its middle goes to the harness).
+  **Test code and other modules (convention):** extraction skips Rust
+  `#[cfg(test)]` modules everywhere (`jevunits::test_ranges`: no doc item, site,
+  helper, or `multi_file` item inside one; a whole-file state elides it behind
+  one untagged marker line, so real line numbers survive) — fixtures in test
+  strings read as code to Jev and were false alarms on real code. Helpers reach
+  across files: `execute_jev` builds a `jevunits::Library` of every function the
+  run's files define (tests excluded, ≤ 60 lines each), and a doc item's or
+  site's calls into another module resolve by module qualifier
+  (`files::read_text` → `files.rs`) or a unique bare name, shown under
+  `helpers` with a `(defined in <path>)` header. Under `--diff` the library is
+  only the changed files.
   **Checks and examples (convention):** a rule's `jev.checks` (atomic violation
   checks, ≤ `MAX_CHECKS`) and `jev.examples` are applied by one pure rewrite
   layer (`jev::with_techniques`, over every built request of every unit): each

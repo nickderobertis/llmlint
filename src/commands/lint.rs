@@ -17,7 +17,9 @@ use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
 use crate::domain::report::{JudgeUsage, Report, Usage};
 use crate::domain::template::{self};
 use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
-use crate::domain::{applicability, attribution, diffmodel, ignore, jev as jevq, schema, vote};
+use crate::domain::{
+    applicability, attribution, diffmodel, ignore, jev as jevq, jevunits, schema, vote,
+};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, diff, env, files, history, jev, oneharness};
@@ -1019,6 +1021,22 @@ fn execute_jev(
         .filter(|(_, _, applying): &(_, _, Vec<jevq::JevRule>)| !applying.is_empty())
         .collect();
 
+    // Every function the run's files define, so a doc claim or site that calls
+    // into another module can be shown what that call does. (Under `--diff`
+    // this is only the changed files.)
+    let mut library = jevunits::Library::default();
+    if rules
+        .iter()
+        .any(|r| matches!(r.unit, JevUnit::DocClaims | JevUnit::Sites))
+    {
+        for (path, slash, _) in &jobs {
+            if let Ok(Some(text)) = files::read_text(cwd, path) {
+                library.add(slash, &text);
+            }
+        }
+    }
+    let lib = &library;
+
     let mut usage = JudgeUsage::default();
     let mut per_rule: BTreeMap<String, Vec<(String, Vec<jevq::RuleAnswer>)>> = BTreeMap::new();
     for wave in jobs.chunks(max_parallel.max(1)) {
@@ -1027,7 +1045,15 @@ fn execute_jev(
                 .iter()
                 .map(|(path, slash, applying)| {
                     s.spawn(move || {
-                        judge_file_with_jev(client, cwd, path, slash, applying, diffs.get(*path))
+                        judge_file_with_jev(
+                            client,
+                            cwd,
+                            path,
+                            slash,
+                            applying,
+                            diffs.get(*path),
+                            lib,
+                        )
                     })
                 })
                 .collect();
@@ -1132,6 +1158,7 @@ fn judge_file_with_jev(
     slash: &str,
     rules: &[jevq::JevRule],
     diff: Option<&String>,
+    lib: &jevunits::Library,
 ) -> (JudgeUsage, Result<Vec<BTreeMap<String, jevq::RuleAnswer>>>) {
     let mut usage = JudgeUsage::default();
     let text = match files::read_text(cwd, path) {
@@ -1145,6 +1172,7 @@ fn judge_file_with_jev(
         text: &text,
         diff: diff.map(String::as_str),
         added_lines: added.as_deref(),
+        lib: Some(lib),
     };
     let mut out = Vec::new();
     for req in jevq::build_requests(&unit, rules) {

@@ -19,6 +19,18 @@ pub struct DocItem {
     /// Same-file functions this item calls, as `(first, last)` line ranges —
     /// the one hop Jev needs to see what the item actually does.
     pub helpers: Vec<(usize, usize)>,
+    /// Functions it calls that are defined in *other* files of the run.
+    pub external: Vec<External>,
+}
+
+/// A function defined in another file, shown as a helper: what a call like
+/// `files::read_text(path)?` does lives there, not at the call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct External {
+    pub path: String,
+    /// 1-based first line of the definition in its own file.
+    pub start: usize,
+    pub lines: Vec<String>,
 }
 
 /// One sentence of a doc comment, with the line it starts on.
@@ -57,9 +69,10 @@ fn lang(path: &str) -> Option<Lang> {
 /// constants are descriptive: the code cannot confirm "a parse error whose
 /// message names the file" on an enum variant, so asking would only produce
 /// false alarms. Empty for a language the heuristics don't know.
-pub fn doc_items(path: &str, text: &str) -> Vec<DocItem> {
+pub fn doc_items(path: &str, text: &str, lib: &Library) -> Vec<DocItem> {
     let lines: Vec<&str> = text.lines().collect();
-    let functions = function_index(path, &lines);
+    let tests = test_ranges(path, &lines);
+    let functions = functions_outside(function_index(path, &lines), &tests);
     all_doc_items(path, &lines)
         .into_iter()
         .filter(|item| {
@@ -67,8 +80,11 @@ pub fn doc_items(path: &str, text: &str) -> Vec<DocItem> {
                 .get(item.code_start - 1)
                 .is_some_and(|l| is_function_header(l))
         })
+        .filter(|item| !in_ranges(&tests, item.code_start))
         .map(|mut item| {
             item.helpers = callees(&lines, &item, &functions);
+            let body = join_lines(&lines, item.code_start, item.code_end);
+            item.external = lib.resolve(path, &body, &functions, MAX_HELPERS - item.helpers.len());
             item
         })
         .collect()
@@ -85,6 +101,8 @@ pub struct SiteGroup {
     /// Same-file functions called *on the site lines*, as line ranges: whether
     /// `load(path)?` adds context depends on what `load` does.
     pub helpers: Vec<(usize, usize)>,
+    /// Functions called on the site lines that are defined in other files.
+    pub external: Vec<External>,
 }
 
 /// Lines of context around a site outside any function.
@@ -112,12 +130,18 @@ pub fn is_comment_line(path: &str, line: &str) -> bool {
 /// Every non-comment line matching `pattern`, grouped by the innermost
 /// function containing it. A site's state is its whole function, so the check
 /// sees what the matched construct is doing (which call, which value).
-pub fn site_groups(path: &str, text: &str, pattern: &regex::Regex) -> Vec<SiteGroup> {
+pub fn site_groups(
+    path: &str,
+    text: &str,
+    pattern: &regex::Regex,
+    lib: &Library,
+) -> Vec<SiteGroup> {
     let lines: Vec<&str> = text.lines().collect();
-    let functions = function_index(path, &lines);
+    let tests = test_ranges(path, &lines);
+    let functions = functions_outside(function_index(path, &lines), &tests);
     let mut groups: Vec<SiteGroup> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        if is_comment_line(path, line) || !pattern.is_match(line) {
+        if is_comment_line(path, line) || !pattern.is_match(line) || in_ranges(&tests, i + 1) {
             continue;
         }
         let n = i + 1;
@@ -139,6 +163,7 @@ pub fn site_groups(path: &str, text: &str, pattern: &regex::Regex) -> Vec<SiteGr
                 end,
                 sites: vec![n],
                 helpers: Vec::new(),
+                external: Vec::new(),
             }),
         }
     }
@@ -157,8 +182,193 @@ pub fn site_groups(path: &str, text: &str, pattern: &regex::Regex) -> Vec<SiteGr
             .take(MAX_HELPERS)
             .map(|(_, s, e)| (*s, *e))
             .collect();
+        g.external = lib.resolve(path, &site_text, &functions, MAX_HELPERS - g.helpers.len());
     }
     groups
+}
+
+/// Every function defined in the files of a Jev run, by name — so a call into
+/// another module (`files::read_text(path)?`) can show Jev what it does. Test
+/// code is left out.
+#[derive(Debug, Clone, Default)]
+pub struct Library {
+    defs: std::collections::BTreeMap<String, Vec<External>>,
+}
+
+/// A definition longer than this is not shown as a helper: it would crowd the
+/// state more than it explains the call.
+const MAX_EXTERNAL_LINES: usize = 60;
+
+impl Library {
+    pub fn add(&mut self, path: &str, text: &str) {
+        let lines: Vec<&str> = text.lines().collect();
+        let tests = test_ranges(path, &lines);
+        for (name, start, end) in function_index(path, &lines) {
+            if in_ranges(&tests, start) || end + 1 - start > MAX_EXTERNAL_LINES {
+                continue;
+            }
+            self.defs.entry(name).or_default().push(External {
+                path: path.to_string(),
+                start,
+                lines: lines[start - 1..end]
+                    .iter()
+                    .map(|l| l.to_string())
+                    .collect(),
+            });
+        }
+    }
+
+    /// The other-file definitions `code` (in `path`) calls, at most `limit`: a
+    /// qualified call (`files::read_text(`) resolves to the definition whose
+    /// file is that module (`files.rs`, `files/mod.rs`, `files.py`) when the
+    /// name alone is ambiguous; a bare call only to a unique definition, and
+    /// only when `path` defines no function of that name itself.
+    fn resolve(
+        &self,
+        path: &str,
+        code: &str,
+        local: &[(String, usize, usize)],
+        limit: usize,
+    ) -> Vec<External> {
+        let mut out: Vec<External> = Vec::new();
+        for (qualifier, name) in call_names(code) {
+            if out.len() >= limit {
+                break;
+            }
+            if qualifier.is_none() && local.iter().any(|(n, _, _)| *n == name) {
+                continue;
+            }
+            let Some(defs) = self.defs.get(&name) else {
+                continue;
+            };
+            let others: Vec<&External> = defs.iter().filter(|d| d.path != path).collect();
+            let pick = match (others.as_slice(), &qualifier) {
+                ([one], _) => Some(*one),
+                (many, Some(q)) => {
+                    let mut hits = many.iter().filter(|d| module_of(&d.path) == q.as_str());
+                    match (hits.next(), hits.next()) {
+                        (Some(d), None) => Some(*d),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(d) = pick {
+                if !out.iter().any(|o| o.path == d.path && o.start == d.start) {
+                    out.push(d.clone());
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The module name a file defines: its stem, or its directory for a
+/// `mod.rs` / `__init__.py`.
+fn module_of(path: &str) -> &str {
+    let mut parts = path.rsplit('/');
+    let file = parts.next().unwrap_or(path);
+    let stem = file.split('.').next().unwrap_or(file);
+    if matches!(stem, "mod" | "__init__" | "index") {
+        parts.next().unwrap_or(stem)
+    } else {
+        stem
+    }
+}
+
+/// Every call in `code`, as `(qualifier, name)`: `a::b::name(` gives
+/// `(Some("b"), "name")`, a bare `name(` gives `(None, "name")`. Method calls
+/// (`.name(`) and macros (`name!(`) are not calls to a known definition.
+fn call_names(code: &str) -> Vec<(Option<String>, String)> {
+    let mut out: Vec<(Option<String>, String)> = Vec::new();
+    let bytes = code.as_bytes();
+    let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    for (i, _) in code.match_indices('(') {
+        let mut j = i;
+        while j > 0 && is_ident(bytes[j - 1]) {
+            j -= 1;
+        }
+        if j == i || bytes[j].is_ascii_digit() {
+            continue;
+        }
+        let name = code[j..i].to_string();
+        let before = code[..j].trim_end_matches(' ');
+        if before.ends_with('.')
+            || matches!(
+                name.as_str(),
+                "if" | "while" | "for" | "match" | "return" | "fn" | "def" | "Some" | "Ok" | "Err"
+            )
+        {
+            continue;
+        }
+        let qualifier = before.strip_suffix("::").map(|q| {
+            let s = q.as_bytes();
+            let mut k = s.len();
+            while k > 0 && is_ident(s[k - 1]) {
+                k -= 1;
+            }
+            q[k..].to_string()
+        });
+        let call = (qualifier.filter(|q| !q.is_empty()), name);
+        if !out.contains(&call) {
+            out.push(call);
+        }
+    }
+    out
+}
+
+/// 1-based inclusive line ranges of test code Jev should not judge: every
+/// Rust `#[cfg(test)]` module. (Other languages keep tests in their own files,
+/// which a rule's `files` globs already decide about.)
+pub fn test_ranges(path: &str, lines: &[&str]) -> Vec<(usize, usize)> {
+    if lang(path) != Some(Lang::Rust) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() == "#[cfg(test)]" {
+            // The item the attribute applies to, past any further attributes.
+            let mut k = i + 1;
+            while k < lines.len() && lines[k].trim_start().starts_with("#[") {
+                k += 1;
+            }
+            let t = lines.get(k).map(|l| l.trim_start()).unwrap_or("");
+            if t.starts_with("mod ")
+                || t.starts_with("pub mod ")
+                || t.starts_with("pub(crate) mod ")
+            {
+                let end = brace_item_end(lines, k);
+                out.push((i + 1, end + 1));
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn functions_outside(
+    functions: Vec<(String, usize, usize)>,
+    tests: &[(usize, usize)],
+) -> Vec<(String, usize, usize)> {
+    functions
+        .into_iter()
+        .filter(|(_, s, _)| !in_ranges(tests, *s))
+        .collect()
+}
+
+pub fn in_ranges(ranges: &[(usize, usize)], n: usize) -> bool {
+    ranges.iter().any(|&(a, b)| (a..=b).contains(&n))
+}
+
+fn join_lines(lines: &[&str], start: usize, end: usize) -> String {
+    (start..=end)
+        .filter_map(|n| lines.get(n - 1))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Whether `text` calls `name(` as a whole identifier.
@@ -385,6 +595,7 @@ fn prefixed_docs(lines: &[&str], marker: &str) -> Vec<DocItem> {
             code_start: i + 1,
             code_end: end + 1,
             helpers: Vec::new(),
+            external: Vec::new(),
         });
         // Docs nested inside this item (fields, methods) are items of their own.
         i += 1;
@@ -419,6 +630,7 @@ fn go_docs(lines: &[&str]) -> Vec<DocItem> {
                 code_start: i + 1,
                 code_end: brace_item_end(lines, i) + 1,
                 helpers: Vec::new(),
+                external: Vec::new(),
             });
         }
     }
@@ -463,6 +675,7 @@ fn block_docs(lines: &[&str]) -> Vec<DocItem> {
             code_start: i + 1,
             code_end: brace_item_end(lines, i) + 1,
             helpers: Vec::new(),
+            external: Vec::new(),
         });
     }
     out
@@ -531,6 +744,7 @@ fn python_docs(lines: &[&str]) -> Vec<DocItem> {
             code_start: i + 1,
             code_end: end + 1,
             helpers: Vec::new(),
+            external: Vec::new(),
         });
     }
     out
@@ -665,7 +879,7 @@ pub fn load(path: &Path) -> Result<()> {
 /// The total in cents.
 pub const TOTAL: u64 = 3;
 ";
-        let items = doc_items("src/a.rs", src);
+        let items = doc_items("src/a.rs", src, &Library::default());
         assert_eq!(
             items.len(),
             1,
@@ -698,7 +912,7 @@ impl Cart {
     }
 }
 ";
-        let items = doc_items("x.rs", src);
+        let items = doc_items("x.rs", src, &Library::default());
         assert_eq!(items.len(), 1);
         assert_eq!(texts(&items[0]), [(8, "The number of items.")]);
         assert_eq!(span(&items[0]), (9, 11));
@@ -711,7 +925,7 @@ impl Cart {
 /// cheapest first. Stable for ties.
 fn sort() {}
 ";
-        let items = doc_items("x.rs", src);
+        let items = doc_items("x.rs", src, &Library::default());
         assert_eq!(
             texts(&items[0]),
             [
@@ -743,7 +957,7 @@ class Store:
         """Return the value, or None when missing."""
         return self.items[key]
 "#;
-        let items = doc_items("svc/load.py", src);
+        let items = doc_items("svc/load.py", src, &Library::default());
         assert_eq!(
             items.len(),
             2,
@@ -779,7 +993,7 @@ def load(client, key):
     body = _fetch(client, key)
     return body
 "#;
-        let items = doc_items("a.py", src);
+        let items = doc_items("a.py", src, &Library::default());
         assert_eq!(items.len(), 1);
         assert_eq!(
             items[0].helpers,
@@ -795,12 +1009,15 @@ pub fn parse(rows: &[&str]) -> Vec<u8> {
     rows.iter().map(|r| parse_row(r)).collect()
 }
 ";
-        assert_eq!(doc_items("a.rs", rust)[0].helpers, [(1, 1)]);
+        assert_eq!(
+            doc_items("a.rs", rust, &Library::default())[0].helpers,
+            [(1, 1)]
+        );
     }
 
     #[test]
     fn a_def_without_a_docstring_is_not_an_item() {
-        assert!(doc_items("a.py", "def f():\n    return 1\n").is_empty());
+        assert!(doc_items("a.py", "def f():\n    return 1\n", &Library::default()).is_empty());
     }
 
     #[test]
@@ -814,7 +1031,7 @@ export function add(a, b) {
   return a + b;
 }
 ";
-        let items = doc_items("m.ts", js);
+        let items = doc_items("m.ts", js, &Library::default());
         assert_eq!(
             texts(&items[0]),
             [(2, "Add two numbers."), (3, "@param a first")]
@@ -830,7 +1047,7 @@ func Add(a, b int) int {
 // Limit is the cap.
 var Limit = 1
 ";
-        let items = doc_items("m.go", go);
+        let items = doc_items("m.go", go, &Library::default());
         assert_eq!(items.len(), 1);
         assert_eq!(texts(&items[0]), [(1, "Add returns the sum.")]);
         assert_eq!(span(&items[0]), (2, 4));
@@ -849,7 +1066,7 @@ fn load(p: &Path) -> Result<String> {
 const X: u8 = helper()?;
 ";
         let re = regex::Regex::new(r"\?").unwrap();
-        let groups = site_groups("a.rs", src, &re);
+        let groups = site_groups("a.rs", src, &re, &Library::default());
         assert_eq!(
             groups,
             [
@@ -857,13 +1074,15 @@ const X: u8 = helper()?;
                     start: 1,
                     end: 6,
                     sites: vec![3, 4],
-                    helpers: vec![]
+                    helpers: vec![],
+                    external: Vec::new(),
                 },
                 SiteGroup {
                     start: 2,
                     end: 8,
                     sites: vec![8],
-                    helpers: vec![]
+                    helpers: vec![],
+                    external: Vec::new(),
                 },
             ]
         );
@@ -899,10 +1118,10 @@ agents:
 
     #[test]
     fn unknown_languages_and_bullets() {
-        assert!(doc_items("notes.txt", "/// x\nfn a() {}\n").is_empty());
+        assert!(doc_items("notes.txt", "/// x\nfn a() {}\n", &Library::default()).is_empty());
         let src = "/// Options:\n/// - fast mode\n/// - `safe` mode\nfn a() {}\n";
         assert_eq!(
-            texts(&doc_items("a.rs", src)[0]),
+            texts(&doc_items("a.rs", src, &Library::default())[0]),
             [(2, "Options: fast mode"), (3, "Options: `safe` mode")]
         );
     }
@@ -921,5 +1140,112 @@ agents:
             "a Markdown heading"
         );
         assert!(!is_comment_line("a.py", "x = 1  # trailing"));
+    }
+
+    const WITH_TESTS: &str = "\
+/// Load it.
+pub fn load() -> u8 {
+    read()?
+}
+
+#[cfg(test)]
+mod tests {
+    const FIXTURE: &str = \"
+/// Returns an error naming the path.
+pub fn broken() {}
+\";
+    #[test]
+    fn t() {
+        let x = read()?;
+    }
+}
+";
+
+    #[test]
+    fn rust_test_modules_are_found_and_never_judged() {
+        let lines: Vec<&str> = WITH_TESTS.lines().collect();
+        assert_eq!(test_ranges("a.rs", &lines), [(6, 16)]);
+        assert!(test_ranges("a.py", &lines).is_empty(), "Rust only");
+        let items = doc_items("a.rs", WITH_TESTS, &Library::default());
+        assert_eq!(
+            items.len(),
+            1,
+            "the fixture's doc is not an item: {items:?}"
+        );
+        let re = regex::Regex::new(r"\?").unwrap();
+        let groups = site_groups("a.rs", WITH_TESTS, &re, &Library::default());
+        assert_eq!(
+            groups
+                .iter()
+                .flat_map(|g| g.sites.clone())
+                .collect::<Vec<_>>(),
+            [3]
+        );
+    }
+
+    #[test]
+    fn calls_are_parsed_with_their_module_qualifier() {
+        let calls =
+            call_names("let t = files::read_text(cwd, p)?; x.len(); vec![1]; run(a); if (b) {}");
+        assert_eq!(
+            calls,
+            [
+                (Some("files".to_string()), "read_text".to_string()),
+                (None, "run".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn other_files_functions_resolve_by_module_or_unique_name() {
+        let mut lib = Library::default();
+        lib.add("src/io/files.rs", "pub fn read_text(p: &str) -> Result<String> {\n    fs::read(p).map_err(|e| ctx(p, e))\n}\n");
+        lib.add(
+            "src/io/other.rs",
+            "pub fn read_text() {}\npub fn only_here() {}\n",
+        );
+        lib.add("src/a.rs", "fn local() {}\n");
+        let local = vec![("local".to_string(), 1, 1)];
+        let got = lib.resolve(
+            "src/a.rs",
+            "files::read_text(p)?; only_here(); local(); read_text()",
+            &local,
+            4,
+        );
+        let at: Vec<(&str, usize)> = got.iter().map(|e| (e.path.as_str(), e.start)).collect();
+        // `files::` picks files.rs; a bare ambiguous `read_text` resolves to
+        // nothing; `local` is this file's own.
+        assert_eq!(at, [("src/io/files.rs", 1), ("src/io/other.rs", 2)]);
+        assert_eq!(got[0].lines[1], "    fs::read(p).map_err(|e| ctx(p, e))");
+        assert_eq!(
+            lib.resolve("src/a.rs", "files::read_text(p)", &local, 0),
+            []
+        );
+        assert_eq!(module_of("src/io/mod.rs"), "io");
+        assert_eq!(module_of("pkg/__init__.py"), "pkg");
+    }
+
+    #[test]
+    fn a_site_shows_the_other_module_function_it_calls() {
+        let mut lib = Library::default();
+        lib.add(
+            "src/io/files.rs",
+            "pub fn read_text(p: &str) -> Result<String> {\n    todo!()\n}\n",
+        );
+        let re = regex::Regex::new(r"\?").unwrap();
+        let g = site_groups(
+            "src/cmd.rs",
+            "fn run() {\n    let t = files::read_text(p)?;\n}\n",
+            &re,
+            &lib,
+        );
+        assert_eq!(g[0].external.len(), 1);
+        assert_eq!(g[0].external[0].path, "src/io/files.rs");
+        let d = doc_items(
+            "src/cmd.rs",
+            "/// Run it.\nfn run() {\n    files::read_text(p);\n}\n",
+            &lib,
+        );
+        assert_eq!(d[0].external[0].start, 1);
     }
 }
