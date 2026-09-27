@@ -823,6 +823,41 @@ with them. What still needs the harness is reasoning Jev can't do in one step â€
 tracing a mutation through a shallow copy, or deciding whether every violation
 a rule allows is line-localizable.
 
+**Which judge for which rule.** Measured on this repository's own code and
+five of its merged PRs (`--diff` against each parent), with the harness as
+the reference:
+
+| Where | Jev + checks vs the harness | Time / cost |
+|---|---|---|
+| PR-sized diffs (5 PRs) | caught 3 of the 4 problems on changed lines, no false fails | ~15 s / $0.03 vs ~8 min / $3.12 for all five |
+| The whole repository | agreed on about 38% of its flags, missed about 30% | 39 s / $0.09 vs 531 s / $4.34 |
+
+So choose per rule:
+
+- **`judge: jev` with `checks`** for rules about specific constructs (error
+  context, log messages, naming, SQL outside repositories, prose claims,
+  config-file rules), run on PRs with `--diff`. It is a fast first pass: a
+  flag in seconds for about a cent, with unsure files shown as warnings.
+- **`judge: harness`** for doc-comment rules (the claims Jev misses tend to
+  need the rest of the repository) and anything that needs reasoning across
+  steps or files, and for whole-repository audits.
+- **`cascade`** is not a cost saving in practice: most files land in some
+  rule's warning band, so the harness ends up reading nearly everything it
+  would have read anyway.
+
+```yaml
+agents:
+  default:
+    judge: jev                    # construct rules: fast, cheap, on every PR
+rules:
+  - name: errors_carry_context
+    jev: { unit: sites, pattern: '\?|map_err|ok_or', checks: [ ... ] }
+    description: ...
+  - name: doc_comments_match_behavior
+    judge: harness                # needs the rest of the repository
+    description: ...
+```
+
 `jev.unit`, `jev.checks`, and `jev.examples` only shape Jev's questions; the
 harness ignores them. Jev never judges code inside a Rust `#[cfg(test)]`
 module: test fixtures (a deliberately wrong doc comment in a test string) read

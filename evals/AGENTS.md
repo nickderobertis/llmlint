@@ -35,8 +35,10 @@ out of `just check` and the `Judge eval` workflow is not a required check.
   each diffed against its committed baseline as a sticky PR comment: `harness`
   (vs `harness-sonnet.json`) and `jev` (vs `jev.json`, 2 repeats; skipped
   cleanly when the repo has no `TYPESAFE_API_KEY` secret). The cascade arm is
-  local-only (it pays for both backends) — re-run it when the band or a unit
-  threshold changes.
+  local-only (it pays for both backends) and has no committed baseline: on real
+  code it escalated nearly every file Jev warned on and saved nothing over the
+  harness, so it is not the recommended mode (README, "Which judge for which
+  rule"). Run it ad hoc when the escalation band changes.
 
 ## Corpus layout
 
