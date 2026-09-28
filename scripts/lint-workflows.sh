@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Lint every GitHub Actions workflow in .github/workflows with the pinned
-# actionlint (`actionlint-version` in the justfile). Part of `just check`, so the
-# whole workflow set is checked on every change. Quiet on success; on a finding
-# actionlint prints it (file:line:col + rule) and this exits non-zero.
-#
 # actionlint also runs shellcheck over `run:` scripts when shellcheck is on PATH
 # (CI's ubuntu runners ship it), so install shellcheck locally to see the same
 # findings CI does.
@@ -33,4 +28,6 @@ if [ "$have" != "$want" ]; then
   exit 1
 fi
 
+# No arguments, from the repo root: actionlint then checks every workflow in
+# .github/workflows, so a new workflow is gated without touching this script.
 actionlint

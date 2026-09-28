@@ -12137,7 +12137,11 @@ fn install_actionlint_names_the_recovery_when_a_step_fails() {
     actionlint_release(&unwritable, ActionlintRelease::Good);
     for (project, envs, needles) in [
         (&p, vec![], ["could not download", "ACTIONLINT_BASE_URL"]),
-        (&corrupt, vec![], ["did not unpack", "re-run"]),
+        (
+            &corrupt,
+            vec![],
+            ["did not unpack", "re-pin actionlint-version"],
+        ),
         (
             &unwritable,
             vec![(
@@ -12328,21 +12332,66 @@ fn lint_workflows_refuses_an_actionlint_off_the_pin() {
 #[test]
 fn lint_workflows_fails_with_the_finding_when_actionlint_reports_one() {
     // The pinned actionlint's findings are the gate: its output reaches the user
-    // and its non-zero exit fails the step; a clean run passes quietly.
+    // and its non-zero exit fails the step; a clean run passes quietly. It is
+    // invoked with no arguments from the repo root — actionlint's own "every
+    // workflow in .github/workflows" mode — so no workflow is left out.
     for (exit, finding) in [(1, "bench.yml:32:12: bad [syntax-check]"), (0, "")] {
         let p = Project::new();
         let bin = p.path().join("bin");
+        let call = p.path().join("call");
         write_exe(
             &bin.join("actionlint"),
             &format!(
-                "#!/usr/bin/env bash\n[ \"${{1:-}}\" = -version ] && {{ printf '{}\\n'; exit 0; }}\nprintf '{finding}'\nexit {exit}\n",
-                actionlint_version()
+                "#!/usr/bin/env bash\n[ \"${{1:-}}\" = -version ] && {{ printf '{}\\n'; exit 0; }}\nprintf '%s|%s' \"$PWD\" \"$#\" > '{}'\nprintf '{finding}'\nexit {exit}\n",
+                actionlint_version(),
+                call.display()
             ),
         );
         let out = run_lint_workflows(&p, &bin);
         assert_eq!(out.status.code(), Some(exit), "{out:?}");
         assert_eq!(String::from_utf8_lossy(&out.stdout), finding);
+        let root = fs::canonicalize(env!("CARGO_MANIFEST_DIR")).unwrap();
+        assert_eq!(
+            fs::read_to_string(&call).unwrap(),
+            format!("{}|0", root.display()),
+            "actionlint must run argument-free from the repo root"
+        );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn lint_workflows_finds_the_actionlint_the_installer_put_in_its_default_dir() {
+    // Setup installs to the default dir with no override, in a shell that may not
+    // have ~/.local/bin on PATH; the lint step must still find that binary.
+    let p = Project::new();
+    actionlint_release(&p, ActionlintRelease::Good);
+    let stub_dir = p.path().join("bin");
+    write_exe(
+        &stub_dir.join("uname"),
+        "#!/usr/bin/env bash\ncase \"$1\" in -s) echo Linux ;; *) echo x86_64 ;; esac\n",
+    );
+    let install = std::process::Command::new("bash")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/install-actionlint.sh"))
+        .env("PATH", path_without_actionlint(&stub_dir))
+        .env("HOME", p.path())
+        .env_remove("ACTIONLINT_INSTALL_DIR")
+        .env(
+            "ACTIONLINT_BASE_URL",
+            format!("file://{}", p.path().join("releases").display()),
+        )
+        .env("ACTIONLINT_SHA256_FILE", p.path().join("actionlint.sha256"))
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    assert!(p.path().join(".local/bin/actionlint").is_file());
+    let out = run_lint_workflows(&p, &p.path().join("empty"));
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        format!("actionlint_{}_linux_amd64", actionlint_version()),
+        "the lint step ran some other actionlint"
+    );
 }
 
 #[cfg(unix)]
