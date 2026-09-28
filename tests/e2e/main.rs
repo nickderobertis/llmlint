@@ -12162,28 +12162,38 @@ fn install_actionlint_names_the_recovery_when_a_step_fails() {
 
 #[cfg(unix)]
 #[test]
-fn install_actionlint_names_the_missing_version_pin() {
-    // The installer's version comes only from the justfile it ships beside; a
-    // checkout whose justfile lost the pin is told which line to restore.
-    let p = Project::new();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for script in ["scripts/install-actionlint.sh", "scripts/setup-lib.sh"] {
-        p.write(script, &fs::read_to_string(root.join(script)).unwrap());
+fn both_scripts_name_a_missing_version_pin() {
+    // Both scripts take the version only from the justfile they ship beside; in a
+    // checkout whose justfile lost the pin each names the line to restore, rather
+    // than installing nothing or comparing against an empty version.
+    for script in ["scripts/install-actionlint.sh", "scripts/lint-workflows.sh"] {
+        let p = Project::new();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for file in [script, "scripts/setup-lib.sh"] {
+            p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+        }
+        p.write("justfile", "default:\n    @true\n");
+        let out = std::process::Command::new("bash")
+            .arg(p.path().join(script))
+            .env("HOME", p.path())
+            .env("ACTIONLINT_INSTALL_DIR", p.path().join("out"))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{script}: {stderr}");
+        assert!(
+            stderr.contains("no actionlint-version pin"),
+            "{script}: {stderr}"
+        );
+        assert!(
+            stderr.contains("actionlint-version :="),
+            "{script}: {stderr}"
+        );
+        assert!(
+            !p.path().join("out/actionlint").exists(),
+            "installed anyway"
+        );
     }
-    p.write("justfile", "default:\n    @true\n");
-    let out = std::process::Command::new("bash")
-        .arg(p.path().join("scripts/install-actionlint.sh"))
-        .env("ACTIONLINT_INSTALL_DIR", p.path().join("out"))
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("no actionlint-version pin"), "{stderr}");
-    assert!(stderr.contains("actionlint-version :="), "{stderr}");
-    assert!(
-        !p.path().join("out/actionlint").exists(),
-        "installed anyway"
-    );
 }
 
 #[cfg(unix)]

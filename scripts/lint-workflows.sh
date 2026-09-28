@@ -13,6 +13,11 @@ cd "$ROOT"
 _load_tool_env
 
 want="$(_justfile_pin actionlint || true)"
+if [ -z "$want" ]; then
+  echo "lint-workflows: no actionlint-version pin in $ROOT/justfile" >&2
+  echo "                Restore the line: actionlint-version := \"<version>\"" >&2
+  exit 1
+fi
 if ! command -v actionlint >/dev/null 2>&1; then
   echo "lint-workflows: actionlint not found on PATH" >&2
   echo "                install the pinned release ($want): just actionlint-tools" >&2
