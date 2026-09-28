@@ -11807,7 +11807,6 @@ fn actionlint_installable_assets() -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// Write an executable script at `path`.
 #[cfg(unix)]
 fn write_exe(path: &Path, body: &str) {
     use std::os::unix::fs::PermissionsExt;
@@ -11831,7 +11830,6 @@ fn path_without_actionlint(dir: &Path) -> String {
     parts.join(":")
 }
 
-/// How the stand-in release tree for the installer is built.
 #[cfg(unix)]
 #[derive(Clone, Copy)]
 enum ActionlintRelease {
