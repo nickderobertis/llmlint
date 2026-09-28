@@ -21,31 +21,6 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
-os="$(uname -s)"
-case "$os" in
-Linux) asset_os="linux" ;;
-Darwin) asset_os="darwin" ;;
-*)
-  echo "install-actionlint: no pinned actionlint build for this OS: $os" >&2
-  echo "                    Install actionlint $version yourself (see" >&2
-  echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
-  echo "                    and put it on PATH." >&2
-  exit 1
-  ;;
-esac
-host="$(uname -m)"
-case "$host" in
-x86_64 | amd64) asset_arch="amd64" ;;
-arm64 | aarch64) asset_arch="arm64" ;;
-*)
-  echo "install-actionlint: no pinned actionlint build for this architecture: $host" >&2
-  echo "                    Install actionlint $version yourself (see" >&2
-  echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
-  echo "                    and put it on PATH." >&2
-  exit 1
-  ;;
-esac
-
 # Overridable so the e2e journeys can drive the real script against a stand-in
 # release tree and digest pin instead of the network; setup and CI use the
 # defaults. `-` rather than `:-`: an override that is SET but empty is a
@@ -75,12 +50,40 @@ if [ ! -f "$sums_file" ] || [ ! -r "$sums_file" ]; then
   exit 1
 fi
 
-# Idempotent: `just setup` runs this on every provision, so an install dir that
-# already holds the pinned version is left alone (and needs no network).
-if [ "$("$install_dir/actionlint" -version 2>/dev/null | head -n1 || true)" = "$version" ]; then
-  echo "install-actionlint: actionlint $version already in $install_dir"
-  exit 0
-fi
+# Idempotent: `just setup` runs this on every provision, so the pinned version
+# already in the install dir — or on PATH, e.g. installed by hand on a platform
+# this script has no build for — is left alone (and needs no network).
+for existing in "$install_dir/actionlint" "$(command -v actionlint || true)"; do
+  if [ -n "$existing" ] && [ "$("$existing" -version 2>/dev/null | head -n1 || true)" = "$version" ]; then
+    echo "install-actionlint: actionlint $version already at $existing"
+    exit 0
+  fi
+done
+
+os="$(uname -s)"
+case "$os" in
+Linux) asset_os="linux" ;;
+Darwin) asset_os="darwin" ;;
+*)
+  echo "install-actionlint: no pinned actionlint build for this OS: $os" >&2
+  echo "                    Install actionlint $version yourself (see" >&2
+  echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
+  echo "                    and put it on PATH." >&2
+  exit 1
+  ;;
+esac
+host="$(uname -m)"
+case "$host" in
+x86_64 | amd64) asset_arch="amd64" ;;
+arm64 | aarch64) asset_arch="arm64" ;;
+*)
+  echo "install-actionlint: no pinned actionlint build for this architecture: $host" >&2
+  echo "                    Install actionlint $version yourself (see" >&2
+  echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
+  echo "                    and put it on PATH." >&2
+  exit 1
+  ;;
+esac
 
 asset="actionlint_${version}_${asset_os}_${asset_arch}.tar.gz"
 tmp="$(mktemp -d)"

@@ -28,8 +28,14 @@ have="$(actionlint -version 2>/dev/null | head -n1 || true)"
 if [ "$have" != "$want" ]; then
   echo "lint-workflows: $(command -v actionlint) is actionlint ${have:-<unknown version>}," >&2
   echo "                but the justfile pins $want" >&2
-  echo "                install the pinned release: just actionlint-tools" >&2
-  echo "                (or, without just: bash scripts/install-actionlint.sh)" >&2
+  if [ "$(command -v actionlint)" = "$LOCAL_BIN/actionlint" ]; then
+    echo "                install the pinned release: just actionlint-tools" >&2
+    echo "                (or, without just: bash scripts/install-actionlint.sh)" >&2
+  else
+    echo "                it shadows $LOCAL_BIN, where just actionlint-tools installs the" >&2
+    echo "                pin: remove it (or put $LOCAL_BIN ahead of it on PATH), then" >&2
+    echo "                run just actionlint-tools" >&2
+  fi
   exit 1
 fi
 

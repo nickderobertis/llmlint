@@ -12015,7 +12015,7 @@ fn install_actionlint_reuses_an_installed_pin_without_fetching() {
         "{}",
         String::from_utf8_lossy(&again.stderr)
     );
-    assert!(stdout.contains("already in"), "{stdout}");
+    assert!(stdout.contains("already at"), "{stdout}");
 }
 
 #[cfg(unix)]
@@ -12219,6 +12219,36 @@ fn install_actionlint_refuses_a_host_with_no_pinned_build() {
 
 #[cfg(unix)]
 #[test]
+fn install_actionlint_accepts_a_pinned_actionlint_already_on_path() {
+    // The recovery the unsupported-host message gives — install the pinned
+    // version yourself and put it on PATH — must let `just setup` pass there.
+    let p = Project::new();
+    actionlint_release(&p, ActionlintRelease::Good);
+    let manual = p.path().join("manual");
+    write_exe(
+        &manual.join("actionlint"),
+        &format!(
+            "#!/usr/bin/env bash\nprintf '{}\\n'\n",
+            actionlint_version()
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        manual.display(),
+        path_without_actionlint(&p.path().join("bin"))
+    );
+    let out = run_install_actionlint_in(&p, "FreeBSD", "x86_64", &[("PATH", path)]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout.contains("already at"), "{stdout}");
+    assert!(
+        !p.path().join("out/actionlint").exists(),
+        "installed anyway"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn install_actionlint_refuses_a_malformed_override_before_fetching() {
     // The overrides steer a download and two filesystem paths, so a bad one fails
     // with its own name attached rather than deep inside curl or awk.
@@ -12317,25 +12347,32 @@ fn lint_workflows_names_the_install_command_when_actionlint_is_absent() {
 #[test]
 fn lint_workflows_refuses_an_actionlint_off_the_pin() {
     // A different actionlint release checks different things, so an off-pin
-    // binary is refused (naming both versions and the install command) before it
-    // lints anything, rather than letting local and CI results disagree.
-    let p = Project::new();
-    let bin = p.path().join("bin");
-    let ran = p.path().join("linted");
-    write_exe(
-        &bin.join("actionlint"),
-        &format!(
-            "#!/usr/bin/env bash\n[ \"${{1:-}}\" = -version ] && {{ printf '0.0.1\\n'; exit 0; }}\ntouch '{}'\n",
-            ran.display()
-        ),
-    );
-    let out = run_lint_workflows(&p, &bin);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("0.0.1"), "{stderr}");
-    assert!(stderr.contains(&actionlint_version()), "{stderr}");
-    assert!(stderr.contains("just actionlint-tools"), "{stderr}");
-    assert!(!ran.exists(), "linted with an off-pin actionlint");
+    // binary is refused (naming both versions) before it lints anything, rather
+    // than letting local and CI results disagree. In the install dir, reinstalling
+    // fixes it; elsewhere on PATH it would shadow the reinstall, so that is said.
+    for (dir, remedy) in [
+        (".local/bin", "install the pinned release"),
+        ("bin", "shadows"),
+    ] {
+        let p = Project::new();
+        let bin = p.path().join(dir);
+        let ran = p.path().join("linted");
+        write_exe(
+            &bin.join("actionlint"),
+            &format!(
+                "#!/usr/bin/env bash\n[ \"${{1:-}}\" = -version ] && {{ printf '0.0.1\\n'; exit 0; }}\ntouch '{}'\n",
+                ran.display()
+            ),
+        );
+        let out = run_lint_workflows(&p, &bin);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{dir}: {stderr}");
+        assert!(stderr.contains("0.0.1"), "{dir}: {stderr}");
+        assert!(stderr.contains(&actionlint_version()), "{dir}: {stderr}");
+        assert!(stderr.contains(remedy), "{dir}: {stderr}");
+        assert!(stderr.contains("just actionlint-tools"), "{dir}: {stderr}");
+        assert!(!ran.exists(), "{dir}: linted with an off-pin actionlint");
+    }
 }
 
 #[cfg(unix)]
