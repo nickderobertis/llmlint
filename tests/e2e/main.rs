@@ -12249,6 +12249,42 @@ fn install_actionlint_accepts_a_pinned_actionlint_already_on_path() {
 
 #[cfg(unix)]
 #[test]
+fn install_actionlint_replaces_a_stale_install_even_with_the_pin_on_path() {
+    // A pinned actionlint elsewhere on PATH does not excuse a stale one in the
+    // install dir: the lint step may find the install dir first, so it is
+    // replaced rather than reported as already installed.
+    let p = Project::new();
+    actionlint_release(&p, ActionlintRelease::Good);
+    write_exe(
+        &p.path().join("out/actionlint"),
+        "#!/usr/bin/env bash\nprintf '0.0.1\\n'\n",
+    );
+    let manual = p.path().join("manual");
+    write_exe(
+        &manual.join("actionlint"),
+        &format!(
+            "#!/usr/bin/env bash\nprintf '{}\\n'\n",
+            actionlint_version()
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        p.path().join("bin").display(),
+        path_without_actionlint(&manual)
+    );
+    let out = run_install_actionlint_in(&p, "Linux", "x86_64", &[("PATH", path)]);
+    assert!(out.status.success(), "{out:?}");
+    let said = std::process::Command::new(p.path().join("out/actionlint"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&said.stdout).trim(),
+        format!("actionlint_{}_linux_amd64", actionlint_version())
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn install_actionlint_refuses_a_malformed_override_before_fetching() {
     // The overrides steer a download and two filesystem paths, so a bad one fails
     // with its own name attached rather than deep inside curl or awk.

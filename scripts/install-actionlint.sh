@@ -51,14 +51,16 @@ if [ ! -f "$sums_file" ] || [ ! -r "$sums_file" ]; then
 fi
 
 # Idempotent: `just setup` runs this on every provision, so the pinned version
-# already in the install dir — or on PATH, e.g. installed by hand on a platform
-# this script has no build for — is left alone (and needs no network).
-for existing in "$install_dir/actionlint" "$(command -v actionlint || true)"; do
-  if [ -n "$existing" ] && [ "$("$existing" -version 2>/dev/null | head -n1 || true)" = "$version" ]; then
-    echo "install-actionlint: actionlint $version already at $existing"
-    exit 0
-  fi
-done
+# already in the install dir is left alone (and needs no network). With nothing
+# in the install dir, a pinned actionlint on PATH (installed by hand on a platform
+# this script has no build for) counts too; a stale one in the install dir is
+# always replaced, since the lint step may find it first.
+existing="$install_dir/actionlint"
+[ -e "$existing" ] || existing="$(command -v actionlint || true)"
+if [ -n "$existing" ] && [ "$("$existing" -version 2>/dev/null | head -n1 || true)" = "$version" ]; then
+  echo "install-actionlint: actionlint $version already at $existing"
+  exit 0
+fi
 
 os="$(uname -s)"
 case "$os" in
@@ -86,7 +88,11 @@ arm64 | aarch64) asset_arch="arm64" ;;
 esac
 
 asset="actionlint_${version}_${asset_os}_${asset_arch}.tar.gz"
-tmp="$(mktemp -d)"
+if ! tmp="$(mktemp -d)"; then
+  echo "install-actionlint: could not create a temporary directory; check that" >&2
+  echo "                    ${TMPDIR:-/tmp} exists, is writable, and has free space." >&2
+  exit 1
+fi
 trap 'rm -rf "$tmp"' EXIT
 
 if ! curl -fsSL -o "$tmp/$asset" "$base_url/v${version}/${asset}"; then
