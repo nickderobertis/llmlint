@@ -11757,8 +11757,8 @@ fn check_runs_the_workflow_lint() {
 }
 
 // llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/tar/install/bash; a test cannot own the host's OS/CPU, rhysd's release server, or a second actionlint release, so only `uname`, the release tree, and (for the version/exit-code journeys) the actionlint binary are stood in
-/// The actionlint version the justfile pins — the one pin both
-/// `scripts/install-actionlint.sh` and `scripts/lint-workflows.sh` read.
+/// Read from the justfile, as both scripts do, so these journeys follow a pin
+/// bump instead of going stale.
 #[cfg(unix)]
 fn actionlint_version() -> String {
     let justfile =
