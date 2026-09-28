@@ -751,19 +751,12 @@ agreeing with the justfile's.
 
 ## Workflow lint (`scripts/lint-workflows.sh`, `scripts/install-actionlint.sh`)
 
-`just check` runs `lint-workflows`: the pinned actionlint (`actionlint-version`
-in the justfile) over every workflow in `.github/workflows/`, installed by
-`scripts/install-actionlint.sh` (prebuilt release, verified against the digests
-in `scripts/actionlint.sha256`). The `install_actionlint_*` journeys drive the
-real installer with real `curl`/`tar`/`install`, standing in only the host
-(`uname`) and rhysd's release server (a local release tree over `file://`): each
-Linux/macOS × amd64/arm64 host installs the matching asset (proven by running
-it), a tampered archive is refused, and an unsupported OS or CPU is named. The
-pin file is held to cover every installable asset, and
-`lint_workflows_names_the_install_command_when_actionlint_is_absent` runs the real
-lint script with no actionlint reachable. `bench_workflow_spells_out_equal_push_and_pull_request_paths`
-holds `bench.yml`'s two trigger path lists free of YAML anchors/aliases (which
-actionlint has rejected there) and equal pattern for pattern.
+These scripts' journeys run the real scripts with real `curl`/`tar`/`install`;
+only what a test cannot own is stood in — the host (`uname`), rhysd's release
+server (a local release tree over `file://`), and, where the journey is about
+how the lint script treats actionlint's answer, the `actionlint` binary itself.
+The installer's supported-platform matrix is read from the script, so the pin
+file and the journeys cannot drift from what it can choose.
 
 ## Unit vs e2e
 

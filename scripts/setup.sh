@@ -8,8 +8,8 @@
 #      official prebuilt installer (no slow `cargo install just` compile),
 #   3. ensures the cargo subcommands the gate drives — cargo-nextest and
 #      cargo-llvm-cov — pinned to the justfile,
-#   4. ensures the pinned `actionlint` (the gate's workflow linter), via
-#      scripts/install-actionlint.sh (prebuilt release, digest-verified),
+#   4. ensures the pinned `actionlint` (the gate's workflow linter) via
+#      `just actionlint-tools` (prebuilt release, digest-verified),
 #   5. fetches dependencies + adds toolchain components via `just bootstrap`,
 #   6. records a setup stamp for the fast session check (scripts/setup-check.sh).
 #
@@ -87,27 +87,12 @@ ensure_cargo_tool() {
   ok "$bin installed"
 }
 
-# Install the pinned actionlint unless the one on PATH already is that version.
-ensure_actionlint() {
-  local pin have_ver
-  pin="$(_justfile_pin actionlint)"
-  have_ver="$(actionlint -version 2>/dev/null | head -n1 || true)"
-  if [ -n "$have_ver" ] && [ "$have_ver" = "$pin" ]; then
-    ok "actionlint $pin present"
-    return
-  fi
-  say "installing actionlint $pin into $LOCAL_BIN (pinned by the justfile)"
-  bash scripts/install-actionlint.sh
-  _load_tool_env
-  ok "actionlint installed"
-}
-
 main() {
   ensure_rust
   ensure_just
   ensure_cargo_tool cargo-nextest  cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"
-  ensure_actionlint
+  just actionlint-tools
   say "fetching dependencies + toolchain components (just bootstrap)"
   just bootstrap
   _write_stamp

@@ -11735,7 +11735,7 @@ fn bench_workflow_spells_out_equal_push_and_pull_request_paths() {
     );
 }
 
-// llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/tar/install/bash; a test cannot own the host's OS/CPU or rhysd's release server, so only `uname` and the release tree are stood in, and the absent-actionlint journey stands in nothing
+// llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/tar/install/bash; a test cannot own the host's OS/CPU, rhysd's release server, or a second actionlint release, so only `uname`, the release tree, and (for the version/exit-code journeys) the actionlint binary are stood in
 /// The actionlint version the justfile pins — the one pin both
 /// `scripts/install-actionlint.sh` and `scripts/lint-workflows.sh` read.
 #[cfg(unix)]
@@ -11751,87 +11751,154 @@ fn actionlint_version() -> String {
         .to_string()
 }
 
-/// A `bin/` holding a `uname` that reports `os` for `-s` and `arch` for `-m`,
-/// to put ahead of the real one on `PATH`.
+/// Every `<os>_<arch>` asset suffix `scripts/install-actionlint.sh` can choose,
+/// read from its `asset_os=` / `asset_arch=` case arms so the pin file and these
+/// journeys follow the script instead of restating its platform matrix.
 #[cfg(unix)]
-fn uname_stub(p: &Project, os: &str, arch: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = p.path().join("bin");
-    fs::create_dir_all(&dir).unwrap();
-    let uname = dir.join("uname");
-    fs::write(
-        &uname,
-        format!(
-            "#!/usr/bin/env bash\ncase \"$1\" in -s) printf '{os}\\n' ;; -m) printf '{arch}\\n' ;; *) exit 2 ;; esac\n"
-        ),
+fn actionlint_installable_assets() -> Vec<String> {
+    let script = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/install-actionlint.sh"),
     )
     .unwrap();
-    fs::set_permissions(&uname, fs::Permissions::from_mode(0o755)).unwrap();
-    dir
+    let values = |var: &str| -> Vec<String> {
+        let needle = format!("{var}=\"");
+        script
+            .lines()
+            .filter_map(|l| l.split_once(&needle))
+            .map(|(_, rest)| rest.split('"').next().unwrap().to_string())
+            .collect()
+    };
+    let (oses, arches) = (values("asset_os"), values("asset_arch"));
+    assert!(
+        !oses.is_empty() && !arches.is_empty(),
+        "no platform arms read"
+    );
+    oses.iter()
+        .flat_map(|os| arches.iter().map(move |arch| format!("{os}_{arch}")))
+        .collect()
 }
 
-/// Drive the real `scripts/install-actionlint.sh` on a host whose `uname` says
-/// `os`/`arch`, against a stand-in release tree over `file://`: one tarball per
-/// asset the pin file covers, each carrying a top-level `actionlint` that prints
-/// the asset it came out of. `tamper` pins a digest that names different bytes.
+/// Write an executable script at `path`.
 #[cfg(unix)]
-fn run_install_actionlint(os: &str, arch: &str, tamper: bool) -> (std::process::Output, Project) {
+fn write_exe(path: &Path, body: &str) {
     use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, body).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `PATH` with `dir` in front and every directory holding an `actionlint`
+/// removed, so a journey controls exactly which actionlint (if any) is found.
+#[cfg(unix)]
+fn path_without_actionlint(dir: &Path) -> String {
+    let mut parts = vec![dir.display().to_string()];
+    parts.extend(
+        std::env::var("PATH")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|d| !d.is_empty() && !Path::new(d).join("actionlint").exists())
+            .map(str::to_string),
+    );
+    parts.join(":")
+}
+
+/// How the stand-in release tree for the installer is built.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum ActionlintRelease {
+    /// Well-formed; each archive's `actionlint` prints the asset it came from.
+    Good,
+    /// The pinned digests name different bytes (a tampered download).
+    WrongDigest,
+    /// The pin file lacks the asset's line.
+    Unpinned,
+    /// Matches its pin, but holds no top-level `actionlint`.
+    NoBinary,
+}
+
+/// A stand-in release tree + pin file under `p`, served over `file://`.
+#[cfg(unix)]
+fn actionlint_release(p: &Project, kind: ActionlintRelease) -> PathBuf {
     let version = actionlint_version();
-    let p = Project::new();
     let releases = p.path().join(format!("releases/v{version}"));
     fs::create_dir_all(&releases).unwrap();
     let mut sums = String::new();
-    for (asset_os, asset_arch) in [
-        ("linux", "amd64"),
-        ("linux", "arm64"),
-        ("darwin", "amd64"),
-        ("darwin", "arm64"),
-    ] {
-        let asset = format!("actionlint_{version}_{asset_os}_{asset_arch}");
+    for suffix in actionlint_installable_assets() {
+        let asset = format!("actionlint_{version}_{suffix}");
         let staging = p.path().join("staging").join(&asset);
-        fs::create_dir_all(&staging).unwrap();
-        let bin = staging.join("actionlint");
-        fs::write(&bin, format!("#!/usr/bin/env bash\nprintf '{asset}\\n'\n")).unwrap();
-        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let inner = match kind {
+            ActionlintRelease::NoBinary => "README.md",
+            _ => "actionlint",
+        };
+        write_exe(
+            &staging.join(inner),
+            &format!(
+                "#!/usr/bin/env bash\n[ \"${{1:-}}\" = -version ] && {{ printf '{version}\\n'; exit 0; }}\nprintf '{asset}\\n'\n"
+            ),
+        );
         let archive = releases.join(format!("{asset}.tar.gz"));
         let tar = std::process::Command::new("tar")
             .arg("-czf")
             .arg(&archive)
             .arg("-C")
             .arg(&staging)
-            .arg("actionlint")
+            .arg(inner)
             .status()
             .unwrap();
         assert!(tar.success(), "packing the stand-in {asset} release");
-        let digest = if tamper {
-            "0".repeat(64)
-        } else {
-            sha256_hex(&archive)
+        let digest = match kind {
+            ActionlintRelease::WrongDigest => "0".repeat(64),
+            _ => sha256_hex(&archive),
         };
-        sums.push_str(&format!("{digest}  {asset}.tar.gz\n"));
+        if !matches!(kind, ActionlintRelease::Unpinned) {
+            sums.push_str(&format!("{digest}  {asset}.tar.gz\n"));
+        }
     }
     let sums_file = p.path().join("actionlint.sha256");
     fs::write(&sums_file, &sums).unwrap();
-    let stub_dir = uname_stub(&p, os, arch);
-    let out = std::process::Command::new("bash")
-        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/install-actionlint.sh"))
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                stub_dir.display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
+    sums_file
+}
+
+/// Run the real `scripts/install-actionlint.sh` on a host whose `uname` reports
+/// `os`/`arch`, with `envs` layered over the stand-in defaults.
+#[cfg(unix)]
+fn run_install_actionlint_in(
+    p: &Project,
+    os: &str,
+    arch: &str,
+    envs: &[(&str, String)],
+) -> std::process::Output {
+    let stub_dir = p.path().join("bin");
+    write_exe(
+        &stub_dir.join("uname"),
+        &format!(
+            "#!/usr/bin/env bash\ncase \"$1\" in -s) printf '{os}\\n' ;; -m) printf '{arch}\\n' ;; *) exit 2 ;; esac\n"
+        ),
+    );
+    let mut cmd = std::process::Command::new("bash");
+    cmd.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/install-actionlint.sh"))
+        .env("PATH", path_without_actionlint(&stub_dir))
         .env(
             "ACTIONLINT_BASE_URL",
             format!("file://{}", p.path().join("releases").display()),
         )
         .env("ACTIONLINT_INSTALL_DIR", p.path().join("out"))
-        .env("ACTIONLINT_SHA256_FILE", &sums_file)
-        .output()
-        .unwrap();
+        .env("ACTIONLINT_SHA256_FILE", p.path().join("actionlint.sha256"));
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+#[cfg(unix)]
+fn run_install_actionlint(
+    os: &str,
+    arch: &str,
+    kind: ActionlintRelease,
+) -> (std::process::Output, Project) {
+    let p = Project::new();
+    actionlint_release(&p, kind);
+    let out = run_install_actionlint_in(&p, os, arch, &[]);
     (out, p)
 }
 
@@ -11847,7 +11914,7 @@ fn install_actionlint_installs_the_build_matching_the_host() {
         ("Darwin", "x86_64", "darwin_amd64"),
         ("Darwin", "arm64", "darwin_arm64"),
     ] {
-        let (out, p) = run_install_actionlint(os, arch, false);
+        let (out, p) = run_install_actionlint(os, arch, ActionlintRelease::Good);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(out.status.success(), "{os}/{arch}: {stderr}");
         let installed = p.path().join("out/actionlint");
@@ -11864,30 +11931,66 @@ fn install_actionlint_installs_the_build_matching_the_host() {
 
 #[cfg(unix)]
 #[test]
-fn install_actionlint_refuses_an_archive_that_misses_its_pinned_digest() {
-    // The digests are pinned in this repository, so a tampered or truncated
-    // download is refused before it is unpacked, never installed.
-    let (out, p) = run_install_actionlint("Linux", "x86_64", true);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("sha256 mismatch"), "{stderr}");
-    assert!(stderr.contains("checksums.txt"), "no next action: {stderr}");
+fn install_actionlint_reuses_an_installed_pin_without_fetching() {
+    // `just setup` runs the installer on every provision: once the pinned version
+    // is in the install dir, a re-run leaves it alone and needs no release server
+    // (proven by deleting the stand-in tree before the second run).
+    let (first, p) = run_install_actionlint("Linux", "x86_64", ActionlintRelease::Good);
+    assert!(first.status.success(), "{first:?}");
+    fs::remove_dir_all(p.path().join("releases")).unwrap();
+    let again = run_install_actionlint_in(&p, "Linux", "x86_64", &[]);
+    let stdout = String::from_utf8_lossy(&again.stdout);
     assert!(
-        !p.path().join("out/actionlint").exists(),
-        "installed anyway"
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
     );
+    assert!(stdout.contains("already in"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn install_actionlint_refuses_a_release_that_fails_validation() {
+    // A tampered download, an asset the pin file does not cover, and an archive
+    // whose layout moved are each refused before anything is installed, with the
+    // cause and the next action named.
+    for (kind, needles) in [
+        (
+            ActionlintRelease::WrongDigest,
+            ["sha256 mismatch", "checksums.txt"],
+        ),
+        (
+            ActionlintRelease::Unpinned,
+            ["no pinned sha256", "checksums.txt"],
+        ),
+        (
+            ActionlintRelease::NoBinary,
+            ["archive layout", "actionlint-version"],
+        ),
+    ] {
+        let (out, p) = run_install_actionlint("Linux", "x86_64", kind);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        for needle in needles {
+            assert!(stderr.contains(needle), "missing {needle:?}: {stderr}");
+        }
+        assert!(
+            !p.path().join("out/actionlint").exists(),
+            "installed anyway"
+        );
+    }
 }
 
 #[cfg(unix)]
 #[test]
 fn install_actionlint_refuses_a_host_with_no_pinned_build() {
-    // A platform the pin file does not cover is named, with where to get
-    // actionlint instead, rather than fetching a URL that does not exist.
+    // A platform the script does not map is named, with where to get actionlint
+    // instead, rather than fetching a URL that does not exist.
     for (os, arch, needle) in [
         ("Linux", "riscv64", "riscv64"),
         ("FreeBSD", "x86_64", "FreeBSD"),
     ] {
-        let (out, p) = run_install_actionlint(os, arch, false);
+        let (out, p) = run_install_actionlint(os, arch, ActionlintRelease::Good);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{os}/{arch}: {stderr}");
         assert!(stderr.contains(needle), "{os}/{arch}: {stderr}");
@@ -11895,6 +11998,36 @@ fn install_actionlint_refuses_a_host_with_no_pinned_build() {
         assert!(
             !p.path().join("out/actionlint").exists(),
             "installed anyway"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_actionlint_refuses_a_malformed_override_before_fetching() {
+    // The overrides steer a download and two filesystem paths, so a bad one fails
+    // with its own name attached rather than deep inside curl or awk.
+    for (var, value, needle) in [
+        (
+            "ACTIONLINT_BASE_URL",
+            "ftp://example.invalid",
+            "ACTIONLINT_BASE_URL",
+        ),
+        ("ACTIONLINT_INSTALL_DIR", "", "ACTIONLINT_INSTALL_DIR"),
+        (
+            "ACTIONLINT_SHA256_FILE",
+            "/nonexistent/actionlint.sha256",
+            "digest pin file",
+        ),
+    ] {
+        let p = Project::new();
+        let out = run_install_actionlint_in(&p, "Linux", "x86_64", &[(var, value.to_string())]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{var}: {stderr}");
+        assert!(stderr.contains(needle), "{var}: {stderr}");
+        assert!(
+            !p.path().join("out/actionlint").exists(),
+            "{var}: installed anyway"
         );
     }
 }
@@ -11908,8 +12041,8 @@ fn pinned_actionlint_digests_cover_every_installable_asset() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sums = fs::read_to_string(root.join("scripts/actionlint.sha256")).unwrap();
     let version = actionlint_version();
-    for asset in ["linux_amd64", "linux_arm64", "darwin_amd64", "darwin_arm64"] {
-        let want = format!("actionlint_{version}_{asset}.tar.gz");
+    for suffix in actionlint_installable_assets() {
+        let want = format!("actionlint_{version}_{suffix}.tar.gz");
         let digest = sums
             .lines()
             .find(|l| l.split_whitespace().nth(1) == Some(want.as_str()))
@@ -11923,6 +12056,19 @@ fn pinned_actionlint_digests_cover_every_installable_asset() {
     }
 }
 
+/// Run the real `scripts/lint-workflows.sh` with `bin` (which may hold an
+/// `actionlint`) as the only place an actionlint can be found.
+#[cfg(unix)]
+fn run_lint_workflows(p: &Project, bin: &Path) -> std::process::Output {
+    fs::create_dir_all(bin).unwrap();
+    std::process::Command::new("bash")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/lint-workflows.sh"))
+        .env("PATH", path_without_actionlint(bin))
+        .env("HOME", p.path())
+        .output()
+        .unwrap()
+}
+
 #[cfg(unix)]
 #[test]
 fn lint_workflows_names_the_install_command_when_actionlint_is_absent() {
@@ -11930,22 +12076,81 @@ fn lint_workflows_names_the_install_command_when_actionlint_is_absent() {
     // into), `just check`'s workflow step fails and says how to install the pin,
     // rather than a bare "command not found".
     let p = Project::new();
-    let path: Vec<String> = std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .filter(|d| !d.is_empty() && !Path::new(d).join("actionlint").exists())
-        .map(str::to_string)
-        .collect();
-    let out = std::process::Command::new("bash")
-        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/lint-workflows.sh"))
-        .env("PATH", path.join(":"))
-        .env("HOME", p.path())
-        .output()
-        .unwrap();
+    let out = run_lint_workflows(&p, &p.path().join("bin"));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("actionlint not found"), "{stderr}");
     assert!(stderr.contains("just actionlint-tools"), "{stderr}");
     assert!(stderr.contains(&actionlint_version()), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn lint_workflows_refuses_an_actionlint_off_the_pin() {
+    // A different actionlint release checks different things, so an off-pin
+    // binary is refused (naming both versions and the install command) before it
+    // lints anything, rather than letting local and CI results disagree.
+    let p = Project::new();
+    let bin = p.path().join("bin");
+    let ran = p.path().join("linted");
+    write_exe(
+        &bin.join("actionlint"),
+        &format!(
+            "#!/usr/bin/env bash\n[ \"${{1:-}}\" = -version ] && {{ printf '0.0.1\\n'; exit 0; }}\ntouch '{}'\n",
+            ran.display()
+        ),
+    );
+    let out = run_lint_workflows(&p, &bin);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("0.0.1"), "{stderr}");
+    assert!(stderr.contains(&actionlint_version()), "{stderr}");
+    assert!(stderr.contains("just actionlint-tools"), "{stderr}");
+    assert!(!ran.exists(), "linted with an off-pin actionlint");
+}
+
+#[cfg(unix)]
+#[test]
+fn lint_workflows_fails_with_the_finding_when_actionlint_reports_one() {
+    // The pinned actionlint's findings are the gate: its output reaches the user
+    // and its non-zero exit fails the step; a clean run passes quietly.
+    for (exit, finding) in [(1, "bench.yml:32:12: bad [syntax-check]"), (0, "")] {
+        let p = Project::new();
+        let bin = p.path().join("bin");
+        write_exe(
+            &bin.join("actionlint"),
+            &format!(
+                "#!/usr/bin/env bash\n[ \"${{1:-}}\" = -version ] && {{ printf '{}\\n'; exit 0; }}\nprintf '{finding}'\nexit {exit}\n",
+                actionlint_version()
+            ),
+        );
+        let out = run_lint_workflows(&p, &bin);
+        assert_eq!(out.status.code(), Some(exit), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), finding);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_check_reports_a_missing_actionlint_as_not_ready() {
+    // actionlint is a gate tool, so a machine without it is not ready: the
+    // session hook's readiness check names it and points at `just setup`.
+    let p = Project::new();
+    let bin = p.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let out = std::process::Command::new("bash")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/setup-check.sh"))
+        .env("PATH", path_without_actionlint(&bin))
+        .env("HOME", p.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let missing = stdout
+        .lines()
+        .find(|l| l.contains("missing tools:"))
+        .unwrap_or_else(|| panic!("no missing-tools line: {stdout}"));
+    assert!(missing.contains("actionlint"), "{stdout}");
+    assert!(stdout.contains("just setup"), "{stdout}");
 }
 // llmlint: ignore-end[e2e_not_mocked]

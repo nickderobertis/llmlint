@@ -25,8 +25,6 @@
       "Bash(just check)",
       "Bash(just lint-workflows)",
       "Bash(just actionlint-tools)",
-      "Bash(bash scripts/lint-workflows.sh)",
-      "Bash(bash scripts/install-actionlint.sh)",
       "Bash(just test)",
       "Bash(just test-e2e)",
       "Bash(just lint)",

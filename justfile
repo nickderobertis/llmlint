@@ -65,12 +65,11 @@ bootstrap:
 check: fmt-check lint-workflows lint test doc
     @echo "check: ok"
 
-# Lint every workflow in .github/workflows with the pinned actionlint. Fails with
-# the install command when actionlint is missing or not the pinned version.
+# Lint every workflow in .github/workflows with the pinned actionlint.
 lint-workflows:
     @bash scripts/lint-workflows.sh
 
-# Install the pinned actionlint into ~/.local/bin (digest-verified; `setup` runs it).
+# Install the pinned actionlint into ~/.local/bin; a no-op when it is already there.
 actionlint-tools:
     @bash scripts/install-actionlint.sh
 

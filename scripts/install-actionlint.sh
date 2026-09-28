@@ -2,7 +2,7 @@
 # Install the pinned `actionlint` (the workflow linter `just lint-workflows` runs
 # inside `just check`) from its prebuilt release, choosing the build for this
 # host's OS and architecture and verifying it against a digest pinned in this
-# repository. Used by `just setup`, `just actionlint-tools`, and CI's gate job.
+# repository. Run through `just actionlint-tools` (by `just setup` and CI's gate).
 #
 # The version is `actionlint-version` in the justfile — the one pin, which
 # scripts/lint-workflows.sh also checks the installed binary against.
@@ -15,6 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(cd "$ROOT" && _justfile_pin actionlint)"
 if [ -z "$version" ]; then
   echo "install-actionlint: no actionlint-version pin in $ROOT/justfile" >&2
+  echo "                    Restore the line: actionlint-version := \"<version>\"" >&2
   exit 1
 fi
 
@@ -72,6 +73,13 @@ if [ ! -r "$sums_file" ]; then
   exit 1
 fi
 
+# Idempotent: `just setup` runs this on every provision, so an install dir that
+# already holds the pinned version is left alone (and needs no network).
+if [ "$("$install_dir/actionlint" -version 2>/dev/null | head -n1 || true)" = "$version" ]; then
+  echo "install-actionlint: actionlint $version already in $install_dir"
+  exit 0
+fi
+
 asset="actionlint_${version}_${asset_os}_${asset_arch}.tar.gz"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -103,6 +111,8 @@ tar -xzf "$tmp/$asset" -C "$tmp"
 if [ ! -f "$tmp/actionlint" ]; then
   echo "install-actionlint: $asset matched its pinned digest but holds no" >&2
   echo "                    top-level actionlint — upstream changed the archive layout." >&2
+  echo "                    Update the extraction above to the new layout, or pin an" >&2
+  echo "                    earlier actionlint-version in the justfile." >&2
   exit 1
 fi
 
