@@ -35,4 +35,10 @@ fi
 
 # No arguments, from the repo root: actionlint then checks every workflow in
 # .github/workflows, so a new workflow is gated without touching this script.
-actionlint
+# Findings are diagnostics, so they go to stderr with the other failure output.
+if ! actionlint >&2; then
+  echo "lint-workflows: fix each finding above at its file:line (the [rule] names the" >&2
+  echo "                check: https://github.com/rhysd/actionlint/blob/main/docs/checks.md)," >&2
+  echo "                then re-run: just lint-workflows" >&2
+  exit 1
+fi

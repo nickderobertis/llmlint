@@ -12341,8 +12341,8 @@ fn lint_workflows_refuses_an_actionlint_off_the_pin() {
 #[cfg(unix)]
 #[test]
 fn lint_workflows_fails_with_the_finding_when_actionlint_reports_one() {
-    // The pinned actionlint's findings are the gate: its output reaches the user
-    // and its non-zero exit fails the step; a clean run passes quietly. It is
+    // The pinned actionlint's findings are the gate: they reach the user on
+    // stderr with the next action, and fail the step; a clean run is silent. It is
     // invoked with no arguments from the repo root — actionlint's own "every
     // workflow in .github/workflows" mode — so no workflow is left out.
     for (exit, finding) in [(1, "bench.yml:32:12: bad [syntax-check]"), (0, "")] {
@@ -12359,7 +12359,14 @@ fn lint_workflows_fails_with_the_finding_when_actionlint_reports_one() {
         );
         let out = run_lint_workflows(&p, &bin);
         assert_eq!(out.status.code(), Some(exit), "{out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), finding);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.stdout.is_empty(), "{out:?}");
+        if exit == 0 {
+            assert!(stderr.is_empty(), "not quiet on success: {stderr}");
+        } else {
+            assert!(stderr.starts_with(finding), "{stderr}");
+            assert!(stderr.contains("re-run: just lint-workflows"), "{stderr}");
+        }
         let root = fs::canonicalize(env!("CARGO_MANIFEST_DIR")).unwrap();
         assert_eq!(
             fs::read_to_string(&call).unwrap(),
@@ -12398,7 +12405,7 @@ fn lint_workflows_finds_the_actionlint_the_installer_put_in_its_default_dir() {
     let out = run_lint_workflows(&p, &p.path().join("empty"));
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim(),
         format!("actionlint_{}_linux_amd64", actionlint_version()),
         "the lint step ran some other actionlint"
     );
