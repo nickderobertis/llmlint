@@ -11843,6 +11843,8 @@ enum ActionlintRelease {
     Unpinned,
     /// Matches its pin, but holds no top-level `actionlint`.
     NoBinary,
+    /// Matches its pin, but is not a gzip tarball at all.
+    Corrupt,
 }
 
 /// A stand-in release tree + pin file under `p`, served over `file://`.
@@ -11866,15 +11868,19 @@ fn actionlint_release(p: &Project, kind: ActionlintRelease) -> PathBuf {
             ),
         );
         let archive = releases.join(format!("{asset}.tar.gz"));
-        let tar = std::process::Command::new("tar")
-            .arg("-czf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(&staging)
-            .arg(inner)
-            .status()
-            .unwrap();
-        assert!(tar.success(), "packing the stand-in {asset} release");
+        if matches!(kind, ActionlintRelease::Corrupt) {
+            fs::write(&archive, "not a tarball").unwrap();
+        } else {
+            let tar = std::process::Command::new("tar")
+                .arg("-czf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&staging)
+                .arg(inner)
+                .status()
+                .unwrap();
+            assert!(tar.success(), "packing the stand-in {asset} release");
+        }
         let digest = match kind {
             ActionlintRelease::WrongDigest => "0".repeat(64),
             _ => sha256_hex(&archive),
@@ -12008,6 +12014,68 @@ fn install_actionlint_refuses_a_release_that_fails_validation() {
             "installed anyway"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_actionlint_names_the_recovery_when_a_step_fails() {
+    // Unreachable release, an archive that will not unpack, and an install dir
+    // that cannot be written each stop with the cause and what to do next, never
+    // a bare curl/tar/install error.
+    let p = Project::new();
+    actionlint_release(&p, ActionlintRelease::Good);
+    fs::remove_dir_all(p.path().join("releases")).unwrap();
+    let blocker = p.path().join("a-file");
+    fs::write(&blocker, "").unwrap();
+    let corrupt = Project::new();
+    actionlint_release(&corrupt, ActionlintRelease::Corrupt);
+    let unwritable = Project::new();
+    actionlint_release(&unwritable, ActionlintRelease::Good);
+    for (project, envs, needles) in [
+        (&p, vec![], ["could not download", "ACTIONLINT_BASE_URL"]),
+        (&corrupt, vec![], ["did not unpack", "re-run"]),
+        (
+            &unwritable,
+            vec![(
+                "ACTIONLINT_INSTALL_DIR",
+                blocker.join("bin").display().to_string(),
+            )],
+            ["could not install into", "ACTIONLINT_INSTALL_DIR"],
+        ),
+    ] {
+        let out = run_install_actionlint_in(project, "Linux", "x86_64", &envs);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        for needle in needles {
+            assert!(stderr.contains(needle), "missing {needle:?}: {stderr}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_actionlint_names_the_missing_version_pin() {
+    // The installer's version comes only from the justfile it ships beside; a
+    // checkout whose justfile lost the pin is told which line to restore.
+    let p = Project::new();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for script in ["scripts/install-actionlint.sh", "scripts/setup-lib.sh"] {
+        p.write(script, &fs::read_to_string(root.join(script)).unwrap());
+    }
+    p.write("justfile", "default:\n    @true\n");
+    let out = std::process::Command::new("bash")
+        .arg(p.path().join("scripts/install-actionlint.sh"))
+        .env("ACTIONLINT_INSTALL_DIR", p.path().join("out"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("no actionlint-version pin"), "{stderr}");
+    assert!(stderr.contains("actionlint-version :="), "{stderr}");
+    assert!(
+        !p.path().join("out/actionlint").exists(),
+        "installed anyway"
+    );
 }
 
 #[cfg(unix)]

@@ -17,7 +17,7 @@ cd "$ROOT"
 # `just setup` installs into ~/.local/bin, which a non-login shell may not have.
 _load_tool_env
 
-want="$(_justfile_pin actionlint)"
+want="$(_justfile_pin actionlint || true)"
 if ! command -v actionlint >/dev/null 2>&1; then
   echo "lint-workflows: actionlint not found on PATH" >&2
   echo "                install the pinned release ($want): just actionlint-tools" >&2

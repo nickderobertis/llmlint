@@ -10,9 +10,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 # shellcheck source=scripts/setup-lib.sh
-. "$ROOT/scripts/setup-lib.sh"
-version="$(cd "$ROOT" && _justfile_pin actionlint)"
+. scripts/setup-lib.sh
+# `|| true`: under pipefail a missing pin would otherwise exit here silently.
+version="$(_justfile_pin actionlint || true)"
 if [ -z "$version" ]; then
   echo "install-actionlint: no actionlint-version pin in $ROOT/justfile" >&2
   echo "                    Restore the line: actionlint-version := \"<version>\"" >&2
