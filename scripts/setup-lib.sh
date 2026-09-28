@@ -4,13 +4,14 @@
 #
 # llmlint deliberately does NOT use asdf/direnv (see AGENTS.md). The dev
 # environment is: rustup + the pinned rust-toolchain.toml, `just`, and the two
-# cargo subcommands the gate drives (`cargo nextest`, `cargo llvm-cov`).
+# cargo subcommands the gate drives (`cargo nextest`, `cargo llvm-cov`), plus the
+# pinned `actionlint` the gate's `lint-workflows` step runs.
 
 # Binaries that must resolve for the dev environment to be considered ready: the
-# Rust toolchain, the task runner, and the test/coverage subcommands `just test`
-# (hence `just check`) drives. cargo-deny/cargo-machete are NOT here — they back
+# Rust toolchain, the task runner, the test/coverage subcommands `just test`
+# (hence `just check`) drives, and the workflow linter `just check` runs. cargo-deny/cargo-machete are NOT here — they back
 # `just deps-check`, which is separate from the gate and needs a network DB.
-REQUIRED_BINS="rustc cargo just cargo-nextest cargo-llvm-cov"
+REQUIRED_BINS="rustc cargo just cargo-nextest cargo-llvm-cov actionlint"
 
 # Soft requirements: their absence is an advisory, never a "not ready" verdict.
 # oneharness is a *runtime* prerequisite (the harness llmlint shells out to), not

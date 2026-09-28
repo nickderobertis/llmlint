@@ -34,7 +34,13 @@ jobs:
           tool: just,nextest,cargo-llvm-cov
       - name: Bootstrap
         run: just bootstrap
-      - name: Full gate (fmt, clippy, tests + coverage, docs)
+      # The pinned workflow linter `just check` runs (`lint-workflows`); the pin
+      # is `actionlint-version` in the justfile, the digests scripts/actionlint.sha256.
+      - name: Install actionlint
+        run: |
+          bash scripts/install-actionlint.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Full gate (fmt, workflow lint, clippy, tests + coverage, docs)
         run: just check
       # Dogfood `check-version-bump` on llmlint's own versioned plugin
       # (`assets/config_lint.yml`, which no standard config glob matches, so the

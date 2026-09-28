@@ -749,6 +749,22 @@ pin file). They cover every `uname -m` spelling installing the matching asset
 for, an archive failing its pinned digest, one missing the binary, and the pin
 agreeing with the justfile's.
 
+## Workflow lint (`scripts/lint-workflows.sh`, `scripts/install-actionlint.sh`)
+
+`just check` runs `lint-workflows`: the pinned actionlint (`actionlint-version`
+in the justfile) over every workflow in `.github/workflows/`, installed by
+`scripts/install-actionlint.sh` (prebuilt release, verified against the digests
+in `scripts/actionlint.sha256`). The `install_actionlint_*` journeys drive the
+real installer with real `curl`/`tar`/`install`, standing in only the host
+(`uname`) and rhysd's release server (a local release tree over `file://`): each
+Linux/macOS × amd64/arm64 host installs the matching asset (proven by running
+it), a tampered archive is refused, and an unsupported OS or CPU is named. The
+pin file is held to cover every installable asset, and
+`lint_workflows_names_the_install_command_when_actionlint_is_absent` runs the real
+lint script with no actionlint reachable. `bench_workflow_spells_out_equal_push_and_pull_request_paths`
+holds `bench.yml`'s two trigger path lists free of YAML anchors/aliases (which
+actionlint has rejected there) and equal pattern for pattern.
+
 ## Unit vs e2e
 
 Pure domain logic (validation, planning, voting, schema, rendering, reporting)
