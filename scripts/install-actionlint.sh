@@ -68,7 +68,7 @@ if [ -z "$install_dir" ]; then
   echo "                    to install into. Unset it to use $LOCAL_BIN." >&2
   exit 1
 fi
-if [ ! -r "$sums_file" ]; then
+if [ ! -f "$sums_file" ] || [ ! -r "$sums_file" ]; then
   echo "install-actionlint: no readable digest pin file at $sums_file" >&2
   echo "                    Restore scripts/actionlint.sha256, or point" >&2
   echo "                    ACTIONLINT_SHA256_FILE at a copy of it." >&2
@@ -103,6 +103,12 @@ if [ -z "$expected" ]; then
   exit 1
 fi
 actual="$(_sha256_stdin <"$tmp/$asset")"
+if [ "$actual" = "no-sha256-tool" ]; then
+  echo "install-actionlint: no SHA-256 tool (sha256sum, shasum, or openssl) on PATH," >&2
+  echo "                    so $asset cannot be verified — NOT installing." >&2
+  echo "                    Install coreutils (sha256sum) or openssl and re-run." >&2
+  exit 1
+fi
 if [ "$actual" != "$expected" ]; then
   echo "install-actionlint: sha256 mismatch for $asset — NOT installing" >&2
   echo "                    expected $expected (pinned in $sums_file)" >&2

@@ -11985,6 +11985,75 @@ fn install_actionlint_reuses_an_installed_pin_without_fetching() {
 
 #[cfg(unix)]
 #[test]
+fn install_actionlint_replaces_an_installed_actionlint_off_the_pin() {
+    // A stale actionlint in the install dir (an earlier pin) is replaced by the
+    // pinned release rather than mistaken for it.
+    let p = Project::new();
+    actionlint_release(&p, ActionlintRelease::Good);
+    write_exe(
+        &p.path().join("out/actionlint"),
+        "#!/usr/bin/env bash\nprintf '0.0.1\\n'\n",
+    );
+    let out = run_install_actionlint_in(&p, "Linux", "x86_64", &[]);
+    assert!(out.status.success(), "{out:?}");
+    let said = std::process::Command::new(p.path().join("out/actionlint"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&said.stdout).trim(),
+        format!("actionlint_{}_linux_amd64", actionlint_version())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn install_actionlint_refuses_to_install_unverified_without_a_sha256_tool() {
+    // With no sha256sum/shasum/openssl the archive cannot be checked against its
+    // pin, so nothing is installed and the missing tool is named — not reported
+    // as a digest mismatch the user would chase upstream.
+    let p = Project::new();
+    actionlint_release(&p, ActionlintRelease::Good);
+    let tools = p.path().join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    for tool in [
+        "bash", "curl", "awk", "tar", "gzip", "install", "mktemp", "rm", "head", "grep", "cut",
+        "dirname", "cat",
+    ] {
+        let found = std::process::Command::new("bash")
+            .args(["-c", &format!("command -v {tool}")])
+            .output()
+            .unwrap();
+        let real = String::from_utf8_lossy(&found.stdout).trim().to_string();
+        assert!(!real.is_empty(), "test host lacks {tool}");
+        std::os::unix::fs::symlink(real, tools.join(tool)).unwrap();
+    }
+    write_exe(
+        &tools.join("uname"),
+        "#!/usr/bin/env bash\ncase \"$1\" in -s) echo Linux ;; *) echo x86_64 ;; esac\n",
+    );
+    let out = std::process::Command::new(tools.join("bash"))
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/install-actionlint.sh"))
+        .env("PATH", &tools)
+        .env("HOME", p.path())
+        .env(
+            "ACTIONLINT_BASE_URL",
+            format!("file://{}", p.path().join("releases").display()),
+        )
+        .env("ACTIONLINT_INSTALL_DIR", p.path().join("out"))
+        .env("ACTIONLINT_SHA256_FILE", p.path().join("actionlint.sha256"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("no SHA-256 tool"), "{stderr}");
+    assert!(
+        !p.path().join("out/actionlint").exists(),
+        "installed anyway"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn install_actionlint_refuses_a_release_that_fails_validation() {
     // A tampered download, an asset the pin file does not cover, and an archive
     // whose layout moved are each refused before anything is installed, with the
@@ -12116,9 +12185,16 @@ fn install_actionlint_refuses_a_malformed_override_before_fetching() {
             "/nonexistent/actionlint.sha256",
             "digest pin file",
         ),
+        // Readable, but a directory: refused here, not handed to awk.
+        ("ACTIONLINT_SHA256_FILE", "", "digest pin file"),
     ] {
         let p = Project::new();
-        let out = run_install_actionlint_in(&p, "Linux", "x86_64", &[(var, value.to_string())]);
+        let value = if var == "ACTIONLINT_SHA256_FILE" && value.is_empty() {
+            p.path().display().to_string()
+        } else {
+            value.to_string()
+        };
+        let out = run_install_actionlint_in(&p, "Linux", "x86_64", &[(var, value)]);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{var}: {stderr}");
         assert!(stderr.contains(needle), "{var}: {stderr}");
