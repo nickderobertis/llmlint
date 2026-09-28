@@ -65,7 +65,7 @@ bootstrap:
 check: fmt-check lint-workflows lint test doc
     @echo "check: ok"
 
-# Lint every workflow in .github/workflows with the pinned actionlint.
+# Part of `check`: fix a workflow finding at its site rather than suppress it.
 lint-workflows:
     @bash scripts/lint-workflows.sh
 

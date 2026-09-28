@@ -11688,6 +11688,7 @@ fn ci_install_freeze_pins_the_version_the_justfile_pins() {
 }
 // llmlint: ignore-end[e2e_not_mocked]
 
+// llmlint: ignore-block[tests_mirror_real_usage] a drift gate over a committed workflow: the only command that reads bench.yml's triggers is actionlint, which the test run does not have, so the file itself is the interface under test
 /// `bench.yml` must not share its trigger paths through a YAML anchor/alias —
 /// actionlint (`just lint-workflows`, inside `check`) has rejected an alias in a
 /// `paths` filter — so the two filters are spelled out, and this holds them equal
@@ -11734,6 +11735,26 @@ fn bench_workflow_spells_out_equal_push_and_pull_request_paths() {
         "bench.yml's pull_request paths must equal its push paths"
     );
 }
+// llmlint: ignore-end[tests_mirror_real_usage]
+
+#[test]
+fn check_runs_the_workflow_lint() {
+    // The workflow set is gated only because `just check` (what CI's gate job
+    // runs) includes `lint-workflows`; dropping it from the recipe's dependencies
+    // would silently un-gate every workflow.
+    let out = std::process::Command::new("just")
+        .args(["--dry-run", "check"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+    let plan = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{plan}");
+    assert!(plan.contains("bash scripts/lint-workflows.sh"), "{plan}");
+}
 
 // llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/tar/install/bash; a test cannot own the host's OS/CPU, rhysd's release server, or a second actionlint release, so only `uname`, the release tree, and (for the version/exit-code journeys) the actionlint binary are stood in
 /// The actionlint version the justfile pins — the one pin both
@@ -11751,30 +11772,38 @@ fn actionlint_version() -> String {
         .to_string()
 }
 
-/// Every `<os>_<arch>` asset suffix `scripts/install-actionlint.sh` can choose,
-/// read from its `asset_os=` / `asset_arch=` case arms so the pin file and these
-/// journeys follow the script instead of restating its platform matrix.
+/// Every asset `scripts/install-actionlint.sh` can choose, as the `uname -s` /
+/// `uname -m` answer that selects it plus its `<os>_<arch>` suffix — read from the
+/// script's `case` arms, so the journeys follow its platform matrix instead of
+/// restating it.
 #[cfg(unix)]
-fn actionlint_installable_assets() -> Vec<String> {
+fn actionlint_installable_assets() -> Vec<(String, String, String)> {
     let script = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/install-actionlint.sh"),
     )
     .unwrap();
-    let values = |var: &str| -> Vec<String> {
-        let needle = format!("{var}=\"");
+    let arms = |var: &str| -> Vec<(String, String)> {
+        let needle = format!(") {var}=\"");
         script
             .lines()
             .filter_map(|l| l.split_once(&needle))
-            .map(|(_, rest)| rest.split('"').next().unwrap().to_string())
+            .map(|(pattern, rest)| {
+                let uname = pattern.split('|').next().unwrap().trim().to_string();
+                (uname, rest.split('"').next().unwrap().to_string())
+            })
             .collect()
     };
-    let (oses, arches) = (values("asset_os"), values("asset_arch"));
+    let (oses, arches) = (arms("asset_os"), arms("asset_arch"));
     assert!(
         !oses.is_empty() && !arches.is_empty(),
         "no platform arms read"
     );
     oses.iter()
-        .flat_map(|os| arches.iter().map(move |arch| format!("{os}_{arch}")))
+        .flat_map(|(s, os)| {
+            arches
+                .iter()
+                .map(move |(m, arch)| (s.clone(), m.clone(), format!("{os}_{arch}")))
+        })
         .collect()
 }
 
@@ -11823,7 +11852,7 @@ fn actionlint_release(p: &Project, kind: ActionlintRelease) -> PathBuf {
     let releases = p.path().join(format!("releases/v{version}"));
     fs::create_dir_all(&releases).unwrap();
     let mut sums = String::new();
-    for suffix in actionlint_installable_assets() {
+    for (_, _, suffix) in actionlint_installable_assets() {
         let asset = format!("actionlint_{version}_{suffix}");
         let staging = p.path().join("staging").join(&asset);
         let inner = match kind {
@@ -12032,26 +12061,33 @@ fn install_actionlint_refuses_a_malformed_override_before_fetching() {
     }
 }
 
-/// The committed pin file covers every asset the installer can choose for the
-/// pinned version, each with a well-formed digest — a missing line would fail
-/// `just setup` or CI's gate on exactly the platform nobody pinned.
 #[cfg(unix)]
 #[test]
-fn pinned_actionlint_digests_cover_every_installable_asset() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let sums = fs::read_to_string(root.join("scripts/actionlint.sha256")).unwrap();
-    let version = actionlint_version();
-    for suffix in actionlint_installable_assets() {
-        let want = format!("actionlint_{version}_{suffix}.tar.gz");
-        let digest = sums
-            .lines()
-            .find(|l| l.split_whitespace().nth(1) == Some(want.as_str()))
-            .and_then(|l| l.split_whitespace().next())
-            .unwrap_or_else(|| panic!("scripts/actionlint.sha256 pins no digest for {want}"));
-        assert_eq!(digest.len(), 64, "not a sha256 for {want}: {digest}");
+fn committed_actionlint_pins_cover_every_installable_asset() {
+    // Run the installer on every host it supports against the COMMITTED pin file:
+    // each must reach the digest comparison (a stand-in archive never matches a
+    // real digest) rather than stop at "no pinned sha256" — a missing line would
+    // fail `just setup` or CI's gate on exactly the platform nobody pinned.
+    let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/actionlint.sha256");
+    for (uname_s, uname_m, suffix) in actionlint_installable_assets() {
+        let p = Project::new();
+        actionlint_release(&p, ActionlintRelease::Good);
+        let out = run_install_actionlint_in(
+            &p,
+            &uname_s,
+            &uname_m,
+            &[("ACTIONLINT_SHA256_FILE", committed.display().to_string())],
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{suffix}: {stderr}");
+        let expected = stderr
+            .split("expected ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .unwrap_or_else(|| panic!("{suffix}: no pinned digest reached: {stderr}"));
         assert!(
-            digest.chars().all(|c| c.is_ascii_hexdigit()),
-            "not hex for {want}: {digest}"
+            expected.len() == 64 && expected.chars().all(|c| c.is_ascii_hexdigit()),
+            "{suffix}: pinned digest is not a sha256: {expected}"
         );
     }
 }

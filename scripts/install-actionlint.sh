@@ -84,7 +84,11 @@ asset="actionlint_${version}_${asset_os}_${asset_arch}.tar.gz"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-curl -fsSL -o "$tmp/$asset" "$base_url/v${version}/${asset}"
+if ! curl -fsSL -o "$tmp/$asset" "$base_url/v${version}/${asset}"; then
+  echo "install-actionlint: could not download $base_url/v${version}/${asset}" >&2
+  echo "                    Check the network (or ACTIONLINT_BASE_URL) and re-run." >&2
+  exit 1
+fi
 
 # Validate before unpacking: the expected digest is pinned in THIS repository,
 # not fetched beside the archive (the reasoning scripts/install.sh's
@@ -107,7 +111,11 @@ if [ "$actual" != "$expected" ]; then
   exit 1
 fi
 
-tar -xzf "$tmp/$asset" -C "$tmp"
+if ! tar -xzf "$tmp/$asset" -C "$tmp"; then
+  echo "install-actionlint: $asset matched its pinned digest but did not unpack;" >&2
+  echo "                    check free space in ${TMPDIR:-/tmp} and re-run." >&2
+  exit 1
+fi
 if [ ! -f "$tmp/actionlint" ]; then
   echo "install-actionlint: $asset matched its pinned digest but holds no" >&2
   echo "                    top-level actionlint — upstream changed the archive layout." >&2
@@ -116,6 +124,9 @@ if [ ! -f "$tmp/actionlint" ]; then
   exit 1
 fi
 
-install -d "$install_dir"
-install "$tmp/actionlint" "$install_dir/actionlint"
+if ! { install -d "$install_dir" && install "$tmp/actionlint" "$install_dir/actionlint"; }; then
+  echo "install-actionlint: could not install into $install_dir" >&2
+  echo "                    Point ACTIONLINT_INSTALL_DIR at a writable directory on PATH." >&2
+  exit 1
+fi
 echo "install-actionlint: installed actionlint $version ($asset_os/$asset_arch) to $install_dir"
