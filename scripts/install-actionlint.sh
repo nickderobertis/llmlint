@@ -120,8 +120,10 @@ if [ "$actual" != "$expected" ]; then
 fi
 
 if ! tar -xzf "$tmp/$asset" -C "$tmp"; then
-  echo "install-actionlint: $asset matched its pinned digest but did not unpack;" >&2
-  echo "                    check free space in ${TMPDIR:-/tmp} and re-run." >&2
+  echo "install-actionlint: $asset matched its pinned digest but did not unpack." >&2
+  echo "                    If ${TMPDIR:-/tmp} is full, free space and re-run; otherwise the" >&2
+  echo "                    pinned release itself is not a .tar.gz — re-pin actionlint-version" >&2
+  echo "                    and scripts/actionlint.sha256 to a release that is." >&2
   exit 1
 fi
 if [ ! -f "$tmp/actionlint" ]; then
