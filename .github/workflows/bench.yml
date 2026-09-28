@@ -34,7 +34,6 @@ on:
       - 'tests/support/mock_oneharness.rs'
       - 'justfile'
   pull_request:
-    # Must stay equal to the push paths above (see the note there).
     paths:
       - 'src/**'
       - 'benches/**'

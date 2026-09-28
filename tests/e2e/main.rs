@@ -11738,6 +11738,39 @@ fn bench_workflow_spells_out_equal_push_and_pull_request_paths() {
 // llmlint: ignore-end[tests_mirror_real_usage]
 
 #[test]
+fn allowlisted_just_commands_are_declared_recipes() {
+    // `.claude/settings.json` pre-approves routine recipes by name; a renamed or
+    // removed recipe would leave a grant for a command that no longer exists (and
+    // re-prompt for the one that replaced it).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = std::process::Command::new("just")
+        .arg("--summary")
+        .current_dir(root)
+        .output()
+        .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+    assert!(out.status.success(), "{out:?}");
+    let summary = String::from_utf8_lossy(&out.stdout);
+    let recipes: Vec<&str> = summary.split_whitespace().collect();
+    let settings: Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    let granted: Vec<&str> = settings["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str()?.strip_prefix("Bash(just "))
+        .map(|rest| rest.split([')', ':', ' ']).next().unwrap())
+        .collect();
+    assert!(granted.contains(&"lint-workflows"), "{granted:?}");
+    for recipe in granted {
+        assert!(
+            recipes.contains(&recipe),
+            ".claude/settings.json grants `just {recipe}`, which the justfile does not declare"
+        );
+    }
+}
+
+#[test]
 fn check_runs_the_workflow_lint() {
     // The workflow set is gated only because `just check` (what CI's gate job
     // runs) includes `lint-workflows`; dropping it from the recipe's dependencies
@@ -11943,9 +11976,13 @@ fn install_actionlint_installs_the_build_matching_the_host() {
     // the matching release asset — proven by running what was installed.
     for (os, arch, asset) in [
         ("Linux", "x86_64", "linux_amd64"),
+        ("Linux", "amd64", "linux_amd64"),
         ("Linux", "aarch64", "linux_arm64"),
+        ("Linux", "arm64", "linux_arm64"),
         ("Darwin", "x86_64", "darwin_amd64"),
+        ("Darwin", "amd64", "darwin_amd64"),
         ("Darwin", "arm64", "darwin_arm64"),
+        ("Darwin", "aarch64", "darwin_arm64"),
     ] {
         let (out, p) = run_install_actionlint(os, arch, ActionlintRelease::Good);
         let stderr = String::from_utf8_lossy(&out.stderr);
