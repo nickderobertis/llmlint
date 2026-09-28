@@ -34,7 +34,9 @@ jobs:
           tool: just,nextest,cargo-llvm-cov
       - name: Bootstrap
         run: just bootstrap
-      - name: Full gate (fmt, clippy, tests + coverage, docs)
+      - name: Install actionlint
+        run: just actionlint-tools
+      - name: Full gate (fmt, workflow lint, clippy, tests + coverage, docs)
         run: just check
       # Dogfood `check-version-bump` on llmlint's own versioned plugin
       # (`assets/config_lint.yml`, which no standard config glob matches, so the

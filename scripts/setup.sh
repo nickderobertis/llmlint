@@ -8,8 +8,10 @@
 #      official prebuilt installer (no slow `cargo install just` compile),
 #   3. ensures the cargo subcommands the gate drives — cargo-nextest and
 #      cargo-llvm-cov — pinned to the justfile,
-#   4. fetches dependencies + adds toolchain components via `just bootstrap`,
-#   5. records a setup stamp for the fast session check (scripts/setup-check.sh).
+#   4. ensures the pinned `actionlint` (the gate's workflow linter) via
+#      `just actionlint-tools` (prebuilt release, digest-verified),
+#   5. fetches dependencies + adds toolchain components via `just bootstrap`,
+#   6. records a setup stamp for the fast session check (scripts/setup-check.sh).
 #
 # It does NOT install oneharness (a separate *runtime* prerequisite) or
 # cargo-deny/cargo-machete (only `just deps-check` needs those, and that needs a
@@ -90,6 +92,8 @@ main() {
   ensure_just
   ensure_cargo_tool cargo-nextest  cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"
+  # llmlint: ignore[changed_behavior_has_e2e] setup provisions a real toolchain over the network, so no hermetic journey can run it; this line only delegates to `just actionlint-tools`, whose installer the install_actionlint_* journeys drive
+  just actionlint-tools
   say "fetching dependencies + toolchain components (just bootstrap)"
   just bootstrap
   _write_stamp

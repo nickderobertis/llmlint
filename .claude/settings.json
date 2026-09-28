@@ -23,6 +23,8 @@
       "Bash(bash scripts/setup-check.sh)",
       "Bash(just bootstrap)",
       "Bash(just check)",
+      "Bash(just lint-workflows)",
+      "Bash(just actionlint-tools)",
       "Bash(just test)",
       "Bash(just test-e2e)",
       "Bash(just lint)",

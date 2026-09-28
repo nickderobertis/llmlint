@@ -48,7 +48,8 @@ Use the `just` recipes; do not hand-roll equivalents.
 
 - `just setup` — one command to provision a **bare machine** from a fresh clone:
   rustup + the pinned toolchain, `just` itself, the cargo dev tools
-  (`cargo-nextest`, `cargo-llvm-cov`), then `just bootstrap`. Idempotent and
+  (`cargo-nextest`, `cargo-llvm-cov`), the pinned `actionlint`, then
+  `just bootstrap`. Idempotent and
   stamped (`.dev/setup.stamp`). On a machine with no `just` yet, run the script
   directly: `./scripts/setup.sh`. The Claude Code **SessionStart hook**
   (`scripts/session-setup.sh`, wired in `.claude/settings.json`) runs the fast
@@ -69,8 +70,16 @@ Use the `just` recipes; do not hand-roll equivalents.
 - `just bootstrap` — the cargo-level step `setup` finishes with (toolchain
   components + `cargo fetch`); CI calls it directly after installing the
   toolchain + tools its own way. Use `just setup` for a bare machine.
-- `just check` — full gate: fmt-check, clippy (`-D warnings`), tests, **e2e**,
-  `cargo doc`. Must pass before any commit or PR.
+- `just check` — full gate: fmt-check, `lint-workflows`, clippy (`-D warnings`),
+  tests, **e2e**, `cargo doc`. Must pass before any commit or PR.
+- `just lint-workflows` — the pinned actionlint (`actionlint-version` in the
+  justfile) over every workflow in `.github/workflows/`; part of `check`, so CI's
+  gate job lints the whole workflow set on every change. A finding is fixed, not
+  suppressed. `just setup` / `just actionlint-tools` install the pin from the
+  prebuilt release, digest-checked against `scripts/actionlint.sha256` (refresh it
+  with the pin); a missing or off-pin actionlint fails naming that command.
+  Workflows spell out repeated lists rather than using YAML anchors/aliases, which
+  actionlint has rejected in trigger filters (issue #201).
 - `just test` / `just test-e2e` / `just lint` / `just format` — individual steps.
 - `just upgrade` — update dependencies, then re-run `just check`.
 - `just check-version-bump [base=origin/main]` — dogfood `check-version-bump` on

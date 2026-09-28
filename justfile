@@ -16,6 +16,12 @@ FEATURES := "mock-oneharness"
 nextest-version := "0.9.137"
 llvmcov-version := "0.8.7"
 
+# The GitHub Actions workflow linter `lint-workflows` (hence `check`) runs.
+# `scripts/install-actionlint.sh` installs this pin from the prebuilt release,
+# verified against the digests in `scripts/actionlint.sha256` (refresh those when
+# this moves); `just setup`, `just actionlint-tools`, and CI's gate job all use it.
+actionlint-version := "1.7.12"
+
 # Tools for the informational performance suite (`bench*`, `profile`). NOT part
 # of the gate or `just setup`: benchmarks measure, they don't block. CI's
 # Performance workflow installs the latest of each via taiki-e/install-action;
@@ -56,8 +62,16 @@ bootstrap:
 
 # Full quality gate: format check, lint, tests (unit + integration + e2e) with
 # coverage enforced, and docs. Fails on any issue.
-check: fmt-check lint test doc
+check: fmt-check lint-workflows lint test doc
     @echo "check: ok"
+
+# Part of `check`: fix a workflow finding at its site rather than suppress it.
+lint-workflows:
+    @bash scripts/lint-workflows.sh
+
+# Install the pinned actionlint into ~/.local/bin; a no-op when it is already there.
+actionlint-tools:
+    @bash scripts/install-actionlint.sh
 
 # Verify formatting without modifying files.
 fmt-check:

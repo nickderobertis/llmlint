@@ -19,7 +19,12 @@ name: Performance
 on:
   push:
     branches: [main]
-    paths: &perf-paths
+    # Keep this list equal, pattern for pattern, to the pull_request one below.
+    # It is spelled out twice rather than shared through a YAML anchor/alias
+    # because actionlint (`just lint-workflows`) has rejected an alias here
+    # ("paths" section must be sequence node but got alias node). An e2e
+    # journey holds the two lists equal.
+    paths:
       - 'src/**'
       - 'benches/**'
       - 'Cargo.toml'
@@ -29,7 +34,15 @@ on:
       - 'tests/support/mock_oneharness.rs'
       - 'justfile'
   pull_request:
-    paths: *perf-paths
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'scripts/bench*.sh'
+      - 'tests/support/mock_oneharness.rs'
+      - 'justfile'
   workflow_dispatch:
 
 # Read the code; write PR comments. The comment step is additionally guarded to

@@ -749,6 +749,15 @@ pin file). They cover every `uname -m` spelling installing the matching asset
 for, an archive failing its pinned digest, one missing the binary, and the pin
 agreeing with the justfile's.
 
+## Workflow lint (`scripts/lint-workflows.sh`, `scripts/install-actionlint.sh`)
+
+These scripts' journeys run the real scripts with real `curl`/`tar`/`install`;
+only what a test cannot own is stood in — the host (`uname`), rhysd's release
+server (a local release tree over `file://`), and, where the journey is about
+how the lint script treats actionlint's answer, the `actionlint` binary itself.
+The installer's supported-platform matrix is read from the script, so the pin
+file and the journeys cannot drift from what it can choose.
+
 ## Unit vs e2e
 
 Pure domain logic (validation, planning, voting, schema, rendering, reporting)
