@@ -77,8 +77,9 @@ pub enum Command {
     Doctor(DoctorArgs),
     /// Inspect logged run results. With no id, list recent runs; with an id (or
     /// `latest`), show that run's full results — the complete per-rule detail the
-    /// terminal report omits. Drill in with `--status`/`--rule` filters, print the
-    /// record's path with `--path`, or emit `--format json`.
+    /// terminal report omits. Drill in with `--status`/`--rule` filters, narrow to
+    /// labelled runs with `--label KEY=VALUE`, print the record's path with
+    /// `--path`, or emit `--format json`.
     History(HistoryArgs),
     /// Report the on-disk plugin cache: per cached plugin, its URL, its version
     /// pin, the version it resolved to, when the origin last confirmed it, and
@@ -224,6 +225,16 @@ pub struct LintArgs {
     /// its full results can be retrieved later with `llmlint history <id>`.
     #[arg(long = "no-history", action = clap::ArgAction::SetTrue)]
     pub no_history: bool,
+
+    /// Attach a caller-supplied label to this run's history record; repeatable.
+    /// Split on the first `=`: KEY is 1-64 ASCII letters, digits, `.`, `_`, or
+    /// `-`, beginning with a letter or digit; VALUE is 1-256 characters with no
+    /// control characters. A repeated key takes the later value, and a `--label`
+    /// overrides the same key from `LLMLINT_LABELS` (comma-separated `KEY=VALUE`
+    /// entries). Find the run again with `llmlint history --label KEY=VALUE`. An
+    /// invalid label is a usage error (exit 2) before any rule is judged.
+    #[arg(long = "label", value_name = "KEY=VALUE")]
+    pub label: Vec<String>,
 
     /// Print how the judge runs would be batched (agents, batches, and files
     /// dropped as ignored) and exit, without calling any harness or model. A
@@ -688,8 +699,15 @@ pub struct HistoryArgs {
     #[arg(long = "format", value_enum, default_value_t = OutputFormat::Human)]
     pub format: OutputFormat,
 
-    /// When listing runs, show at most this many (most recent first; default 20).
-    /// Ignored when an id is given.
+    /// Only runs labelled KEY=VALUE (see `lint --label`); repeatable, and every
+    /// pair must match with an equal value. Filters the listing (newest first,
+    /// `--limit` applied after filtering), resolves `latest` to the newest
+    /// matching run, and shows an explicit id only when that run matches.
+    #[arg(long = "label", value_name = "KEY=VALUE")]
+    pub label: Vec<String>,
+
+    /// When listing runs, show at most this many (most recent first; default 20;
+    /// counted after any `--label` filter). Ignored when an id is given.
     #[arg(long = "limit", value_name = "N")]
     pub limit: Option<usize>,
 

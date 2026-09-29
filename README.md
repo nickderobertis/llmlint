@@ -304,6 +304,7 @@ unset.
 | `history.enabled` | `LLMLINT_HISTORY_ENABLED` | `--no-history` (force off) | bool; supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch |
 | `history.max_runs` | `LLMLINT_HISTORY_MAX_RUNS` | — | ≥ 1 |
 | `history.dir` | `LLMLINT_HISTORY_DIR` | — | path |
+| — (run labels; no config key) | `LLMLINT_LABELS` | `--label KEY=VALUE` (repeatable) | comma-separated `KEY=VALUE` entries, each trimmed; `--label` overrides the same key (see [Labelling runs](#labelling-runs)) |
 
 The env layer applies **process-wide**, after the nearest-wins config merge — it
 tunes the effective run, not any one directory's config. Two list-valued settings
@@ -715,6 +716,7 @@ llmlint history <id> --rule my_rule   # only one rule
 llmlint history <id> --path           # just the JSON record's path (for scripting)
 llmlint history <id> --format json    # the raw record
 llmlint history --format json         # a JSON array of run summaries
+llmlint history --label session=abc   # only runs carrying that label (see below)
 ```
 
 Records live in the platform per-user **data** directory by default
@@ -737,6 +739,46 @@ chain: `LLMLINT_HISTORY_DIR` sets `dir`, `LLMLINT_HISTORY_ENABLED` sets `enabled
 for a single run. Like the other top-level settings, `history` is a cwd-and-up
 **session setting** (a subtree config never retunes it) and traces through `llmlint
 config --sources` / `llmlint where history.dir`.
+
+#### Labelling runs
+
+A caller that runs `llmlint` on its own behalf can tag a run so it can find
+exactly that run again, even when other runs share the history directory:
+
+```console
+$ llmlint --label session=abc --label turn=3
+See full results with `llmlint history 20260704T153000Z-1a2b3` (labels: session=abc, turn=3)
+$ llmlint history --label session=abc              # that session's runs, newest first
+$ llmlint history latest --label session=abc --label turn=3
+```
+
+- **Giving labels:** `--label KEY=VALUE` on `lint` (repeatable), and/or
+  `LLMLINT_LABELS` — comma-separated `KEY=VALUE` entries, each trimmed (unset or
+  empty means none). The flag is the upper layer: it overrides the environment's
+  value for the same key, and within either layer a repeated key takes the later
+  value. There is no config-file key. The entry is split on its first `=`; the
+  **key** is 1–64 ASCII letters, digits, `.`, `_`, or `-`, beginning with a letter
+  or digit, and the **value** is 1–256 characters (Unicode code points) with no
+  control character. An invalid label is a usage error (exit 2) before any rule is
+  judged, naming the entry and whether it came from `--label` or `LLMLINT_LABELS`.
+- **In the record:** a labelled run's record carries a top-level `"labels"`
+  object (string → string, keys sorted). An unlabelled run's record has no
+  `labels` key at all — read its absence as `{}`. `history <id> --format json`
+  prints the record as stored. Every entry of the `history --format json` listing
+  always carries `"labels"` (`{}` when the run had none), and the human listing and
+  single-run view print a labelled run's labels.
+- **Filtering:** `history --label KEY=VALUE` (repeatable) keeps only runs whose
+  labels contain every given pair with an equal value — newest first, with
+  `--limit` applied *after* filtering. `history latest --label …` is the newest
+  matching run, and `history <id> --label …` shows that run only if it matches.
+  When nothing matches, each is a history error (exit 2) naming the filter.
+- **The results pointer:** for `--format human` with history on, an unlabelled
+  run prints exactly ``See full results with `llmlint history <ID>` `` on stderr,
+  as before; a labelled run appends ` (labels: k1=v1, k2=v2)` in sorted key order.
+  **To extract the id**, take the stderr line beginning with
+  `See full results with`: the id is the text between
+  ``See full results with `llmlint history `` and the next backtick. That rule
+  holds whether or not labels follow.
 
 ### oneharness passthrough
 

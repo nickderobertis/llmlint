@@ -725,7 +725,14 @@ harness reads target files on-demand with its own tools.
   `latest`, `--status`/`--rule` filters, `--path`, `--format json`); the store,
   id/clock generation, and record shape live in `io::history` (pure logic
   unit-tested there). Like the other session settings it comes from `cwd`-and-up
-  only, in `SETTING_KEYS` + provenance. The e2e harness points
+  only, in `SETTING_KEYS` + provenance. **Run labels** are not a setting (no
+  config key, so absent from `SETTING_KEYS`/`ENV_SETTINGS`): their grammar lives
+  only in `domain::labels`, and their user-facing contract is the README's
+  "Labelling runs" section, which callers (onejudge) parse against — so change it
+  deliberately, never as a side effect. The persisted record is pinned by the
+  goldens in `tests/fixtures/history_record/` (its README says why `labels` is an
+  optional additive field rather than a version bump); change the shape and the
+  goldens move in the same commit. The e2e harness points
   `LLMLINT_HISTORY_DIR` at a per-project temp dir so runs never touch the real data
   dir.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled
