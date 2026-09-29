@@ -11262,6 +11262,18 @@ fn labelled_runs_are_recorded_pointed_at_and_filtered_in_history() {
             "no run with id \"{id3}\""
         )))
         .stderr(predicate::str::contains("--label session=abc"));
+    // `--path` resolves through the same filter.
+    p.bare()
+        .args(["history", &id1, "--path", "--label", "turn=1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("{id1}.json")));
+    p.bare()
+        .args(["history", &id3, "--path", "--label", "session=abc"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("--label session=abc"));
     // `latest` and a listing with no match each give that error too.
     for args in [
         &["history", "latest", "--label", "session=zzz"][..],

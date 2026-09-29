@@ -725,15 +725,11 @@ harness reads target files on-demand with its own tools.
   `latest`, `--status`/`--rule` filters, `--path`, `--format json`); the store,
   id/clock generation, and record shape live in `io::history` (pure logic
   unit-tested there). Like the other session settings it comes from `cwd`-and-up
-  only, in `SETTING_KEYS` + provenance. **Run labels** (`lint --label`,
-  `LLMLINT_LABELS`, filtered by `history --label`) are *not* a setting — no config
-  key, so not in `SETTING_KEYS`/`ENV_SETTINGS` — and their grammar lives only in
-  `domain::labels`. The record's
-  `labels` key and the stderr pointer's shape are a contract callers parse
-  (onejudge extracts the id from the pointer): keep an unlabelled record and
-  pointer byte-identical to before, and change neither unilaterally. The README's
-  and `--help`'s restatements of the grammar bounds and pointer shape are held to
-  the code by `label_docs_restate_the_grammar_and_pointer_they_document`. The e2e harness points
+  only, in `SETTING_KEYS` + provenance. **Run labels** are not a setting (no
+  config key, so absent from `SETTING_KEYS`/`ENV_SETTINGS`): their grammar lives
+  only in `domain::labels`, and their user-facing contract is the README's
+  "Labelling runs" section, which callers (onejudge) parse against — so change it
+  deliberately, never as a side effect. The e2e harness points
   `LLMLINT_HISTORY_DIR` at a per-project temp dir so runs never touch the real data
   dir.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled

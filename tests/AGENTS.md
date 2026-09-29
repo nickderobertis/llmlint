@@ -632,22 +632,15 @@ resolves the oneharness the test put on PATH.
   data dir; the store, id/timestamp generation, and the record shape are
   unit-tested in `io::history`, the config model + provenance in `domain::config`,
   and the record rendering/filtering in `commands::history`.
-- Run labels: `lint --label KEY=VALUE` (repeatable) and `LLMLINT_LABELS`
-  (comma-separated, trimmed; the flag overrides the same key) write a sorted
-  top-level `labels` object into the record, and an unlabelled record has no
-  `labels` key; the stderr pointer appends ` (labels: …)` in sorted key order
-  (unlabelled it is unchanged), and the id extracted by the README's parse rule is
-  the id `history` returns. `history --label` lists only matching runs, newest
-  first, with `--limit` counted after the filter; `latest --label` resolves within
-  the filter; `<id> --label` shows a matching run and refuses a non-matching one;
-  a no-match is the exit-2 history error naming the filter. Every listing entry
-  carries `labels` (`{}` when none) and both human views print them. Each invalid
-  label shape, from the flag or the env var, is exit 2 naming the entry and its
-  source, with no harness spawn and no record written (a non-UTF-8
-  `LLMLINT_LABELS` too). Labels read back from a hand-edited record are held to
-  the grammar again, so an ungrammatical pair is never listed or matched. The
-  README's and `--help`'s restated bounds and example pointer are checked against
-  the binary's behavior. The grammar's boundary vectors are unit-tested in
+- Run labels (the README's "Labelling runs" is the contract): the journeys
+  `labelled_runs_are_recorded_pointed_at_and_filtered_in_history`,
+  `filtered_history_applies_limit_after_the_filter`,
+  `env_labels_label_a_run_and_a_flag_overrides_the_same_key`,
+  `an_invalid_label_exits_2_before_judging_and_records_nothing`,
+  `a_non_utf8_llmlint_labels_exits_2_and_records_nothing`,
+  `ungrammatical_labels_in_a_stored_record_are_not_trusted`, and
+  `label_docs_restate_the_grammar_and_pointer_they_document` drive each part of it
+  through the binary; the grammar's boundary vectors are unit-tested in
   `domain::labels`.
 - Failure/recovery: missing config, malformed config, and each deterministic
   validation error — duplicate rule names, an even `judges` count, an invalid
