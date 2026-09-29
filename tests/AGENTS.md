@@ -664,6 +664,24 @@ resolves the oneharness the test put on PATH.
   (nothing ran) errors naming every attempted harness rather than one skipped
   harness's "no structured output" (`+ LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
 
+## Real-oneharness tier (`tests/real_oneharness.rs`)
+
+The hermetic suite doubles oneharness, so it can prove which `--config` files
+llmlint forwards and in what order, but not that a later file's settings win.
+`just test-oneharness` closes that gap without a model: it installs the released
+`oneharness-cli` at the justfile's `oneharness-cli-version` pin — the multi-file
+floor, `LAYERED_CONFIG_MIN_VERSION` — runs the real `llmlint` against the mock
+(which records the argv), and hands the recorded `--config` list, verbatim and
+from the same working directory, to the real `oneharness config --format json`.
+Each journey asserts the forwarded list, that oneharness loaded exactly those
+files, and that the resolved `mode` is the highest layer's, attributed to it:
+the later of two configured files; a repository config over its plugin's; the
+nearest of nested llmlint configs (with a path configured at both levels);
+`LLMLINT_ONEHARNESS_CONFIG` over the config files; and a `--oneharness-config`
+flag over both. The tests are `#[ignore]`-d; run without the recipe's
+`LLMLINT_REAL_ONEHARNESS` they fail rather than skip. The one non-ignored test,
+`the_tier_pins_the_multi_file_floor`, holds the pin to the constant in every run.
+
 ## Live tier (`scripts/live-*.sh`)
 
 The hermetic e2e suite above proves llmlint's logic against a mock oneharness. The

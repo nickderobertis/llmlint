@@ -99,6 +99,14 @@ Use the `just` recipes; do not hand-roll equivalents.
   `docs/contract.md`) other repositories wait on; its target ids and short names
   (`crate:llmlint`/`crate`, `pypi:llmlint-cli`/`cli`) are named by consumers'
   plans, so never rename them unilaterally.
+- `just test-oneharness` — the **real-oneharness tier** (`tests/real_oneharness.rs`,
+  its `#[ignore]`-d tests): installs the released `oneharness-cli` at the
+  justfile's `oneharness-cli-version` pin (`scripts/install-oneharness.sh`, a venv
+  under `.dev/`; needs PyPI), then feeds the `--config` layers llmlint forwards
+  (recorded by the mock) to the real `oneharness config --format json` and asserts
+  the highest layer's settings win. Free and model-free, but networked, so out of
+  `test`/`check`. The pin is the multi-file floor
+  (`oneharness::LAYERED_CONFIG_MIN_VERSION`); an always-run test holds them equal.
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the **live e2e tier**: builds a release binary, then drives
@@ -532,7 +540,9 @@ harness reads target files on-demand with its own tools.
   needs `oneharness::LAYERED_CONFIG_MIN_VERSION` (repeatable `--config`); below it
   `lint` exits 2 naming the found version and that floor, never falling back to
   the first file. One file keeps the `MIN_VERSION` floor and the argv it always
-  had, which is why the `pyproject.toml` floor stays at `MIN_VERSION`.
+  had, which is why the `pyproject.toml` floor stays at `MIN_VERSION`. The hermetic
+  e2e journeys pin the argv; `just test-oneharness` proves the released oneharness
+  resolves those layers as intended.
 
 ## Commits, releases, and merging
 

@@ -103,6 +103,17 @@ test-e2e:
 test-release-targets:
     cargo nextest run --features {{FEATURES}} --test release_targets --locked --run-ignored all
 
+# The real-oneharness tier: `tests/real_oneharness.rs`'s `#[ignore]`-d tests,
+# which feed the `--config` list llmlint forwards to the released oneharness's own
+# `oneharness config --format json` and assert which file's settings win. Free and
+# model-free, but installs `oneharness-cli` from PyPI (network), so it is out of
+# `test`/`check`. The pin is the multi-file floor (a test holds them equal).
+oneharness-cli-version := "0.18.0"
+
+test-oneharness:
+    bin="$(bash scripts/install-oneharness.sh)"; \
+    LLMLINT_REAL_ONEHARNESS="$bin" cargo nextest run --features {{FEATURES}} --test real_oneharness --locked --run-ignored all
+
 # Build the docs with warnings denied (kept in the gate so doc links don't rot).
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features {{FEATURES}}
