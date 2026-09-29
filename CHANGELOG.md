@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.4](https://github.com/nickderobertis/llmlint/compare/v0.4.3...v0.4.4) - 2026-09-29
+
+### Added
+
+- *(oneharness)* pass every configured oneharness config as layered --config ([#213](https://github.com/nickderobertis/llmlint/pull/213))
+
 ## [0.4.3](https://github.com/nickderobertis/llmlint/compare/v0.4.2...v0.4.3) - 2026-09-29
 
 ### Added
