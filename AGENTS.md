@@ -728,7 +728,7 @@ harness reads target files on-demand with its own tools.
   only, in `SETTING_KEYS` + provenance. **Run labels** (`lint --label`,
   `LLMLINT_LABELS`, filtered by `history --label`) are *not* a setting — no config
   key, so not in `SETTING_KEYS`/`ENV_SETTINGS` — and their grammar lives only in
-  `domain::labels` (mirroring oneharness's history-label grammar). The record's
+  `domain::labels`. The record's
   `labels` key and the stderr pointer's shape are a contract callers parse
   (onejudge extracts the id from the pointer): keep an unlabelled record and
   pointer byte-identical to before, and change neither unilaterally. The README's

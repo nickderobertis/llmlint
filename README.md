@@ -761,8 +761,6 @@ $ llmlint history latest --label session=abc --label turn=3
   or digit, and the **value** is 1–256 characters (Unicode code points) with no
   control character. An invalid label is a usage error (exit 2) before any rule is
   judged, naming the entry and whether it came from `--label` or `LLMLINT_LABELS`.
-  This is the same grammar as oneharness's `--history-label` /
-  `ONEHARNESS_HISTORY_LABELS`, so one convention covers both tools.
 - **In the record:** a labelled run's record carries a top-level `"labels"`
   object (string → string, keys sorted). An unlabelled run's record has no
   `labels` key at all — read its absence as `{}`. `history <id> --format json`

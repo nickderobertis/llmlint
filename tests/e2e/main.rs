@@ -11413,22 +11413,40 @@ fn squash(text: &str) -> String {
 #[test]
 fn label_docs_restate_the_grammar_and_pointer_they_document() {
     // The README and `--help` restate the grammar's bounds and the pointer shape
-    // for callers who parse it; hold them to the one source (`domain::labels`)
-    // and to the pointer a real labelled run prints, so neither drifts silently.
-    use llmlint::domain::labels::{ENV_VAR, KEY_MAX, VALUE_MAX};
+    // for callers who parse it. Probe the real binary at each documented bound,
+    // then hold both docs to those bounds and to the pointer a real labelled run
+    // prints, so neither drifts silently from what llmlint enforces.
+    const KEY_MAX: usize = 64;
+    const VALUE_MAX: usize = 256;
+    let (p, verdicts) = label_project();
+    let exit_for = |label: String| {
+        p.lint()
+            .args(["--plan-only", "--label", &label])
+            .output()
+            .unwrap()
+            .status
+            .code()
+    };
+    assert_eq!(exit_for(format!("{}=v", "k".repeat(KEY_MAX))), Some(0));
+    assert_eq!(exit_for(format!("{}=v", "k".repeat(KEY_MAX + 1))), Some(2));
+    assert_eq!(exit_for(format!("k={}", "é".repeat(VALUE_MAX))), Some(0));
+    assert_eq!(
+        exit_for(format!("k={}", "é".repeat(VALUE_MAX + 1))),
+        Some(2)
+    );
+
     let readme = squash(
         &fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap(),
     );
     for needle in [
         format!("the **key** is 1–{KEY_MAX} ASCII letters, digits, `.`, `_`, or `-`, beginning with a letter or digit"),
         format!("the **value** is 1–{VALUE_MAX} characters (Unicode code points) with no control character"),
-        format!("`{ENV_VAR}` — comma-separated `KEY=VALUE` entries, each trimmed"),
+        "`LLMLINT_LABELS` — comma-separated `KEY=VALUE` entries, each trimmed".to_string(),
         "the id is the text between ``See full results with `llmlint history `` and the next backtick".to_string(),
     ] {
         assert!(readme.contains(&needle), "README no longer states: {needle}");
     }
     // The README's example pointer is what a run given those labels prints.
-    let (p, verdicts) = label_project();
     let out = p
         .lint()
         .args(["--label", "turn=3", "--label", "session=abc"])
@@ -11450,7 +11468,7 @@ fn label_docs_restate_the_grammar_and_pointer_they_document() {
     for needle in [
         format!("KEY is 1-{KEY_MAX} ASCII letters"),
         format!("VALUE is 1-{VALUE_MAX} characters"),
-        ENV_VAR.to_string(),
+        "LLMLINT_LABELS".to_string(),
     ] {
         assert!(
             lint_help.contains(&needle),
