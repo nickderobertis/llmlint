@@ -301,7 +301,12 @@ pub(crate) fn run_loaded(
     // Pre-flight: read-only mode (so the harness never edits target files)
     // requires oneharness >= MIN_VERSION. Check once up front and fail with a
     // clear message rather than letting every judge's `--mode read-only` error.
-    client.check_min_version()?;
+    let oh_version = client.check_min_version()?;
+    // Several oneharness config files are forwarded as layered `--config`s,
+    // which only a newer oneharness accepts: refuse up front (naming the found
+    // version and the floor) rather than run with the first file alone.
+    let oh_config = resolve_oneharness_config(&args, &config);
+    oneharness::Client::check_layered_config_version(&oh_version, oh_config.len())?;
 
     // At `-v`, narrate the plan up front — before any judge runs — so a reader sees
     // what will be linted (the file set, the batching, any diff-excluded files)
@@ -318,8 +323,7 @@ pub(crate) fn run_loaded(
         .timeout
         .or(config.oneharness.timeout)
         .unwrap_or(DEFAULT_TIMEOUT);
-    let oh_config = resolve_oneharness_config(&args, &config);
-    let oh_config_ref = oh_config.as_deref();
+    let oh_config_ref = oh_config.as_slice();
     let global_model = config.oneharness.model.as_deref();
     let max_parallel = args.max_parallel.unwrap_or(DEFAULT_MAX_PARALLEL).max(1);
 
@@ -747,18 +751,19 @@ fn restrict_to_changed(
     }
 }
 
-fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Option<PathBuf> {
-    let mut all: Vec<PathBuf> = args.oneharness_config.clone();
-    all.extend(config.oneharness.config.iter().map(PathBuf::from));
-    if all.len() > 1 {
-        eprintln!(
-            "llmlint: warning: oneharness `--config` takes a single file; using {} and ignoring \
-             {} other(s)",
-            all[0].display(),
-            all.len() - 1
-        );
-    }
-    all.into_iter().next()
+/// The oneharness config files to forward, lowest layer first: the merged
+/// `oneharness.config` (nested configs and plugins most distant first, with
+/// `LLMLINT_ONEHARNESS_CONFIG`'s paths already appended by the env layer), then
+/// the `--oneharness-config` flags in order — the command line is the top layer,
+/// so it comes last and oneharness lets it win.
+fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Vec<PathBuf> {
+    config
+        .oneharness
+        .config
+        .iter()
+        .map(PathBuf::from)
+        .chain(args.oneharness_config.iter().cloned())
+        .collect()
 }
 
 /// The draw target for the live view: real stderr when it should show (indicatif
@@ -824,7 +829,7 @@ fn execute(
     run: &JudgeRun,
     cwd: &Path,
     timeout: u64,
-    oh_config: Option<&Path>,
+    oh_config: &[PathBuf],
     global_model: Option<&str>,
     want_trace: bool,
     diffs: &BTreeMap<PathBuf, String>,

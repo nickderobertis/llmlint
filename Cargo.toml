@@ -114,6 +114,13 @@ toml = "0.9"
 name = "e2e"
 path = "tests/e2e/main.rs"
 
+# The real-oneharness tier (`just test-oneharness`): llmlint's forwarded
+# `--config` layers resolved by the released oneharness. Its tests are
+# `#[ignore]`-d (they need that binary); the pin drift test runs everywhere.
+[[test]]
+name = "real_oneharness"
+path = "tests/real_oneharness.rs"
+
 # The release declaration (`release-targets.toml`) held to the canonical schema
 # and to release.yml, plus the three answers of `scripts/release-probe.sh`.
 [[test]]

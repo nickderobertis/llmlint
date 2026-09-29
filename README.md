@@ -296,7 +296,7 @@ unset.
 | `oneharness.model` | `LLMLINT_ONEHARNESS_MODEL` | `--model` | default judge model |
 | `oneharness.timeout` | `LLMLINT_ONEHARNESS_TIMEOUT` | `--timeout` | seconds, ≥ 1 |
 | `oneharness.schema_max_retries` | `LLMLINT_ONEHARNESS_SCHEMA_MAX_RETRIES` | `--schema-max-retries` | |
-| `oneharness.config` | `LLMLINT_ONEHARNESS_CONFIG` | `--oneharness-config` | path (single file) |
+| `oneharness.config` | `LLMLINT_ONEHARNESS_CONFIG` | `--oneharness-config` (repeatable) | layered list of paths; `PATH`-separated in the env var; **layers above** the config's files, with the flags on top (see [oneharness passthrough](#oneharness-passthrough)) |
 | `oneharness.bin` | `LLMLINT_ONEHARNESS_BIN` | `--oneharness-bin` | path |
 | `prompt_template` | `LLMLINT_PROMPT_TEMPLATE` | `--prompt-template` | path to a template file |
 | `rationales` | `LLMLINT_RATIONALES` | `--rationales` / `--no-rationales` | bool |
@@ -782,10 +782,29 @@ $ llmlint history latest --label session=abc --label turn=3
 
 ### oneharness passthrough
 
-llmlint lets oneharness discover its own `oneharness.toml` by default. To force a
-specific oneharness config, use `--oneharness-config <path>` (or `oneharness.config`
-in the llmlint config); it is forwarded via oneharness's `--config`. Override the
-binary with `--oneharness-bin` or `$LLMLINT_ONEHARNESS_BIN`.
+llmlint lets oneharness discover its own `oneharness.toml` by default. To pass
+specific oneharness configs instead, list them in `oneharness.config` in the
+llmlint config, in `LLMLINT_ONEHARNESS_CONFIG` (separated like `PATH`: `:` on
+Unix, `;` on Windows), or with `--oneharness-config <path>` (repeatable). Each
+file is forwarded as its own oneharness `--config`, and oneharness **layers**
+them: every later file overrides the earlier ones, field by field. llmlint builds
+one list, lowest layer first:
+
+1. `oneharness.config` entries, in the order written. Across plugins and nested
+   llmlint configs the lists concatenate — the most distant config or plugin
+   first, the nearest last — so a shared config's oneharness defaults sit
+   beneath yours. A path configured at more than one level is passed once, at
+   the nearest config's position.
+2. then `LLMLINT_ONEHARNESS_CONFIG`'s paths, in order;
+3. then the `--oneharness-config` flags, in order — the command line is the top
+   layer, so it wins.
+
+Passing more than one file needs oneharness ≥ 0.18.0, the release that made
+`--config` repeatable; on an older oneharness llmlint refuses the run (exit 2,
+naming the version it found and that floor) rather than silently using only the
+first file. A single file works on any supported oneharness. `-v` prints the
+exact `oneharness run …` command, every `--config` included. Override the binary
+with `--oneharness-bin` or `$LLMLINT_ONEHARNESS_BIN`.
 
 ### Plugins (shared rule sets)
 

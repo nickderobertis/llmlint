@@ -28,6 +28,7 @@
       "Bash(just test)",
       "Bash(just test-e2e)",
       "Bash(just test-release-targets)",
+      "Bash(just test-oneharness)",
       "Bash(just lint)",
       "Bash(just lint-live)",
       "Bash(just live-claude)",

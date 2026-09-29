@@ -99,6 +99,14 @@ Use the `just` recipes; do not hand-roll equivalents.
   `docs/contract.md`) other repositories wait on; its target ids and short names
   (`crate:llmlint`/`crate`, `pypi:llmlint-cli`/`cli`) are named by consumers'
   plans, so never rename them unilaterally.
+- `just test-oneharness` — the **real-oneharness tier** (`tests/real_oneharness.rs`,
+  its `#[ignore]`-d tests): installs the released `oneharness-cli` at the
+  justfile's `oneharness-cli-version` pin (`scripts/install-oneharness.sh`, a venv
+  under `.dev/`; needs PyPI), then feeds the `--config` layers llmlint forwards
+  (recorded by the mock) to the real `oneharness config --format json` and asserts
+  the highest layer's settings win. Free and model-free, but networked, so out of
+  `test`/`check`. The pin is the multi-file floor
+  (`oneharness::LAYERED_CONFIG_MIN_VERSION`); an always-run test holds them equal.
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the **live e2e tier**: builds a release binary, then drives
@@ -519,9 +527,22 @@ harness reads target files on-demand with its own tools.
   (honored in `history::resolve` only when the canonical var is unset);
   `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into
   the same scheme. When a new session setting lands, add its `LLMLINT_` var here.
-- **oneharness `--config` is single-file** today; llmlint forwards the first
-  `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
-  `--config` repeatable, then drop the warning.
+- **oneharness configs are layered (convention, issue #210):** every resolved
+  oneharness config file is forwarded as its own `--config`, lowest layer first,
+  because oneharness layers repeated `--config`s (a later file overrides an
+  earlier one per field). The one list is `oneharness.config` — concatenated
+  across plugins and nested llmlint configs, most distant first and nearest last,
+  an exact duplicate kept at its nearest position (`OneharnessCfg::merge_under`,
+  the one exception to first-writer-wins session settings) — then
+  `LLMLINT_ONEHARNESS_CONFIG`'s `PATH`-separated paths (appended by the env layer),
+  then the `--oneharness-config` flags (`resolve_oneharness_config` in
+  `commands/lint.rs`), so the command line is the top layer. More than one file
+  needs `oneharness::LAYERED_CONFIG_MIN_VERSION` (repeatable `--config`); below it
+  `lint` exits 2 naming the found version and that floor, never falling back to
+  the first file. One file keeps the `MIN_VERSION` floor and the argv it always
+  had, which is why the `pyproject.toml` floor stays at `MIN_VERSION`. The hermetic
+  e2e journeys pin the argv; `just test-oneharness` proves the released oneharness
+  resolves those layers as intended.
 
 ## Commits, releases, and merging
 
