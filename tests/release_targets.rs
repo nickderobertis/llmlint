@@ -1,3 +1,4 @@
+// llmlint: ignore-file[new_code_lands_in_a_project] a single binary crate with no Nx project graph (AGENTS.md) has no project for a test file to belong to; Cargo's [[test]] target is its home
 //! Drift gate for what this repository *releases*, and the contract of the probe
 //! that answers what a registry currently serves for it.
 //!
@@ -10,7 +11,10 @@
 //! defined once in `docs/contract.md` of github.com/nickderobertis/onevcs;
 //! [`schema`] restates it as a reader that refuses, so a dropped field or a
 //! malformed identifier fails here rather than reaching a consumer that cannot
-//! read it.
+//! read it. That restatement is reconciled against the canonical implementation
+//! (onevcs's `crates/onevcs/src/declaration.rs` and `releases.rs`) by the
+//! `#[ignore]`-d network test
+//! [`the_restated_schema_matches_the_canonical_definition`].
 //!
 //! The declaration is also the thing that goes stale silently, so this suite
 //! never trusts it: it derives the published set from the *real* release
@@ -38,13 +42,13 @@ mod schema {
 
     /// The schema version this gate reads, and the oldest it accepts.
     pub const SCHEMA_VERSION: i64 = 1;
-    const MAX_PROSE: usize = 400;
-    const MAX_IDENTIFIER: usize = 128;
-    const MAX_TARGET_NAME: usize = 64;
+    pub const MAX_PROSE: usize = 400;
+    pub const MAX_IDENTIFIER: usize = 128;
+    pub const MAX_TARGET_NAME: usize = 64;
 
-    const TOP_LEVEL_KEYS: [&str; 4] = ["schema_version", "probe", "target", "retired"];
-    const TARGET_KEYS: [&str; 6] = ["id", "name", "what", "published_by", "manifest", "covers"];
-    const RETIRED_KEYS: [&str; 2] = ["id", "why"];
+    pub const TOP_LEVEL_KEYS: [&str; 4] = ["schema_version", "probe", "target", "retired"];
+    pub const TARGET_KEYS: [&str; 6] = ["id", "name", "what", "published_by", "manifest", "covers"];
+    pub const RETIRED_KEYS: [&str; 2] = ["id", "why"];
 
     /// What one repository publishes, as its `release-targets.toml` declares it.
     #[derive(Debug, Deserialize)]
@@ -210,12 +214,12 @@ mod schema {
         let mut chars = value.chars();
         let drive = matches!(
             (chars.next(), chars.next()),
-            (Some(d), Some(':')) if d.is_ascii_alphabetic()
+            (Some(drive), Some(':')) if drive.is_ascii_alphabetic()
         );
         if value.is_empty()
             || value.starts_with(SEPARATORS)
             || drive
-            || value.split(SEPARATORS).any(|part| part == "..")
+            || value.split(SEPARATORS).any(|component| component == "..")
         {
             return Err(format!(
                 "the path {value:?} is not a path inside the repository, relative to its root"
@@ -608,6 +612,156 @@ fn the_drift_check_fails_a_declaration_that_disagrees_with_release_yml() {
         }),
         "pypi:llmlint-cli is declared but nothing",
     );
+}
+
+/// Network tier: the schema [`schema`] restates has not moved upstream.
+///
+/// The restatement is of a contract this repository does not own, so it is the
+/// one thing here that can drift silently. It is reconciled against the
+/// *implementation* a consumer's reader enforces — its constants, its version-1
+/// key lists, and the expressions its rules are made of — and against the
+/// readable range, so the day onevcs stops reading `schema_version = 1` this
+/// fails rather than a consumer refusing what this repository publishes.
+/// `#[ignore]`-d like the other network test; run via `just test-release-targets`.
+#[test]
+#[ignore = "network: reads nickderobertis/onevcs; run via `just test-release-targets`"]
+fn the_restated_schema_matches_the_canonical_definition() {
+    const CANONICAL: &str =
+        "https://raw.githubusercontent.com/nickderobertis/onevcs/HEAD/crates/onevcs/src";
+
+    fn upstream(file: &str) -> String {
+        let url = format!("{CANONICAL}/{file}");
+        let output = std::process::Command::new("curl")
+            .args(["-q", "--silent", "--show-error", "--fail", "--location"])
+            .args(["--max-time", "30", &url])
+            .output()
+            .unwrap_or_else(|e| panic!("curl is needed to read {url}: {e}"));
+        assert!(
+            output.status.success(),
+            "could not read the canonical schema at {url}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("the canonical schema is UTF-8")
+    }
+
+    /// The value of `const <name>` in a Rust source file, from `=` to `;`,
+    /// joined across lines.
+    fn constant(source: &str, origin: &str, name: &str) -> String {
+        let start = [format!("\nconst {name}:"), format!("\npub const {name}:")]
+            .iter()
+            .find_map(|decl| source.find(decl.as_str()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{origin} no longer declares `{name}`; reread this suite's schema against it"
+                )
+            });
+        // After the `=`, so a `;` in the type (`[&str; 4]`) is not the end.
+        let rest = &source[start..];
+        let rest = &rest[rest.find('=').unwrap() + 1..];
+        let value = &rest[..rest.find(';').unwrap()];
+        value.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn number(source: &str, origin: &str, name: &str) -> i64 {
+        constant(source, origin, name)
+            .parse()
+            .unwrap_or_else(|e| panic!("{origin}'s `{name}` is not a number: {e}"))
+    }
+
+    /// Every quoted string of a Rust array literal.
+    fn strings(literal: &str) -> Vec<String> {
+        literal
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect()
+    }
+
+    let (declaration, declaration_rs) = (upstream("declaration.rs"), "declaration.rs");
+    let (releases, releases_rs) = (upstream("releases.rs"), "releases.rs");
+
+    let oldest = number(&declaration, declaration_rs, "OLDEST_SCHEMA_VERSION");
+    let newest = number(&declaration, declaration_rs, "SCHEMA_VERSION");
+    assert!(
+        (oldest..=newest).contains(&schema::SCHEMA_VERSION),
+        "onevcs reads schema_version {oldest}..={newest}; release-targets.toml declares {}",
+        schema::SCHEMA_VERSION
+    );
+    for (source, origin, name, restated) in [
+        (&declaration, declaration_rs, "MAX_PROSE", schema::MAX_PROSE),
+        (
+            &declaration,
+            declaration_rs,
+            "MAX_IDENTIFIER",
+            schema::MAX_IDENTIFIER,
+        ),
+        (
+            &releases,
+            releases_rs,
+            "MAX_TARGET_NAME",
+            schema::MAX_TARGET_NAME,
+        ),
+    ] {
+        let canonical = number(source, origin, name);
+        assert_eq!(
+            restated as i64, canonical,
+            "{origin} declares {name} = {canonical}"
+        );
+    }
+    for (name, restated) in [
+        ("TOP_LEVEL_KEYS", &schema::TOP_LEVEL_KEYS[..]),
+        ("TARGET_KEYS", &schema::TARGET_KEYS[..]),
+        ("RETIRED_KEYS", &schema::RETIRED_KEYS[..]),
+    ] {
+        let canonical = strings(&constant(&declaration, declaration_rs, name));
+        assert_eq!(
+            restated, canonical,
+            "{declaration_rs} declares {name} = {canonical:?}"
+        );
+    }
+    // The rules themselves: each is the expression one canonical check is made
+    // of, restated verbatim in `schema`.
+    for (source, origin, expression) in [
+        (
+            &declaration,
+            declaration_rs,
+            "c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'",
+        ),
+        (
+            &declaration,
+            declaration_rs,
+            "c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@' | '/')",
+        ),
+        (
+            &releases,
+            releases_rs,
+            "c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')",
+        ),
+        (&declaration, declaration_rs, "value.trim().is_empty()"),
+        (
+            &declaration,
+            declaration_rs,
+            "value.chars().any(char::is_control)",
+        ),
+        (
+            &declaration,
+            declaration_rs,
+            "const SEPARATORS: [char; 2] = ['/', '\\\\'];",
+        ),
+        (&declaration, declaration_rs, "component == \"..\""),
+        (
+            &declaration,
+            declaration_rs,
+            "(Some(drive), Some(':')) if drive.is_ascii_alphabetic()",
+        ),
+    ] {
+        assert!(
+            source.contains(expression),
+            "{origin} no longer contains `{expression}`; the canonical rule changed and \
+             `schema` restates the one it replaced"
+        );
+    }
 }
 
 /// A document missing what the schema requires is refused with a message

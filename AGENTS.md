@@ -87,8 +87,10 @@ Use the `just` recipes; do not hand-roll equivalents.
   vs the base without a `version:` bump. Out of `check` (it needs a base ref +
   network to resolve it); CI runs it against the PR base.
 - `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
-- `just test-release-targets` — `tests/release_targets.rs`, including its one
-  `#[ignore]`-d test that reads the live crates.io/PyPI APIs. The offline tests
+- `just test-release-targets` — `tests/release_targets.rs`, including its two
+  `#[ignore]`-d network tests: the probe against the live crates.io/PyPI APIs,
+  and the restated schema reconciled against onevcs's canonical implementation
+  (its drift gate — the schema is onevcs's, not ours). The offline tests
   (the release declaration held to `release.yml`, and the probe against a local
   stand-in registry) already run in `test`. `release-targets.toml` is the
   canonical release-target declaration (schema defined in onevcs's

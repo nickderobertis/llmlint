@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# llmlint: ignore-file[new_code_lands_in_a_project] a single binary crate with no Nx project graph (AGENTS.md) has no project for a shell script to belong to
 # What does the public registry serve, right now, for ONE release target of this
 # repository? The targets are declared in `release-targets.toml`, which names this
 # script as its `probe`.
@@ -45,25 +46,25 @@ unanswered() {
 }
 
 if [ "$#" -ne 1 ]; then
-    unanswered "usage: release-probe.sh <registry>:<name> (exactly one argument, got $#)"
+    unanswered "usage: release-probe.sh <id> takes exactly one argument, got $#; pass crate:llmlint or pypi:llmlint-cli"
 fi
 
 id=$1
 registry=${id%%:*}
 name=${id#*:}
 if [ "$registry" = "$id" ]; then
-    unanswered "unrecognised identifier '$id': expected a registry-qualified <registry>:<name>"
+    unanswered "unrecognised identifier '$id': expected a registry-qualified <registry>:<name>; pass crate:llmlint or pypi:llmlint-cli"
 fi
 # Bash's own matching, not grep's: a name check that shelled out would report a
 # PATH missing `grep` as a malformed identifier, which is a different answer.
 if ! [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-    unanswered "unrecognised identifier '$id': '$name' is not a registry artifact name"
+    unanswered "unrecognised identifier '$id': '$name' is not a registry artifact name; pass crate:llmlint or pypi:llmlint-cli"
 fi
 
 case "$registry" in
     crate) base=${LLMLINT_RELEASE_PROBE_CRATES_URL:-https://crates.io} ;;
     pypi) base=${LLMLINT_RELEASE_PROBE_PYPI_URL:-https://pypi.org} ;;
-    *) unanswered "unrecognised identifier '$id': this repository publishes to crate: and pypi: only" ;;
+    *) unanswered "unrecognised identifier '$id': this repository publishes to crate: and pypi: only; pass crate:llmlint or pypi:llmlint-cli" ;;
 esac
 
 # Only what release-targets.toml declares. Another package's version is not an
@@ -71,11 +72,11 @@ esac
 case "$id" in
     crate:llmlint) url="${base%/}/api/v1/crates/$name" ;;
     pypi:llmlint-cli) url="${base%/}/pypi/$name/json" ;;
-    *) unanswered "unrecognised identifier '$id': not a release target of this repository (crate:llmlint, pypi:llmlint-cli)" ;;
+    *) unanswered "unrecognised identifier '$id': not a release target of this repository; pass crate:llmlint or pypi:llmlint-cli (see release-targets.toml)" ;;
 esac
 
 for tool in curl mktemp python3; do
-    command -v "$tool" >/dev/null 2>&1 || unanswered "$tool is not on PATH, so '$id' cannot be looked up"
+    command -v "$tool" >/dev/null 2>&1 || unanswered "$tool is not on PATH, so '$id' cannot be looked up; install $tool or add it to PATH, then re-run"
 done
 
 body=$(mktemp)
@@ -86,7 +87,7 @@ status=$(curl -q --silent --show-error --location \
     --retry "$RETRIES" --retry-delay 1 \
     --user-agent "$UA" --header 'Accept: application/json' \
     --output "$body" --write-out '%{http_code}' "$url") \
-    || unanswered "could not read $url for '$id' (see curl's message above)"
+    || unanswered "could not read $url for '$id' (see curl's message above); check the network or the registry's status, then re-run"
 
 # A registry that has never served this artifact answers 404. That is the ONLY
 # way to report "no release yet" — any other unexpected status is not answered.
@@ -94,7 +95,7 @@ if [ "$status" = 404 ]; then
     exit 0
 fi
 if [ "$status" != 200 ]; then
-    unanswered "$url answered HTTP $status for '$id'"
+    unanswered "$url answered HTTP $status for '$id'; the registry is failing or refusing the read, re-run once it answers 200 or 404"
 fi
 
 version=$(python3 -c '
@@ -115,6 +116,6 @@ else:
 if not isinstance(version, str) or not version or any(c.isspace() for c in version):
     sys.exit(1)
 print(version)
-' "$body" "$registry") || unanswered "$url answered HTTP 200 for '$id' with no version this probe could read"
+' "$body" "$registry") || unanswered "$url answered HTTP 200 for '$id' with no version this probe could read; the registry's response shape changed, so update the parser in this script"
 
 printf '%s\n' "$version"

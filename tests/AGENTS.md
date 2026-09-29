@@ -771,8 +771,11 @@ real, with a cleared environment, against a stand-in registry on localhost
 (`LLMLINT_RELEASE_PROBE_{CRATES,PYPI}_URL`): a served version for each target,
 404 → no release yet, error status / refused connection / a stalled connection
 (within the 60s bound) → not answered, planted credentials never sent, and any
-identifier but the two declared ids → not answered. Unix-only; the one live
-registry test is `#[ignore]`-d (`just test-release-targets`).
+identifier but the two declared ids → not answered. Unix-only. Two tests need
+the network and are `#[ignore]`-d (`just test-release-targets`): the probe
+against the live registries, and the restated schema reconciled against onevcs's
+canonical implementation (constants, version-1 key sets, rule expressions, and
+that `schema_version = 1` is still in the range it reads).
 
 ## Unit vs e2e
 
