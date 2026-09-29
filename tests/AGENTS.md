@@ -382,8 +382,13 @@ resolves the oneharness the test put on PATH.
 - `--timeout` is forwarded to oneharness; a config `oneharness.timeout` is
   forwarded when no CLI flag is given; `schema_max_retries` is forwarded as
   `--schema-max-retries`; the oneharness `model` is forwarded, with a per-agent
-  `model` overriding the global default; multiple oneharness configs warn and use
-  the first; `--oneharness-bin` resolves from the env, and a config
+  `model` overriding the global default; every oneharness config is its own
+  `--config`, lowest layer first — config entries (plugins and ancestor configs
+  beneath nearer ones, duplicates at their nearest position), then
+  `LLMLINT_ONEHARNESS_CONFIG`'s platform-`PATH`-separated paths, then the flags —
+  with one file's argv pinned byte for byte, and several files refused with exit 2
+  below the layering floor (running nothing) while one file still runs down to
+  `MIN_VERSION`; `--oneharness-bin` resolves from the env, and a config
   `oneharness.bin` resolves the binary with no flag or env at all.
 - Rationales (on by default): the generated schema requires each rule to emit
   `name` -> `rationale` -> `holds` -> `violations` in that order, with `name`

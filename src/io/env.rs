@@ -58,7 +58,8 @@ pub const ENV_SETTINGS: &[(&str, &str)] = &[
 #[cfg(test)]
 const CONFIG_ONLY_SETTINGS: &[&str] = &["version"];
 
-/// The separator for the list-valued `LLMLINT_FILES_*` env vars: the platform
+/// The separator for the list-valued env vars (`LLMLINT_FILES_*`,
+/// `LLMLINT_ONEHARNESS_CONFIG`): the platform
 /// `PATH`-list separator (`:` on Unix, `;` on Windows), the convention users
 /// already know for multi-path env vars. Globs are forward-slash relative
 /// patterns, so they never contain it (unlike a comma, which brace-expansion
@@ -98,7 +99,7 @@ fn apply_from(
         // they *intersect* whichever set wins (see `ignores::resolve_files`). An
         // empty (all-separators) value is rejected rather than silently selecting
         // nothing.
-        let globs = parse_list("LLMLINT_FILES_INCLUDE", &v)?;
+        let globs = parse_list("LLMLINT_FILES_INCLUDE", &v, "globs")?;
         config.files.include = globs;
         note(prov, "files.include", "LLMLINT_FILES_INCLUDE");
     }
@@ -106,15 +107,17 @@ fn apply_from(
         // The exclude set is a *denylist*: layers accumulate (config ∪ env ∪ CLI)
         // so an env exclude never silently drops a config safety exclude — the same
         // additive, always-wins semantics as the `--exclude` flag.
-        let globs = parse_list("LLMLINT_FILES_EXCLUDE", &v)?;
+        let globs = parse_list("LLMLINT_FILES_EXCLUDE", &v, "globs")?;
         config.files.exclude.extend(globs);
         note(prov, "files.exclude", "LLMLINT_FILES_EXCLUDE");
     }
     if let Some(v) = get("LLMLINT_ONEHARNESS_CONFIG") {
-        // A single path, matching the single-file `--oneharness-config` / config
-        // `oneharness.config` semantics (`resolve_oneharness_config` still warns
-        // on extras from other layers).
-        config.oneharness.config = vec![v];
+        // A layer list, like the config key: oneharness applies its `--config`
+        // files lowest first, so the env paths go *above* the config files'
+        // (env wins over config) and beneath the `--oneharness-config` flags,
+        // which `lint` appends last. Order is kept verbatim, repeats included.
+        let paths = parse_list("LLMLINT_ONEHARNESS_CONFIG", &v, "paths")?;
+        config.oneharness.config.extend(paths);
         note(prov, "oneharness.config", "LLMLINT_ONEHARNESS_CONFIG");
     }
     if let Some(v) = get("LLMLINT_ONEHARNESS_BIN") {
@@ -200,11 +203,11 @@ fn parse_int(var: &str, val: &str, min: u64) -> Result<u64> {
     Ok(n)
 }
 
-/// Split a `LIST_SEP`-separated glob list, trimming whitespace and dropping empty
-/// entries. Erroring (located to `var`) when nothing usable remains, so a
-/// set-but-empty `LLMLINT_FILES_*` is a clear boundary fault rather than a
-/// silent "select/exclude nothing".
-fn parse_list(var: &str, val: &str) -> Result<Vec<String>> {
+/// Split a `LIST_SEP`-separated list (of globs or paths, as `kind` names them in
+/// the error), trimming whitespace and dropping empty entries. Erroring (located
+/// to `var`) when nothing usable remains, so a set-but-empty list variable is a
+/// clear boundary fault rather than a silent "select/exclude/layer nothing".
+fn parse_list(var: &str, val: &str, kind: &str) -> Result<Vec<String>> {
     let globs: Vec<String> = val
         .split(LIST_SEP)
         .map(str::trim)
@@ -214,7 +217,7 @@ fn parse_list(var: &str, val: &str) -> Result<Vec<String>> {
     if globs.is_empty() {
         return Err(Error::Env {
             var: var.to_string(),
-            message: format!("expected one or more {LIST_SEP:?}-separated globs, got {val:?}"),
+            message: format!("expected one or more {LIST_SEP:?}-separated {kind}, got {val:?}"),
         });
     }
     Ok(globs)
@@ -352,6 +355,42 @@ mod tests {
         );
         assert_eq!(prov.settings["files.include"], "env:LLMLINT_FILES_INCLUDE");
         assert_eq!(prov.settings["files.exclude"], "env:LLMLINT_FILES_EXCLUDE");
+    }
+
+    #[test]
+    fn oneharness_config_env_paths_layer_above_the_config_files() {
+        let sep = LIST_SEP;
+        let mut config = Config::default();
+        config.oneharness.config = vec!["repo.toml".to_string()];
+        let mut prov = Provenance::default();
+        apply(
+            &mut config,
+            &mut prov,
+            &[(
+                "LLMLINT_ONEHARNESS_CONFIG",
+                &format!("e1.toml{sep} e2.toml{sep}"),
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            config.oneharness.config,
+            vec!["repo.toml", "e1.toml", "e2.toml"]
+        );
+        assert_eq!(
+            prov.settings["oneharness.config"],
+            "env:LLMLINT_ONEHARNESS_CONFIG"
+        );
+
+        // An all-separators value names no file: a located boundary error.
+        let err = apply(
+            &mut Config::default(),
+            &mut Provenance::default(),
+            &[("LLMLINT_ONEHARNESS_CONFIG", &format!("{sep}{sep}"))],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("LLMLINT_ONEHARNESS_CONFIG"), "{err}");
+        assert!(err.contains("separated paths"), "{err}");
     }
 
     #[test]

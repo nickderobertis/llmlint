@@ -519,9 +519,20 @@ harness reads target files on-demand with its own tools.
   (honored in `history::resolve` only when the canonical var is unset);
   `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into
   the same scheme. When a new session setting lands, add its `LLMLINT_` var here.
-- **oneharness `--config` is single-file** today; llmlint forwards the first
-  `--oneharness-config` and warns on extras. *Follow-up:* make oneharness
-  `--config` repeatable, then drop the warning.
+- **oneharness configs are layered (convention, issue #210):** every resolved
+  oneharness config file is forwarded as its own `--config`, lowest layer first,
+  because oneharness layers repeated `--config`s (a later file overrides an
+  earlier one per field). The one list is `oneharness.config` — concatenated
+  across plugins and nested llmlint configs, most distant first and nearest last,
+  an exact duplicate kept at its nearest position (`OneharnessCfg::merge_under`,
+  the one exception to first-writer-wins session settings) — then
+  `LLMLINT_ONEHARNESS_CONFIG`'s `PATH`-separated paths (appended by the env layer),
+  then the `--oneharness-config` flags (`resolve_oneharness_config` in
+  `commands/lint.rs`), so the command line is the top layer. More than one file
+  needs `oneharness::LAYERED_CONFIG_MIN_VERSION` (repeatable `--config`); below it
+  `lint` exits 2 naming the found version and that floor, never falling back to
+  the first file. One file keeps the `MIN_VERSION` floor and the argv it always
+  had, which is why the `pyproject.toml` floor stays at `MIN_VERSION`.
 
 ## Commits, releases, and merging
 

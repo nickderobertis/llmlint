@@ -15,6 +15,7 @@ use std::thread;
 use assert_cmd::cargo::cargo_bin;
 use assert_cmd::Command;
 use llmlint::io::diff::git_command;
+use llmlint::io::oneharness::LAYERED_CONFIG_MIN_VERSION;
 use predicates::prelude::*;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -5896,25 +5897,255 @@ fn system_prompt_is_delivered_by_file_not_inline() {
     );
 }
 
-#[test]
-fn multiple_oneharness_configs_warns() {
+/// The values of every `--config` flag in a mock `LLMLINT_MOCK_DUMP_ARGS`
+/// record, in argv order — the oneharness config layers llmlint forwarded.
+fn forwarded_configs(dump: &Path) -> Vec<String> {
+    let args = fs::read_to_string(dump).expect("the mock ran and recorded its argv");
+    let mut lines = args.lines();
+    let mut out = Vec::new();
+    while lines.by_ref().any(|l| l == "--config") {
+        out.push(lines.next().expect("--config takes a value").to_string());
+    }
+    out
+}
+
+/// The mock's `--version` at [`LAYERED_CONFIG_MIN_VERSION`], the first
+/// oneharness that accepts several `--config`s.
+fn layered_config_floor() -> String {
+    let (major, minor, patch) = LAYERED_CONFIG_MIN_VERSION;
+    format!("{major}.{minor}.{patch}")
+}
+
+/// A project whose llmlint config sets `oneharness.config` to `configs` (a YAML
+/// flow list, e.g. `["a.toml", "b.toml"]`) over one passing rule `oh_rule`.
+fn oneharness_config_project(configs: &str) -> (Project, PathBuf) {
     let p = Project::new();
     p.write(
         "llmlint.yml",
         &format!(
-            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  config: [\"./a.toml\"]\n\
-             rules:\n  - {{ name: warn_rule, description: \"{RULE}\" }}\n"
+            "version: 1\nfiles:\n  include: [\"src/**\"]\noneharness:\n  config: {configs}\n\
+             rules:\n  - {{ name: oh_rule, description: \"{RULE}\" }}\n"
         ),
     );
     p.write("src/lib.rs", "// code\n");
-    let verdicts = p.write_verdicts(r#"{"warn_rule": true}"#);
+    let verdicts = p.write_verdicts(r#"{"oh_rule": true}"#);
+    (p, verdicts)
+}
+
+#[test]
+fn configured_oneharness_configs_are_each_forwarded_in_order() {
+    // oneharness layers repeated `--config`s lowest first, so the configured
+    // list reaches it whole and in the order written.
+    let (p, verdicts) = oneharness_config_project(r#"["a.toml", "b.toml"]"#);
+    let dump = p.path().join("args.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERSION", layered_config_floor())
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(forwarded_configs(&dump), vec!["a.toml", "b.toml"]);
+}
+
+#[test]
+fn oneharness_config_layers_config_then_env_then_flags() {
+    // Config entries first, then `LLMLINT_ONEHARNESS_CONFIG`'s paths (split on
+    // the platform's `PATH` separator), then the flags: the command line is the
+    // top layer, so it comes last. Nothing is dropped, and nothing warns.
+    let (p, verdicts) = oneharness_config_project(r#"["a.toml", "b.toml"]"#);
+    let dump = p.path().join("args.txt");
+    let env_list = std::env::join_paths(["e1.toml", "e2.toml"]).unwrap();
     p.lint()
         .arg("--oneharness-config")
-        .arg("./b.toml")
+        .arg("c.toml")
+        .arg("--oneharness-config")
+        .arg("d.toml")
+        .env("LLMLINT_ONEHARNESS_CONFIG", &env_list)
+        .env("LLMLINT_MOCK_VERSION", layered_config_floor())
         .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
         .assert()
         .success()
-        .stderr(predicate::str::contains("single file"));
+        .stderr(predicate::str::contains("ignoring").not())
+        .stderr(predicate::str::contains("warning").not());
+    assert_eq!(
+        forwarded_configs(&dump),
+        vec!["a.toml", "b.toml", "e1.toml", "e2.toml", "c.toml", "d.toml"]
+    );
+}
+
+#[test]
+fn env_oneharness_config_list_is_split_on_the_path_separator() {
+    // With no config-file entries, the env list alone is the layer stack.
+    let (p, verdicts) = oneharness_config_project("[]");
+    let dump = p.path().join("args.txt");
+    let env_list = std::env::join_paths(["one.toml", "two.toml", "three.toml"]).unwrap();
+    p.lint()
+        .env("LLMLINT_ONEHARNESS_CONFIG", &env_list)
+        .env("LLMLINT_MOCK_VERSION", layered_config_floor())
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(
+        forwarded_configs(&dump),
+        vec!["one.toml", "two.toml", "three.toml"]
+    );
+}
+
+#[test]
+fn plugin_oneharness_config_layers_beneath_the_repo_config() {
+    // A plugin's oneharness files are defaults the including config overrides,
+    // so they go first (lowest) and the repository's come after them.
+    let p = Project::new();
+    p.write(
+        "team.yml",
+        "oneharness:\n  config: [\"p.toml\"]\nrules: []\n",
+    );
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nplugins:\n  - ./team.yml\n\
+             oneharness:\n  config: [\"r.toml\"]\n\
+             rules:\n  - {{ name: oh_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"oh_rule": true}"#);
+    let dump = p.path().join("args.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERSION", layered_config_floor())
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(forwarded_configs(&dump), vec!["p.toml", "r.toml"]);
+}
+
+#[test]
+fn nested_configs_layer_oneharness_configs_distant_first_without_duplicates() {
+    // An ancestor llmlint config's oneharness files go beneath the nearer one's.
+    // `shared.toml` is configured at both levels: it is forwarded once, at the
+    // nearer config's position, so it still overrides the ancestor's `root.toml`
+    // the way the nearer config layered it.
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\noneharness:\n  config: [\"shared.toml\", \"root.toml\"]\n",
+    );
+    p.write(
+        "sub/llmlint.yml",
+        &format!(
+            "files:\n  include: [\"src/**\"]\n\
+             oneharness:\n  config: [\"shared.toml\", \"leaf.toml\"]\n\
+             rules:\n  - {{ name: oh_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("sub/src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"oh_rule": true}"#);
+    let dump = p.path().join("args.txt");
+    p.lint()
+        .current_dir(p.path().join("sub"))
+        .env("LLMLINT_MOCK_VERSION", layered_config_floor())
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(
+        forwarded_configs(&dump),
+        vec!["root.toml", "shared.toml", "leaf.toml"]
+    );
+}
+
+#[test]
+fn a_single_oneharness_config_keeps_the_argv_it_always_had() {
+    // One resolved file is forwarded exactly as before layering existed, and on
+    // the base floor (the mock's default version, `MIN_VERSION`) — the
+    // multi-file floor does not apply. The whole argv is pinned, not just the
+    // `--config` pair; only the temp `--system-file`/`--schema` paths vary.
+    let (p, verdicts) = oneharness_config_project(r#"["only.toml"]"#);
+    let dump = p.path().join("args.txt");
+    p.lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    let args = fs::read_to_string(&dump).unwrap();
+    let mut normalized: Vec<&str> = Vec::new();
+    let mut lines = args.lines().peekable();
+    while let Some(l) = lines.next() {
+        normalized.push(l);
+        if matches!(l, "--system-file" | "--schema" | "--cwd" | "--prompt") {
+            lines.next();
+            normalized.push("<value>");
+        }
+    }
+    assert_eq!(
+        normalized,
+        vec![
+            "run",
+            "--system-file",
+            "<value>",
+            "--prompt",
+            "<value>",
+            "--schema",
+            "<value>",
+            "--cwd",
+            "<value>",
+            "--timeout",
+            "600",
+            "--mode",
+            "read-only",
+            "--require-available",
+            "--format",
+            "json",
+            "--compact",
+            "--config",
+            "only.toml",
+        ],
+        "{args}"
+    );
+}
+
+#[test]
+fn several_oneharness_configs_on_a_too_old_oneharness_exit_two() {
+    // A pre-layering oneharness refuses a second `--config`; llmlint refuses the
+    // run up front, naming the version it found and the floor, rather than
+    // silently forwarding only the first file. No judge runs.
+    let (p, verdicts) = oneharness_config_project(r#"["a.toml", "b.toml"]"#);
+    let dump = p.path().join("args.txt");
+    let floor = layered_config_floor();
+    p.lint()
+        .env("LLMLINT_MOCK_VERSION", "0.17.9")
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "oneharness 0.17.9 (mock) is too old",
+        ))
+        .stderr(predicate::str::contains(format!(">= {floor}")))
+        .stderr(predicate::str::contains("layer 2 oneharness config files"));
+    assert!(
+        !dump.exists(),
+        "no oneharness run may happen below the floor"
+    );
+}
+
+#[test]
+fn a_single_oneharness_config_still_runs_below_the_layering_floor() {
+    // One file needs only the base floor: a oneharness older than the layering
+    // floor (here exactly `MIN_VERSION`) still runs it.
+    let (p, verdicts) = oneharness_config_project(r#"["only.toml"]"#);
+    let dump = p.path().join("args.txt");
+    let (major, minor, patch) = llmlint::io::oneharness::MIN_VERSION;
+    p.lint()
+        .env("LLMLINT_MOCK_VERSION", format!("{major}.{minor}.{patch}"))
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
+        .assert()
+        .success();
+    assert_eq!(forwarded_configs(&dump), vec!["only.toml"]);
 }
 
 #[test]

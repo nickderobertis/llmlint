@@ -122,7 +122,7 @@
       "type": "object",
       "properties": {
         "config": {
-          "description": "oneharness config file(s) to forward via `--config` (single-file today;\nextras are warned and dropped).",
+          "description": "oneharness config files to forward, each as its own `--config`, in\nlayering order: oneharness applies them lowest first, so a later file\noverrides an earlier one per field. Across nested llmlint configs and\nplugins the lists concatenate — the most distant config's entries first,\nthe nearest's last, an exact duplicate path kept only at its nearest\nposition — then `LLMLINT_ONEHARNESS_CONFIG`'s paths and the\n`--oneharness-config` flags follow, so the command line is the top layer.\nMore than one file needs oneharness >= 0.18.0 (layered `--config`).",
           "type": "array",
           "items": {
             "type": "string"

@@ -72,6 +72,19 @@ pub enum Error {
     )]
     OneharnessTooOld { found: String, required: String },
 
+    #[error(
+        "oneharness {found} is too old to layer {files} oneharness config files; \
+         llmlint requires oneharness >= {required} to forward more than one \
+         --config (each later file overriding the earlier ones). Upgrade \
+         oneharness (https://github.com/nickderobertis/oneharness), or configure \
+         a single oneharness config file."
+    )]
+    OneharnessTooOldForLayeredConfig {
+        found: String,
+        required: String,
+        files: usize,
+    },
+
     #[error("oneharness run failed: {0}")]
     Oneharness(String),
 

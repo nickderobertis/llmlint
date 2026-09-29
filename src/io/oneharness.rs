@@ -40,6 +40,15 @@ pub const DEFAULT_BIN: &str = "oneharness";
 // llmlint: ignore[invalid_states_unrepresentable] every u64 (major, minor, patch) triple is a valid semver core, and tuple order is semver-core order
 pub const MIN_VERSION: (u64, u64, u64) = (0, 14, 0);
 
+/// Minimum oneharness version for forwarding **more than one** oneharness config
+/// file. oneharness 0.18.0 made `--config` repeatable, layering the files in the
+/// order given (each later file overriding the earlier ones per field); an older
+/// binary refuses a second `--config`. Required only when llmlint resolves
+/// several files — a single file still works down to [`MIN_VERSION`], which is
+/// why `pyproject.toml`'s `oneharness-cli` floor stays at that one.
+// llmlint: ignore[invalid_states_unrepresentable] every u64 (major, minor, patch) triple is a valid semver core, and tuple order is semver-core order
+pub const LAYERED_CONFIG_MIN_VERSION: (u64, u64, u64) = (0, 18, 0);
+
 const HISTORY_LABELS_ENV: &str = "ONEHARNESS_HISTORY_LABELS";
 
 /// Add llmlint's role to oneharness's comma-separated `key=value` environment
@@ -167,8 +176,11 @@ pub struct RunRequest<'a> {
     pub schema_max_retries: Option<u32>,
     pub cwd: &'a Path,
     pub timeout_secs: u64,
-    /// Single oneharness config to forward via `--config` (replaces discovery).
-    pub oneharness_config: Option<&'a Path>,
+    /// oneharness config files to forward, each as its own `--config`, lowest
+    /// layer first (replaces oneharness's own discovery when non-empty). More
+    /// than one needs [`LAYERED_CONFIG_MIN_VERSION`]; see
+    /// [`Client::check_layered_config_version`].
+    pub oneharness_config: &'a [PathBuf],
     /// Pass `--no-config` so oneharness ignores its own config discovery.
     pub no_config: bool,
 }
@@ -289,6 +301,25 @@ impl Client {
         }
     }
 
+    /// Confirm oneharness can layer `files` config files, given the `--version`
+    /// string [`Client::check_min_version`] returned. More than one file needs
+    /// [`LAYERED_CONFIG_MIN_VERSION`] (repeatable `--config`); one file or none
+    /// passes on any version `check_min_version` accepted. Never degrades to
+    /// forwarding only the first file.
+    pub fn check_layered_config_version(raw: &str, files: usize) -> Result<()> {
+        if files <= 1 {
+            return Ok(());
+        }
+        match parse_semver(raw) {
+            Some(v) if v >= LAYERED_CONFIG_MIN_VERSION => Ok(()),
+            _ => Err(Error::OneharnessTooOldForLayeredConfig {
+                found: raw.to_string(),
+                required: format_version(LAYERED_CONFIG_MIN_VERSION),
+                files,
+            }),
+        }
+    }
+
     /// Run one judge and return its per-rule verdicts. Convenience wrapper over
     /// [`Client::run_with_trace`] that discards the debug trace.
     pub fn run(&self, req: &RunRequest) -> Result<BTreeMap<String, RuleVerdict>> {
@@ -395,9 +426,11 @@ impl Client {
         }
         if req.no_config {
             args.push("--no-config".into());
-        } else if let Some(c) = req.oneharness_config {
-            args.push("--config".into());
-            args.push(c.as_os_str().to_os_string());
+        } else {
+            for c in req.oneharness_config {
+                args.push("--config".into());
+                args.push(c.as_os_str().to_os_string());
+            }
         }
         trace.command = render_command(&self.bin, &args);
 
@@ -503,7 +536,7 @@ impl Client {
             schema_max_retries: None,
             cwd: &cwd,
             timeout_secs,
-            oneharness_config: None,
+            oneharness_config: &[],
             no_config: false,
         };
         match self.run(&req) {
@@ -727,7 +760,7 @@ mod tests {
             schema_max_retries: None,
             cwd,
             timeout_secs: 5,
-            oneharness_config: None,
+            oneharness_config: &[],
             no_config: true,
         }
     }
@@ -781,7 +814,7 @@ mod tests {
         let full = RunRequest {
             model: Some("some-model"),
             schema_max_retries: Some(2),
-            oneharness_config: Some(&config),
+            oneharness_config: std::slice::from_ref(&config),
             no_config: false,
             ..req(&schema, &cwd)
         };
@@ -829,6 +862,54 @@ mod tests {
     }
 
     #[test]
+    fn layered_config_floor_applies_only_to_several_files() {
+        // One file (or none) passes on any version the base gate accepted...
+        for files in [0, 1] {
+            assert!(Client::check_layered_config_version("oneharness 0.14.0", files).is_ok());
+        }
+        // ...several need repeatable `--config`: at the floor or above passes.
+        let (major, minor, patch) = LAYERED_CONFIG_MIN_VERSION;
+        let floor = format!("oneharness {major}.{minor}.{patch}");
+        assert!(Client::check_layered_config_version(&floor, 2).is_ok());
+        assert!(Client::check_layered_config_version("oneharness 1.0.0", 3).is_ok());
+        // Below it is refused, naming the found version, the floor and the count.
+        let err = Client::check_layered_config_version("oneharness 0.17.9 (x)", 2)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("oneharness 0.17.9 (x) is too old"), "{err}");
+        assert!(
+            err.contains(&format!(">= {major}.{minor}.{patch}")),
+            "{err}"
+        );
+        assert!(err.contains("layer 2 oneharness config files"), "{err}");
+        // An unparseable version can't prove the floor, so it is refused too.
+        assert!(Client::check_layered_config_version("oneharness", 2).is_err());
+    }
+
+    #[test]
+    fn layered_config_floor_is_above_the_base_floor() {
+        assert!(LAYERED_CONFIG_MIN_VERSION > MIN_VERSION);
+    }
+
+    #[test]
+    fn each_oneharness_config_is_its_own_flag_in_order() {
+        let client = Client::new(Some("definitely-not-a-real-binary-xyz"));
+        let schema = json!({"type": "object"});
+        let cwd = std::env::temp_dir();
+        let files = [PathBuf::from("a.toml"), PathBuf::from("b.toml")];
+        let (trace, _) = client.run_with_trace(&RunRequest {
+            oneharness_config: &files,
+            no_config: false,
+            ..req(&schema, &cwd)
+        });
+        assert!(
+            trace.command.ends_with(" --config a.toml --config b.toml"),
+            "{}",
+            trace.command
+        );
+    }
+
+    #[test]
     fn pyproject_oneharness_floor_matches_min_version() {
         // The wheel's `oneharness-cli` floor (what `pip install llmlint-cli`
         // resolves) and `MIN_VERSION` (what the binary enforces) restate one
@@ -860,6 +941,26 @@ mod tests {
         assert!(
             agents.contains(&expected),
             "AGENTS.md must state the floor as `{expected}` to match oneharness::MIN_VERSION"
+        );
+    }
+
+    #[test]
+    fn docs_name_the_layered_config_floor() {
+        // The README and the `oneharness.config` doc comment (hence the generated
+        // config schema) tell a user which oneharness layers several files; pin
+        // each restatement to the constant so a floor bump can't strand one.
+        let (major, minor, patch) = LAYERED_CONFIG_MIN_VERSION;
+        let readme = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"));
+        let expected =
+            format!("Passing more than one file needs oneharness ≥ {major}.{minor}.{patch}");
+        assert!(
+            readme.contains(&expected),
+            "README.md must state `{expected}`"
+        );
+        let expected = format!("More than one file needs oneharness >= {major}.{minor}.{patch}");
+        assert!(
+            crate::io::assets::CONFIG_SCHEMA.contains(&expected),
+            "the `oneharness.config` doc comment must state `{expected}`"
         );
     }
 

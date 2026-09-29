@@ -111,7 +111,8 @@ pub struct LintArgs {
     #[arg(long = "config", short = 'c', value_name = "PATH")]
     pub config: Vec<PathBuf>,
 
-    /// oneharness config file to forward via `--config` (single-file; extras warn).
+    /// oneharness config file to forward via `--config` (repeatable; layered
+    /// above the configured ones, later flags overriding earlier).
     #[arg(long = "oneharness-config", value_name = "PATH")]
     pub oneharness_config: Vec<PathBuf>,
 
@@ -502,7 +503,8 @@ pub struct LintConfigArgs {
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
 
-    /// oneharness config file to forward via `--config` (single-file; extras warn).
+    /// oneharness config file to forward via `--config` (repeatable; layered
+    /// above the configured ones, later flags overriding earlier).
     #[arg(long = "oneharness-config", value_name = "PATH")]
     pub oneharness_config: Vec<PathBuf>,
 

@@ -499,7 +499,9 @@ fn load_discovered(cwd: &Path, explicit_files: &[PathBuf]) -> Result<Loaded> {
 /// Fold a `cwd`-or-ancestor config's session-level settings under `session`
 /// (first-writer-wins, so the nearer-`cwd` config already in `session` keeps its
 /// values). Agents and rules are handled by the caller; this is scalars + the
-/// default file filter only.
+/// default file filter only. `oneharness.config` is layered, not replaced: the
+/// ancestor's files go beneath the nearer config's (see
+/// [`crate::domain::config::OneharnessCfg::merge_under`]).
 fn fold_session_settings(session: &mut Config, unit: &Config) {
     session.version = session.version.take().or_else(|| unit.version.clone());
     session.prompt_template = session

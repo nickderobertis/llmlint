@@ -36,8 +36,14 @@ impl FileFilter {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct OneharnessCfg {
-    /// oneharness config file(s) to forward via `--config` (single-file today;
-    /// extras are warned and dropped).
+    /// oneharness config files to forward, each as its own `--config`, in
+    /// layering order: oneharness applies them lowest first, so a later file
+    /// overrides an earlier one per field. Across nested llmlint configs and
+    /// plugins the lists concatenate — the most distant config's entries first,
+    /// the nearest's last, an exact duplicate path kept only at its nearest
+    /// position — then `LLMLINT_ONEHARNESS_CONFIG`'s paths and the
+    /// `--oneharness-config` flags follow, so the command line is the top layer.
+    /// More than one file needs oneharness >= 0.18.0 (layered `--config`).
     #[serde(default)]
     pub config: Vec<String>,
     /// Override the oneharness binary path.
@@ -59,15 +65,32 @@ impl OneharnessCfg {
     /// Fill any unset field from `other` (a plugin's `oneharness` block), keeping
     /// this (nearer-root) config's own values. Lets a plugin supply defaults the
     /// including config didn't set, while the including config always wins.
+    ///
+    /// `config` is the exception: oneharness layers its `--config` files, so the
+    /// lists concatenate rather than the nearer one replacing the farther —
+    /// `other`'s (the more distant layer) first, this config's last, so this
+    /// config's files override the plugin's per field. An exact duplicate path
+    /// keeps only its last (nearest) position, where the nearer config put it.
     pub fn merge_under(&mut self, other: OneharnessCfg) {
-        if self.config.is_empty() {
-            self.config = other.config;
-        }
+        let mut layered = other.config;
+        layered.append(&mut self.config);
+        self.config = dedup_keep_last(layered);
         self.bin = self.bin.take().or(other.bin);
         self.model = self.model.take().or(other.model);
         self.timeout = self.timeout.or(other.timeout);
         self.schema_max_retries = self.schema_max_retries.or(other.schema_max_retries);
     }
+}
+
+/// Drop every earlier repeat of a value, keeping each at its last position.
+fn dedup_keep_last(items: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        if !items[i + 1..].contains(item) {
+            out.push(item.clone());
+        }
+    }
+    out
 }
 
 /// Whether, how many, and where to log each run's full results to disk. When
@@ -331,6 +354,8 @@ impl Config {
     /// the current config over its plugins, a plugin over its own plugins, and an
     /// earlier-listed plugin over a later sibling. Rules are appended in include
     /// order; on an agent-name clash the existing (nearer-root) agent is kept.
+    /// `oneharness.config` lists concatenate beneath ours instead (see
+    /// [`OneharnessCfg::merge_under`]), since oneharness layers them itself.
     pub fn merge_plugin(&mut self, other: Config) {
         // Top-level scalars: keep ours when set, otherwise adopt the plugin's.
         self.version = self.version.take().or(other.version);
@@ -1048,6 +1073,40 @@ mod tests {
         // ...and the plugin fills only what the root left unset.
         assert_eq!(root.files.include, vec!["src/**".to_string()]);
         assert_eq!(root.oneharness.timeout, Some(99));
+    }
+
+    #[test]
+    fn oneharness_config_lists_layer_plugin_first_nearest_last() {
+        // oneharness layers `--config` files, so a plugin's list sits beneath
+        // the including config's instead of being replaced by it.
+        let mut root = Config::default();
+        root.oneharness.config = vec!["r.toml".into()];
+        let mut plugin = Config::default();
+        plugin.oneharness.config = vec!["p.toml".into()];
+        root.merge_plugin(plugin);
+        assert_eq!(root.oneharness.config, vec!["p.toml", "r.toml"]);
+
+        // A second, farther plugin goes beneath both; an empty list adds nothing.
+        let mut farther = Config::default();
+        farther.oneharness.config = vec!["f.toml".into()];
+        root.merge_plugin(farther);
+        root.merge_plugin(Config::default());
+        assert_eq!(root.oneharness.config, vec!["f.toml", "p.toml", "r.toml"]);
+    }
+
+    #[test]
+    fn oneharness_config_duplicates_keep_their_nearest_position() {
+        // The same path at two levels is forwarded once, where the nearer config
+        // placed it — so it still overrides what that config layered it over.
+        let mut near = OneharnessCfg {
+            config: vec!["shared.toml".into(), "near.toml".into()],
+            ..Default::default()
+        };
+        near.merge_under(OneharnessCfg {
+            config: vec!["shared.toml".into(), "far.toml".into()],
+            ..Default::default()
+        });
+        assert_eq!(near.config, vec!["far.toml", "shared.toml", "near.toml"]);
     }
 
     #[test]
