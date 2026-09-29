@@ -12,6 +12,7 @@ pub mod config_schema;
 pub mod cost;
 pub mod diffmodel;
 pub mod ignore;
+pub mod labels;
 pub mod plan;
 pub mod report;
 pub mod schema;

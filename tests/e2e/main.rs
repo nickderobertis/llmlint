@@ -11080,6 +11080,330 @@ fn history_limit_truncates_the_listing() {
     assert_eq!(arr.as_array().unwrap().len(), 2);
 }
 
+// ---- run labels: `lint --label` / `LLMLINT_LABELS` + `history --label` -------
+
+/// A one-rule passing project for the label journeys. Returns the verdicts path.
+fn label_project() -> (Project, PathBuf) {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: a_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write("src/lib.rs", "// code\n");
+    let verdicts = p.write_verdicts(r#"{"a_rule": true}"#);
+    (p, verdicts)
+}
+
+/// The stderr results pointer of a human-format run: the line beginning with
+/// `See full results with`.
+fn pointer_line(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find(|l| l.starts_with("See full results with"))
+        .unwrap_or_else(|| panic!("no results pointer on stderr:\n{stderr}"))
+        .to_string()
+}
+
+/// Extract a run id from its pointer exactly as the README tells a caller to:
+/// the text after ``llmlint history `` up to the next backtick.
+fn pointer_id(line: &str) -> String {
+    let rest = line
+        .split_once("`llmlint history ")
+        .unwrap_or_else(|| panic!("pointer has no `llmlint history `: {line}"))
+        .1;
+    rest[..rest.find('`').expect("closing backtick")].to_string()
+}
+
+/// Run ids sort chronologically only to the second (the sub-second suffix is not
+/// monotonic), so journeys asserting newest-first order start each run in a
+/// fresh second.
+fn wait_for_next_second() {
+    let secs = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let start = secs();
+    while secs() == start {
+        thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Run a labelled (or, with no labels, unlabelled) passing lint in a fresh
+/// second and return its pointer line.
+fn labelled_run(p: &Project, verdicts: &Path, labels: &[&str]) -> String {
+    wait_for_next_second();
+    let mut c = p.lint();
+    for l in labels {
+        c.arg("--label").arg(l);
+    }
+    let out = c.env("LLMLINT_MOCK_VERDICTS", verdicts).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "stderr:\n{stderr}");
+    pointer_line(&stderr)
+}
+
+/// `history <args> --format json`, asserting success and parsing stdout.
+fn history_json(p: &Project, args: &[&str]) -> Value {
+    let out = p
+        .bare()
+        .arg("history")
+        .args(args)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn labelled_runs_are_recorded_pointed_at_and_filtered_in_history() {
+    let (p, verdicts) = label_project();
+    let first = labelled_run(&p, &verdicts, &["session=abc", "turn=1"]);
+    // Given out of order: the pointer still lists the pairs sorted by key.
+    let second = labelled_run(&p, &verdicts, &["turn=2", "session=abc"]);
+    let plain = labelled_run(&p, &verdicts, &[]);
+    let (id1, id2, id3) = (pointer_id(&first), pointer_id(&second), pointer_id(&plain));
+
+    assert_eq!(
+        first,
+        format!("See full results with `llmlint history {id1}` (labels: session=abc, turn=1)")
+    );
+    assert!(
+        second.ends_with("` (labels: session=abc, turn=2)"),
+        "{second}"
+    );
+    // An unlabelled run's pointer is byte-identical to before labels existed.
+    assert_eq!(
+        plain,
+        format!("See full results with `llmlint history {id3}`")
+    );
+
+    // The filtered listing holds exactly the two labelled runs, newest first,
+    // with their labels; the ids are the ones the pointers printed.
+    let listed = history_json(&p, &["--label", "session=abc"]);
+    let entries = listed.as_array().unwrap();
+    let ids: Vec<&str> = entries.iter().map(|e| e["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec![id2.as_str(), id1.as_str()]);
+    assert_eq!(
+        entries[0]["labels"],
+        serde_json::json!({"session": "abc", "turn": "2"})
+    );
+    assert_eq!(
+        entries[1]["labels"],
+        serde_json::json!({"session": "abc", "turn": "1"})
+    );
+    // Unfiltered, every entry carries `labels` — `{}` for the unlabelled run.
+    let all = history_json(&p, &[]);
+    assert_eq!(all.as_array().unwrap().len(), 3);
+    assert_eq!(all[0]["id"], id3.as_str());
+    assert_eq!(all[0]["labels"], serde_json::json!({}));
+
+    // `latest` resolves within the filter, to the older of the two runs here.
+    let latest = history_json(
+        &p,
+        &["latest", "--label", "session=abc", "--label", "turn=1"],
+    );
+    assert_eq!(latest["id"], id1.as_str());
+
+    // `history <id> --format json` is the record as stored: `labels` (sorted)
+    // for a labelled run, and no `labels` key at all for an unlabelled one.
+    let rec = history_json(&p, &[&id2]);
+    let keys: Vec<&String> = rec["labels"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, vec!["session", "turn"]);
+    let stored = fs::read_to_string(p.history_dir().join(format!("{id2}.json"))).unwrap();
+    assert_eq!(rec, serde_json::from_str::<Value>(&stored).unwrap());
+    let rec = history_json(&p, &[&id3]);
+    assert!(rec.get("labels").is_none(), "{rec}");
+    assert!(
+        !fs::read_to_string(p.history_dir().join(format!("{id3}.json")))
+            .unwrap()
+            .contains("\"labels\"")
+    );
+
+    // The human listing and single-run view show the labels.
+    p.bare()
+        .args(["history", "--label", "session=abc"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("{id1}  ")))
+        .stdout(predicate::str::contains("labels: session=abc, turn=1"))
+        .stdout(predicate::str::contains("labels: session=abc, turn=2"))
+        .stdout(predicate::str::contains(id3.as_str()).not());
+    p.bare()
+        .args(["history", &id1])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("  labels: session=abc, turn=1\n"));
+
+    // `history <id> --label …` shows a matching run and refuses a non-matching
+    // one with the history error naming the filter.
+    p.bare()
+        .args(["history", &id1, "--label", "turn=1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("Run {id1}")));
+    p.bare()
+        .args(["history", &id3, "--label", "session=abc"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(format!(
+            "no run with id \"{id3}\""
+        )))
+        .stderr(predicate::str::contains("--label session=abc"));
+    // `latest` and a listing with no match each give that error too.
+    for args in [
+        &["history", "latest", "--label", "session=zzz"][..],
+        &["history", "--label", "session=zzz"][..],
+        &["history", "--label", "session=zzz", "--format", "json"][..],
+    ] {
+        p.bare()
+            .args(args)
+            .assert()
+            .code(2)
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains(
+                "no run matching --label session=zzz",
+            ));
+    }
+    // A malformed filter is a usage error under the same grammar as `lint`.
+    p.bare()
+        .args(["history", "--label", "session"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid label \"session\" from --label: expected KEY=VALUE",
+        ));
+}
+
+#[test]
+fn filtered_history_applies_limit_after_the_filter() {
+    // Three matching runs, then two newer non-matching ones: `--limit 2` returns
+    // the two newest *matching* runs — the newer non-matches don't use it up.
+    let (p, verdicts) = label_project();
+    let matching: Vec<String> = (0..3)
+        .map(|i| {
+            pointer_id(&labelled_run(
+                &p,
+                &verdicts,
+                &["session=a", &format!("turn={i}")],
+            ))
+        })
+        .collect();
+    for _ in 0..2 {
+        labelled_run(&p, &verdicts, &["session=b"]);
+    }
+    let listed = history_json(&p, &["--label", "session=a", "--limit", "2"]);
+    let ids: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![matching[2].as_str(), matching[1].as_str()]);
+}
+
+#[test]
+fn env_labels_label_a_run_and_a_flag_overrides_the_same_key() {
+    let (p, verdicts) = label_project();
+    let run = |flags: &[&str]| {
+        let mut c = p.lint();
+        c.args(flags.iter().flat_map(|f| ["--label", f]));
+        let out = c
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .env("LLMLINT_LABELS", " session=env , turn=1 ")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        pointer_id(&pointer_line(&String::from_utf8_lossy(&out.stderr)))
+    };
+    // The env layer alone labels the run (entries trimmed).
+    let id = run(&[]);
+    assert_eq!(
+        history_json(&p, &[&id])["labels"],
+        serde_json::json!({"session": "env", "turn": "1"})
+    );
+    // `--label` overlays it key by key: `turn` is replaced, `session` kept.
+    let id = run(&["turn=9"]);
+    assert_eq!(
+        history_json(&p, &[&id])["labels"],
+        serde_json::json!({"session": "env", "turn": "9"})
+    );
+    // An empty `LLMLINT_LABELS` means no labels.
+    let out = p
+        .lint()
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_LABELS", "")
+        .output()
+        .unwrap();
+    let id = pointer_id(&pointer_line(&String::from_utf8_lossy(&out.stderr)));
+    assert!(history_json(&p, &[&id]).get("labels").is_none());
+}
+
+#[test]
+fn an_invalid_label_exits_2_before_judging_and_records_nothing() {
+    let (p, verdicts) = label_project();
+    let spawns = p.path().join("spawns");
+    let long_key = format!("{}=v", "k".repeat(65));
+    let long_value = format!("k={}", "v".repeat(257));
+    let cases: [(&str, &str); 8] = [
+        ("=v", "key must be"),
+        (".k=v", "beginning with a letter or digit"),
+        ("_k=v", "beginning with a letter or digit"),
+        (&long_key, "key must be 1-64"),
+        ("k=", "value must not be empty"),
+        (&long_value, "value exceeds 256 characters"),
+        ("k=a\u{7}b", "control characters"),
+        ("session", "expected KEY=VALUE"),
+    ];
+    for (entry, why) in cases {
+        let quoted = format!("{entry:?}");
+        // From the flag...
+        p.lint()
+            .args(["--label", entry])
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!(
+                "invalid label {quoted} from --label: "
+            )))
+            .stderr(predicate::str::contains(why));
+        // ...and from the environment, where it is named as its source.
+        p.lint()
+            .env("LLMLINT_LABELS", format!("ok=1,{entry}"))
+            .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+            .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!(
+                "invalid label {quoted} from LLMLINT_LABELS: "
+            )))
+            .stderr(predicate::str::contains(why));
+    }
+    // A C1 control is rejected too (it can't travel through an env var on every
+    // platform, so the flag carries it).
+    p.lint()
+        .args(["--label", "k=a\u{85}b"])
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("control characters"));
+    assert_eq!(harness_spawns(&spawns), 0, "no judge may run");
+    assert_eq!(history_record_count(&p), 0, "no record may be written");
+}
+
 // llmlint: ignore-block[e2e_not_mocked] the hook's third-party tools (screencomp, freeze) are its external-process seam, stubbed as this suite stubs oneharness: the real hook script runs, and the real tools are not installed by `just setup` or CI's gate
 /// A scratch checkout for driving the real `.githooks/pre-push` script the way
 /// git does (a range on `SCREENCOMP_GUARD_RANGE`, cwd = the repo; unix-only, as

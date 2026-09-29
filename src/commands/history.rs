@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::cli::{HistoryArgs, OutputFormat};
+use crate::domain::labels;
 use crate::errors::{Error, Result};
 use crate::io::{configfs, history};
 
@@ -31,12 +32,55 @@ pub fn run(args: HistoryArgs) -> Result<i32> {
     };
 
     validate_filters(&args)?;
+    // Parsed through the same grammar `lint --label` records with, so a filter
+    // that could never match a recorded label is a usage error, not a silent
+    // empty result.
+    let filter = labels::parse_flags(&args.label)?;
 
     let dir = resolve_dir(&args, &cwd)?;
 
     match &args.id {
-        Some(id) => show(&dir, id, &args),
-        None => list(&dir, &args),
+        Some(id) => show(&dir, id, &args, &filter),
+        None => list(&dir, &args, &filter),
+    }
+}
+
+/// The label filter as the user spelled it (`--label k=v --label k2=v2`), for
+/// naming it in a no-match error.
+fn describe_filter(filter: &[(String, String)]) -> String {
+    filter
+        .iter()
+        .map(|(k, v)| format!("{} {k}={v}", labels::FLAG))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Resolve `id` (or `latest`) within the label filter. With no filter this is
+/// exactly [`history::load`]; with one, `latest` is the newest matching run and
+/// an explicit id is shown only when it matches — otherwise the history error,
+/// naming the filter.
+fn load_matching(dir: &Path, id: &str, filter: &[(String, String)]) -> Result<history::Record> {
+    if filter.is_empty() {
+        return history::load(dir, id);
+    }
+    let described = describe_filter(filter);
+    if id == "latest" {
+        return history::all(dir)?
+            .into_iter()
+            .find(|r| labels::matches(&r.labels(), filter))
+            .ok_or_else(|| {
+                Error::History(format!("no run matching {described} in {}", dir.display()))
+            });
+    }
+    let record = history::load(dir, id)?;
+    if labels::matches(&record.labels(), filter) {
+        Ok(record)
+    } else {
+        Err(Error::History(format!(
+            "no run with id {id:?} matching {described} in {} \
+             (run `llmlint history {described}` to list matching runs)",
+            dir.display()
+        )))
     }
 }
 
@@ -83,8 +127,8 @@ fn validate_filters(args: &HistoryArgs) -> Result<()> {
 
 /// Show one run. `--path` prints just the record's file path; otherwise the run's
 /// results, optionally narrowed by `--status`/`--rule`, as human text or JSON.
-fn show(dir: &Path, id: &str, args: &HistoryArgs) -> Result<i32> {
-    let record = history::load(dir, id)?;
+fn show(dir: &Path, id: &str, args: &HistoryArgs, filter: &[(String, String)]) -> Result<i32> {
+    let record = load_matching(dir, id, filter)?;
     if args.path {
         println!("{}", record.path.display());
         return Ok(0);
@@ -105,20 +149,34 @@ fn show(dir: &Path, id: &str, args: &HistoryArgs) -> Result<i32> {
             "{}",
             serde_json::to_string_pretty(&value).map_err(|e| Error::Io(e.to_string()))?
         ),
-        OutputFormat::Human => print!("{}", render_run(&value, &record.id)),
+        OutputFormat::Human => print!("{}", render_run(&record, &value)),
     }
     Ok(0)
 }
 
-/// List recent runs, newest first, capped at `--limit` (default 20).
-fn list(dir: &Path, args: &HistoryArgs) -> Result<i32> {
+/// List recent runs, newest first, keeping only those matching the label filter
+/// and then capping at `--limit` (default 20) — so non-matching runs never count
+/// against the limit. A filter that matches nothing is the history error naming
+/// it (an unfiltered empty history stays a friendly note).
+fn list(dir: &Path, args: &HistoryArgs, filter: &[(String, String)]) -> Result<i32> {
     if args.path {
         // `--path` with no id: the directory itself, for scripting.
         println!("{}", dir.display());
         return Ok(0);
     }
     let limit = args.limit.unwrap_or(20);
-    let records: Vec<history::Record> = history::all(dir)?.into_iter().take(limit).collect();
+    let records: Vec<history::Record> = history::all(dir)?
+        .into_iter()
+        .filter(|r| labels::matches(&r.labels(), filter))
+        .take(limit)
+        .collect();
+    if records.is_empty() && !filter.is_empty() {
+        return Err(Error::History(format!(
+            "no run matching {} in {}",
+            describe_filter(filter),
+            dir.display()
+        )));
+    }
 
     match args.format {
         OutputFormat::Json => {
@@ -173,11 +231,14 @@ fn list_entry(r: &history::Record) -> Value {
         "summary": g("summary"),
         "cwd": g("cwd"),
         "path": r.path.display().to_string(),
+        // Always present (`{}` when the run had none), so a consumer never has
+        // to special-case an unlabelled run.
+        "labels": r.labels(),
     })
 }
 
-/// One line in the human run listing: id, timestamp, exit code, and a terse
-/// counts summary.
+/// One line in the human run listing: id, timestamp, exit code, a terse counts
+/// summary, and the run's labels when it has any.
 fn render_list_line(r: &history::Record) -> String {
     let s = |k: &str| r.value.get(k).and_then(Value::as_str).unwrap_or("");
     let exit = r
@@ -190,11 +251,17 @@ fn render_list_line(r: &history::Record) -> String {
         .get("summary")
         .map(counts_summary)
         .unwrap_or_default();
-    format!("{}  {}  exit {exit}  {counts}", r.id, s("timestamp"))
+    let mut line = format!("{}  {}  exit {exit}  {counts}", r.id, s("timestamp"));
+    let labels = r.labels();
+    if !labels.is_empty() {
+        line.push_str(&format!("  labels: {}", labels::render(&labels)));
+    }
+    line
 }
 
 /// Render one run's full results as human-readable text.
-fn render_run(value: &Value, id: &str) -> String {
+fn render_run(record: &history::Record, value: &Value) -> String {
+    let id = &record.id;
     let s = |k: &str| value.get(k).and_then(Value::as_str).unwrap_or("");
     let exit = value.get("exit_code").and_then(Value::as_i64).unwrap_or(-1);
     let mut out = String::new();
@@ -209,6 +276,10 @@ fn render_run(value: &Value, id: &str) -> String {
         if !joined.is_empty() {
             out.push_str(&format!("  config: {}\n", joined.join(", ")));
         }
+    }
+    let labels = record.labels();
+    if !labels.is_empty() {
+        out.push_str(&format!("  labels: {}\n", labels::render(&labels)));
     }
     if let Some(summary) = value.get("summary") {
         out.push_str(&format!("  {}\n", counts_summary(summary)));
@@ -372,7 +443,7 @@ mod tests {
 
     #[test]
     fn render_run_shows_metadata_and_located_violation() {
-        let text = render_run(&record(), "20260704T000000Z-00001");
+        let text = render_run(&stored(record()), &record());
         assert!(text.contains("Run 20260704T000000Z-00001  2026-07-04T00:00:00Z"));
         assert!(text.contains("command: lint   exit: 1   cwd: /proj"));
         assert!(text.contains("config: llmlint.yml"));
@@ -382,6 +453,33 @@ mod tests {
         assert!(text.contains("rationale: raw SQL"));
         assert!(text.contains("src/db.rs:12: inline SQL"));
         assert!(text.contains("SKIP no_files"));
+        // An unlabelled run prints no labels line.
+        assert!(!text.contains("labels:"));
+    }
+
+    fn stored(value: Value) -> history::Record {
+        history::Record {
+            id: "20260704T000000Z-00001".into(),
+            path: PathBuf::from("20260704T000000Z-00001.json"),
+            value,
+        }
+    }
+
+    #[test]
+    fn labels_render_in_both_human_views_and_every_listing_entry() {
+        let mut value = record();
+        value["labels"] = json!({"session": "abc", "turn": "1"});
+        let labelled = stored(value.clone());
+        assert!(render_run(&labelled, &value).contains("  labels: session=abc, turn=1\n"));
+        assert!(render_list_line(&labelled).ends_with("  labels: session=abc, turn=1"));
+        assert_eq!(
+            list_entry(&labelled)["labels"],
+            json!({"session": "abc", "turn": "1"})
+        );
+        // Absence reads as `{}` in the listing and adds nothing to the line.
+        let plain = stored(record());
+        assert_eq!(list_entry(&plain)["labels"], json!({}));
+        assert!(!render_list_line(&plain).contains("labels"));
     }
 
     #[test]

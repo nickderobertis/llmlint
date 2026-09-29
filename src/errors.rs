@@ -124,6 +124,15 @@ pub enum Error {
 
     #[error("invalid environment variable {var}: {message}")]
     Env { var: String, message: String },
+
+    /// A run label that breaks the label grammar ([`crate::domain::labels`]);
+    /// `origin` names where it came from (`--label` or `LLMLINT_LABELS`).
+    #[error("invalid label {entry:?} from {origin}: {message}")]
+    Label {
+        origin: String,
+        entry: String,
+        message: String,
+    },
 }
 
 impl Error {

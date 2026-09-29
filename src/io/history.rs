@@ -18,6 +18,7 @@ use std::time::SystemTime;
 use serde_json::{json, Map, Value};
 
 use crate::domain::config::Config;
+use crate::domain::labels::Labels;
 use crate::domain::report::Report;
 use crate::errors::{io_err, Error, Result};
 
@@ -174,7 +175,10 @@ fn civil(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
 /// Assemble the full run record: the run metadata followed by the pure report
 /// JSON (`summary`/`rules`/`errors`), so the persisted record carries every field
 /// the report exposes and can never drift from it. `config_files` is the ordered
-/// source list (files + plugin URLs) that produced the run.
+/// source list (files + plugin URLs) that produced the run. `labels` are the
+/// caller-supplied run labels: written as a top-level `labels` object (keys
+/// sorted) only when there is at least one, so an unlabelled record keeps its
+/// previous shape and a reader treats absence as `{}`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_record(
     id: &str,
@@ -183,6 +187,7 @@ pub fn build_record(
     cwd: &Path,
     exit_code: i32,
     config_files: &[String],
+    labels: &Labels,
     report: &Report,
 ) -> Value {
     let report_json = report.to_json();
@@ -194,6 +199,9 @@ pub fn build_record(
     obj.insert("cwd".into(), json!(cwd.display().to_string()));
     obj.insert("exit_code".into(), json!(exit_code));
     obj.insert("config_files".into(), json!(config_files));
+    if !labels.is_empty() {
+        obj.insert("labels".into(), json!(labels));
+    }
     // Fold in the report's own top-level keys (summary, rules, errors) in order.
     if let Value::Object(report_map) = report_json {
         for (k, v) in report_map {
@@ -240,6 +248,22 @@ pub struct Record {
     pub id: String,
     pub path: PathBuf,
     pub value: Value,
+}
+
+impl Record {
+    /// The run's caller-supplied labels; an unlabelled record (no `labels` key)
+    /// reads as none. Non-string values are skipped rather than trusted.
+    pub fn labels(&self) -> Labels {
+        self.value
+            .get("labels")
+            .and_then(Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// Every stored record under `dir`, newest first (ids are time-sortable, so this
@@ -419,6 +443,7 @@ mod tests {
             Path::new("/proj"),
             0,
             &["llmlint.yml".to_string()],
+            &Labels::new(),
             &report,
         );
         assert_eq!(rec["id"], "id1");
@@ -430,6 +455,32 @@ mod tests {
         assert_eq!(rec["summary"]["passed"], 1);
         assert_eq!(rec["rules"][0]["name"], "r");
         assert!(rec["errors"].as_array().unwrap().is_empty());
+        // An unlabelled run writes no `labels` key at all.
+        assert!(rec.get("labels").is_none());
+
+        // A labelled run writes them as a sorted object, read back by `labels()`.
+        let labels: Labels = [("turn", "1"), ("session", "abc")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let rec = build_record(
+            "id2",
+            "2026-07-04T00:00:00Z",
+            "lint",
+            Path::new("/proj"),
+            0,
+            &[],
+            &labels,
+            &report,
+        );
+        let text = serde_json::to_string(&rec["labels"]).unwrap();
+        assert_eq!(text, r#"{"session":"abc","turn":"1"}"#);
+        let record = Record {
+            id: "id2".into(),
+            path: PathBuf::from("id2.json"),
+            value: rec,
+        };
+        assert_eq!(record.labels(), labels);
     }
 
     #[test]

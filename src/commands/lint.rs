@@ -13,6 +13,7 @@ use crate::commands::ignores;
 use crate::commands::progress::{LiveStatus, ProgressView};
 use crate::domain::config::{validate, Config, RelevanceMode, Rule};
 use crate::domain::ignore::Suppressions;
+use crate::domain::labels::{self, Labels};
 use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
@@ -65,6 +66,9 @@ pub(crate) fn run_loaded(
     let sources = loaded.sources;
     let plugins = loaded.plugins;
     let mut config = loaded.config;
+    // Run labels are validated first, so a malformed one (from either layer) is
+    // a usage error before anything is judged or recorded.
+    let labels = labels::resolve(std::env::var(labels::ENV_VAR).ok().as_deref(), &args.label)?;
     validate(&config)?;
     validate_filters(&config, &args)?;
     // Fold the `LLMLINT_*` env overrides into the merged config *before* the CLI
@@ -94,7 +98,9 @@ pub(crate) fn run_loaded(
     let selected = select_rules(&config, &args);
     if selected.is_empty() {
         let report = Report::new(Vec::new(), Vec::new());
-        return Ok(finish(&report, &args, &cwd, &sources, command, &config));
+        return Ok(finish(
+            &report, &args, &cwd, &sources, command, &config, &labels,
+        ));
     }
 
     let master_template = config
@@ -466,7 +472,9 @@ pub(crate) fn run_loaded(
     }
 
     let report = Report::new(outcomes, run_errors).with_plan(the_plan.explanation.clone());
-    Ok(finish(&report, &args, &cwd, &sources, command, &config))
+    Ok(finish(
+        &report, &args, &cwd, &sources, command, &config, &labels,
+    ))
 }
 
 /// Emit the report, log the run's full results to disk (best-effort, when results
@@ -480,10 +488,11 @@ fn finish(
     sources: &[String],
     command: &str,
     config: &Config,
+    labels: &Labels,
 ) -> i32 {
     emit(report, args.format, args.verbose, args.color);
     let code = report.exit_code();
-    log_history(report, args, cwd, sources, command, config, code);
+    log_history(report, args, cwd, sources, command, config, labels, code);
     code
 }
 
@@ -492,6 +501,7 @@ fn finish(
 /// a stderr warning, never a change to the lint's exit code — a broken history
 /// dir must not fail an otherwise-good run. Suppressed entirely when logging is
 /// off or no history directory can be determined.
+#[allow(clippy::too_many_arguments)]
 fn log_history(
     report: &Report,
     args: &LintArgs,
@@ -499,6 +509,7 @@ fn log_history(
     sources: &[String],
     command: &str,
     config: &Config,
+    labels: &Labels,
     exit_code: i32,
 ) {
     let settings = history::resolve(config, args.no_history);
@@ -515,17 +526,33 @@ fn log_history(
     let now = std::time::SystemTime::now();
     let id = history::generate_id(now);
     let timestamp = history::format_timestamp(now);
-    let record = history::build_record(&id, &timestamp, command, cwd, exit_code, sources, report);
+    let record = history::build_record(
+        &id, &timestamp, command, cwd, exit_code, sources, labels, report,
+    );
     match history::write_record(dir, &id, &record, settings.max_runs) {
         Ok(_) => {
             // The report on stdout stays the clean report/JSON channel; the note
             // goes to stderr, and only for the human format (a JSON consumer reads
             // the record file itself). This keeps stdout byte-identical to before.
             if args.format == OutputFormat::Human {
-                eprintln!("See full results with `llmlint history {id}`");
+                eprintln!("{}", results_pointer(&id, labels));
             }
         }
         Err(e) => eprintln!("llmlint: warning: could not log run results: {e}"),
+    }
+}
+
+/// The stderr pointer to a run's full results. Unlabelled it is exactly
+/// ``See full results with `llmlint history <ID>` `` (a caller extracts the id as
+/// the text between ``llmlint history `` and the next backtick); a labelled run
+/// appends ` (labels: k1=v1, k2=v2)` in sorted key order, outside the backticks
+/// so that parse rule still holds.
+fn results_pointer(id: &str, labels: &Labels) -> String {
+    let pointer = format!("See full results with `llmlint history {id}`");
+    if labels.is_empty() {
+        pointer
+    } else {
+        format!("{pointer} (labels: {})", labels::render(labels))
     }
 }
 
