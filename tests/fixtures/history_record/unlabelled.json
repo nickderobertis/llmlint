@@ -1,0 +1,29 @@
+{
+  "id": "20260704T153000Z-1a2b3",
+  "timestamp": "2026-07-04T15:30:00Z",
+  "llmlint_version": "<version>",
+  "command": "lint",
+  "cwd": "/proj",
+  "exit_code": 0,
+  "config_files": [
+    "llmlint.yml"
+  ],
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "ignored": 0,
+    "not_relevant": 0,
+    "errored": 0
+  },
+  "rules": [
+    {
+      "name": "r",
+      "outcome": "pass",
+      "votes_total": 1,
+      "votes_hold": 1
+    }
+  ],
+  "errors": []
+}

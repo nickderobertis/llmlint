@@ -11361,6 +11361,30 @@ fn env_labels_label_a_run_and_a_flag_overrides_the_same_key() {
         .unwrap();
     let id = pointer_id(&pointer_line(&String::from_utf8_lossy(&out.stderr)));
     assert!(history_json(&p, &[&id]).get("labels").is_none());
+
+    // Each entry splits on its first `=` (the rest is the value), and a key
+    // repeated within one layer takes the later value — in the env and on the
+    // command line alike.
+    let out = p
+        .lint()
+        .args([
+            "--label",
+            "url=a=b=c",
+            "--label",
+            "turn=5",
+            "--label",
+            "turn=6",
+        ])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_LABELS", "q=x=y,session=one,session=two")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let id = pointer_id(&pointer_line(&String::from_utf8_lossy(&out.stderr)));
+    assert_eq!(
+        history_json(&p, &[&id])["labels"],
+        serde_json::json!({"q": "x=y", "session": "two", "turn": "6", "url": "a=b=c"})
+    );
 }
 
 #[test]

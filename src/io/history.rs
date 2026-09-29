@@ -424,6 +424,55 @@ mod tests {
         assert!(load(dir.path(), "20260101T000000Z-00001").is_err());
     }
 
+    /// The persisted record, pinned byte for byte (see
+    /// `tests/fixtures/history_record/README.md`). The unlabelled golden is the
+    /// shape every record had before run labels existed; the labelled one adds only
+    /// the top-level `labels` object after `config_files`.
+    const GOLDEN_UNLABELLED: &str =
+        include_str!("../../tests/fixtures/history_record/unlabelled.json");
+    const GOLDEN_LABELLED: &str = include_str!("../../tests/fixtures/history_record/labelled.json");
+
+    /// Render a record exactly as [`write_record`] writes it, with the build's
+    /// own version swapped for a placeholder so a release bump doesn't churn the
+    /// golden.
+    fn persisted(labels: &Labels) -> String {
+        use crate::domain::verdict::{Outcome, RuleOutcome};
+        let report = Report::new(
+            vec![RuleOutcome {
+                name: "r".into(),
+                rationale: None,
+                outcome: Outcome::Pass,
+                votes_total: 1,
+                votes_hold: 1,
+                judges: vec![],
+                violations: vec![],
+            }],
+            vec![],
+        );
+        let mut rec = build_record(
+            "20260704T153000Z-1a2b3",
+            "2026-07-04T15:30:00Z",
+            "lint",
+            Path::new("/proj"),
+            0,
+            &["llmlint.yml".to_string()],
+            labels,
+            &report,
+        );
+        rec["llmlint_version"] = json!("<version>");
+        let mut body = serde_json::to_string_pretty(&rec).unwrap();
+        body.push('\n');
+        body
+    }
+
+    #[test]
+    fn persisted_record_matches_the_goldens() {
+        assert_eq!(persisted(&Labels::default()), GOLDEN_UNLABELLED);
+        let labels =
+            crate::domain::labels::resolve(None, &["turn=3".into(), "session=abc".into()]).unwrap();
+        assert_eq!(persisted(&labels), GOLDEN_LABELLED);
+    }
+
     #[test]
     fn build_record_carries_metadata_and_report_fields() {
         use crate::domain::verdict::{Outcome, RuleOutcome};
