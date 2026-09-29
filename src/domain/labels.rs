@@ -1,4 +1,5 @@
 // llmlint: ignore-file[contracts_have_one_source_or_a_drift_gate] the grammar mirrors oneharness's history labels by a cited convention the plan chose (issue #204), not across a seam: llmlint's labels are validated, stored, and filtered by llmlint alone and never handed to oneharness, so the two drifting would make one tool accept a label the other rejects, never corrupt shared data; a reconciling drift gate is a tracked follow-up
+// llmlint: ignore-file[new_code_lands_in_a_project] llmlint is deliberately not a monorepo (AGENTS.md "Stack and composition": a single binary crate, no Nx); this module lands in that one crate, beside the rest of `src/domain/`
 //! Caller-supplied run labels: the one grammar for `lint --label`,
 //! `LLMLINT_LABELS`, and the `history --label` filter.
 //!

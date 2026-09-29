@@ -731,7 +731,9 @@ harness reads target files on-demand with its own tools.
   `domain::labels` (mirroring oneharness's history-label grammar). The record's
   `labels` key and the stderr pointer's shape are a contract callers parse
   (onejudge extracts the id from the pointer): keep an unlabelled record and
-  pointer byte-identical to before, and change neither unilaterally. The e2e harness points
+  pointer byte-identical to before, and change neither unilaterally. The README's
+  and `--help`'s restatements of the grammar bounds and pointer shape are held to
+  the code by `label_docs_restate_the_grammar_and_pointer_they_document`. The e2e harness points
   `LLMLINT_HISTORY_DIR` at a per-project temp dir so runs never touch the real data
   dir.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled

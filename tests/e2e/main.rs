@@ -11080,7 +11080,6 @@ fn history_limit_truncates_the_listing() {
     assert_eq!(arr.as_array().unwrap().len(), 2);
 }
 
-// ---- run labels: `lint --label` / `LLMLINT_LABELS` + `history --label` -------
 // llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
 
 /// A one-rule passing project for the label journeys. Returns the verdicts path.
@@ -11403,6 +11402,62 @@ fn an_invalid_label_exits_2_before_judging_and_records_nothing() {
         .stderr(predicate::str::contains("control characters"));
     assert_eq!(harness_spawns(&spawns), 0, "no judge may run");
     assert_eq!(history_record_count(&p), 0, "no record may be written");
+}
+
+/// Collapse every whitespace run to one space, so a doc's line wrapping never
+/// decides whether a restated phrase is found.
+fn squash(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn label_docs_restate_the_grammar_and_pointer_they_document() {
+    // The README and `--help` restate the grammar's bounds and the pointer shape
+    // for callers who parse it; hold them to the one source (`domain::labels`)
+    // and to the pointer a real labelled run prints, so neither drifts silently.
+    use llmlint::domain::labels::{ENV_VAR, KEY_MAX, VALUE_MAX};
+    let readme = squash(
+        &fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap(),
+    );
+    for needle in [
+        format!("the **key** is 1–{KEY_MAX} ASCII letters, digits, `.`, `_`, or `-`, beginning with a letter or digit"),
+        format!("the **value** is 1–{VALUE_MAX} characters (Unicode code points) with no control character"),
+        format!("`{ENV_VAR}` — comma-separated `KEY=VALUE` entries, each trimmed"),
+        "the id is the text between ``See full results with `llmlint history `` and the next backtick".to_string(),
+    ] {
+        assert!(readme.contains(&needle), "README no longer states: {needle}");
+    }
+    // The README's example pointer is what a run given those labels prints.
+    let (p, verdicts) = label_project();
+    let out = p
+        .lint()
+        .args(["--label", "turn=3", "--label", "session=abc"])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .output()
+        .unwrap();
+    let line = pointer_line(&String::from_utf8_lossy(&out.stderr));
+    let example = line.replace(&pointer_id(&line), "20260704T153000Z-1a2b3");
+    assert!(
+        readme.contains(&example),
+        "README example pointer drifted from: {example}"
+    );
+
+    let help = |args: &[&str]| {
+        let out = p.bare().args(args).arg("--help").output().unwrap();
+        squash(&String::from_utf8_lossy(&out.stdout))
+    };
+    let lint_help = help(&["lint"]);
+    for needle in [
+        format!("KEY is 1-{KEY_MAX} ASCII letters"),
+        format!("VALUE is 1-{VALUE_MAX} characters"),
+        ENV_VAR.to_string(),
+    ] {
+        assert!(
+            lint_help.contains(&needle),
+            "`lint --help` no longer states: {needle}"
+        );
+    }
+    assert!(help(&["history"]).contains("--label <KEY=VALUE>"));
 }
 // llmlint: ignore-end[e2e_not_mocked]
 
