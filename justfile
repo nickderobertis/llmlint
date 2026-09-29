@@ -96,10 +96,11 @@ test-e2e:
     cargo nextest run --features {{FEATURES}} --test e2e --locked
 
 # The release declaration (`release-targets.toml`) and `scripts/release-probe.sh`,
-# including the `#[ignore]`-d tier that reads the live crates.io and PyPI APIs.
-# The offline tests also run in `test`/`check`; the live one runs only here.
+# including the `#[ignore]`-d network tier (the schema reconciled against onevcs's
+# canonical one, the probe against live crates.io/PyPI). The offline tests also
+# run in `test`/`check`; the network ones run only here (CI's gate job runs it).
 test-release-targets:
-    cargo nextest run --test release_targets --locked --run-ignored all
+    cargo nextest run --features {{FEATURES}} --test release_targets --locked --run-ignored all
 
 # Build the docs with warnings denied (kept in the gate so doc links don't rot).
 doc:

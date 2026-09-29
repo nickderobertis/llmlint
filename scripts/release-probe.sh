@@ -30,7 +30,9 @@
 #
 # LLMLINT_RELEASE_PROBE_CRATES_URL / LLMLINT_RELEASE_PROBE_PYPI_URL replace the
 # registry base URLs (defaults https://crates.io, https://pypi.org) so the tests
-# can point the real script at a local stand-in registry.
+# can point the real script at a local stand-in registry. An override must be a
+# bare http(s)://host[:port] origin — no path, query, or userinfo (so no
+# credential can ride in on it) — else the answer is NOT ANSWERED.
 set -euo pipefail
 
 readonly UA="llmlint-release-probe (https://github.com/nickderobertis/llmlint)"
@@ -66,6 +68,9 @@ case "$registry" in
     pypi) base=${LLMLINT_RELEASE_PROBE_PYPI_URL:-https://pypi.org} ;;
     *) unanswered "unrecognised identifier '$id': this repository publishes to crate: and pypi: only; pass crate:llmlint or pypi:llmlint-cli" ;;
 esac
+if ! [[ $base =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]]; then
+    unanswered "registry base URL '$base' for '$id' is not a bare http(s)://host[:port] origin; fix or unset LLMLINT_RELEASE_PROBE_CRATES_URL / LLMLINT_RELEASE_PROBE_PYPI_URL"
+fi
 
 # Only what release-targets.toml declares. Another package's version is not an
 # answer about this repository's releases.

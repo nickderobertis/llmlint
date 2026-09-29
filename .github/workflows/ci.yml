@@ -47,6 +47,13 @@ jobs:
       - name: Versioned configs bumped vs the PR base
         if: github.event_name == 'pull_request'
         run: just check-version-bump ${{ github.event.pull_request.base.sha }}
+      # The network tier of the release declaration: the restated release-target
+      # schema reconciled against onevcs's canonical implementation (its drift
+      # gate — the schema is onevcs's, so drift upstream must redden a build), and
+      # the probe against the live crates.io/PyPI APIs. `#[ignore]`-d out of
+      # `just check` so that stays offline.
+      - name: Release declaration vs the canonical schema + live registries
+        run: just test-release-targets
 
   # Prove the artifact builds and its tests pass on macOS and Windows (without
   # the coverage threshold, which is enforced on Linux).

@@ -1132,6 +1132,25 @@ mod probe {
         );
     }
 
+    /// A base-URL override is validated at the boundary: anything but a bare
+    /// http(s) origin is not answered, and no request is made.
+    #[test]
+    fn a_malformed_registry_override_is_not_answered() {
+        for base in [
+            "file:///etc/passwd",
+            "http://user:secret@127.0.0.1:9",
+            "http://127.0.0.1:9/elsewhere?x=1",
+            "crates.io",
+        ] {
+            let (output, elapsed, _home) = run(&["crate:llmlint"], &[(CRATES_URL, base)]);
+            assert_not_answered(
+                &output,
+                elapsed,
+                "is not a bare http(s)://host[:port] origin",
+            );
+        }
+    }
+
     #[test]
     fn the_probe_takes_exactly_one_identifier() {
         for args in [&[][..], &["crate:llmlint", "pypi:llmlint-cli"][..]] {
