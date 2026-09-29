@@ -77,8 +77,9 @@ pub enum Command {
     Doctor(DoctorArgs),
     /// Inspect logged run results. With no id, list recent runs; with an id (or
     /// `latest`), show that run's full results — the complete per-rule detail the
-    /// terminal report omits. Drill in with `--status`/`--rule` filters, print the
-    /// record's path with `--path`, or emit `--format json`.
+    /// terminal report omits. Drill in with `--status`/`--rule` filters, narrow to
+    /// labelled runs with `--label KEY=VALUE`, print the record's path with
+    /// `--path`, or emit `--format json`.
     History(HistoryArgs),
     /// Report the on-disk plugin cache: per cached plugin, its URL, its version
     /// pin, the version it resolved to, when the origin last confirmed it, and

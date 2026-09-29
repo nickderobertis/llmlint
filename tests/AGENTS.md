@@ -632,6 +632,19 @@ resolves the oneharness the test put on PATH.
   data dir; the store, id/timestamp generation, and the record shape are
   unit-tested in `io::history`, the config model + provenance in `domain::config`,
   and the record rendering/filtering in `commands::history`.
+- Run labels: `lint --label KEY=VALUE` (repeatable) and `LLMLINT_LABELS`
+  (comma-separated, trimmed; the flag overrides the same key) write a sorted
+  top-level `labels` object into the record, and an unlabelled record has no
+  `labels` key; the stderr pointer appends ` (labels: …)` in sorted key order
+  (unlabelled it is unchanged), and the id extracted by the README's parse rule is
+  the id `history` returns. `history --label` lists only matching runs, newest
+  first, with `--limit` counted after the filter; `latest --label` resolves within
+  the filter; `<id> --label` shows a matching run and refuses a non-matching one;
+  a no-match is the exit-2 history error naming the filter. Every listing entry
+  carries `labels` (`{}` when none) and both human views print them. Each invalid
+  label shape, from the flag or the env var, is exit 2 naming the entry and its
+  source, with no harness spawn and no record written. The grammar's boundary
+  vectors are unit-tested in `domain::labels`.
 - Failure/recovery: missing config, malformed config, and each deterministic
   validation error — duplicate rule names, an even `judges` count, an invalid
   rule name, an empty description, an empty relevance condition, `judges: 0`,

@@ -725,7 +725,13 @@ harness reads target files on-demand with its own tools.
   `latest`, `--status`/`--rule` filters, `--path`, `--format json`); the store,
   id/clock generation, and record shape live in `io::history` (pure logic
   unit-tested there). Like the other session settings it comes from `cwd`-and-up
-  only, in `SETTING_KEYS` + provenance. The e2e harness points
+  only, in `SETTING_KEYS` + provenance. **Run labels** (`lint --label`,
+  `LLMLINT_LABELS`, filtered by `history --label`) are *not* a setting — no config
+  key, so not in `SETTING_KEYS`/`ENV_SETTINGS` — and their grammar lives only in
+  `domain::labels` (mirroring oneharness's history-label grammar). The record's
+  `labels` key and the stderr pointer's shape are a contract callers parse
+  (onejudge extracts the id from the pointer): keep an unlabelled record and
+  pointer byte-identical to before, and change neither unilaterally. The e2e harness points
   `LLMLINT_HISTORY_DIR` at a per-project temp dir so runs never touch the real data
   dir.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled
