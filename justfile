@@ -95,6 +95,12 @@ test:
 test-e2e:
     cargo nextest run --features {{FEATURES}} --test e2e --locked
 
+# The release declaration (`release-targets.toml`) and `scripts/release-probe.sh`,
+# including the `#[ignore]`-d tier that reads the live crates.io and PyPI APIs.
+# The offline tests also run in `test`/`check`; the live one runs only here.
+test-release-targets:
+    cargo nextest run --test release_targets --locked --run-ignored all
+
 # Build the docs with warnings denied (kept in the gate so doc links don't rot).
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features {{FEATURES}}

@@ -106,10 +106,19 @@ indicatif = { version = "0.17", features = ["in_memory"] }
 # feature `cargo bench` needs, and it still emits the per-bench `estimates.json`
 # that `critcmp` diffs.
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+# Reads `release-targets.toml` (and the TOML manifests it names) in the
+# release-target drift gate, `tests/release_targets.rs`. Test-only.
+toml = "0.9"
 
 [[test]]
 name = "e2e"
 path = "tests/e2e/main.rs"
+
+# The release declaration (`release-targets.toml`) held to the canonical schema
+# and to release.yml, plus the three answers of `scripts/release-probe.sh`.
+[[test]]
+name = "release_targets"
+path = "tests/release_targets.rs"
 
 # Statistical micro-benchmarks of the pure engine hot paths (config parse, plan,
 # template render, schema, vote, report). `harness = false` hands `main` to
