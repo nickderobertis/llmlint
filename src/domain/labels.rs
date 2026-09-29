@@ -1,3 +1,4 @@
+// llmlint: ignore-file[contracts_have_one_source_or_a_drift_gate] the grammar mirrors oneharness's history labels by a cited convention the plan chose (issue #204), not across a seam: llmlint's labels are validated, stored, and filtered by llmlint alone and never handed to oneharness, so the two drifting would make one tool accept a label the other rejects, never corrupt shared data; a reconciling drift gate is a tracked follow-up
 //! Caller-supplied run labels: the one grammar for `lint --label`,
 //! `LLMLINT_LABELS`, and the `history --label` filter.
 //!
@@ -19,11 +20,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::errors::{Error, Result};
+use serde::Serialize;
 
-/// A validated label set. A `BTreeMap` so keys are always in sorted order — the
-/// order the history record, listings, and results pointer all promise.
-pub type Labels = BTreeMap<String, String>;
+use crate::errors::{Error, Result};
 
 /// The environment variable carrying a run's labels (the lower layer).
 pub const ENV_VAR: &str = "LLMLINT_LABELS";
@@ -38,9 +37,88 @@ pub const KEY_MAX: usize = 64;
 /// Longest permitted value, in Unicode code points (not bytes).
 pub const VALUE_MAX: usize = 256;
 
+/// One label that satisfies the grammar. Its fields are private and the only
+/// constructor is the grammar, so an invalid label cannot exist past a parse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Label {
+    key: String,
+    value: String,
+}
+
+impl Label {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+impl std::fmt::Display for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}={}", self.key, self.value)
+    }
+}
+
+/// A set of valid labels, one value per key. Keys iterate (and serialize, as a
+/// JSON object) in sorted order — the order the history record, listings, and
+/// results pointer all promise. Built only from [`Label`]s.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Labels(BTreeMap<String, String>);
+
+impl Labels {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Add `label`, replacing any earlier value for its key (a later label wins).
+    pub fn insert(&mut self, label: Label) {
+        self.0.insert(label.key, label.value);
+    }
+
+    /// Whether this set contains every `filter` label with an equal value.
+    pub fn matches(&self, filter: &[Label]) -> bool {
+        filter
+            .iter()
+            .all(|l| self.0.get(&l.key).is_some_and(|v| *v == l.value))
+    }
+
+    /// Rebuild a set read back from storage, keeping only the pairs that still
+    /// satisfy the grammar — a hand-edited or foreign record can never smuggle an
+    /// invalid label into a filter match or a rendered view.
+    pub fn from_stored<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Labels {
+        pairs
+            .into_iter()
+            .filter_map(|(k, v)| validate(k, v).ok())
+            .collect()
+    }
+
+    /// `k1=v1, k2=v2` in sorted key order — the spelling of the results pointer
+    /// and the human views.
+    pub fn render(&self) -> String {
+        self.0
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+impl FromIterator<Label> for Labels {
+    fn from_iter<I: IntoIterator<Item = Label>>(iter: I) -> Self {
+        let mut labels = Labels::default();
+        for label in iter {
+            labels.insert(label);
+        }
+        labels
+    }
+}
+
 /// Parse one `KEY=VALUE` entry, naming `origin` (`--label` or `LLMLINT_LABELS`)
 /// in the error so a caller can tell which input to fix.
-pub fn parse_entry(entry: &str, origin: &str) -> Result<(String, String)> {
+pub fn parse_entry(entry: &str, origin: &str) -> Result<Label> {
     parse_label(entry).map_err(|message| Error::Label {
         origin: origin.to_string(),
         entry: entry.to_string(),
@@ -48,11 +126,16 @@ pub fn parse_entry(entry: &str, origin: &str) -> Result<(String, String)> {
     })
 }
 
-/// The label grammar itself, with a plain message for the failure.
-fn parse_label(entry: &str) -> std::result::Result<(String, String), String> {
+/// Split an entry on its first `=` and hold both halves to the grammar.
+fn parse_label(entry: &str) -> std::result::Result<Label, String> {
     let Some((key, value)) = entry.split_once('=') else {
         return Err("expected KEY=VALUE".to_string());
     };
+    validate(key, value)
+}
+
+/// The label grammar itself, with a plain message for the failure.
+fn validate(key: &str, value: &str) -> std::result::Result<Label, String> {
     let valid_key = !key.is_empty()
         && key.chars().count() <= KEY_MAX
         && key
@@ -75,18 +158,21 @@ fn parse_label(entry: &str) -> std::result::Result<(String, String), String> {
     if value.chars().any(char::is_control) {
         return Err("value must not contain control characters".to_string());
     }
-    Ok((key.to_string(), value.to_string()))
+    Ok(Label {
+        key: key.to_string(),
+        value: value.to_string(),
+    })
 }
 
 /// Parse repeated `--label` entries in order (a later duplicate key wins when
 /// they are folded into [`Labels`]).
-pub fn parse_flags(entries: &[String]) -> Result<Vec<(String, String)>> {
+pub fn parse_flags(entries: &[String]) -> Result<Vec<Label>> {
     entries.iter().map(|e| parse_entry(e, FLAG)).collect()
 }
 
 /// Parse an `LLMLINT_LABELS` value: comma-separated entries, each trimmed. An
 /// empty (or all-whitespace) value means no labels.
-pub fn parse_env(text: &str) -> Result<Vec<(String, String)>> {
+pub fn parse_env(text: &str) -> Result<Vec<Label>> {
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -98,27 +184,12 @@ pub fn parse_env(text: &str) -> Result<Vec<(String, String)>> {
 /// The effective label set for a run: the environment's labels, overlaid key by
 /// key by the `--label` flags (a later duplicate winning within each layer).
 pub fn resolve(env: Option<&str>, flags: &[String]) -> Result<Labels> {
-    let mut labels = Labels::new();
-    if let Some(text) = env {
-        labels.extend(parse_env(text)?);
-    }
-    labels.extend(parse_flags(flags)?);
-    Ok(labels)
-}
-
-/// Whether `labels` contains every `filter` pair with an equal value.
-pub fn matches(labels: &Labels, filter: &[(String, String)]) -> bool {
-    filter.iter().all(|(k, v)| labels.get(k) == Some(v))
-}
-
-/// Render pairs as `k1=v1, k2=v2` in the given order (a [`Labels`] iterates
-/// sorted by key) — the spelling of the results pointer and the human views.
-pub fn render<'a>(pairs: impl IntoIterator<Item = (&'a String, &'a String)>) -> String {
-    pairs
-        .into_iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join(", ")
+    let env = match env {
+        Some(text) => parse_env(text)?,
+        None => Vec::new(),
+    };
+    let flags = parse_flags(flags)?;
+    Ok(env.into_iter().chain(flags).collect())
 }
 
 #[cfg(test)]
@@ -130,7 +201,8 @@ mod tests {
     use super::*;
 
     fn ok(entry: &str) -> (String, String) {
-        parse_label(entry).unwrap_or_else(|e| panic!("{entry:?} should parse: {e}"))
+        let label = parse_label(entry).unwrap_or_else(|e| panic!("{entry:?} should parse: {e}"));
+        (label.key().to_string(), label.value().to_string())
     }
 
     fn err(entry: &str) -> String {
@@ -201,13 +273,12 @@ mod tests {
     fn env_is_trimmed_comma_separated_and_empty_means_none() {
         assert!(parse_env("").unwrap().is_empty());
         assert!(parse_env("   ").unwrap().is_empty());
-        assert_eq!(
-            parse_env(" session=abc , turn=3 ").unwrap(),
-            vec![
-                ("session".into(), "abc".into()),
-                ("turn".into(), "3".into())
-            ]
-        );
+        let parsed: Vec<String> = parse_env(" session=abc , turn=3 ")
+            .unwrap()
+            .iter()
+            .map(Label::to_string)
+            .collect();
+        assert_eq!(parsed, vec!["session=abc", "turn=3"]);
         // An empty entry between commas has no `=`.
         assert!(parse_env("a=1,,b=2").is_err());
     }
@@ -219,31 +290,44 @@ mod tests {
             &["judge=j".into(), "session=cli".into(), "judge=k".into()],
         )
         .unwrap();
-        let got: Vec<(&str, &str)> = labels
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        assert_eq!(got, vec![("judge", "k"), ("session", "cli"), ("turn", "2")]);
+        assert_eq!(labels.render(), "judge=k, session=cli, turn=2");
         assert!(resolve(None, &[]).unwrap().is_empty());
     }
 
     #[test]
     fn matches_requires_every_pair_equal() {
         let labels = resolve(Some("session=abc,turn=1"), &[]).unwrap();
-        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
-        assert!(matches(&labels, &[]));
-        assert!(matches(&labels, &[pair("session", "abc")]));
-        assert!(matches(
-            &labels,
-            &[pair("session", "abc"), pair("turn", "1")]
-        ));
-        assert!(!matches(&labels, &[pair("turn", "2")]));
-        assert!(!matches(&labels, &[pair("judge", "abc")]));
+        let filter = |entries: &[&str]| {
+            let entries: Vec<String> = entries.iter().map(|e| e.to_string()).collect();
+            parse_flags(&entries).unwrap()
+        };
+        assert!(labels.matches(&[]));
+        assert!(labels.matches(&filter(&["session=abc"])));
+        assert!(labels.matches(&filter(&["session=abc", "turn=1"])));
+        assert!(!labels.matches(&filter(&["turn=2"])));
+        assert!(!labels.matches(&filter(&["judge=abc"])));
     }
 
     #[test]
-    fn render_joins_in_iteration_order() {
+    fn render_and_serialize_in_sorted_key_order() {
         let labels = resolve(None, &["z=1".into(), "a=2".into()]).unwrap();
-        assert_eq!(render(&labels), "a=2, z=1");
+        assert_eq!(labels.render(), "a=2, z=1");
+        assert_eq!(
+            serde_json::to_string(&labels).unwrap(),
+            r#"{"a":"2","z":"1"}"#
+        );
+    }
+
+    #[test]
+    fn stored_labels_keep_only_grammatical_pairs() {
+        let long = "v".repeat(VALUE_MAX + 1);
+        let labels = Labels::from_stored([
+            ("session", "abc"),
+            ("-bad", "x"),
+            ("empty", ""),
+            ("ctl", "a\nb"),
+            ("long", long.as_str()),
+        ]);
+        assert_eq!(labels.render(), "session=abc");
     }
 }

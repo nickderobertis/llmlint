@@ -252,15 +252,18 @@ pub struct Record {
 
 impl Record {
     /// The run's caller-supplied labels; an unlabelled record (no `labels` key)
-    /// reads as none. Non-string values are skipped rather than trusted.
+    /// reads as none. A stored record is external input, so each pair is held to
+    /// the label grammar again ([`Labels::from_stored`]) and a non-string or
+    /// ungrammatical one is skipped rather than trusted.
     pub fn labels(&self) -> Labels {
         self.value
             .get("labels")
             .and_then(Value::as_object)
             .map(|m| {
-                m.iter()
-                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
-                    .collect()
+                Labels::from_stored(
+                    m.iter()
+                        .filter_map(|(k, v)| Some((k.as_str(), v.as_str()?))),
+                )
             })
             .unwrap_or_default()
     }
@@ -443,7 +446,7 @@ mod tests {
             Path::new("/proj"),
             0,
             &["llmlint.yml".to_string()],
-            &Labels::new(),
+            &Labels::default(),
             &report,
         );
         assert_eq!(rec["id"], "id1");
@@ -459,10 +462,8 @@ mod tests {
         assert!(rec.get("labels").is_none());
 
         // A labelled run writes them as a sorted object, read back by `labels()`.
-        let labels: Labels = [("turn", "1"), ("session", "abc")]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        let labels =
+            crate::domain::labels::resolve(None, &["turn=1".into(), "session=abc".into()]).unwrap();
         let rec = build_record(
             "id2",
             "2026-07-04T00:00:00Z",

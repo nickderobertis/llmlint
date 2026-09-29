@@ -11081,6 +11081,7 @@ fn history_limit_truncates_the_listing() {
 }
 
 // ---- run labels: `lint --label` / `LLMLINT_LABELS` + `history --label` -------
+// llmlint: ignore-block[e2e_not_mocked] the mock-oneharness subprocess is this suite's external-process seam; the real one is the live tier
 
 /// A one-rule passing project for the label journeys. Returns the verdicts path.
 fn label_project() -> (Project, PathBuf) {
@@ -11403,6 +11404,7 @@ fn an_invalid_label_exits_2_before_judging_and_records_nothing() {
     assert_eq!(harness_spawns(&spawns), 0, "no judge may run");
     assert_eq!(history_record_count(&p), 0, "no record may be written");
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 // llmlint: ignore-block[e2e_not_mocked] the hook's third-party tools (screencomp, freeze) are its external-process seam, stubbed as this suite stubs oneharness: the real hook script runs, and the real tools are not installed by `just setup` or CI's gate
 /// A scratch checkout for driving the real `.githooks/pre-push` script the way

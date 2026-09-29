@@ -68,7 +68,17 @@ pub(crate) fn run_loaded(
     let mut config = loaded.config;
     // Run labels are validated first, so a malformed one (from either layer) is
     // a usage error before anything is judged or recorded.
-    let labels = labels::resolve(std::env::var(labels::ENV_VAR).ok().as_deref(), &args.label)?;
+    let env_labels = match std::env::var(labels::ENV_VAR) {
+        Ok(text) => Some(text),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(Error::Env {
+                var: labels::ENV_VAR.to_string(),
+                message: "value is not valid UTF-8".to_string(),
+            })
+        }
+    };
+    let labels = labels::resolve(env_labels.as_deref(), &args.label)?;
     validate(&config)?;
     validate_filters(&config, &args)?;
     // Fold the `LLMLINT_*` env overrides into the merged config *before* the CLI
@@ -501,6 +511,9 @@ fn finish(
 /// a stderr warning, never a change to the lint's exit code — a broken history
 /// dir must not fail an otherwise-good run. Suppressed entirely when logging is
 /// off or no history directory can be determined.
+// Each argument is a distinct piece of run context the record carries (the
+// report, where and how it ran, its sources, labels, and exit code); bundling
+// them into a struct used only for this one call would add a type, not clarity.
 #[allow(clippy::too_many_arguments)]
 fn log_history(
     report: &Report,
@@ -552,7 +565,7 @@ fn results_pointer(id: &str, labels: &Labels) -> String {
     if labels.is_empty() {
         pointer
     } else {
-        format!("{pointer} (labels: {})", labels::render(labels))
+        format!("{pointer} (labels: {})", labels.render())
     }
 }
 

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::cli::{HistoryArgs, OutputFormat};
-use crate::domain::labels;
+use crate::domain::labels::{self, Label};
 use crate::errors::{Error, Result};
 use crate::io::{configfs, history};
 
@@ -47,10 +47,10 @@ pub fn run(args: HistoryArgs) -> Result<i32> {
 
 /// The label filter as the user spelled it (`--label k=v --label k2=v2`), for
 /// naming it in a no-match error.
-fn describe_filter(filter: &[(String, String)]) -> String {
+fn describe_filter(filter: &[Label]) -> String {
     filter
         .iter()
-        .map(|(k, v)| format!("{} {k}={v}", labels::FLAG))
+        .map(|l| format!("{} {l}", labels::FLAG))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -59,7 +59,7 @@ fn describe_filter(filter: &[(String, String)]) -> String {
 /// exactly [`history::load`]; with one, `latest` is the newest matching run and
 /// an explicit id is shown only when it matches — otherwise the history error,
 /// naming the filter.
-fn load_matching(dir: &Path, id: &str, filter: &[(String, String)]) -> Result<history::Record> {
+fn load_matching(dir: &Path, id: &str, filter: &[Label]) -> Result<history::Record> {
     if filter.is_empty() {
         return history::load(dir, id);
     }
@@ -67,13 +67,13 @@ fn load_matching(dir: &Path, id: &str, filter: &[(String, String)]) -> Result<hi
     if id == "latest" {
         return history::all(dir)?
             .into_iter()
-            .find(|r| labels::matches(&r.labels(), filter))
+            .find(|r| r.labels().matches(filter))
             .ok_or_else(|| {
                 Error::History(format!("no run matching {described} in {}", dir.display()))
             });
     }
     let record = history::load(dir, id)?;
-    if labels::matches(&record.labels(), filter) {
+    if record.labels().matches(filter) {
         Ok(record)
     } else {
         Err(Error::History(format!(
@@ -127,7 +127,7 @@ fn validate_filters(args: &HistoryArgs) -> Result<()> {
 
 /// Show one run. `--path` prints just the record's file path; otherwise the run's
 /// results, optionally narrowed by `--status`/`--rule`, as human text or JSON.
-fn show(dir: &Path, id: &str, args: &HistoryArgs, filter: &[(String, String)]) -> Result<i32> {
+fn show(dir: &Path, id: &str, args: &HistoryArgs, filter: &[Label]) -> Result<i32> {
     let record = load_matching(dir, id, filter)?;
     if args.path {
         println!("{}", record.path.display());
@@ -158,7 +158,7 @@ fn show(dir: &Path, id: &str, args: &HistoryArgs, filter: &[(String, String)]) -
 /// and then capping at `--limit` (default 20) — so non-matching runs never count
 /// against the limit. A filter that matches nothing is the history error naming
 /// it (an unfiltered empty history stays a friendly note).
-fn list(dir: &Path, args: &HistoryArgs, filter: &[(String, String)]) -> Result<i32> {
+fn list(dir: &Path, args: &HistoryArgs, filter: &[Label]) -> Result<i32> {
     if args.path {
         // `--path` with no id: the directory itself, for scripting.
         println!("{}", dir.display());
@@ -167,7 +167,7 @@ fn list(dir: &Path, args: &HistoryArgs, filter: &[(String, String)]) -> Result<i
     let limit = args.limit.unwrap_or(20);
     let records: Vec<history::Record> = history::all(dir)?
         .into_iter()
-        .filter(|r| labels::matches(&r.labels(), filter))
+        .filter(|r| r.labels().matches(filter))
         .take(limit)
         .collect();
     if records.is_empty() && !filter.is_empty() {
@@ -254,7 +254,7 @@ fn render_list_line(r: &history::Record) -> String {
     let mut line = format!("{}  {}  exit {exit}  {counts}", r.id, s("timestamp"));
     let labels = r.labels();
     if !labels.is_empty() {
-        line.push_str(&format!("  labels: {}", labels::render(&labels)));
+        line.push_str(&format!("  labels: {}", labels.render()));
     }
     line
 }
@@ -279,7 +279,7 @@ fn render_run(record: &history::Record, value: &Value) -> String {
     }
     let labels = record.labels();
     if !labels.is_empty() {
-        out.push_str(&format!("  labels: {}\n", labels::render(&labels)));
+        out.push_str(&format!("  labels: {}\n", labels.render()));
     }
     if let Some(summary) = value.get("summary") {
         out.push_str(&format!("  {}\n", counts_summary(summary)));
