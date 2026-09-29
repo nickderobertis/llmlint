@@ -11404,6 +11404,55 @@ fn an_invalid_label_exits_2_before_judging_and_records_nothing() {
     assert_eq!(history_record_count(&p), 0, "no record may be written");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_llmlint_labels_exits_2_and_records_nothing() {
+    use std::os::unix::ffi::OsStrExt;
+    let (p, verdicts) = label_project();
+    let spawns = p.path().join("spawns");
+    p.lint()
+        .env(
+            "LLMLINT_LABELS",
+            std::ffi::OsStr::from_bytes(b"session=\xff"),
+        )
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid environment variable LLMLINT_LABELS: value is not valid UTF-8",
+        ));
+    assert_eq!(harness_spawns(&spawns), 0, "no judge may run");
+    assert_eq!(history_record_count(&p), 0, "no record may be written");
+}
+
+#[test]
+fn ungrammatical_labels_in_a_stored_record_are_not_trusted() {
+    // A record is a file anyone can edit: labels read back from it are held to
+    // the grammar again, so a bad pair never matches a filter or reaches a view.
+    let (p, verdicts) = label_project();
+    let id = pointer_id(&labelled_run(&p, &verdicts, &["session=abc"]));
+    let path = p.history_dir().join(format!("{id}.json"));
+    let mut record: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    record["labels"] = serde_json::json!({
+        "session": "abc", "-bad": "x", "turn": 3, "ctl": "a\u{7}b"
+    });
+    fs::write(&path, serde_json::to_string_pretty(&record).unwrap()).unwrap();
+
+    let listed = history_json(&p, &["--label", "session=abc"]);
+    assert_eq!(listed[0]["labels"], serde_json::json!({"session": "abc"}));
+    p.bare()
+        .args(["history", &id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("  labels: session=abc\n"));
+    p.bare()
+        .args(["history", "--label", "ctl=a"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no run matching --label ctl=a"));
+}
+
 /// Collapse every whitespace run to one space, so a doc's line wrapping never
 /// decides whether a restated phrase is found.
 fn squash(text: &str) -> String {

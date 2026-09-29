@@ -643,8 +643,12 @@ resolves the oneharness the test put on PATH.
   a no-match is the exit-2 history error naming the filter. Every listing entry
   carries `labels` (`{}` when none) and both human views print them. Each invalid
   label shape, from the flag or the env var, is exit 2 naming the entry and its
-  source, with no harness spawn and no record written. The grammar's boundary
-  vectors are unit-tested in `domain::labels`.
+  source, with no harness spawn and no record written (a non-UTF-8
+  `LLMLINT_LABELS` too). Labels read back from a hand-edited record are held to
+  the grammar again, so an ungrammatical pair is never listed or matched. The
+  README's and `--help`'s restated bounds and example pointer are checked against
+  the binary's behavior. The grammar's boundary vectors are unit-tested in
+  `domain::labels`.
 - Failure/recovery: missing config, malformed config, and each deterministic
   validation error — duplicate rule names, an even `judges` count, an invalid
   rule name, an empty description, an empty relevance condition, `judges: 0`,
