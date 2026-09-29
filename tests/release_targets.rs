@@ -364,8 +364,13 @@ fn published(config: &ReleaseConfig) -> Result<BTreeMap<String, Vec<Publisher>>,
         .ok_or("Cargo.toml has no [package] name")?;
     let dist_name = toml_field(&config.pyproject, "pyproject.toml", "project", "name")
         .ok_or("pyproject.toml has no [project] name")?;
-    let release_plz_publishes =
-        toml_field_bool(&config.release_plz, "workspace", "publish").unwrap_or(true);
+    let release_plz_publishes = toml_field_bool(
+        &config.release_plz,
+        "release-plz.toml",
+        "workspace",
+        "publish",
+    )
+    .unwrap_or(true);
 
     let mut out: BTreeMap<String, Vec<Publisher>> = BTreeMap::new();
     for (path, text) in &config.workflows {
@@ -432,9 +437,18 @@ fn published(config: &ReleaseConfig) -> Result<BTreeMap<String, Vec<Publisher>>,
     Ok(out)
 }
 
-fn toml_field_bool(document: &str, table: &str, key: &str) -> Option<bool> {
-    let value: toml::Value = toml::from_str(document).ok()?;
-    value.get(table)?.get(key)?.as_bool()
+/// A boolean at `table.key`: `None` when absent (the tool's default applies), and
+/// a panic when the document is not TOML or the value is not a boolean, so a
+/// malformed config is never read as the default.
+fn toml_field_bool(document: &str, origin: &str, table: &str, key: &str) -> Option<bool> {
+    let value: toml::Value =
+        toml::from_str(document).unwrap_or_else(|e| panic!("{origin} is not TOML: {e}"));
+    let field = value.get(table)?.get(key)?;
+    Some(
+        field
+            .as_bool()
+            .unwrap_or_else(|| panic!("{origin}'s {table}.{key} is not a boolean: {field}")),
+    )
 }
 
 /// Where a declaration and the release configuration disagree, in both
