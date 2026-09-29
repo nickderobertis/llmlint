@@ -90,8 +90,9 @@ Use the `just` recipes; do not hand-roll equivalents.
 - `just test-release-targets` — `tests/release_targets.rs`, including its two
   `#[ignore]`-d network tests: the probe against the live crates.io/PyPI APIs,
   and the restated schema reconciled against onevcs's canonical implementation
-  (its drift gate — the schema is onevcs's, not ours); CI's `gate` job runs this
-  recipe after `check`. The offline tests
+  (its drift gate — the schema is onevcs's, not ours); the `Release targets`
+  workflow (`.github/workflows/release-targets.yml`) runs this recipe on a
+  change to what it reads and weekly. The offline tests
   (the release declaration held to `release.yml`, and the probe against a local
   stand-in registry) already run in `test`. `release-targets.toml` is the
   canonical release-target declaration (schema defined in onevcs's

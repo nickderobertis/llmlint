@@ -98,7 +98,8 @@ test-e2e:
 # The release declaration (`release-targets.toml`) and `scripts/release-probe.sh`,
 # including the `#[ignore]`-d network tier (the schema reconciled against onevcs's
 # canonical one, the probe against live crates.io/PyPI). The offline tests also
-# run in `test`/`check`; the network ones run only here (CI's gate job runs it).
+# run in `test`/`check`; the network ones run only here, which the
+# `.github/workflows/release-targets.yml` workflow runs.
 test-release-targets:
     cargo nextest run --features {{FEATURES}} --test release_targets --locked --run-ignored all
 
