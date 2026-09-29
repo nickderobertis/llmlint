@@ -87,6 +87,18 @@ Use the `just` recipes; do not hand-roll equivalents.
   vs the base without a `version:` bump. Out of `check` (it needs a base ref +
   network to resolve it); CI runs it against the PR base.
 - `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
+- `just test-release-targets` — `tests/release_targets.rs`, including its two
+  `#[ignore]`-d network tests: the probe against the live crates.io/PyPI APIs,
+  and the restated schema reconciled against onevcs's canonical implementation
+  (its drift gate — the schema is onevcs's, not ours); the `Release targets`
+  workflow (`.github/workflows/release-targets.yml`) runs this recipe on a
+  change to what it reads and weekly. The offline tests
+  (the release declaration held to `release.yml`, and the probe against a local
+  stand-in registry) already run in `test`. `release-targets.toml` is the
+  canonical release-target declaration (schema defined in onevcs's
+  `docs/contract.md`) other repositories wait on; its target ids and short names
+  (`crate:llmlint`/`crate`, `pypi:llmlint-cli`/`cli`) are named by consumers'
+  plans, so never rename them unilaterally.
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the **live e2e tier**: builds a release binary, then drives

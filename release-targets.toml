@@ -1,0 +1,54 @@
+# What this repository publishes: the artifacts a dependent names in order to
+# depend on llmlint. Written against the canonical release-target schema
+# (`schema_version = 1`), which is defined once, in `docs/contract.md` of
+# github.com/nickderobertis/onevcs, and read across repositories by machinery
+# that does not know this one.
+#
+# The registry qualification in every `id` is load-bearing: the crate is
+# `llmlint` but the PyPI distribution is `llmlint-cli` (PyPI rejected `llmlint`
+# as too similar to an existing project), and the two are published by two
+# different jobs, so a consumer waiting on a release has to say which one it
+# means. Each target also carries the short `name` a consumer's plan waits on.
+#
+# `tests/release_targets.rs` holds this document to the schema and to the real
+# release configuration (`.github/workflows/release.yml` and the manifests it
+# publishes from), in both directions, so an artifact the workflow publishes
+# without a target here fails the gate rather than going silently undeclared.
+
+schema_version = 1
+
+# Ask what a registry serves for one `id` below with
+# `scripts/release-probe.sh <id>`. Its three answers — a version, no release yet,
+# and NOT ANSWERED — are the probe's own contract; see the script's header.
+probe = "scripts/release-probe.sh"
+
+[[target]]
+id = "crate:llmlint"
+name = "crate"
+what = "The llmlint crate, as a Rust user installs it with `cargo install llmlint`."
+published_by = ".github/workflows/release.yml — the `publish-crate` job's `cargo publish --locked` step, from Cargo.toml's [package] name."
+manifest = "Cargo.toml"
+
+[[target]]
+id = "pypi:llmlint-cli"
+name = "cli"
+what = "The prebuilt `llmlint` binary as a wheel, installed with `pip install llmlint-cli`."
+published_by = ".github/workflows/release.yml — the `publish-pypi` job's `pypa/gh-action-pypi-publish` step, from pyproject.toml (maturin wraps the crate's binary)."
+manifest = "pyproject.toml"
+
+# Named artifacts that are deliberately NOT targets of their own, and are not
+# `covers` entries either, because `covers` names registry-qualified identifiers
+# and none of these is one:
+#
+#   * the per-platform `llmlint-cli` wheels (release.yml's `build-wheels`
+#     matrix) are builds of `pypi:llmlint-cli`, resolved by pip at that
+#     project's own version — ONE name, many wheels, not many names, so there is
+#     no second identifier to cover;
+#   * the `llmlint-<tag>-<target>.(tar.gz|zip)` GitHub Release archives and
+#     their `.sha256` / `.sigstore.json` companions (release.yml's `upload`
+#     matrix) are download artifacts for `scripts/install.sh`, not a name a
+#     dependent resolves from a registry;
+#   * this repository publishes nothing to npm.
+#
+# No `[[retired]]` entry: this repository has never published an artifact it does
+# not publish today.

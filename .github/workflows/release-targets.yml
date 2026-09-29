@@ -1,0 +1,46 @@
+name: Release targets
+
+# The network tier of the release declaration (`release-targets.toml`):
+# `just test-release-targets` reconciles the release-target schema that
+# `tests/release_targets.rs` restates against onevcs's canonical implementation
+# (its drift gate — the schema is onevcs's, so upstream drift has to redden a
+# build), and runs `scripts/release-probe.sh` against the live crates.io and PyPI
+# APIs. Both reach external services with no credential, so they sit in their own
+# workflow rather than a pull request's gate: on a landed change to what they
+# read, on a schedule (upstream drift does not wait for a change here), and on
+# demand. The offline tests in the same file already run in `just check`.
+on:
+  push:
+    branches: [main]
+    paths:
+      - release-targets.toml
+      - scripts/release-probe.sh
+      - tests/release_targets.rs
+      - .github/workflows/release.yml
+      - .github/workflows/release-targets.yml
+      - Cargo.toml
+      - pyproject.toml
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-targets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-targets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,nextest
+      - name: Release declaration vs the canonical schema + live registries
+        # llmlint: ignore[live_tier_compiles_and_requires_credential] no credential exists to require: every endpoint this tier reads (raw.githubusercontent.com, crates.io, PyPI) is public, and the probe's contract forbids sending one. It cannot no-op to green either: an unreachable endpoint fails the test, so the build goes red.
+        run: just test-release-targets
