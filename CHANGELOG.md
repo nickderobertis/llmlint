@@ -7,6 +7,13 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.3](https://github.com/nickderobertis/llmlint/compare/v0.4.2...v0.4.3) - 2026-09-29
+
+### Added
+
+- *(history)* caller-supplied run labels on `lint`, filterable in `history` ([#206](https://github.com/nickderobertis/llmlint/pull/206))
+- *(release)* declare llmlint's release targets and a registry probe ([#205](https://github.com/nickderobertis/llmlint/pull/205))
+
 ## [0.4.2](https://github.com/nickderobertis/llmlint/compare/v0.4.1...v0.4.2) - 2026-09-18
 
 ### Added
