@@ -5897,6 +5897,7 @@ fn system_prompt_is_delivered_by_file_not_inline() {
     );
 }
 
+// llmlint: ignore-block[e2e_not_mocked, tests_mirror_real_usage] the argv llmlint hands the oneharness subprocess is the contract under test here (issue #210 specifies it flag by flag), and only the mock-oneharness seam can record it; the real oneharness resolving these same layers is proven by the `just test-oneharness` tier (tests/real_oneharness.rs)
 /// The values of every `--config` flag in a mock `LLMLINT_MOCK_DUMP_ARGS`
 /// record, in argv order — the oneharness config layers llmlint forwarded.
 fn forwarded_configs(dump: &Path) -> Vec<String> {
@@ -5955,7 +5956,9 @@ fn oneharness_config_layers_config_then_env_then_flags() {
     let (p, verdicts) = oneharness_config_project(r#"["a.toml", "b.toml"]"#);
     let dump = p.path().join("args.txt");
     let env_list = std::env::join_paths(["e1.toml", "e2.toml"]).unwrap();
-    p.lint()
+    // `-v` is how a user sees the layers: the traced `oneharness run …` command
+    // names every `--config`, in the order oneharness applies them.
+    p.lint_v()
         .arg("--oneharness-config")
         .arg("c.toml")
         .arg("--oneharness-config")
@@ -5966,6 +5969,10 @@ fn oneharness_config_layers_config_then_env_then_flags() {
         .env("LLMLINT_MOCK_DUMP_ARGS", &dump)
         .assert()
         .success()
+        .stderr(predicate::str::contains(
+            " --config a.toml --config b.toml --config e1.toml --config e2.toml \
+             --config c.toml --config d.toml",
+        ))
         .stderr(predicate::str::contains("ignoring").not())
         .stderr(predicate::str::contains("warning").not());
     assert_eq!(
@@ -6147,6 +6154,7 @@ fn a_single_oneharness_config_still_runs_below_the_layering_floor() {
         .success();
     assert_eq!(forwarded_configs(&dump), vec!["only.toml"]);
 }
+// llmlint: ignore-end[e2e_not_mocked, tests_mirror_real_usage]
 
 #[test]
 fn oneharness_bin_from_env_is_used() {

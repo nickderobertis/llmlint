@@ -33,10 +33,15 @@ if ! bin="$(find_bin)" || ! "$bin" --version 2>/dev/null | grep -qF "oneharness 
   py="$(command -v python3 || command -v python || true)"
   if [ -z "$py" ]; then
     echo "install-oneharness: python3 is required to install oneharness-cli==$version" >&2
+    echo "                    Install Python 3 (with its venv module), then re-run just test-oneharness." >&2
     exit 1
   fi
   rm -rf "$venv"
-  "$py" -m venv "$venv" >&2
+  if ! "$py" -m venv "$venv" >&2; then
+    echo "install-oneharness: $py -m venv could not create $venv" >&2
+    echo "                    Install Python's venv module (e.g. python3-venv), then re-run just test-oneharness." >&2
+    exit 1
+  fi
   pip_py="$venv/bin/python"
   [ -x "$pip_py" ] || pip_py="$venv/Scripts/python.exe"
   if ! "$pip_py" -m pip install --quiet --disable-pip-version-check "oneharness-cli==$version" >&2; then
@@ -46,6 +51,7 @@ if ! bin="$(find_bin)" || ! "$bin" --version 2>/dev/null | grep -qF "oneharness 
   fi
   if ! bin="$(find_bin)"; then
     echo "install-oneharness: oneharness-cli==$version installed no oneharness binary in $venv" >&2
+    echo "                    Check that PyPI has a wheel for this platform, then delete $venv and re-run just test-oneharness." >&2
     exit 1
   fi
 fi
