@@ -17,7 +17,9 @@ cached pass could replay over a newly forbidden edge.
 - **Tests.** `tests/*.test.mjs` (`bun test`, this project's `test`) drive the
   checker against real scratch Cargo workspaces, and check against the real graph
   that every shell script is under some project's `lint-sh`, the workflows under
-  `lint-workflows`, and that `just check` runs every gate target.
+  `lint-workflows`, that `just check` runs every gate target, and that an edit
+  selects exactly its owning project and that project's dependents
+  (`affected.test.mjs`, asking `nx show projects --affected --files=`).
 - **Supply chain.** `supply-chain` (`cargo deny` + `cargo machete`) is
   workspace-wide and needs a network advisory DB, so it is outside the gate tiers:
   `just deps-check` and CI's `deny` job run it.
