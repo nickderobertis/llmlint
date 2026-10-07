@@ -1383,6 +1383,28 @@ fn setup_lib_sets_its_own_strict_mode() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout), "strict\n", "{out:?}");
+
+    // Under its own pipefail, a pin the justfile lacks still reads as empty
+    // (setup then installs the latest) rather than aborting the sourcing script.
+    let p = Project::new();
+    p.write("justfile", "nextest-version := \"0.9.1\"\n");
+    let out = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(
+            "source \"$1\"\na=\"$(_justfile_pin nextest)\"\nb=\"$(_justfile_pin absent)\"\n\
+             printf '[%s][%s]\\n' \"$a\" \"$b\"",
+        )
+        .arg("setup-lib")
+        .arg(repo_root().join("scripts/setup-lib.sh"))
+        .current_dir(p.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[0.9.1][]\n",
+        "{out:?}"
+    );
 }
 
 #[cfg(unix)]
