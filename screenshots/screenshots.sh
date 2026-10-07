@@ -187,7 +187,7 @@ for view in default verbose; do
   ( cd "$fixture" \
       && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
          LLMLINT_MOCK_STATE="$tmp_state/state-$view" \
-         "${mock_run[@]}" "${verbosity[@]}" ) >"$out" 2>/dev/null || true
+         "${mock_run[@]}" ${verbosity[@]+"${verbosity[@]}"} ) >"$out" 2>/dev/null || true
   render_scene "lint" "{\"view\":\"$view\"}" "lint-$view.svg" "$out" 1
 done
 
@@ -210,7 +210,8 @@ sed \
   -e "s|$fixture|.|g" \
   -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
   -e 's#/[^ ]*/llmlint-system-[A-Za-z0-9]*\.txt#/tmp/llmlint-system.txt#g' \
-  "$out" >"$out.sed" && mv "$out.sed" "$out"
+  "$out" >"$out.sed" || { echo "screenshots: could not normalize $out" >&2; exit 1; }
+mv "$out.sed" "$out" || { echo "screenshots: could not replace $out" >&2; exit 1; }
 render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
 
 # --- multi-judge: the per-judge breakdown, its own fixture + scene ------------
@@ -242,7 +243,8 @@ render_scene "init" "{}" "init.svg" "$out" 0
 out="$tmp_state/config.txt"
 ( cd "$fixture" && "$llmlint_bin" config -c "$fixture/llmlint.yml" --cwd "$fixture" ) \
   >"$out" 2>/dev/null || true
-sed "s|$fixture/||g" "$out" >"$out.sed" && mv "$out.sed" "$out"
+sed "s|$fixture/||g" "$out" >"$out.sed" || { echo "screenshots: could not normalize $out" >&2; exit 1; }
+mv "$out.sed" "$out" || { echo "screenshots: could not replace $out" >&2; exit 1; }
 render_scene "config" "{}" "config.svg" "$out" 0
 
 # --- doctor: the oneharness preflight check -----------------------------------

@@ -1,5 +1,6 @@
 # tests/release-targets/AGENTS.md
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
 ## Release declaration + probe (`release_targets.rs`)
 
 `release-targets.toml` is parsed by a restatement of the canonical release-target
@@ -18,6 +19,7 @@ the network and are `#[ignore]`-d (`just test-release-targets`): the probe
 against the live registries, and the restated schema reconciled against onevcs's
 canonical implementation (constants, version-1 key sets, rule expressions, and
 that `schema_version = 1` is still in the range it reads).
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Running
 

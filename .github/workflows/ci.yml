@@ -79,7 +79,9 @@ jobs:
       # full history fetched above); only meaningful on a PR.
       - name: Versioned configs bumped vs the PR base
         if: github.event_name == 'pull_request'
-        run: just check-version-bump ${{ github.event.pull_request.base.sha }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: just check-version-bump "$BASE_SHA"
 
   # Prove the artifact builds and its tests pass on macOS and Windows, at the same
   # tier as `gate` (without the coverage floor, which is enforced on Linux, and

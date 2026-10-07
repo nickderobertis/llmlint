@@ -22,8 +22,6 @@
 # Repo root = two levels above this script (it lives in tests/live/).
 LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# --- logging -----------------------------------------------------------------
-
 note() { printf '%s\n' "$*" >&2; }
 
 # A missing prerequisite is a HARD FAILURE, not a skip: the live tier is meant to
@@ -47,8 +45,6 @@ need_env() {
     done
     fail "no $label configured (set one of: $*)"
 }
-
-# --- binary resolution -------------------------------------------------------
 
 # The release build the live recipes produce, an explicit `LLMLINT_BIN`, or
 # whatever is on PATH. Platform-aware `.exe` handling for Windows runners.
@@ -81,8 +77,6 @@ require_oneharness() {
     command -v oneharness >/dev/null 2>&1 && return 0
     fail "oneharness not found (install it, or set LLMLINT_ONEHARNESS_BIN)"
 }
-
-# --- throwaway project scaffolding ------------------------------------------
 
 LL_PROJECTS=()
 _ll_cleanup() {
@@ -164,8 +158,6 @@ make_fallback_project() {
     printf '%s' "$proj"
 }
 
-# --- run + assert ------------------------------------------------------------
-
 LL_REPORT=""
 LL_STDERR=""
 LL_EXIT=0
@@ -232,8 +224,6 @@ assert_fail() {
     _ll_rule_outcome_is fail || { _ll_dump; fail "rule no_todo_comments did not flag the planted TODO"; }
     note "  ok: planted TODO flagged (exit 1, rule failed)"
 }
-
-# --- journeys ----------------------------------------------------------------
 
 # A satisfied invariant -> exit 0. Proves the model can read a clean file through
 # the harness and return holds=true, and that llmlint maps that to a pass.

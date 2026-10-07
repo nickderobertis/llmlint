@@ -124,12 +124,15 @@ verdict() {
   local attempts="${CI_WAIT_ATTEMPTS:-20}" delay="${CI_WAIT_DELAY:-30}"
   [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || usage "REPO '$repo' is not an owner/name repository"
   is_sha "$sha" || usage "SHA '$sha' is not a full 40-character commit sha"
-  [[ "$attempts" =~ ^[0-9]{1,4}$ ]] && [ "$attempts" -ge 1 ] || usage "CI_WAIT_ATTEMPTS '$attempts' is not a whole number of polls (1-9999)"
-  [[ "$delay" =~ ^[0-9]{1,4}$ ]] || usage "CI_WAIT_DELAY '$delay' is not a whole number of seconds (0-9999)"
+  # Plain decimal only: a leading zero would be read as octal by the loop below.
+  [[ "$attempts" =~ ^[1-9][0-9]{0,3}$ ]] || usage "CI_WAIT_ATTEMPTS '$attempts' is not a whole number of polls (1-9999, no leading zero)"
+  [[ "$delay" =~ ^(0|[1-9][0-9]{0,3})$ ]] || usage "CI_WAIT_DELAY '$delay' is not a whole number of seconds (0-9999, no leading zero)"
 
-  local tree
-  tree="$(gh_api "repos/$repo/commits/$sha" | jq -r '.commit.tree.sha // ""')"
-  is_sha "$tree" || refuse "GitHub returned no tree for $sha" "check that $sha is pushed to $repo, then re-run the release"
+  local commit tree
+  commit="$(gh_api "repos/$repo/commits/$sha")"
+  if ! tree="$(jq -r '.commit.tree.sha // ""' <<<"$commit" 2>&1)" || ! is_sha "$tree"; then
+    refuse "GitHub returned no tree for $sha (repos/$repo/commits/$sha answered: ${commit:0:200})" "check that $sha is pushed to $repo and the token can read it, then re-run the release"
+  fi
 
   local poll runs run run_id run_url run_status jobs state
   for ((poll = 1; poll <= attempts; poll++)); do

@@ -25,9 +25,3 @@ renders; this tier proves that end result.
   oneharness — only the binary + the fixture — so unlike the live tier it is free
   and runs on every PR.
 
-## Running
-
-`just win-color` runs this project's `win-color` target: it builds the release
-binary and the mock, then runs `win-console-color.ps1`. It is Windows-only, so
-the Linux gate tiers never run it; `.github/workflows/win-color.yml` does, on
-`windows-latest`, on every PR.

@@ -1,5 +1,6 @@
 # tests/real-oneharness/AGENTS.md
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
 ## Real-oneharness tier (`real_oneharness.rs`)
 
 The hermetic suite doubles oneharness, so it can prove which `--config` files
@@ -17,6 +18,7 @@ nearest of nested llmlint configs (with a path configured at both levels);
 flag over both. The tests are `#[ignore]`-d; run without the recipe's
 `LLMLINT_REAL_ONEHARNESS` they fail rather than skip. The one non-ignored test,
 `the_tier_pins_the_multi_file_floor`, holds the pin to the constant in every run.
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Running
 

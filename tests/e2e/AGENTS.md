@@ -1,5 +1,7 @@
 # tests/e2e/AGENTS.md
 
+<!-- llmlint: ignore-file[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
+
 The e2e suite (`tests/e2e/`) is the source of truth for what llmlint does. It
 drives the **real `llmlint` binary** (via `assert_cmd`) against the deterministic
 `llmlint-mock-oneharness` fixture (passed with `--oneharness-bin`), which stands

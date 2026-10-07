@@ -127,7 +127,7 @@ note "» benchmarking $bin"
 # is what should be measured each time); harmless for the read-only commands.
 # `lint:fail` exits 1 by design, so it is wrapped with `|| true`.
 hyperfine \
-    --warmup "$warmup" "${runs_opt[@]}" \
+    --warmup "$warmup" ${runs_opt[@]+"${runs_opt[@]}"} \
     --prepare "rm -f '$initdir/llmlint.yml'" \
     --export-json "$out/results.json" \
     --export-markdown "$out/results.md" \

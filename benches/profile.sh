@@ -135,7 +135,7 @@ if [[ "$mode" == "engine" ]]; then
     echo "» profiling engine for ${seconds}s (${filter:-all benchmarks})"
     # `--profile-time` makes Criterion run the bench in a plain loop with no
     # statistical analysis — exactly what an external sampler wants.
-    samply record "${samply_args[@]}" -- \
+    samply record ${samply_args[@]+"${samply_args[@]}"} -- \
         "$bench_exe" --bench --profile-time "$seconds" ${filter:+"$filter"}
     exit 0
 fi
@@ -146,7 +146,7 @@ if [[ "$mode" == "cli" ]]; then
     setup_cli_sandbox
     echo "» profiling '$bin $* --cwd $proj' over $repeat invocations"
     # shellcheck disable=SC2016  # the loop is expanded by the inner bash, from its own "$@".
-    samply record "${samply_args[@]}" -- \
+    samply record ${samply_args[@]+"${samply_args[@]}"} -- \
         bash -c 'n="$1"; shift; proj="$1"; shift; for ((i = 0; i < n; i++)); do "$@" --cwd "$proj" >/dev/null 2>&1 || true; done' \
         _ "$repeat" "$proj" "$bin" "$@"
     exit 0

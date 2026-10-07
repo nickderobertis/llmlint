@@ -154,6 +154,7 @@ keep the two `freeze` version pins in sync (`freeze-version` in the justfile and
 equal). A reflow changes every lane identically, so one host's bless covers both
 baselines.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
 ## The pre-push visual guard (`.githooks/pre-push`)
 
 The `pre_push_guard_*` journeys (`tests/visual_guard.rs`) drive the **real hook
@@ -195,3 +196,4 @@ pin file). They cover every `uname -m` spelling installing the matching asset
 (proven by running the installed binary), an architecture freeze does not publish
 for, an archive failing its pinned digest, one missing the binary, and the pin
 agreeing with the justfile's.
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

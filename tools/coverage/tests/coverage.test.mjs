@@ -94,7 +94,6 @@ test("the e2e crate's profiles combine with the unit run's and pass the floor", 
   expect(e2e.code, e2e.out).toBe(0);
   const report = coverage(["report"]);
   expect(report.code, report.out).toBe(0);
-  // Only the package's own sources are measured: the members under tests/ are not.
   expect(report.out).toMatch(/^lib\.rs\s/m);
   expect(report.out).not.toContain("e2e/main.rs");
   expect(report.out).toMatch(/coverage: 100\.00% lines covered \(floor 95%\)/);

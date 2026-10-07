@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use schema::Declaration;
 
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] the schema is onevcs's, so its only authoritative copy is upstream; reconciling against it reads onevcs over the network, which AGENTS.md and this project keep in the `network` target (the Release targets workflow, on a change to what it reads and weekly) rather than the offline gate
 /// The canonical release-target schema (`schema_version = 1`), as a reader that
 /// refuses. Deliberately narrow: the keys, alphabets, and document-level refusals
 /// the canonical contract fixes, and nothing beside them.
@@ -272,6 +273,7 @@ mod schema {
         Ok(())
     }
 }
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 /// The repository root: this crate lives two levels below it
 /// (`tests/release-targets/`), and every path the declaration names is

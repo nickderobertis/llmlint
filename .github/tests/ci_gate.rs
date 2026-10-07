@@ -596,6 +596,38 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
     let out = gh.verdict(&[("SHA", "abc123")]);
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     assert!(stderr(&out).contains("not a full 40-character commit sha"));
+    for (var, value) in [
+        ("CI_WAIT_ATTEMPTS", "08"),
+        ("CI_WAIT_DELAY", "09"),
+        ("CI_WAIT_ATTEMPTS", "0"),
+    ] {
+        let out = gh.verdict(&[(var, value)]);
+        assert_eq!(out.status.code(), Some(2), "{var}={value}: {out:?}");
+        assert!(
+            stderr(&out).contains(var),
+            "{var}={value}: {}",
+            stderr(&out)
+        );
+    }
+
+    // An answer that is not the commit object GitHub documents stops the release
+    // naming the endpoint, never jq's bare parse error alone.
+    fs::write(
+        gh.dir.path().join("commit.json"),
+        "<html>rate limited</html>",
+    )
+    .unwrap();
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!("GitHub returned no tree for {SHA}")),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!("repos/{REPO}/commits/{SHA}")),
+        "{err}"
+    );
     assert!(gh.calls().is_empty() || !gh.calls().contains("abc123"));
 }
 

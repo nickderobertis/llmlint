@@ -1,5 +1,6 @@
 # tests/live/AGENTS.md
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
 ## Live tier (`live-*.sh`)
 
 The hermetic e2e suite (`tests/e2e/`) proves llmlint's logic against a mock oneharness. The
@@ -39,10 +40,10 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
 - **Overrides:** `CLAUDE_E2E_MODEL` picks the judge model (defaults to `haiku`);
   `LL_TIMEOUT` (default 120s) becomes the config's `oneharness.timeout`;
   `LLMLINT_BIN` / `LLMLINT_ONEHARNESS_BIN` override binary resolution.
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Running
 
-`just live-claude` runs this project's `live` target: it builds the release
-binary, then runs `live-claude.sh` (the ad-hoc `just lint-live` drives the same
-stack by hand). Its own workflow (`.github/workflows/live.yml`) runs it on PRs;
-no gate tier does — the gate tiers reach only this project's `lint-sh`. It makes real (paid) model calls.
+`just live-claude` runs this project's `live` target, which builds the release
+binary before `live-claude.sh` (the ad-hoc `just lint-live` drives the same stack
+by hand).
