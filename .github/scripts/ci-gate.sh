@@ -134,7 +134,7 @@ gh_api() {
 verdict() {
   local repo="${REPO:-${GITHUB_REPOSITORY:-}}" sha="${SHA:-${GITHUB_SHA:-}}"
   local attempts="${CI_WAIT_ATTEMPTS:-20}" delay="${CI_WAIT_DELAY:-30}"
-  [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || usage "REPO '$repo' is not an owner/name repository"
+  [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || usage "REPO '$repo' is not an owner/name repository; set REPO (or GITHUB_REPOSITORY) to e.g. nickderobertis/llmlint"
   is_sha "$sha" || usage "SHA '$sha' is not a full 40-character commit sha"
   # Plain decimal only: a leading zero would be read as octal by the loop below.
   [[ "$attempts" =~ ^[1-9][0-9]{0,3}$ ]] || usage "CI_WAIT_ATTEMPTS '$attempts' is not a whole number of polls (1-9999, no leading zero)"

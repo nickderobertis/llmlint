@@ -44,11 +44,11 @@ usage() {
 pins="$(awk '$1 == "bun" { print $2 }' "$ROOT/.tool-versions")" \
   || fail "cannot read the bun pin from $ROOT/.tool-versions; restore it from git."
 [ "$(printf '%s\n' "$pins" | grep -c .)" -eq 1 ] \
-  || fail ".tool-versions must pin bun exactly once, as 'bun X.Y.Z' (found $(printf '%s\n' "$pins" | grep -c .) bun lines)."
+  || fail ".tool-versions must pin bun exactly once, as 'bun X.Y.Z' (found $(printf '%s\n' "$pins" | grep -c .) bun lines); restore the line from git (git checkout -- .tool-versions)."
 VERSION="$pins"
 readonly VERSION
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-  || fail ".tool-versions must pin bun as 'bun X.Y.Z' (got '${VERSION}')."
+  || fail ".tool-versions must pin bun as 'bun X.Y.Z' (got '${VERSION}'); restore the line from git (git checkout -- .tool-versions)."
 
 # The cache root is where `ensure` creates and replaces the bun binary, so it must
 # be an absolute path (XDG_CACHE_HOME when set, else HOME/.cache), never one
@@ -83,8 +83,8 @@ pinned_bun() {
 
 asset_name() {
   local os arch
-  os="$(uname -s)" || fail "'uname -s' failed (above); cannot pick a bun build for this host."
-  arch="$(uname -m)" || fail "'uname -m' failed (above); cannot pick a bun build for this host."
+  os="$(uname -s)" || fail "'uname -s' failed (above); cannot pick a bun build for this host. Check the uname first on PATH (command -v uname), or install bun $VERSION first on PATH yourself, then re-run 'just bootstrap'."
+  arch="$(uname -m)" || fail "'uname -m' failed (above); cannot pick a bun build for this host. Check the uname first on PATH (command -v uname), or install bun $VERSION first on PATH yourself, then re-run 'just bootstrap'."
   case "$os/$arch" in
     Linux/x86_64) echo "bun-linux-x64" ;;
     Linux/aarch64 | Linux/arm64) echo "bun-linux-aarch64" ;;

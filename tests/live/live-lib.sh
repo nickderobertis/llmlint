@@ -24,7 +24,7 @@ set -euo pipefail
 
 # llmlint: ignore-file[tool_output_is_signal] the paid live tier's per-journey narration is the only log of a run that cannot be replayed for free (live.yml's CI output)
 LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
-    || { printf 'FAIL: cannot resolve the repository root\n' >&2; exit 1; }
+    || { printf 'FAIL: cannot resolve the repository root; source this library by its path from a readable checkout (tests/live/live-lib.sh)\n' >&2; exit 1; }
 
 note() { printf '%s\n' "$*" >&2; }
 
@@ -97,9 +97,9 @@ trap _ll_cleanup EXIT
 validate_settings() {
     local timeout="${LL_TIMEOUT:-120}" model="${LL_MODEL:-}"
     [[ "$timeout" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$timeout" -le 86400 ] \
-        || fail "LL_TIMEOUT must be a whole number of seconds from 1 to 86400, got '$timeout'"
+        || fail "LL_TIMEOUT must be a whole number of seconds from 1 to 86400, got '$timeout'; fix it or unset it to use 120"
     [ -z "$model" ] || [[ "$model" =~ ^[A-Za-z0-9._:/@-]+$ ]] \
-        || fail "LL_MODEL must be a plain model id (letters, digits and . _ - : / @), got '$model'"
+        || fail "LL_MODEL must be a plain model id (letters, digits and . _ - : / @), got '$model'; fix it (CLAUDE_E2E_MODEL for live-claude.sh) or unset it to use the harness default"
 }
 
 # The harness id is written into llmlint.yml and oneharness.toml, so it must be a
@@ -107,7 +107,7 @@ validate_settings() {
 # close a TOML string or start a new YAML key.
 validate_harness() {
     [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
-        || fail "the harness id must be a plain oneharness id (lowercase letters, digits and -), got '${1:-}'"
+        || fail "the harness id must be a plain oneharness id (lowercase letters, digits and -), got '${1:-}'; pass one such as claude-code"
 }
 
 # The `oneharness:` block both project constructors share, from the settings
@@ -131,7 +131,7 @@ make_project() {
     validate_harness "$harness"
     validate_settings
     proj="$(mktemp -d)" || fail "could not create a temporary project directory (check TMPDIR)"
-    mkdir -p "$proj/src" || fail "could not create $proj/src"
+    mkdir -p "$proj/src" || fail "could not create $proj/src; check that TMPDIR is writable and has space, then re-run"
     {
         echo "version: 1"
         echo "files:"
@@ -147,7 +147,7 @@ make_project() {
         echo "      The property HOLDS when no source file contains a TODO or FIXME"
         echo "      marker, and is VIOLATED by any file that contains one."
         echo "    agent: judge"
-    } >"$proj/llmlint.yml" || fail "could not write $proj/llmlint.yml"
+    } >"$proj/llmlint.yml" || fail "could not write $proj/llmlint.yml; check that TMPDIR is writable and has space, then re-run"
     printf '%s' "$proj"
 }
 
@@ -171,7 +171,7 @@ make_fallback_project() {
     validate_settings
     primary="$(_fallback_primary "$harness")"
     proj="$(mktemp -d)" || fail "could not create a temporary project directory (check TMPDIR)"
-    mkdir -p "$proj/src" || fail "could not create $proj/src"
+    mkdir -p "$proj/src" || fail "could not create $proj/src; check that TMPDIR is writable and has space, then re-run"
     {
         echo "version: 1"
         echo "files:"
@@ -183,11 +183,11 @@ make_fallback_project() {
         echo "      Every source file under src/ is free of TODO and FIXME comments."
         echo "      The property HOLDS when no source file contains a TODO or FIXME"
         echo "      marker, and is VIOLATED by any file that contains one."
-    } >"$proj/llmlint.yml" || fail "could not write $proj/llmlint.yml"
+    } >"$proj/llmlint.yml" || fail "could not write $proj/llmlint.yml; check that TMPDIR is writable and has space, then re-run"
     {
         echo 'run_mode = "fallback"'
         echo "harnesses = [\"${primary}\", \"${harness}\"]"
-    } >"$proj/oneharness.toml" || fail "could not write $proj/oneharness.toml"
+    } >"$proj/oneharness.toml" || fail "could not write $proj/oneharness.toml; check that TMPDIR is writable and has space, then re-run"
     printf '%s' "$proj"
 }
 
@@ -208,7 +208,7 @@ ll_run() {
     LL_REPORT="$("$bin" --cwd "$proj" --format json "$@" 2>"$errf")"
     LL_EXIT=$?
     set -e
-    LL_STDERR="$(cat "$errf")" || fail "could not read llmlint's captured stderr ($errf)"
+    LL_STDERR="$(cat "$errf")" || fail "could not read llmlint's captured stderr ($errf); check that TMPDIR is readable, then re-run"
     rm -f "$errf" || note "could not remove $errf; delete it by hand"
 }
 
@@ -265,7 +265,7 @@ ll_live_pass() {
     proj="$(make_project "$harness")"
     LL_PROJECTS+=("$proj")
     printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs" \
-        || fail "could not write $proj/src/lib.rs"
+        || fail "could not write $proj/src/lib.rs; check that TMPDIR is writable and has space, then re-run"
     note "  journey: a satisfied rule -> exit 0"
     ll_run "$proj"
     assert_pass
@@ -281,7 +281,7 @@ ll_live_fail() {
         "// TODO: replace this placeholder with the real implementation" \
         "pub fn add(a: i32, b: i32) -> i32 {" \
         "    a + b" \
-        "}" >"$proj/src/lib.rs" || fail "could not write $proj/src/lib.rs"
+        "}" >"$proj/src/lib.rs" || fail "could not write $proj/src/lib.rs; check that TMPDIR is writable and has space, then re-run"
     note "  journey: a clear violation -> exit 1"
     ll_run "$proj"
     assert_fail
@@ -294,7 +294,7 @@ ll_live_fallback() {
     proj="$(make_fallback_project "$harness")"
     LL_PROJECTS+=("$proj")
     printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs" \
-        || fail "could not write $proj/src/lib.rs"
+        || fail "could not write $proj/src/lib.rs; check that TMPDIR is writable and has space, then re-run"
     note "  journey: fallback chain skips an absent primary and runs $harness -> exit 0"
     ll_run "$proj"
     assert_pass
