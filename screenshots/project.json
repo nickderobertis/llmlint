@@ -43,12 +43,13 @@
       "cache": true,
       "inputs": [
         "default",
+        "^default",
         "{workspaceRoot}/.githooks/pre-push",
         "{workspaceRoot}/justfile",
         "{workspaceRoot}/screencomp.toml",
         "{workspaceRoot}/shots/baseline/*.json"
       ],
-      "//": "The guard's offline script journeys. Cached: its inputs are every file they read or run."
+      "//": "The guard's offline script journeys and the demo GIF's outcome drift check. Cached: its inputs are every file they read or run, and (^default) the llmlint sources whose Outcome the drift check reads."
     },
     "capture": {
       "executor": "nx:run-commands",
