@@ -203,7 +203,9 @@ verdict() {
     if [ "$poll" -eq 1 ]; then
       printf 'ci-gate: CI run %s: %s; waiting (up to %s polls, %ss apart)\n' "$run_id" "${state#pending }" "$attempts" "$delay" >&2
     fi
-    [ "$poll" -lt "$attempts" ] && sleep "$delay"
+    if [ "$poll" -lt "$attempts" ]; then
+      sleep "$delay" || refuse "could not wait ${delay}s between polls of CI run $run_id" "re-run this release"
+    fi
   done
   # llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
   refuse "the full sweep of tree $tree (CI run $run_id) did not finish within $attempts polls" "wait for CI run $run_id to settle ($run_url), then re-run this release"

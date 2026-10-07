@@ -1321,6 +1321,72 @@ fn bun_sh_refuses_a_download_base_that_is_not_an_https_or_file_url() {
 
 #[cfg(unix)]
 #[test]
+fn bun_sh_refuses_a_relative_cache_root_before_installing() {
+    // The cache root is where `ensure` creates and replaces the bun binary, so a
+    // relative XDG_CACHE_HOME (or, without one, a relative HOME) is refused by
+    // name rather than resolved against the recipe's working directory.
+    let version = pinned_bun_version();
+    let pin = format!("bun {version}\n");
+    for (env, says) in [
+        (
+            vec![("XDG_CACHE_HOME", "relative/cache")],
+            "XDG_CACHE_HOME must be an absolute path",
+        ),
+        (
+            vec![("XDG_CACHE_HOME", ""), ("HOME", "relative-home")],
+            "HOME must be an absolute path",
+        ),
+    ] {
+        let repo = BunRepo::new(&pin);
+        let base = repo.release(&version, &version, false);
+        let out = repo.bun_sh_with("ensure", &repo.p.path().join("empty"), &base, &env);
+        assert_eq!(out.status.code(), Some(1), "{env:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(says), "{env:?}: {err}");
+        // The script runs in this test's working directory, which a relative
+        // root would have resolved against.
+        let cwd = std::env::current_dir().unwrap();
+        assert!(
+            !cwd.join("relative").exists() && !cwd.join("relative-home").exists(),
+            "{env:?}: installed under a relative root"
+        );
+    }
+    // With XDG_CACHE_HOME empty, an absolute HOME is the root.
+    let repo = BunRepo::new(&pin);
+    let base = repo.release(&version, &version, false);
+    let home = repo.p.path().join("home");
+    let out = repo.bun_sh_with(
+        "ensure",
+        &repo.p.path().join("empty"),
+        &base,
+        &[("XDG_CACHE_HOME", ""), ("HOME", home.to_str().unwrap())],
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert!(home
+        .join(format!(".cache/llmlint-dev/bun-{version}/bin/bun"))
+        .is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_lib_sets_its_own_strict_mode() {
+    // Sourced from a shell with every strict option off (as the session hook
+    // and setup scripts source it), the library turns them on itself.
+    let out = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(
+            "set +e +u +o pipefail\ncd \"$1\"\nsource scripts/setup-lib.sh\n\
+             [[ $- == *e* && $- == *u* ]] && shopt -qo pipefail && echo strict",
+        )
+        .arg("setup-lib")
+        .arg(repo_root())
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "strict\n", "{out:?}");
+}
+
+#[cfg(unix)]
+#[test]
 fn bun_sh_refuses_a_failed_download_a_wrong_layout_a_wrong_version_and_an_unwritable_cache() {
     use std::os::unix::fs::PermissionsExt;
     let version = pinned_bun_version();

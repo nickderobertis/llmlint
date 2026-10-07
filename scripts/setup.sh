@@ -54,7 +54,7 @@ ensure_just() {
     return
   fi
   local ver
-  ver="$(grep -E '^just[[:space:]]' .tool-versions 2>/dev/null | awk '{print $2}')"
+  ver="$({ grep -E '^just[[:space:]]' .tool-versions 2>/dev/null || true; } | awk '{print $2}')"
   have curl || { printf 'error: curl is required to install just\n' >&2; exit 1; }
   mkdir -p "$LOCAL_BIN"
   if [ -n "$ver" ]; then

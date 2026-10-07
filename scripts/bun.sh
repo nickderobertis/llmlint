@@ -50,7 +50,21 @@ readonly VERSION
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || fail ".tool-versions must pin bun as 'bun X.Y.Z' (got '${VERSION}')."
 
-readonly CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/llmlint-dev/bun-$VERSION"
+# The cache root is where `ensure` creates and replaces the bun binary, so it must
+# be an absolute path (XDG_CACHE_HOME when set, else HOME/.cache), never one
+# resolved against whatever directory the recipe happens to run from.
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+  case "$XDG_CACHE_HOME" in
+    /*) cache_root="$XDG_CACHE_HOME" ;;
+    *) fail "XDG_CACHE_HOME must be an absolute path (got '${XDG_CACHE_HOME}'); fix it or unset it to use \$HOME/.cache." ;;
+  esac
+else
+  case "${HOME:-}" in
+    /*) cache_root="$HOME/.cache" ;;
+    *) fail "HOME must be an absolute path to find the bun cache (got '${HOME:-}'), or set XDG_CACHE_HOME to an absolute directory." ;;
+  esac
+fi
+readonly CACHE_DIR="$cache_root/llmlint-dev/bun-$VERSION"
 
 # The pinned bun, if one is available: PATH first, then the cache.
 pinned_bun() {
