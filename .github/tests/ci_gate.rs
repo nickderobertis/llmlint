@@ -230,6 +230,7 @@ struct Github {
     dir: TempDir,
 }
 
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] GitHub owns these response shapes and no test can reach its API (the task prescribes answering it at the gh seam); the fixtures carry only fields GitHub's REST docs define for workflow runs and jobs, and the verdict refuses any answer that lacks them rather than trusting a drifted shape
 /// A ci.yml run as the runs endpoint lists it.
 fn run(id: u64, event: &str, branch: &str, head_repo: &str, tree: &str, status: &str) -> String {
     format!(
@@ -261,6 +262,7 @@ const GREEN: &[(&str, &str, &str)] = &[
     ("cross (windows-latest)", "completed", "success"),
     ("deny", "completed", "success"),
 ];
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 impl Github {
     fn new(pr_runs: &[String], dispatch_runs: &[String]) -> Self {

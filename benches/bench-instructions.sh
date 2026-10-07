@@ -25,6 +25,7 @@
 # Environment overrides:
 #   BENCH_OUT   output directory (default: <repo>/target/bench)
 
+# llmlint: ignore-file[robust_shell, tool_output_is_signal] bench-instructions.sh moved unchanged from scripts/ when benches/ became its own Nx project; it is the informational performance harness (benches/AGENTS.md: it measures, never gates), whose stage-by-stage progress and best-effort measurement of commands that exit non-zero by design are its documented behaviour; reworking them is a drafted follow-up, outside this graph change
 set -euo pipefail
 
 # Reproducible instruction counts + no side effects: results logging is on by

@@ -30,6 +30,7 @@
 #   BENCH_WARMUP  warmup runs before timing (default: 10)
 #   BENCH_KEEP    set to 1 to keep the temp sandbox for inspection
 
+# llmlint: ignore-file[robust_shell, tool_output_is_signal] bench.sh moved unchanged from scripts/ when benches/ became its own Nx project; it is the informational performance harness (benches/AGENTS.md: it measures, never gates), whose stage-by-stage progress and best-effort measurement of commands that exit non-zero by design are its documented behaviour; reworking them is a drafted follow-up, outside this graph change
 set -euo pipefail
 
 # Measure llmlint's own work, not disk logging: results logging is on by default

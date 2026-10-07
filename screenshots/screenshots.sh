@@ -37,6 +37,7 @@
 # README + gallery.
 #
 # Requires `freeze` on PATH (install the pinned version with `just screenshots-tools`).
+# llmlint: ignore-file[robust_shell] the captures moved unchanged from scripts/ when screenshots/ became its own Nx project: each scene command's exit status is deliberately not required (the lint scene's verdict is a failure, exit 1, by design) and render_scene validates the captured output instead, so a failed run cannot render; tightening per-scene status checks is a drafted follow-up, outside this graph change
 set -euo pipefail
 
 # Byte-determinism starts with the environment: the scenes render the REAL
@@ -82,7 +83,7 @@ if ! command -v freeze >/dev/null 2>&1; then
 fi
 
 # Build the binaries the capture drives: the real CLI and the mock oneharness it
-# talks to (the fixture feature). Release, like a user would run.
+# talks to (the `llmlint-mock-oneharness` crate). Release, like a user would run.
 llmlint_bin="$repo_root/target/release/llmlint"
 mock_bin="$repo_root/target/release/llmlint-mock-oneharness"
 if [ -z "${SCREENSHOTS_NO_BUILD:-}" ] || [ ! -x "$llmlint_bin" ] || [ ! -x "$mock_bin" ]; then
@@ -152,11 +153,12 @@ render_scene() {
       echo "screenshots: scene '$name' produced no ANSI — cannot render the colored report."
       echo "---- captured stdout ($(wc -c <"$src") bytes) ----"
       cat -v "$src"
+      echo "Re-run the scene by hand from screenshots/fixture/ with the same flags to see llmlint's stderr."
     } >&2
     exit 1
   fi
   if [ ! -s "$src" ]; then
-    echo "screenshots: scene '$name' produced no output — cannot render." >&2
+    echo "screenshots: scene '$name' produced no output — cannot render. Re-run that command from screenshots/fixture/ to see why it printed nothing." >&2
     exit 1
   fi
   # `< /dev/null`: freeze reads stdin whenever it is not a character device (its

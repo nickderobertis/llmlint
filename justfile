@@ -69,6 +69,7 @@ bootstrap:
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
 
+# llmlint: ignore-block[diagnostics_error_or_absent] compiler warnings already fail these gates: their `lint` target is `cargo clippy --all-targets -- -D warnings` over every crate, which compiles and denies the same diagnostics the build and test targets would emit; forcing RUSTFLAGS here would also rebuild every artifact the cache and the cross jobs share
 # Full quality gate: format check, clippy and the project-boundary check,
 # shellcheck, actionlint, build, every project's tests (unit, e2e, the offline
 # release-targets and script journeys) with the coverage-measured ones under
@@ -98,6 +99,7 @@ check-portable *flags:
       bash scripts/nx affected --base="$tier" -t format lint test; \
     fi
     @echo "check-portable: ok"
+# llmlint: ignore-end[diagnostics_error_or_absent]
 
 # The test targets (each coverage-measured one writes its profiles; no floor).
 [positional-arguments]
@@ -212,7 +214,7 @@ test-oneharness:
 # resolve it, so CI runs it against the PR base. The base is a positional arg —
 # override it with `just check-version-bump <ref>`.
 check-version-bump base="origin/main":
-    @bash scripts/nx run config-lint-plugin:check-version-bump --base={{quote(base)}}
+    @CHECK_VERSION_BUMP_BASE={{quote(base)}} bash scripts/nx run config-lint-plugin:check-version-bump
 
 # Advisory + license audit and unused-dependency check (the workspace project's
 # `supply-chain` target). Separate from `check`: `cargo deny` needs a

@@ -19,7 +19,7 @@
 # `live_run_journeys` is harness-agnostic, so an ad-hoc script for another harness
 # is a few lines (see `tests/live/AGENTS.md`).
 
-# Repo root = two levels above this script (it lives in tests/live/).
+# llmlint: ignore-file[tool_output_is_signal] the paid live tier's per-journey narration is the only log of a run that cannot be replayed for free (live.yml's CI output); moved unchanged from scripts/ when tests/live/ became its own Nx project
 LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 note() { printf '%s\n' "$*" >&2; }

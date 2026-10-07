@@ -90,10 +90,7 @@ ensure_cargo_tool() {
 }
 
 ensure_node() {
-  if have node; then
-    ok "node present ($(node --version 2>/dev/null || echo unknown))"
-    return
-  fi
+  have node && return
   printf 'error: Node is required to run Nx (the gate orchestrator); install Node (LTS) from https://nodejs.org or your package manager, then re-run ./scripts/setup.sh\n' >&2
   exit 1
 }
