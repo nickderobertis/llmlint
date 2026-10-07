@@ -1,38 +1,12 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
-  "name": "coverage",
-  "//": "The repo-level coverage gate: clears the shared profile directory before the instrumented test runs, then merges every coverage:profiles project's profiles and enforces the 95% line floor over the llmlint crate's sources (src/), once (coverage.sh). It depends on exactly what can move that number: the projects whose tests write profiles, and its own driver.",
+  "name": "coverage-driver",
+  "//": "The coverage driver, coverage.sh (the per-crate instrumented test runs and the merged report the coverage gate project runs), and its self-tests. Nothing depends on it but the coverage gate, so only an edit to the driver selects its slow self-tests.",
   "projectType": "library",
   "tags": [
     "type:workspace"
   ],
-  "implicitDependencies": [
-    "tag:coverage:profiles"
-  ],
   "targets": {
-    "coverage-clear": {
-      "executor": "nx:run-commands",
-      "cache": false,
-      "options": {
-        "command": "bash tools/coverage/coverage.sh clear"
-      }
-    },
-    "coverage": {
-      "executor": "nx:run-commands",
-      "cache": false,
-      "dependsOn": [
-        {
-          "projects": [
-            "tag:coverage:profiles"
-          ],
-          "target": "test"
-        }
-      ],
-      "options": {
-        "command": "bash tools/coverage/coverage.sh report"
-      },
-      "//": "Uncached: the profiles it merges come from uncached test runs, so a replay could report on a set that no longer exists."
-    },
     "lint-sh": {
       "executor": "nx:run-commands",
       "options": {
@@ -64,7 +38,8 @@
   },
   "namedInputs": {
     "default": [
-      "{projectRoot}/**/*"
+      "{projectRoot}/**/*",
+      "!{projectRoot}/gate/**/*"
     ]
   }
 }

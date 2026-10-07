@@ -1,4 +1,10 @@
-# tools/coverage/AGENTS.md — the coverage project
+# tools/coverage/AGENTS.md — the coverage-driver and coverage projects
+
+Two projects. `coverage-driver` (this directory) owns `coverage.sh` and its
+self-tests; `coverage` (`gate/`) owns the gate's targets and depends on every
+`coverage:profiles` project plus the driver. They are split so that the edge a
+product edit must follow to re-run the gate does not also select the driver's
+slow self-tests: only an edit here does.
 
 The repo-level coverage gate (`coverage.sh`): `coverage-clear` empties
 `target/llvm-cov-target`, each coverage-measured project's `test` target (tag
@@ -15,7 +21,7 @@ binary and the fixture they drive.
 - `LLMLINT_COVERAGE=off` (`just check-portable`, which the macOS/Windows `cross`
   jobs run) runs the tests with plain nextest and skips the report; the floor is
   the Linux gate's.
-- `tests/coverage.test.mjs` (this project's `test`) drives `coverage.sh` against
-  a scratch Cargo workspace under the real cargo-llvm-cov.
+- `tests/coverage.test.mjs` (`coverage-driver`'s `test`) drives `coverage.sh`
+  against a scratch Cargo workspace under the real cargo-llvm-cov.
 - Never lower the floor, or drop a project from `coverage:profiles`, to make the
   number pass: cover the missed lines with a test that drives the real behaviour.

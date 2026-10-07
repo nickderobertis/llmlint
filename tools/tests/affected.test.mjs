@@ -63,6 +63,17 @@ test("an edit to the root crate selects it and every project depending on it", (
   const got = selected("src/main.rs");
   expect(got).toEqual(dependents("llmlint"));
   for (const p of ["llmlint-mock-oneharness", "llmlint-e2e", "bench", "repo-tooling", "coverage"]) expect(got).toContain(p);
+  expect(got).not.toContain("coverage-driver");
+});
+
+test("only an edit to the coverage driver selects its self-tests, and it re-runs the gate", () => {
+  const got = selected("tools/coverage/coverage.sh");
+  expect(got).toEqual(dependents("coverage-driver"));
+  expect(got).toContain("coverage");
+  for (const p of ["llmlint", "llmlint-e2e"]) expect(got).not.toContain(p);
+  for (const file of ["src/main.rs", "tests/e2e/main.rs", "tools/coverage/gate/project.json"]) {
+    expect(selected(file)).not.toContain("coverage-driver");
+  }
 });
 
 test("an edit to a shared script or workflow selects exactly its consumers", () => {

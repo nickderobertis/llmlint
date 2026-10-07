@@ -87,8 +87,10 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
 - `git-hooks` (`type:tooling`, `.githooks/`) — the pre-push hook (its journeys are
   the screenshots project's).
 - `workspace` (`type:workspace`, `tools/`) — the boundary check and the
-  supply-chain check; `coverage` (`type:workspace`, `tools/coverage/`) — the
-  aggregate coverage gate.
+  supply-chain check; `coverage` (`type:workspace`, `tools/coverage/gate/`) — the
+  aggregate coverage gate; `coverage-driver` (`type:workspace`, `tools/coverage/`)
+  — its driver, `coverage.sh`, and the driver's slow self-tests, a project of
+  their own so a product edit (which selects the gate) never selects them.
 
 Every project declares the repo-uniform target names that apply to it: `format`
 (a check; `--configuration=write` writes), `lint` (clippy, or the boundary
