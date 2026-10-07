@@ -9,6 +9,9 @@
 #
 set -euo pipefail
 
+# The baseline paths below are relative to the repository root.
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || { echo "bless-baseline: cannot enter the repository root; run it by its path from a readable checkout." >&2; exit 1; }
+
 if ! command -v screencomp >/dev/null 2>&1; then
   echo "bless-baseline: screencomp is not installed, so the baseline cannot be" >&2
   echo "                refreshed. Install it and retry:" >&2
@@ -23,7 +26,7 @@ if [ ! -d "$current" ]; then
   exit 1
 fi
 
-if ! lane="$(bash "$(dirname "$0")/host-arch.sh")"; then
+if ! lane="$(bash screenshots/host-arch.sh)"; then
   echo "bless-baseline: could not name this host's lane (host-arch.sh's error above)" >&2
   echo "                It reads 'uname -m'; make that work on this host, then re-run" >&2
   echo "                just screenshots-bless." >&2

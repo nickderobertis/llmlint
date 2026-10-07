@@ -51,11 +51,15 @@ https://* | file://*) ;;
   exit 1
   ;;
 esac
-if [ -z "$install_dir" ]; then
-  echo "ci-install-freeze: FREEZE_INSTALL_DIR is empty; it must name a directory" >&2
-  echo "                   to install into. Unset it to use /usr/local/bin." >&2
+case "$install_dir" in
+/*) ;;
+*)
+  echo "ci-install-freeze: FREEZE_INSTALL_DIR must be an absolute directory path" >&2
+  echo "                   to install into; got: ${install_dir:-<empty>}" >&2
+  echo "                   Unset it to use /usr/local/bin." >&2
   exit 1
-fi
+  ;;
+esac
 if [ ! -r "$sums_file" ]; then
   echo "ci-install-freeze: no readable digest pin file at $sums_file" >&2
   echo "                   Restore screenshots/freeze.sha256, or point" >&2

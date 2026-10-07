@@ -712,6 +712,7 @@ fn ci_install_freeze_refuses_a_malformed_override_before_fetching() {
             "FREEZE_BASE_URL",
         ),
         ("FREEZE_INSTALL_DIR", "", "FREEZE_INSTALL_DIR"),
+        ("FREEZE_INSTALL_DIR", "relative/bin", "FREEZE_INSTALL_DIR"),
         (
             "FREEZE_SHA256_FILE",
             "/nonexistent/freeze.sha256",
@@ -823,9 +824,9 @@ fn ci_install_freeze_pins_the_version_the_justfile_pins() {
 
 #[cfg(unix)]
 /// The real `screenshots.sh` with `freeze` absent from PATH, capturing into
-/// `shots_out`: it stops at the capture-directory guard or at the `freeze`
+/// `shots_out`: it stops at the capture-directory guards or at the `freeze`
 /// check, before it builds or renders anything.
-fn capture_into(shots_out: &Path) -> std::process::Output {
+fn capture_into(shots_out: &str) -> std::process::Output {
     let mut cmd = std::process::Command::new("bash");
     cmd.arg(repo_root().join("screenshots/screenshots.sh"))
         .env("PATH", "/usr/bin:/bin")
@@ -835,11 +836,30 @@ fn capture_into(shots_out: &Path) -> std::process::Output {
 }
 
 #[cfg(unix)]
+/// A scratch directory inside the repository's (gitignored) `shots/current/`,
+/// the only tree the capture may delete from, removed when dropped; the second
+/// value is its path relative to the repository root, as SHOTS_OUT names it.
+fn shots_scratch() -> (TempDir, String) {
+    let current = repo_root().join("shots/current");
+    fs::create_dir_all(&current).unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("guard-test-")
+        .tempdir_in(&current)
+        .unwrap();
+    let rel = format!(
+        "shots/current/{}",
+        dir.path().file_name().unwrap().to_str().unwrap()
+    );
+    (dir, rel)
+}
+
+#[cfg(unix)]
 #[test]
 fn the_capture_refuses_to_delete_a_shots_out_that_is_not_a_capture_directory() {
-    let p = Project::new();
-    p.write("unrelated/keep.txt", "not a capture\n");
-    let out = capture_into(&p.path().join("unrelated"));
+    let (scratch, rel) = shots_scratch();
+    fs::create_dir_all(scratch.path().join("unrelated")).unwrap();
+    fs::write(scratch.path().join("unrelated/keep.txt"), "not a capture\n").unwrap();
+    let out = capture_into(&format!("{rel}/unrelated"));
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -847,19 +867,120 @@ fn the_capture_refuses_to_delete_a_shots_out_that_is_not_a_capture_directory() {
         "{err}"
     );
     assert!(
-        p.path().join("unrelated/keep.txt").exists(),
+        scratch.path().join("unrelated/keep.txt").exists(),
         "nothing deleted"
     );
 
-    // A previous capture, an empty directory and an absent one pass the guard:
-    // each run goes on to the freeze check, the next step.
-    p.write("previous/captures.json", "{}\n");
-    fs::create_dir_all(p.path().join("empty")).unwrap();
+    // A previous capture, an empty directory and an absent one pass the guard,
+    // named relative to the repository root or absolutely under it: each run goes
+    // on to the freeze check, the next step.
+    fs::create_dir_all(scratch.path().join("previous")).unwrap();
+    fs::write(scratch.path().join("previous/captures.json"), "{}\n").unwrap();
+    fs::create_dir_all(scratch.path().join("empty")).unwrap();
     for dir in ["previous", "empty", "absent"] {
-        let out = capture_into(&p.path().join(dir));
+        for shots_out in [
+            format!("{rel}/{dir}"),
+            scratch.path().join(dir).display().to_string(),
+        ] {
+            let out = capture_into(&shots_out);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(1), "{shots_out}: {out:?}");
+            assert!(err.contains("'freeze' not on PATH"), "{shots_out}: {err}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_capture_refuses_a_shots_out_outside_the_shots_tree() {
+    // The capture deletes SHOTS_OUT before writing, so an override naming any
+    // directory outside the repository's shots/ tree — elsewhere on disk, the
+    // repository's own sources, or a path that walks back out with `..` — is
+    // refused by name before anything is deleted, even one shaped like a capture.
+    let outside = Project::new();
+    outside.write("captures.json", "{}\n");
+    let (_scratch, rel) = shots_scratch();
+    for shots_out in [
+        outside.path().display().to_string(),
+        "src".to_owned(),
+        "shots".to_owned(),
+        format!("{rel}/../../../src"),
+        "shots/./current".to_owned(),
+        String::new(),
+    ] {
+        let out = capture_into(&shots_out);
         let err = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(1), "{dir}: {out:?}");
-        assert!(err.contains("'freeze' not on PATH"), "{dir}: {err}");
+        // An empty SHOTS_OUT falls back to this host's lane, which passes.
+        if shots_out.is_empty() {
+            assert!(err.contains("'freeze' not on PATH"), "empty: {err}");
+            continue;
+        }
+        assert_eq!(out.status.code(), Some(1), "{shots_out}: {out:?}");
+        assert!(
+            err.contains("SHOTS_OUT must name a directory inside this repository's shots/"),
+            "{shots_out}: {err}"
+        );
+    }
+    assert!(
+        outside.path().join("captures.json").exists(),
+        "nothing deleted"
+    );
+    assert!(repo_root().join("src/main.rs").exists(), "nothing deleted");
+}
+
+#[cfg(unix)]
+#[test]
+fn host_arch_names_a_lane_only_for_a_plain_machine_name() {
+    // The lane names shots/current/<arch>, which the capture deletes and
+    // rebuilds, so `uname -m` output that is not a plain machine name is refused
+    // rather than turned into a path; the two vocabularies still normalize.
+    use std::os::unix::fs::PermissionsExt;
+    for (machine, want) in [
+        ("aarch64", Some("arm64")),
+        ("amd64", Some("x86_64")),
+        ("riscv64", Some("riscv64")),
+        ("../../src", None),
+        ("x86 64", None),
+        ("", None),
+    ] {
+        let p = Project::new();
+        p.write(
+            "bin/uname",
+            &format!("#!/usr/bin/env bash\nprintf '%s\\n' '{machine}'\n"),
+        );
+        fs::set_permissions(
+            p.path().join("bin/uname"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let out = std::process::Command::new("bash")
+            .arg(repo_root().join("screenshots/host-arch.sh"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    p.path().join("bin").display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        match want {
+            Some(lane) => {
+                assert!(out.status.success(), "{machine}: {stderr}");
+                assert_eq!(stdout.trim_end(), lane, "{machine}");
+            }
+            None => {
+                assert_eq!(out.status.code(), Some(1), "{machine}: {out:?}");
+                assert!(
+                    stderr.contains("not a plain machine name"),
+                    "{machine}: {stderr}"
+                );
+                assert!(stdout.is_empty(), "{machine}: printed a lane: {stdout}");
+            }
+        }
     }
 }
 

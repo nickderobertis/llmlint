@@ -60,13 +60,35 @@ unset _var
 # captures. Turn it off so the shots stay byte-reproducible and hash-gateable.
 export LLMLINT_NO_HISTORY=1
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
+  || { echo "screenshots: cannot resolve the repository root; run it by its path from a readable checkout." >&2; exit 1; }
+cd "$repo_root" || { echo "screenshots: cannot enter $repo_root; make it readable and searchable, then re-run." >&2; exit 1; }
 
 # This host's capture lane (shots/current/<arch>), named the same way the pre-push
 # guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT per lane.
-arch="$(bash "$repo_root/screenshots/host-arch.sh")"
+arch="$(bash "$repo_root/screenshots/host-arch.sh")" \
+  || { echo "screenshots: could not name this host's lane (host-arch.sh's error above)." >&2; exit 1; }
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
+# The capture starts by deleting $SHOTS_OUT, so it must lie inside this
+# repository's shots/ tree, where every capture lane lives (shots/current/<arch>
+# locally and in CI): relative to the repository root or under it absolutely, and
+# with no `.`/`..` step or empty segment that could walk back out of it.
+shots_rel="$SHOTS_OUT"
+case "$SHOTS_OUT" in
+/*) shots_rel="${SHOTS_OUT#"$repo_root"/}" ;;
+esac
+case "/$shots_rel/" in
+*/../* | */./* | *//*) shots_rel="" ;;
+/shots/?*/) ;;
+*) shots_rel="" ;;
+esac
+if [ -z "$shots_rel" ]; then
+  echo "screenshots: SHOTS_OUT must name a directory inside this repository's shots/" >&2
+  echo "             tree (e.g. shots/current/$arch), since the capture deletes it first;" >&2
+  echo "             got '$SHOTS_OUT'. Unset it to use shots/current/$arch." >&2
+  exit 1
+fi
+SHOTS_OUT="$shots_rel"
 if [ -e "$SHOTS_OUT" ] && [ ! -d "$SHOTS_OUT" ]; then
   echo "screenshots: SHOTS_OUT must name a directory to capture into;" >&2
   echo "             $SHOTS_OUT is not one. Unset it or point it elsewhere." >&2

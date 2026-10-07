@@ -13,4 +13,10 @@ case "$arch" in
 x86_64 | amd64) arch="x86_64" ;;
 arm64 | aarch64) arch="arm64" ;;
 esac
+# The lane names a directory the capture deletes and rebuilds
+# (shots/current/<arch>), so anything but a plain machine name is refused.
+if ! [[ "$arch" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo "host-arch: 'uname -m' reported '$arch', not a plain machine name (letters, digits, _); this host's lane cannot be named." >&2
+  exit 1
+fi
 printf '%s\n' "$arch"
