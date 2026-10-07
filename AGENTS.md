@@ -17,11 +17,47 @@ A YAML config declares rules, agents, file globs, and a prompt template; llmlint
 drives real coding harnesses **through `oneharness`** and reads its validated
 structured output. Consumers: developers and CI gating a repo's quality.
 
+## Two standing goals on every task
+
+The user drives product features and their request is the priority — but carry
+two goals into *every* task. When either is the lowest-error path to what the
+user asked, fold it into the same task without asking first; surface the rest as
+follow-ups (see "After the main task").
+
+1. **Engineer the context for next time.** Make the next agent (and you) see
+   more for less: realistic end-to-end tests that drive the real binary the way a
+   user does (the e2e suite against the mock-oneharness fixture) — especially when
+   a reported bug slipped past the existing ones — scripts and `just` recipes that
+   automate repetitive steps and shrink their output to signal, and terse
+   `AGENTS.md` notes capturing what the code doesn't make obvious.
+2. **Engineer the codebase and environment.** Be the engineer the user isn't:
+   prioritize the technical initiatives that keep the codebase clean,
+   maintainable, and repeatable, and keep environment setup automated and
+   consistent (`just setup` on a bare machine, `just bootstrap` in CI). The strict
+   `just check` gate plus local/CI parity (same recipes, the toolchain pinned in
+   `rust-toolchain.toml`) make results repeatable — not "works on my machine." A
+   clean base and a reproducible environment are usually how the user's feature
+   ships with a low error rate.
+
 ## Stack and composition
 
-Built with the `create-repo` skill from one **product shape** (CLI), one
-**language** (Rust), and the **CI** + **releasing** cross-cutting references —
-pulling `shapes/cli.md` + `languages/rust.md` + `intersections/rust-cli.md`.
+Built with the `create-repo` skill from one **product shape** (CLI), two
+**languages** (Rust, Bash), and the **CI**, **releasing** and **llmlint**
+cross-cutting references — composing `base.md` + `shapes/cli.md` +
+`languages/rust.md` + `languages/bash.md` + `intersections/rust-cli.md` + `ci.md`
++ `releasing.md` + `llmlint.md`. The judged tier's `llmlint.yml` composes the
+matching rule fragments (`base`, `shapes/cli`, `languages/rust`,
+`languages/bash`, `ci`, `releasing`, plus llmlint's own `config_lint`), each
+pinned at `@1`. Bash is composed because `scripts/*.sh` and the
+`.githooks/pre-push` hook carry real logic (setup, install, capture, the hook);
+two other languages appear only as **supporting tooling**, not composed
+languages:
+
+- **PowerShell** — `scripts/win-console-color.ps1`, one script: it must drive a
+  real Windows console buffer, which only PowerShell can read back.
+- **Python** — `scripts/demo-gif.py`, one on-demand helper that renders the README
+  GIF with Pillow; it is neither built, shipped, nor gated.
+
 Deliberately excluded (so it isn't re-litigated):
 
 - **No monorepo** — single binary crate; no Nx/affected wiring.
@@ -69,9 +105,17 @@ Use the `just` recipes; do not hand-roll equivalents.
   pins); bump those pins and the stamp invalidates so `setup` re-runs.
 - `just bootstrap` — the cargo-level step `setup` finishes with (toolchain
   components + `cargo fetch`); CI calls it directly after installing the
-  toolchain + tools its own way. Use `just setup` for a bare machine.
-- `just check` — full gate: fmt-check, `lint-workflows`, clippy (`-D warnings`),
-  tests, **e2e**, `cargo doc`. Must pass before any commit or PR.
+  toolchain + tools its own way — the jobs that run the gate or its tests (`gate`,
+  `cross`) install the channel pinned in `rust-toolchain.toml`
+  (`actions-rust-lang/setup-rust-toolchain`), never a floating `stable`; only
+  `install`, which stands in for an end user's machine, uses a stock stable. Use
+  `just setup` for a bare machine.
+- `just check` — full gate: `lint-sh`, fmt-check, `lint-workflows`, clippy
+  (`-D warnings`), tests, **e2e**, `cargo doc`. Must pass before any commit or PR.
+- `just lint-sh` — shellcheck over `scripts/*.sh` and `.githooks/pre-push`; first
+  in `check` (cheapest). Fix a finding at its site; a `# shellcheck disable=` is
+  site-scoped and carries its reason. `just setup` does not install shellcheck
+  yet (CI's ubuntu runner ships it); the recipe names the install when missing.
 - `just lint-workflows` — the pinned actionlint (`actionlint-version` in the
   justfile) over every workflow in `.github/workflows/`; part of `check`, so CI's
   gate job lints the whole workflow set on every change. A finding is fixed, not
@@ -107,6 +151,16 @@ Use the `just` recipes; do not hand-roll equivalents.
   the highest layer's settings win. Free and model-free, but networked, so out of
   `test`/`check`. The pin is the multi-file floor
   (`oneharness::LAYERED_CONFIG_MIN_VERSION`); an always-run test holds them equal.
+- **LLM-judge tier (dogfood)** — `just lint-llm-validate` (model-free: config
+  structure, ignore directives, version bumps) and `just lint-llm-diff <base>`
+  (the judge over the branch's changes) run the released llmlint
+  (`just setup-llmlint`, floor `LLMLINT_MIN` in `scripts/setup-llmlint.sh`)
+  against `llmlint.yml` + `oneharness.toml`. CI's `llmlint` job runs validate, then
+  the judge — after installing and logging in the harness `oneharness.toml`
+  selects first (codex, via `npm install -g @openai/codex` + `codex login
+  --with-api-key` from `OPENAI_API_KEY`); a missing key fails the job, never a
+  green no-op. `.githooks/pre-push` runs `just lint-llm-validate` on every push
+  before the visual guard: a failure blocks, a missing llmlint warns and skips.
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the **live e2e tier**: builds a release binary, then drives
@@ -550,10 +604,22 @@ harness reads target files on-demand with its own tools.
   merge/rebase commits disabled, so one PR is one squash commit whose subject is
   the PR title. Queue with `gh pr merge --auto --squash`; merged heads auto-delete.
   Admins may break-glass.
-- **All gating checks required**: `check` (full e2e gate), `deny`, `install`,
-  `pr-title`, and the Visual docs diff check, one per declared capture lane
-  (`visual-docs / report (x86_64)`, `visual-docs / report (arm64)`),
-  plus linear history, conversation resolution, no force-push/deletion.
+- **Required status checks** — the fixed context contract: `gate` (the full
+  `just check` gate), `deny`, `pr-title`, `cross (macos-latest)`,
+  `cross (windows-latest)`, `install (ubuntu-latest)`, `install (macos-latest)`,
+  `install (windows-latest)`, `visual-docs / report (x86_64)` and
+  `visual-docs / report (arm64)` (the Visual docs diff check, one per declared
+  capture lane); plus linear history, conversation resolution, no
+  force-push/deletion. `llmlint` (the judged tier, `ci.yml`) is the blocking PR
+  check the create-repo skill requires to be required too — else auto-merge lands
+  a PR past a red judge run; requiring it is applied in a separate governance step
+  (`gov-llmlint`), whose `setup_github_governance.py --verify` comparison is what
+  reconciles this list with the live branch protection. An e2e journey
+  (`every_required_context_is_reported_on_every_pull_request`) holds the
+  workflows to these names: renaming a job or adding a filter, `if:` or `needs`
+  that could leave one unreported on a PR fails the gate. `notignored`
+  (`notignored.yml`, the PR comment listing added suppressions) is deliberately
+  not required: it skips fork PRs.
 - **PRs follow `.github/pull_request_template.md`** (What / Why; the squash body).
 - **Releases**: Conventional Commits drive release-plz (pre-1.0: `feat`→minor,
   `fix`/`perf`→patch, `!`/`BREAKING`→minor; `docs`/`test`/`chore`/`ci`→no release).
@@ -821,6 +887,15 @@ it. When a new routine command joins the build/test/release workflow, add it
 
 ## After the main task: refine and hand off
 
-After the requested task, propose only materially-helpful follow-ups (scripts,
-`AGENTS.md` constraints, shared skills, tests/fixtures), each with its likely
-impact. Skip busywork; if nothing helps, say so.
+After completing the user's requested task, act on the two standing goals above:
+look for ways to make future work easier and propose follow-ups — but only ones
+that are materially helpful, and note each one's likely impact:
+
+- **Scripts** — a repeatable step you did by hand that should be a `just` recipe
+  or a script.
+- **`AGENTS.md`** — a constraint, gotcha, or decision worth recording here.
+- **Skills** — guidance general enough to belong in a shared skill.
+- **Other context** — e2e journeys, fixtures, or docs that would improve
+  visibility.
+
+Skip busywork. If nothing is materially helpful, say so and stop.
