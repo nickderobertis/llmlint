@@ -18,11 +18,12 @@
 # offline; it exists for those tests only.
 #
 # Exit status: 0 the pinned bun is available (`path` prints it); 1 it is not and
-# could not be installed, or the invocation was wrong (the message says which).
+# could not be installed (the message says why); 2 a usage error (no mode, more
+# than one, or an unknown one).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
-  || { echo "bun.sh: cannot resolve the repository root from ${BASH_SOURCE[0]}" >&2; exit 1; }
+  || { echo "bun.sh: cannot resolve the repository root from ${BASH_SOURCE[0]}; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
 readonly ROOT
 readonly MODE="${1:-}"
 
@@ -31,7 +32,12 @@ fail() {
   exit 1
 }
 
-[ $# -eq 1 ] || fail "expected exactly one mode; usage: scripts/bun.sh ensure | path"
+usage() {
+  echo "bun.sh: $*; usage: scripts/bun.sh ensure | path" >&2
+  exit 2
+}
+
+[ $# -eq 1 ] || usage "expected exactly one mode (got $#)"
 [ -r "$ROOT/.tool-versions" ] || fail "cannot read $ROOT/.tool-versions; restore it (it pins bun) from git."
 # Exactly one `bun X.Y.Z` line: the value lands in a cache path and a download
 # URL, so a second pin or anything but a plain version is refused, not guessed at.
@@ -132,6 +138,6 @@ case "$MODE" in
     fi
     ;;
   *)
-    fail "unknown mode '${MODE}'; usage: scripts/bun.sh ensure | path"
+    usage "unknown mode '${MODE}'"
     ;;
 esac

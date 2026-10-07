@@ -970,7 +970,8 @@ fn check_all_runs_the_full_sweep_and_a_mistyped_tier_runs_nothing() {
 #[test]
 fn every_gate_recipe_takes_the_same_tier() {
     // The test/lint/format/doc recipes are the same tier choice over one
-    // target each, so `just test` in CI's cross jobs and `just check` agree.
+    // target each, so `just check-portable` in CI's cross jobs and `just
+    // check` agree.
     let repo = GateRepo::new();
     for (recipe, targets) in [
         ("test", "-t test"),
@@ -1204,6 +1205,29 @@ fn bun_sh_refuses_a_release_that_fails_its_checksum() {
         !repo.cached_bun(&version).exists(),
         "a tampered bun was installed"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn bun_sh_calls_a_missing_extra_or_unknown_mode_a_usage_error() {
+    let repo = BunRepo::new(&format!("bun {}\n", pinned_bun_version()));
+    let empty = repo.p.path().join("empty");
+    for (mode, says) in [("", "unknown mode ''"), ("pth", "unknown mode 'pth'")] {
+        let out = repo.bun_sh(mode, &empty, "file:///nowhere");
+        assert_eq!(out.status.code(), Some(2), "{mode:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(says) && err.contains("usage: scripts/bun.sh ensure | path"),
+            "{mode:?}: {err}"
+        );
+    }
+    let out = std::process::Command::new("bash")
+        .arg(repo.p.path().join("scripts/bun.sh"))
+        .args(["path", "ensure"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("expected exactly one mode (got 2)"));
 }
 
 #[cfg(unix)]

@@ -13,9 +13,10 @@
 # Usage: scripts/nx <nx arguments...>
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
+  || { echo "nx: cannot resolve the repository root from ${BASH_SOURCE[0]}; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
 readonly ROOT
-cd "$ROOT"
+cd "$ROOT" || { echo "nx: cannot enter $ROOT; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
 
 bun_path="$(bash scripts/bun.sh path)"
 PATH="$(dirname "$bun_path"):$PATH"

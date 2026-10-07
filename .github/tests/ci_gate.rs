@@ -614,8 +614,7 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
         );
     }
 
-    // An answer that is not the commit object GitHub documents stops the release
-    // naming the endpoint, never jq's bare parse error alone.
+    // A run id that is not a positive integer never reaches the jobs endpoint.
     let bad_id = Github::new(
         &[run(
             7,
@@ -637,6 +636,8 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
     );
     assert!(!bad_id.calls().contains("/jobs"), "{}", bad_id.calls());
 
+    // An answer that is not the commit object GitHub documents stops the release
+    // naming the endpoint, never jq's bare parse error alone.
     fs::write(
         gh.dir.path().join("commit.json"),
         "<html>rate limited</html>",
@@ -654,6 +655,53 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
         "{err}"
     );
     assert!(gh.calls().is_empty() || !gh.calls().contains("abc123"));
+}
+
+#[test]
+fn a_runs_or_jobs_answer_without_its_collection_stops_the_release() {
+    // A runs answer that is not GitHub's workflow-runs list stops the release
+    // before any run is trusted, and names what to do next.
+    let gh = Github::new(&[], &[]);
+    fs::write(
+        gh.dir.path().join("runs-pr.json"),
+        r#"{"message":"Not Found"}"#,
+    )
+    .unwrap();
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains("ci.yml runs was unreadable") && err.contains("no workflow_runs"),
+        "{err}"
+    );
+    assert!(err.contains("inspect the API response"), "{err}");
+    assert!(!gh.calls().contains("/jobs"), "{}", gh.calls());
+
+    // A jobs answer without its jobs list is refused, never read as pending.
+    let gh = Github::new(
+        &[run(
+            7,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "completed",
+        )],
+        &[],
+    );
+    gh.jobs("jobs-7.json", "<html>rate limited</html>");
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains("the jobs of CI run 7 were unreadable"),
+        "{err}"
+    );
+    assert!(err.contains("inspect the API response"), "{err}");
+    gh.jobs("jobs-7.json", r#"{"total_count":0}"#);
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(stderr(&out).contains("no jobs"), "{}", stderr(&out));
 }
 
 /// The jobs of ci.yml as status-check contexts (a matrix job reports one per
