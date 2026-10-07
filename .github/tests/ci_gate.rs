@@ -200,6 +200,16 @@ fn an_unroutable_event_or_payload_is_refused_without_a_tier() {
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stderr).contains("no usable base ref ('a..b')"));
     assert!(recorded.is_empty(), "{recorded}");
+
+    // A nested field of the wrong type reads as absent: a refusal naming the
+    // missing base ref (exit 1), never a bare jq error with jq's own exit code.
+    for payload in [r#"{"pull_request":"invalid"}"#, r#"{"pull_request":{"base":7}}"#] {
+        let (out, recorded) = repo.tier("pull_request", payload);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{payload}: {out:?}");
+        assert!(err.contains("no usable base ref ('')"), "{payload}: {err}");
+        assert!(recorded.is_empty(), "{recorded}");
+    }
 }
 
 #[test]

@@ -37,7 +37,7 @@ usage() {
   exit 2
 }
 
-[ $# -eq 1 ] || usage "expected exactly one mode (got $#)"
+[ "$#" -eq 1 ] || usage "expected exactly one mode (got $#)"
 [ -r "$ROOT/.tool-versions" ] || fail "cannot read $ROOT/.tool-versions; restore it (it pins bun) from git."
 # Exactly one `bun X.Y.Z` line: the value lands in a cache path and a download
 # URL, so a second pin or anything but a plain version is refused, not guessed at.

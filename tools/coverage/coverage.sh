@@ -39,11 +39,11 @@ usage() {
   exit 2
 }
 
-[ $# -ge 1 ] || usage "no step given"
+[ "$#" -ge 1 ] || usage "no step given"
 readonly STEP="$1"
 case "$STEP" in
-  clear | report) [ $# -eq 1 ] || usage "'$STEP' takes no arguments (got $(($# - 1)))" ;;
-  test) [ $# -eq 2 ] || usage "'test' takes exactly one crate name (got $(($# - 1)) arguments)" ;;
+  clear | report) [ "$#" -eq 1 ] || usage "'$STEP' takes no arguments (got $(($# - 1)))" ;;
+  test) [ "$#" -eq 2 ] || usage "'test' takes exactly one crate name (got $(($# - 1)) arguments)" ;;
   *) usage "unknown step '$STEP'" ;;
 esac
 

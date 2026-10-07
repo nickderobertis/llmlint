@@ -59,6 +59,17 @@ emit() {
   printf 'ci-gate: %s\n' "$why" >&2
 }
 
+# One string field of the event payload, by path (`field pull_request head ref`).
+# A field that is absent, or whose value or any parent is not the expected type
+# (`{"pull_request":"x"}`), reads as empty, so the callers' own checks refuse it
+# with their message instead of a bare jq error.
+field() {
+  local out
+  out="$(jq -r --args '(try getpath($ARGS.positional) catch null) | if type == "string" then . else "" end' "$@" <<<"$payload" 2>&1)" ||
+    refuse "could not read $* from the event payload: $out" "point GITHUB_EVENT_PATH at the event JSON the runner provides"
+  printf '%s' "$out"
+}
+
 is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]] && [[ ! "$1" =~ ^0+$ ]]; }
 
 route() {
@@ -74,16 +85,16 @@ route() {
   case "$event" in
     pull_request)
       local head_ref head_repo base_repo head_sha base_ref base
-      head_ref="$(jq -r '.pull_request.head.ref // ""' <<<"$payload")"
-      head_repo="$(jq -r '.pull_request.head.repo.full_name // ""' <<<"$payload")"
-      base_repo="$(jq -r '.pull_request.base.repo.full_name // ""' <<<"$payload")"
+      head_ref="$(field pull_request head ref)"
+      head_repo="$(field pull_request head repo full_name)"
+      base_repo="$(field pull_request base repo full_name)"
       if [[ "$head_ref" == "$RELEASE_PR_PREFIX"* ]] && [ -n "$head_repo" ] && [ "$head_repo" = "$base_repo" ]; then
-        head_sha="$(jq -r '.pull_request.head.sha // ""' <<<"$payload")"
+        head_sha="$(field pull_request head sha)"
         is_sha "$head_sha" || refuse "release PR payload has no usable head sha ('$head_sha')" "re-run CI on the release PR"
         emit $'tier=all\nbase=\nhead='"$head_sha"$'\n' "all — release PR ($head_ref): the full sweep at release-prep, on its head $head_sha"
         return
       fi
-      base_ref="$(jq -r '.pull_request.base.ref // ""' <<<"$payload")"
+      base_ref="$(field pull_request base ref)"
       if [[ ! "$base_ref" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "$base_ref" == *..* ]] || [[ "$base_ref" == -* ]]; then
         refuse "pull_request payload has no usable base ref ('$base_ref')" "target a branch named with letters, digits and . _ / - only; nothing was run"
       fi
@@ -93,7 +104,7 @@ route() {
       ;;
     push)
       local before
-      before="$(jq -r '.before // ""' <<<"$payload")"
+      before="$(field before)"
       if is_sha "$before" && git rev-parse --verify --quiet "$before^{commit}" >/dev/null; then
         emit "tier=affected"$'\n'"base=$before"$'\nhead=\n' "affected — push: since the previous tip ($before)"
       else
@@ -198,7 +209,7 @@ verdict() {
   refuse "the full sweep of tree $tree (CI run $run_id) did not finish within $attempts polls" "wait for CI run $run_id to settle ($run_url), then re-run this release"
 }
 
-[ $# -eq 1 ] || usage "expected exactly one step"
+[ "$#" -eq 1 ] || usage "expected exactly one step"
 case "$1" in
   tier) route ;;
   verdict) verdict ;;
