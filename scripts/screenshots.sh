@@ -254,7 +254,7 @@ cp "$mock_bin" "$doctor_bin/oneharness"
 out="$tmp_state/doctor.txt"
 # The scene is a passing doctor (rendered with exit 0), so a failing one is a
 # broken capture, not a scene: stop with doctor's own stderr rather than render it.
-# llmlint: ignore-block[changed_behavior_has_e2e] this capture needs the pinned freeze, which neither `just setup` nor the gate installs, so no hermetic journey can run it; its real run is the Visual docs workflow on every PR, whose fail-on-drift classify holds the output to the committed shots byte for byte, and this change only turns a broken capture into a failed job instead of a rendered one
+# llmlint: ignore-block[changed_behavior_has_e2e] the capture needs the pinned freeze, outside the gate; the Visual docs workflow runs it on every PR and classifies its output against the committed shots
 if ! ( cd "$tmp_state" && PATH="$doctor_bin:$PATH" \
     LLMLINT_ONEHARNESS_BIN='' "$llmlint_bin" doctor ) >"$out" 2>"$out.err"; then
   echo "screenshots: 'llmlint doctor' failed against the mock fixture:" >&2
@@ -270,7 +270,7 @@ render_scene "doctor" "{}" "doctor.svg" "$out" 0
 # ASCII (names, toggle values, hex digests, file names), so plain printf is sound.
 {
   printf '{\n  "schema": 1,\n  "shots": [\n'
-  # llmlint: ignore-block[changed_behavior_has_e2e] this capture needs the pinned freeze, which neither `just setup` nor the gate installs, so no hermetic journey can run it; its real run is the Visual docs workflow on every PR, whose fail-on-drift classify holds the output to the committed shots byte for byte, and this change only turns a broken capture into a failed job instead of a rendered one
+  # llmlint: ignore-block[changed_behavior_has_e2e] same capture as the doctor block above; this read loop only replaces an unquoted array split and leaves the sorted manifest byte-identical
   sorted_text="$(printf '%s\n' "${entries[@]}" | sort)"   # a failing sort stops here
   sorted=()
   while IFS= read -r entry; do sorted+=("$entry"); done <<<"$sorted_text"

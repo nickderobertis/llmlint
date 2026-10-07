@@ -11855,10 +11855,12 @@ impl GuardRepo {
         );
         // `just` itself is real, linked alone into a dir of its own so the hook's
         // PATH can carry it without whatever else (a real llmlint) sits beside it.
+        // llmlint: ignore-block[shell_test_tiers_stay_split] `just` is the gate's own required tool (REQUIRED_BINS in scripts/setup-lib.sh), present wherever this suite runs, and the hook under test invokes the real recipe through it; splitting test tiers into projects is the Nx retrofit's, which this repo has not had yet
         let just = std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|d| d.join("just"))
             .find(|j| j.is_file())
             .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+        // llmlint: ignore-end[shell_test_tiers_stay_split]
         fs::create_dir_all(p.path().join("tools")).unwrap();
         std::os::unix::fs::symlink(just, p.path().join("tools/just")).unwrap();
         fs::create_dir_all(p.path().join("home")).unwrap();
@@ -12598,6 +12600,7 @@ fn bench_workflow_spells_out_equal_push_and_pull_request_paths() {
 /// request to `main` must report each of these under exactly this name, or a PR
 /// either waits forever on a context that never reports or merges past one that
 /// was dropped. `llmlint` is the judged tier's blocking check.
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] the third copy, the live branch protection, is applied and reconciled off-repo by the governance step (`setup_github_governance.py --verify`); this repo's gate has no settings-API access by design, and the two in-repo copies (the workflows and AGENTS.md) are both held to this list
 const PR_CONTEXTS: &[&str] = &[
     "gate",
     "deny",
@@ -12611,6 +12614,7 @@ const PR_CONTEXTS: &[&str] = &[
     "visual-docs / report (arm64)",
     "llmlint",
 ];
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 /// The `if:` conditions a contract job may carry: each is true on every
 /// `pull_request` event, so it can never leave the context unreported.
@@ -12885,6 +12889,7 @@ fn check_runs_the_workflow_lint() {
 fn check_runs_the_shell_lint() {
     // Dropping `lint-sh` from `check`'s dependencies would silently un-gate
     // every script.
+    // llmlint: ignore[shell_test_tiers_stay_split] `--dry-run` of the gate's own required tool (REQUIRED_BINS), runs nothing it names, exactly as check_runs_the_workflow_lint does beside it
     let out = std::process::Command::new("just")
         .args(["--dry-run", "check"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))

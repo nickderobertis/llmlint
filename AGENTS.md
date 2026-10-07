@@ -150,10 +150,9 @@ Use the `just` recipes; do not hand-roll equivalents.
   (the judge over the branch's changes) run the released llmlint
   (`just setup-llmlint`, floor `LLMLINT_MIN` in `scripts/setup-llmlint.sh`)
   against `llmlint.yml` + `oneharness.toml`. CI's `llmlint` job runs validate, then
-  the judge — after installing and logging in the harness `oneharness.toml`
-  selects first (codex, via `npm install -g @openai/codex` + `codex login
-  --with-api-key` from `OPENAI_API_KEY`); a missing key fails the job, never a
-  green no-op. `.githooks/pre-push` runs `just lint-llm-validate` on every push
+  the judge, and must provision and authenticate the harness `oneharness.toml`
+  selects first (codex, keyed by `OPENAI_API_KEY`); a missing key fails the job,
+  never a green no-op. `.githooks/pre-push` runs `just lint-llm-validate` on every push
   before the visual guard: a failure blocks, a missing llmlint warns and skips.
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
