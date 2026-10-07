@@ -289,7 +289,7 @@ bench-tools:
 # bench-compare reads); extra arguments go to Criterion (e.g. --measurement-time 3).
 [positional-arguments]
 bench baseline="current" *criterion_args:
-    @for a in "$@"; do printf '%s' "$a" | grep -Eq '^[A-Za-z0-9_./=:-]+$' || { printf "bench: argument '%s' is not a plain baseline name or Criterion option\n" "$a" >&2; exit 2; }; done
+    @for a in "$@"; do printf '%s' "$a" | grep -Eq '^[A-Za-z0-9_./=:-]+$' || { printf "bench: argument '%s' is not a plain baseline name or Criterion option; use letters, digits and _./=:- only (e.g. just bench current --measurement-time 3)\n" "$a" >&2; exit 2; }; done
     @bash scripts/nx run bench:bench -- --save-baseline "$@"
 
 # Save current engine benchmarks as the `base` baseline (run on the comparison point).

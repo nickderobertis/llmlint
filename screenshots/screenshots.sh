@@ -221,8 +221,8 @@ sed \
   -e "s|$fixture|.|g" \
   -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
   -e 's#/[^ ]*/llmlint-system-[A-Za-z0-9]*\.txt#/tmp/llmlint-system.txt#g' \
-  "$out" >"$out.sed" || { echo "screenshots: could not normalize $out" >&2; exit 1; }
-mv "$out.sed" "$out" || { echo "screenshots: could not replace $out" >&2; exit 1; }
+  "$out" >"$out.sed" || { echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+mv "$out.sed" "$out" || { echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
 render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
 
 # --- multi-judge: the per-judge breakdown, its own fixture + scene ------------
@@ -254,8 +254,8 @@ render_scene "init" "{}" "init.svg" "$out" 0
 out="$tmp_state/config.txt"
 ( cd "$fixture" && "$llmlint_bin" config -c "$fixture/llmlint.yml" --cwd "$fixture" ) \
   >"$out" 2>/dev/null || true
-sed "s|$fixture/||g" "$out" >"$out.sed" || { echo "screenshots: could not normalize $out" >&2; exit 1; }
-mv "$out.sed" "$out" || { echo "screenshots: could not replace $out" >&2; exit 1; }
+sed "s|$fixture/||g" "$out" >"$out.sed" || { echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+mv "$out.sed" "$out" || { echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
 render_scene "config" "{}" "config.svg" "$out" 0
 
 # --- doctor: the oneharness preflight check -----------------------------------
