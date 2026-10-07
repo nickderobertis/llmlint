@@ -58,7 +58,7 @@ are **supporting tooling** only:
   project-boundary checker and its `bun test` suite. Nothing JavaScript is built
   or shipped.
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] this list is the composition record the create-repo baseline requires "Stack and composition" to carry (the projects in the graph, each with its boundary tag and the one-line reason it is a project), and the only place the tags and ownership read together; project.json files hold each definition, not why the graph is cut this way -->
+[//]: # "llmlint: ignore-block[agents_md_durable_and_terse] this list is the composition record the create-repo baseline requires Stack and composition to carry: the projects in the graph, each with its boundary tag and the one-line reason it is a project, and the only place tags and ownership read together; each project.json holds a definition, not why the graph is cut this way"
 **Projects in the graph** (`nx.json` + a `project.json` per project; each Rust
 one beside its `Cargo.toml`, all members of one Cargo workspace with one
 `Cargo.lock`; the tag after each name is its boundary type):
@@ -94,7 +94,7 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   aggregate coverage gate; `coverage-driver` (`type:workspace`, `tools/coverage/`)
   — its driver, `coverage.sh`, and the driver's slow self-tests, a project of
   their own so a product edit (which selects the gate) never selects them.
-<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
+[//]: # "llmlint: ignore-end[agents_md_durable_and_terse]"
 
 Every project declares the repo-uniform target names that apply to it: `format`
 (a check; `--configuration=write` writes), `lint` (clippy, or the boundary
