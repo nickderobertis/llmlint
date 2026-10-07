@@ -1068,3 +1068,91 @@ fn the_demo_gif_draws_every_report_outcome() {
         "OUTCOME_STYLE in screenshots/demo-gif.py"
     );
 }
+
+/// Runs `demo-gif.py`'s real `build_frames` over `rules` (a JSON array of report
+/// rules) and returns the process output; stdout is `{"yellow": …, "frames": …}`.
+/// Only `render_gif` needs Pillow, which the gate never installs, so the helper's
+/// `from PIL import …` is answered by an empty placeholder package: everything
+/// `build_frames` runs is the helper's own code.
+#[cfg(unix)]
+fn demo_gif_frames(rules: &str) -> std::process::Output {
+    const DRIVER: &str = r#"
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("demo_gif", sys.argv[1])
+gif = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gif)
+frames = gif.build_frames(json.loads(sys.argv[2]), ["PASS a-rule"])
+print(json.dumps({"yellow": gif.YELLOW, "frames": [lines for lines, _ in frames]}))
+"#;
+    let pil = Project::new();
+    pil.write("PIL/__init__.py", "Image = ImageDraw = ImageFont = None\n");
+    std::process::Command::new("python3")
+        .args(["-B", "-s", "-c", DRIVER])
+        .arg(repo_root().join("screenshots/demo-gif.py"))
+        .arg(rules)
+        .env("PYTHONPATH", pil.path())
+        .output()
+        .expect("python3 runs the demo GIF helper")
+}
+
+/// An `ignored` rule is resolved before any judge runs, so the animation draws it
+/// as ignored, in the not-judged colour, from the very first frame — never
+/// queued behind the judged rules, which do start queued.
+#[cfg(unix)]
+#[test]
+fn the_demo_gif_draws_an_ignored_rule_resolved_from_the_first_frame() {
+    let out = demo_gif_frames(
+        r#"[{"name": "a-rule", "outcome": "pass", "votes_total": 1},
+            {"name": "b-rule", "outcome": "ignored"},
+            {"name": "c-rule", "outcome": "fail", "votes_total": 1}]"#,
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let drawn: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let frames = drawn["frames"].as_array().unwrap();
+    let (report, live) = frames.split_last().expect("the helper draws frames");
+    assert_eq!(report[0][0][0], "PASS", "the last frame is the report");
+    let text = |line: &serde_json::Value| -> String {
+        line.as_array()
+            .unwrap()
+            .iter()
+            .map(|seg| seg[0].as_str().unwrap())
+            .collect()
+    };
+    assert!(
+        live[0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| text(l) == "▖ a-rule  queued"),
+        "a judged rule starts queued: {:?}",
+        live[0]
+    );
+    for (i, frame) in live.iter().enumerate() {
+        let lines = frame.as_array().unwrap();
+        let ignored: Vec<_> = lines
+            .iter()
+            .filter(|l| text(l).contains("b-rule"))
+            .collect();
+        assert_eq!(ignored.len(), 1, "frame {i}: {frame}");
+        assert_eq!(text(ignored[0]), "– b-rule  ignored", "frame {i}");
+        assert_eq!(ignored[0][0][1], drawn["yellow"], "frame {i}: its colour");
+    }
+}
+
+/// An outcome the helper has no style for stops it with the outcome named,
+/// rather than a KeyError midway through the animation.
+#[cfg(unix)]
+#[test]
+fn the_demo_gif_refuses_an_outcome_it_cannot_draw_naming_it() {
+    let out = demo_gif_frames(r#"[{"name": "a-rule", "outcome": "deferred"}]"#);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("['deferred']"), "{stderr}");
+    assert!(stderr.contains("OUTCOME_STYLE"), "{stderr}");
+    assert!(
+        out.stdout.is_empty(),
+        "drew frames anyway: {:?}",
+        out.stdout
+    );
+}
