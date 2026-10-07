@@ -1,0 +1,21 @@
+# The release declaration (`release-targets.toml`) held to the canonical schema
+# and to release.yml, plus the three answers of `scripts/release-probe.sh`. The
+# offline tests are this project's `test` target; the `#[ignore]`-d network tests
+# (live crates.io/PyPI, onevcs's canonical schema) are its `network` target, run
+# only by the Release targets workflow. Test-only; never published.
+[package]
+name = "llmlint-release-targets"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "release_targets"
+path = "release_targets.rs"
+
+[dev-dependencies]
+serde.workspace = true
+serde_yaml_ng.workspace = true
+tempfile.workspace = true
+toml.workspace = true

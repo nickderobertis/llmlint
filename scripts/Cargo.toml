@@ -1,0 +1,18 @@
+# Journeys over the repository's own tooling scripts (tests/tooling.rs): the
+# pinned actionlint installer and workflow lint, the readiness check, the gate
+# recipes' base selection, and the agent allowlist held to the justfile.
+# Test-only; never published.
+[package]
+name = "llmlint-repo-tooling"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "tooling"
+path = "tests/tooling.rs"
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true

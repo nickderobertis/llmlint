@@ -7,7 +7,7 @@ workflow (`.github/workflows/visual-docs.yml`) owns the comparison on PRs.
 
 ## What it is
 
-`scripts/screenshots.sh` drives the **real release `llmlint` binary** against the
+`screenshots/screenshots.sh` drives the **real release `llmlint` binary** against the
 mock-oneharness fixture in `fixture/` — exactly as the e2e suite does — so the
 captured text is genuine CLI output; only the judge verdicts are scripted
 (`fixture/verdicts.json`), so there is no model, network, or cost. Each scene is
@@ -61,7 +61,7 @@ SVG is pure layout math. We pin both inputs:
 
 - **`freeze` is version-pinned** (`just`'s `freeze-version`, which
   `screenshots-tools` installs, and `freeze_version` in
-  `scripts/ci-install-freeze.sh`, which CI's `capture-command` runs; an e2e
+  `screenshots/ci-install-freeze.sh`, which CI's `capture-command` runs; an e2e
   journey holds the two equal).
 - **The font is vendored** (`fonts/JetBrainsMono-Regular.ttf`, OFL — see
   `fonts/JetBrainsMono-OFL.txt`) and passed via `--font.file`, so freeze never
@@ -92,7 +92,7 @@ runs on, and refuses a host arch no lane declares. llmlint is developed on arm64
 and released from CI's x86_64, so both are real hosts.
 
 **Re-blessing, on any host:** `just screenshots-bless` rewrites **this host's lane
-only** (`scripts/host-arch.sh` names it — the single place a lane name is derived
+only** (`screenshots/host-arch.sh` names it — the single place a lane name is derived
 from `uname -m`, shared with the capture and the guard). Commit it with
 `docs/screenshots/`; the identical-bytes contract is what makes that safe, and CI's
 job for the *other* lane is the check on it.
@@ -109,7 +109,7 @@ job for the *other* lane is the check on it.
 
 The SVGs are static; the README **hero** is an animated GIF of the live-progress
 view (rules resolving as their judges return, then clearing to the report — see
-`docs/design/interactive-progress.md`). `scripts/demo-gif.py` drives the **real
+`docs/design/interactive-progress.md`). `screenshots/demo-gif.py` drives the **real
 release binary** against the same `fixture/` for its data (genuine rules/verdicts/
 report), then reconstructs the frames the view draws and renders them with the same
 **vendored JetBrains Mono font** — Pillow only, no `ttyd`/`ffmpeg`. Unlike the SVGs
@@ -121,7 +121,7 @@ when the live view's format changes (`src/commands/progress.rs`).
 
 - `just screenshots-tools` — install the pinned `freeze` (needs Go). screencomp
   is installed separately (see its README); CI installs both itself — `freeze`
-  via `scripts/ci-install-freeze.sh`, which picks the prebuilt release matching
+  via `screenshots/ci-install-freeze.sh`, which picks the prebuilt release matching
   the runner's arch (so the arm64 lane's runner gets an arm64 binary) and pins the
   same version this recipe does.
 - `just screenshots` — capture (builds the release binaries, writes the shots +
@@ -130,7 +130,7 @@ when the live view's format changes (`src/commands/progress.rs`).
   Pillow). Builds the release binaries, then writes `docs/screenshots/demo.gif`.
 - `just screenshots-bless` — after an **intended** output change, recapture and
   refresh **this host's** lane, `shots/baseline/<arch>.json` (the arch from
-  `scripts/host-arch.sh`). Commit it alongside `docs/screenshots/`.
+  `screenshots/host-arch.sh`). Commit it alongside `docs/screenshots/`.
 
 ## The strict gate
 
@@ -146,10 +146,10 @@ instead, naming what is declared and how to add the lane.
 ## Changing the screenshots
 
 Editing the report format (`src/domain/report.rs`), the CLI surface, the fixture,
-or the scenes in `scripts/screenshots.sh` will change the SVGs. That is expected —
+or the scenes in `screenshots/screenshots.sh` will change the SVGs. That is expected —
 run `just screenshots-bless` and commit the new baseline + `docs/screenshots/`.
 Bumping `freeze-version` or the vendored font reflows every shot; bless once and
 keep the two `freeze` version pins in sync (`freeze-version` in the justfile and
-`freeze_version` in `scripts/ci-install-freeze.sh` — an e2e journey holds them
+`freeze_version` in `screenshots/ci-install-freeze.sh` — an e2e journey holds them
 equal). A reflow changes every lane identically, so one host's bless covers both
 baselines.

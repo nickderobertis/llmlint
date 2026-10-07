@@ -2,7 +2,6 @@
 # actionlint also runs shellcheck over `run:` scripts when shellcheck is on PATH
 # (CI's ubuntu runners ship it), so install shellcheck locally to see the same
 # findings CI does.
-# llmlint: ignore-file[new_code_lands_in_a_project] a single binary crate with no Nx project graph (AGENTS.md) has no project for a shell script to belong to
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

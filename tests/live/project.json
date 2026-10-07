@@ -1,0 +1,32 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "live",
+  "//": "The paid live tier: the release llmlint -> real oneharness -> a real, authenticated harness. Its live target runs only in the Live workflow (live.yml); the gate tiers reach only its offline shellcheck.",
+  "projectType": "application",
+  "tags": [
+    "type:live"
+  ],
+  "implicitDependencies": [
+    "llmlint"
+  ],
+  "targets": {
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck tests/live/*.sh"
+      }
+    },
+    "live": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": [
+          "cargo build --release --locked -p llmlint --bin llmlint",
+          "bash tests/live/live-claude.sh"
+        ],
+        "parallel": false
+      },
+      "//": "Real (paid) model calls; a missing harness CLI, auth or oneharness is a hard failure. `just live-claude` runs it."
+    }
+  }
+}

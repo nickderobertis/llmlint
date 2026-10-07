@@ -6,13 +6,14 @@
 # llmlint deliberately does NOT use asdf/direnv (see AGENTS.md). The dev
 # environment is: rustup + the pinned rust-toolchain.toml, `just`, and the two
 # cargo subcommands the gate drives (`cargo nextest`, `cargo llvm-cov`), plus the
-# pinned `actionlint` the gate's `lint-workflows` step runs.
+# pinned `actionlint` the gate's `lint-workflows` step runs, and Node + the bun
+# `.tool-versions` pins, which install and run Nx (the gate's orchestrator).
 
 # Binaries that must resolve for the dev environment to be considered ready —
 # everything `just check` shells out to. cargo-deny/cargo-machete are NOT here —
 # they back `just deps-check`, which is separate from the gate and needs a
 # network DB.
-REQUIRED_BINS="rustc cargo just cargo-nextest cargo-llvm-cov actionlint"
+REQUIRED_BINS="rustc cargo just cargo-nextest cargo-llvm-cov actionlint node"
 
 # Soft requirements: their absence is an advisory, never a "not ready" verdict.
 # oneharness is a *runtime* prerequisite (the harness llmlint shells out to), not
@@ -99,6 +100,13 @@ _check_ready() {
   missing="$(_missing_bins "$REQUIRED_BINS")"
   if [ -n "$missing" ]; then
     REASON="missing tools:$missing"
+    return 1
+  fi
+  # bun is resolved from its `.tool-versions` pin (PATH or the per-version cache
+  # scripts/bun.sh installs into), not from PATH alone.
+  if ! bash scripts/bun.sh path >/dev/null 2>&1; then
+    # shellcheck disable=SC2034  # REASON is the caller's to print (setup-check.sh, session-setup.sh).
+    REASON="missing tools: bun (the .tool-versions pin)"
     return 1
   fi
   local want have_fp

@@ -34,12 +34,12 @@
 # Bypass intentionally:   git push --no-verify
 #
 # Re-blessing from either host: `just screenshots-bless` recaptures and rewrites
-# THIS host's lane only (shots/baseline/$(bash scripts/host-arch.sh).json), which
+# THIS host's lane only (shots/baseline/$(bash screenshots/host-arch.sh).json), which
 # is also what this guard does for you on drift. An arm64 host therefore refreshes
 # shots/baseline/arm64.json and commits it; the x86_64 lane is left untouched and
 # CI's x86_64 job checks the two agree (and vice versa on an x86_64 host).
 #
-# llmlint: ignore-file[changed_behavior_has_e2e] the `pre_push_guard_*` journeys in tests/e2e/main.rs drive this real script the way git does, with screencomp/freeze/the capture stubbed at the subprocess seam (as the suite stubs oneharness); those third-party tools are not installed by `just setup` or CI's gate, and their own behavior is theirs to test
+# llmlint: ignore-file[changed_behavior_has_e2e] the `pre_push_guard_*` journeys in screenshots/tests/visual_guard.rs drive this real script the way git does, with screencomp/freeze/the capture stubbed at the subprocess seam (as the suite stubs oneharness); those third-party tools are not installed by `just setup` or CI's gate, and their own behavior is theirs to test
 set -euo pipefail
 
 # --- 0. llmlint validate: runs before every exit of the visual guard below ---
@@ -68,7 +68,7 @@ fi
 # with no committed baseline and no CI job, so refuse loudly rather than guess.
 LANES="$(sed -n 's/^arches *= *\[\(.*\)\].*/\1/p' screencomp.toml \
   | tr -d '"[:blank:]' | tr ',' '\n' | grep -v '^$' || true)"
-LANE="$(bash scripts/host-arch.sh)"
+LANE="$(bash screenshots/host-arch.sh)"
 if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
   echo "pre-push: this host's architecture ($LANE) has no lane in [capture].arches" >&2
   echo "          of screencomp.toml, so it has no committed baseline to classify" >&2
@@ -144,7 +144,7 @@ if ! command -v freeze >/dev/null 2>&1; then
   echo "          then retry, or bypass with: git push --no-verify" >&2
   exit 1
 fi
-SHOTS_OUT="$CURRENT/$LANE" bash scripts/screenshots.sh
+SHOTS_OUT="$CURRENT/$LANE" bash screenshots/screenshots.sh
 
 # --- 4. Classify the capture against the committed baseline manifest ---------
 set +e
@@ -161,7 +161,7 @@ elif [ "$status" -ne 3 ]; then
 fi
 
 # --- On drift (classify exit 3): regenerate, build a gallery, BLOCK. ---------
-SHOTS_CURRENT="$CURRENT" bash scripts/bless-baseline.sh   # rewrites $MANIFEST
+SHOTS_CURRENT="$CURRENT" bash screenshots/bless-baseline.sh   # rewrites $MANIFEST
 screencomp gallery --input "$CURRENT" --arch "$LANE" \
   --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null
 

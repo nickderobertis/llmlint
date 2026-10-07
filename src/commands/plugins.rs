@@ -7,10 +7,6 @@
 //! plugin resolving to an unexpected version is read off the report rather than
 //! inferred.
 
-// llmlint: ignore-file[new_code_lands_in_a_project] The rule asks which Nx
-// project covers this path; llmlint has no project graph, by the deliberate
-// exclusion AGENTS.md records under "Stack and composition".
-
 use std::path::PathBuf;
 
 use serde_json::json;

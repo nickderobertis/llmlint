@@ -1,5 +1,5 @@
 # Terminal screenshots via screencomp's reusable workflow. The capture step is
-# ours (scripts/screenshots.sh); screencomp owns the classify gate, the HTML
+# ours (screenshots/screenshots.sh); screencomp owns the classify gate, the HTML
 # gallery, the GitHub Pages deploy, and the sticky before/after PR comment.
 #
 # Which CPU arch(es) CI captures is read from [capture].arches in screencomp.toml
@@ -47,7 +47,7 @@ jobs:
       # Install the pinned `freeze` from its prebuilt release (no Go needed), then
       # capture. The asset must match THIS runner's architecture — the arm64 lane
       # runs on ubuntu-24.04-arm — so the choice lives in a script
-      # (scripts/ci-install-freeze.sh) that picks it from `uname -m`, rather than in
+      # (screenshots/ci-install-freeze.sh) that picks it from `uname -m`, rather than in
       # a hard-coded URL here. RUSTUP_TOOLCHAIN bypasses rust-toolchain.toml so we
       # build with the image's toolchain instead of syncing its extra
       # components/targets (the SVG bytes don't depend on the compiler anyway). The
@@ -55,6 +55,6 @@ jobs:
       # writes captures.json + SVGs.
       capture-command: |
         export RUSTUP_TOOLCHAIN=1.96.0
-        bash scripts/ci-install-freeze.sh
+        bash screenshots/ci-install-freeze.sh
         # llmlint: ignore[work_goes_through_command_surface] no `just` in this container; `just screenshots` wraps exactly this line
-        bash scripts/screenshots.sh
+        bash screenshots/screenshots.sh

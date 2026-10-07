@@ -682,7 +682,7 @@ flag over both. The tests are `#[ignore]`-d; run without the recipe's
 `LLMLINT_REAL_ONEHARNESS` they fail rather than skip. The one non-ignored test,
 `the_tier_pins_the_multi_file_floor`, holds the pin to the constant in every run.
 
-## Live tier (`scripts/live-*.sh`)
+## Live tier (`tests/live/live-*.sh`)
 
 The hermetic e2e suite above proves llmlint's logic against a mock oneharness. The
 **live tier** proves the *real* stack — the built `llmlint` binary → real
@@ -701,7 +701,7 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
   silent skip would let a broken live setup pass unnoticed, so the live tier has no
   skip path at all (matching oneharness's own e2e, which fails rather than skips).
   This runs the full round-trip on Linux, macOS, **and Windows**.
-- **Journeys** (`live_run_journeys` in `scripts/live-lib.sh`): scaffold a throwaway
+- **Journeys** (`live_run_journeys` in `tests/live/live-lib.sh`): scaffold a throwaway
   project with one crisp invariant (`no_todo_comments`) pinned to the harness, then
   (1) a clean `src/lib.rs` must pass → exit 0, rule `pass`; (2) a file with a
   planted `TODO` must be flagged → exit 1, rule `fail`; (3) a **fallback** journey
@@ -717,12 +717,12 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
 - **Harness CLI + auth** (required; absent → fail): `claude-code` needs the
   `claude` CLI and `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`). To drive a
   different harness ad hoc, call `live_run_journeys <id>` with that harness's CLI
-  installed and authed (`scripts/live-lib.sh` is harness-agnostic).
+  installed and authed (`tests/live/live-lib.sh` is harness-agnostic).
 - **Overrides:** `CLAUDE_E2E_MODEL` picks the judge model (defaults to `haiku`);
   `LL_TIMEOUT` (default 120s) becomes the config's `oneharness.timeout`;
   `LLMLINT_BIN` / `LLMLINT_ONEHARNESS_BIN` override binary resolution.
 
-## Windows color-rendering tier (`scripts/win-console-color.ps1`)
+## Windows color-rendering tier (`tests/win-color/win-console-color.ps1`)
 
 Color has two separable questions: does llmlint **emit** the right ANSI, and does
 a terminal **render** it? The first is platform-independent and already covered —
@@ -734,7 +734,7 @@ prints bare ANSI as `<-[31m` garbage. llmlint routes its report through anstream
 renders; this tier proves that end result.
 
 - **What it covers that nothing else does:** a *real Windows console* interpreting
-  llmlint's color. `scripts/win-console-color.ps1` drives the **release binary**
+  llmlint's color. `tests/win-color/win-console-color.ps1` drives the **release binary**
   against the **mock-oneharness fixture** (`screenshots/fixture/`, no model/network/
   cost — deterministic) with `--color always` into a freshly created console screen
   buffer, then reads the buffer back with `ReadConsoleOutput` and asserts the per
@@ -752,10 +752,10 @@ renders; this tier proves that end result.
 The `pre_push_guard_*` journeys drive the **real hook script** the way git does
 (cwd = a scratch repo, the range on `SCREENCOMP_GUARD_RANGE`), with stubs at its
 subprocess seams (`GuardRepo`): a `screencomp` that records argv and answers with
-a chosen exit, a `freeze`, and a `scripts/screenshots.sh`. The real tools are not
+a chosen exit, a `freeze`, and a `screenshots/screenshots.sh`. The real tools are not
 installed by `just setup` or CI's gate, so they are stubbed as the suite stubs
 oneharness; a change to the hook's own logic gets its journey here. The hook's own
-lane helper (`scripts/host-arch.sh`) is **not** stubbed — the real one is copied
+lane helper (`screenshots/host-arch.sh`) is **not** stubbed — the real one is copied
 in, so the lane under test is the one this host would really guard. They are
 `#[cfg(unix)]` — the hook is bash.
 
@@ -775,7 +775,7 @@ justfile with only `llmlint` stubbed. Keep the hook's PATH to the stubs, a lone
 `~/.local/bin`, so a host llmlint would otherwise stand in for the stub or for
 its absence.
 
-## CI's `freeze` installer (`scripts/ci-install-freeze.sh`)
+## CI's `freeze` installer (`screenshots/ci-install-freeze.sh`)
 
 CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the
 `freeze` release matching the **runner's** architecture, and validate it against

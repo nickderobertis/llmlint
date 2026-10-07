@@ -2,7 +2,7 @@
 //!
 //! These measure the in-process, CPU-bound work a single `llmlint` invocation
 //! does *around* the external `oneharness` call (which is excluded here — it is
-//! the network/model boundary `scripts/bench.sh` times end to end): parse the
+//! the network/model boundary `benches/bench.sh` times end to end): parse the
 //! YAML config, plan the judge runs, render the judge prompt, generate the
 //! output schema, and aggregate the judges' verdicts into a report.
 //!

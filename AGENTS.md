@@ -47,9 +47,9 @@ Composes the `create-repo` skill's `base.md` + `shapes/cli.md` +
 Bash is a composed language because `scripts/*.sh` and `.githooks/pre-push`
 carry real logic; two other languages are **supporting tooling** only:
 
-- **PowerShell** — `scripts/win-console-color.ps1`, one script: it must drive a
+- **PowerShell** — `tests/win-color/win-console-color.ps1`, one script: it must drive a
   real Windows console buffer, which only PowerShell can read back.
-- **Python** — `scripts/demo-gif.py`, one on-demand helper that renders the README
+- **Python** — `screenshots/demo-gif.py`, one on-demand helper that renders the README
   GIF with Pillow; it is neither built, shipped, nor gated.
 
 Deliberately excluded (so it isn't re-litigated):
@@ -139,7 +139,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   plans, so never rename them unilaterally.
 - `just test-oneharness` — the **real-oneharness tier** (`tests/real_oneharness.rs`,
   its `#[ignore]`-d tests): installs the released `oneharness-cli` at the
-  justfile's `oneharness-cli-version` pin (`scripts/install-oneharness.sh`, a venv
+  justfile's `oneharness-cli-version` pin (`tests/real-oneharness/install-oneharness.sh`, a venv
   under `.dev/`; needs PyPI), then feeds the `--config` layers llmlint forwards
   (recorded by the mock) to the real `oneharness config --format json` and asserts
   the highest layer's settings win. Free and model-free, but networked, so out of
@@ -158,7 +158,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the **live e2e tier**: builds a release binary, then drives
   the real `llmlint` → real `oneharness` → the real claude-code harness through
-  `scripts/live-claude.sh`, asserting a clean file passes (exit 0), a planted
+  `tests/live/live-claude.sh`, asserting a clean file passes (exit 0), a planted
   `TODO` is flagged (exit 1), and a **fallback** run (issue #146 — an absent
   primary harness ahead of the canonical one via a `oneharness.toml`
   `run_mode = "fallback"`) still passes, proving llmlint reads the real
@@ -173,7 +173,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   skips. Auth + the `CLAUDE_E2E_MODEL` override are documented in `tests/AGENTS.md`.
   Makes real (paid) model calls — out of `check`.
 - `just win-color` — the **Windows color-rendering gate**: builds the release
-  binary + mock oneharness and runs `scripts/win-console-color.ps1`, which drives
+  binary + mock oneharness and runs `tests/win-color/win-console-color.ps1`, which drives
   llmlint against the mock-oneharness fixture with `--color always` into a real
   Windows console screen buffer, then reads the buffer back and asserts the
   `FAIL`/`PASS` labels carry the red/green console attributes (and no raw ESC
@@ -186,8 +186,8 @@ Use the `just` recipes; do not hand-roll equivalents.
 - **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
   `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
   gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the
-  pure engine (`benches/`); `scripts/bench.sh` (hyperfine) and
-  `scripts/bench-instructions.sh` (cachegrind) measure the real binary end to end
+  pure engine (`benches/`); `benches/bench.sh` (hyperfine) and
+  `benches/bench-instructions.sh` (cachegrind) measure the real binary end to end
   against the **mock-oneharness fixture**, so there's no model/network cost — just
   llmlint's own work plus one child spawn. The `Performance` workflow
   (`.github/workflows/bench.yml`) runs all of this on each PR and posts a sticky
@@ -197,7 +197,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   installs them on demand; CI installs them via `taiki-e/install-action`.
 - **Terminal screenshots** (`just screenshots`, `screenshots-tools`,
   `screenshots-bless`) — *informational, never a gate*. See `screenshots/AGENTS.md`.
-  `scripts/screenshots.sh` drives the real binary against the **mock-oneharness
+  `screenshots/screenshots.sh` drives the real binary against the **mock-oneharness
   fixture** (`screenshots/fixture/`) — one scene per command (`lint`, with a
   `view` toggle over `default`/`-v` `verbose`/`-v` `debug` (the stderr oneharness
   debug view), plus `init`, `config`, `doctor`) — and renders the real output to
@@ -217,15 +217,15 @@ Use the `just` recipes; do not hand-roll equivalents.
   are real hosts. The SVGs are identical across arches, so the two baselines are
   the same bytes (an e2e journey holds them equal) and one host's
   `just screenshots-bless` — which rewrites **its own** lane only, named by
-  `scripts/host-arch.sh` — is checked by CI's job for the other lane. `freeze` is
+  `screenshots/host-arch.sh` — is checked by CI's job for the other lane. `freeze` is
   *not* installed by `just setup` — `just screenshots-tools` installs the pinned
   version; screencomp is installed separately (CI installs both, `freeze` via
-  `scripts/ci-install-freeze.sh`, which picks the prebuilt release matching the
+  `screenshots/ci-install-freeze.sh`, which picks the prebuilt release matching the
   runner's arch). Keep the two `freeze` version pins in sync (`freeze-version` in
-  the justfile, `freeze_version` in `scripts/ci-install-freeze.sh`; an e2e journey
+  the justfile, `freeze_version` in `screenshots/ci-install-freeze.sh`; an e2e journey
   gates them against each other). The README **hero** is a separate animated GIF of the
   live-progress view (`docs/screenshots/demo.gif`, `just screenshots-gif`,
-  `scripts/demo-gif.py`) — same real-binary-against-the-fixture approach, rendered
+  `screenshots/demo-gif.py`) — same real-binary-against-the-fixture approach, rendered
   to frames with the vendored font (Pillow, no `ttyd`/`ffmpeg`); it is *not*
   hash-gated (a GIF isn't byte-reproducible), so it is regenerated on demand.
 
@@ -864,7 +864,7 @@ coverage are a rule, not a preference.
   macOS, and Windows to prove the built binary + oneharness + a real harness work
   on each OS. It expects the harness CLI + auth configured, so a missing
   CLI/auth/oneharness is a **hard failure**, not a skip. The scripted journeys
-  live in `scripts/live-claude.sh` + `scripts/live-lib.sh` and are described in
+  live in `tests/live/live-claude.sh` + `tests/live/live-lib.sh` and are described in
   `tests/AGENTS.md`.
 
 ## Scripts and output are context

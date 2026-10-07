@@ -1,0 +1,89 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "screenshots",
+  "//": "The terminal screenshots: the capture scripts, fixture and font, CI's freeze installer, and the pre-push visual guard's journeys (the hook itself sits in .githooks/, a root file, hence the llmlint edge). The capture renders through freeze, so it is left to the Visual docs workflow; lint and test are offline and in the gate tiers.",
+  "projectType": "application",
+  "tags": [
+    "type:capture"
+  ],
+  "implicitDependencies": [
+    "llmlint",
+    "llmlint-mock-oneharness"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-screenshots -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-screenshots"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-screenshots --all-targets --locked -- -D warnings"
+      }
+    },
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck screenshots/*.sh .githooks/pre-push"
+      },
+      "inputs": [
+        "default",
+        "{workspaceRoot}/.githooks/pre-push",
+        {
+          "runtime": "shellcheck --version"
+        }
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo nextest run -p llmlint-screenshots --locked"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "{workspaceRoot}/.githooks/pre-push",
+        "{workspaceRoot}/justfile",
+        "{workspaceRoot}/screencomp.toml",
+        "{workspaceRoot}/shots/baseline/*.json"
+      ],
+      "//": "The guard's offline script journeys. Cached: its inputs are every file they read or run."
+    },
+    "capture": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash screenshots/screenshots.sh"
+      },
+      "//": "Needs freeze (not a gate tool), so it runs only in the Visual docs workflow and the local pre-push guard; `just screenshots` runs it."
+    },
+    "bless": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": [
+        "capture"
+      ],
+      "options": {
+        "command": "bash screenshots/bless-baseline.sh"
+      }
+    },
+    "gif": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": [
+          "cargo build --release --locked -p llmlint -p llmlint-mock-oneharness --bin llmlint --bin llmlint-mock-oneharness",
+          "python3 screenshots/demo-gif.py"
+        ],
+        "parallel": false
+      }
+    }
+  }
+}

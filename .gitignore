@@ -28,3 +28,5 @@
 /shots/review/
 /site/
 __pycache__/
+/node_modules
+/.nx

@@ -1,0 +1,15 @@
+{
+  "//": "Module-boundary rules for the project graph, in Nx's depConstraints shape. A project tagged sourceTag may depend (a Cargo path dependency of any kind, or an Nx implicitDependency) only on projects carrying one of onlyDependOnTags. Enforced by tools/check-project-boundaries.mjs, the workspace project's lint target. The point: the published llmlint crate (type:app), the plugin contract, the fixture and the tooling can never be made to depend on an expensive project (e2e, external, live, capture, bench), which would drag that suite behind every change, and no expensive project may depend on another.",
+  "depConstraints": [
+    { "sourceTag": "type:app", "onlyDependOnTags": ["type:app", "type:contract"] },
+    { "sourceTag": "type:contract", "onlyDependOnTags": ["type:contract"] },
+    { "sourceTag": "type:fixture", "onlyDependOnTags": ["type:app", "type:contract"] },
+    { "sourceTag": "type:tooling", "onlyDependOnTags": ["type:app", "type:contract", "type:tooling"] },
+    { "sourceTag": "type:e2e", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture"] },
+    { "sourceTag": "type:external", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture", "type:tooling"] },
+    { "sourceTag": "type:live", "onlyDependOnTags": ["type:app", "type:contract"] },
+    { "sourceTag": "type:capture", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture"] },
+    { "sourceTag": "type:bench", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture"] },
+    { "sourceTag": "type:workspace", "onlyDependOnTags": ["*"] }
+  ]
+}

@@ -6,7 +6,6 @@
 #
 # The version is `actionlint-version` in the justfile — the one pin, which
 # scripts/lint-workflows.sh also checks the installed binary against.
-# llmlint: ignore-file[new_code_lands_in_a_project] a single binary crate with no Nx project graph (AGENTS.md) has no project for a shell script to belong to
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

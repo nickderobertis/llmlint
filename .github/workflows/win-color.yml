@@ -37,6 +37,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
+      # The recipe runs through Nx, which bun installs from bun.lock at the
+      # .tool-versions pin.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
       - name: Render-on-a-real-Windows-console check
         shell: bash
         run: just win-color

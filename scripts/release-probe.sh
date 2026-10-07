@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# llmlint: ignore-file[new_code_lands_in_a_project] a single binary crate with no Nx project graph (AGENTS.md) has no project for a shell script to belong to
 # What does the public registry serve, right now, for ONE release target of this
 # repository? The targets are declared in `release-targets.toml`, which names this
 # script as its `probe`.

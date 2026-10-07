@@ -1,0 +1,54 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "repo-tooling",
+  "//": "The repository's own tooling scripts: setup and the session hook, the Nx wrapper and gate plumbing (nx, nx-base.sh, bun.sh), the actionlint installer and workflow lint the ci-workflows project runs, install.sh (the README's published installer URL, so it stays here), and the release probe (named by release-targets.toml, so it stays here), with their offline journeys. It depends on llmlint because the justfile, .claude/ and the other repo-root files these scripts and journeys read belong to the root project.",
+  "projectType": "library",
+  "tags": [
+    "type:tooling"
+  ],
+  "implicitDependencies": [
+    "llmlint"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-repo-tooling -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-repo-tooling"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-repo-tooling --all-targets --locked -- -D warnings"
+      }
+    },
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck scripts/*.sh scripts/nx"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo nextest run -p llmlint-repo-tooling --locked"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "{workspaceRoot}/justfile",
+        "{workspaceRoot}/.claude/settings.json",
+        "{workspaceRoot}/.tool-versions",
+        {
+          "runtime": "just --version"
+        }
+      ],
+      "//": "Offline journeys over the scripts here (the actionlint installer and workflow lint, the readiness check, the gate recipes' base selection) and the agent allowlist. Cached: its inputs are every file they read or run."
+    }
+  }
+}

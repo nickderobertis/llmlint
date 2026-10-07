@@ -1,0 +1,87 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "bench",
+  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format and lint (which compiles the benches and shellchecks the harness scripts). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
+  "projectType": "application",
+  "tags": [
+    "type:bench"
+  ],
+  "implicitDependencies": [
+    "llmlint"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-bench -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-bench"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-bench --all-targets --locked -- -D warnings"
+      }
+    },
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck benches/*.sh"
+      }
+    },
+    "bench": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "cargo bench --locked -p llmlint-bench --bench engine -- --save-baseline current"
+      }
+    },
+    "bench-base": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "cargo bench --locked -p llmlint-bench --bench engine -- --save-baseline base"
+      }
+    },
+    "bench-allocs": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "mkdir -p target/bench && cargo bench --locked --quiet -p llmlint-bench --bench engine_allocs | tee target/bench/allocs.md"
+      },
+      "//": "Also written to target/bench/allocs.md, which the Performance workflow's report embeds (Nx's own run banners stay out of it)."
+    },
+    "bench-cli": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/bench.sh"
+      }
+    },
+    "bench-cli-smoke": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/bench.sh --dry-run"
+      }
+    },
+    "bench-instructions": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/bench-instructions.sh"
+      }
+    },
+    "profile": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/profile.sh"
+      }
+    }
+  }
+}

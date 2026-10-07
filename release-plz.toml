@@ -44,3 +44,40 @@ commit_parsers = [
   { message = "^style", skip = true },
   { body = ".*", group = "Other" },
 ]
+
+# The workspace's other members — the mock fixture, the e2e, release-target,
+# real-oneharness, screenshot, tooling and CI-workflow test crates, and the bench
+# suite — are not deliverables: they carry `publish = false`, nothing published
+# depends on them, and a version of their own would be noise in the changelog
+# everyone reads. Only the `llmlint` package is versioned and released.
+[[package]]
+name = "llmlint-mock-oneharness"
+release = false
+
+[[package]]
+name = "llmlint-e2e"
+release = false
+
+[[package]]
+name = "llmlint-release-targets"
+release = false
+
+[[package]]
+name = "llmlint-real-oneharness"
+release = false
+
+[[package]]
+name = "llmlint-screenshots"
+release = false
+
+[[package]]
+name = "llmlint-repo-tooling"
+release = false
+
+[[package]]
+name = "llmlint-ci-workflows"
+release = false
+
+[[package]]
+name = "llmlint-bench"
+release = false

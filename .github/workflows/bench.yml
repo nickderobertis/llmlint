@@ -10,8 +10,9 @@ name: Performance
 
 # Only the inputs that can actually move the numbers trigger a run: the Rust
 # source and engine benches, the build inputs (deps/toolchain change codegen),
-# the two bench harness scripts + the justfile recipes they call, and the
-# mock-oneharness whose child-spawn cost is inside every `lint` timing. A docs-,
+# the bench project (its harness scripts + Nx targets) + the justfile recipes that
+# run them, and the mock-oneharness whose child-spawn cost is inside every `lint`
+# timing. A docs-,
 # config-, or workflow-only change can't shift performance, so it skips the suite
 # — including edits to this file itself; verify a workflow change with
 # workflow_dispatch instead. Safe to scope because this job is informational — it
@@ -30,8 +31,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
-      - 'scripts/bench*.sh'
-      - 'tests/support/mock_oneharness.rs'
+      - 'tests/mock-oneharness/**'
       - 'justfile'
   pull_request:
     paths:
@@ -40,8 +40,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
-      - 'scripts/bench*.sh'
-      - 'tests/support/mock_oneharness.rs'
+      - 'tests/mock-oneharness/**'
       - 'justfile'
   workflow_dispatch:
 
@@ -77,6 +76,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just,hyperfine,critcmp
+      # The bench recipes run through Nx (the bench project's targets), which bun
+      # installs from bun.lock at the .tool-versions pin.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
 
       # cachegrind backs the deterministic instruction counts; a system package,
       # not a cargo tool.
@@ -89,7 +93,7 @@ jobs:
         run: rm -rf target/criterion
 
       - name: Benchmark this revision (Criterion)
-        run: cargo bench --locked --bench engine -- --measurement-time 3 --save-baseline pr
+        run: cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline pr
 
       - name: Benchmark this revision (hyperfine CLI)
         run: just bench-cli
@@ -97,9 +101,8 @@ jobs:
       # Exact counts, no statistics: these two are the only layers where a small
       # delta is meaningful on a shared runner.
       - name: Allocation counts (deterministic)
-        run: |
-          mkdir -p target/bench
-          just bench-allocs | tee target/bench/allocs.md
+        # The target writes target/bench/allocs.md itself (no Nx banners in it).
+        run: just bench-allocs
 
       - name: Instruction counts (cachegrind)
         run: just bench-instructions
@@ -118,14 +121,16 @@ jobs:
           # The instructions harness must be the PR's copy even while the
           # worktree sits at base (where it may not exist yet); parked one level
           # under the repo root so its own root resolution still finds this repo.
-          cp scripts/bench-instructions.sh target/bench-instructions-pr.sh
+          cp benches/bench-instructions.sh target/bench-instructions-pr.sh
           git checkout -q "$base"
-          cargo bench --locked --bench engine -- --measurement-time 3 --save-baseline base
+          # `--workspace` finds the engine bench in either layout: the bench crate
+          # at the PR, the root package at a base that predates the workspace.
+          cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline base
           BENCH_OUT="$PWD/target/bench-base" bash target/bench-instructions-pr.sh || true
           git checkout -q -
           critcmp base pr | tee target/bench/critcmp.txt
           if [ -s target/bench-base/instructions.tsv ]; then
-            bash scripts/bench-instructions.sh report \
+            bash benches/bench-instructions.sh report \
               target/bench-base/instructions.tsv target/bench/instructions.tsv \
               | tee target/bench/instructions-delta.md
           fi

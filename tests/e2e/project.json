@@ -1,0 +1,49 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "llmlint-e2e",
+  "//": "The binary journeys: the real freshly built llmlint against the mock fixture. Depends on exactly what it drives (the crate, which owns the repo-root files the journeys read, such as README.md, and the fixture), and no project depends on it but the coverage aggregate.",
+  "projectType": "application",
+  "tags": [
+    "type:e2e",
+    "coverage:profiles"
+  ],
+  "implicitDependencies": [
+    "llmlint",
+    "llmlint-mock-oneharness"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-e2e -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-e2e"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-e2e --all-targets --locked -- -D warnings"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "llmlint:build",
+        "llmlint-mock-oneharness:build",
+        "coverage:coverage-clear"
+      ],
+      "options": {
+        "command": "bash tools/coverage/coverage.sh test llmlint-e2e"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
+      ],
+      "cache": false,
+      "//": "dependsOn both builds, so a broken binary or fixture fails here, named, before any journey runs, and an uninstrumented run (LLMLINT_COVERAGE=off, the cross jobs) drives exactly what they built. Under coverage the journeys drive the instrumented copies coverage.sh builds, so their lines count toward coverage:coverage. Uncached for the same reason as llmlint:test."
+    }
+  }
+}

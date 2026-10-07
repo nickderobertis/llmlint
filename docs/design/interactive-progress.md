@@ -207,9 +207,9 @@ Windows console — the only genuinely new Windows surface the feature adds.
 
 ## Demo GIF
 
-The static screenshot tooling (`scripts/screenshots.sh`, deterministic SVGs) can't
+The static screenshot tooling (`screenshots/screenshots.sh`, deterministic SVGs) can't
 capture an *animation*. A separate, informational GIF (like the screenshots, never
-gated) is the README hero. `scripts/demo-gif.py` drives the **real release binary**
+gated) is the README hero. `screenshots/demo-gif.py` drives the **real release binary**
 against the mock-oneharness fixture (same as the screenshots) for its data — the
 rules, verdicts, and final report are genuine CLI output — then reconstructs the
 exact frames the view draws (the same glyphs, words, and status colors as

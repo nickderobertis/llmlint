@@ -1,0 +1,51 @@
+{
+  "$schema": "./node_modules/nx/schemas/project-schema.json",
+  "name": "llmlint",
+  "//": "The published crate: lib + bin `llmlint`, with its inline unit tests. It is the root project because the crate stays a root package (AGENTS.md, Stack and composition), so it also owns every repo-root file no other project claims (the justfile, AGENTS.md, README, .githooks/, .claude/, docs/, shots/). Its inputs are narrowed to what the crate compiles and its unit tests read, so an edit to any other root file replays its cached lint, build and doc. It embeds assets/ (the config-lint-plugin project).",
+  "projectType": "application",
+  "tags": ["type:app", "coverage:profiles"],
+  "implicitDependencies": ["config-lint-plugin"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/src/**/*",
+      "{projectRoot}/Cargo.toml",
+      "{projectRoot}/tests/fixtures/**/*",
+      "{projectRoot}/README.md",
+      "{projectRoot}/AGENTS.md",
+      "{projectRoot}/pyproject.toml",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": { "command": "cargo fmt -p llmlint -- --check" },
+      "configurations": { "write": { "command": "cargo fmt -p llmlint" } }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "cargo clippy -p llmlint --all-targets --locked -- -D warnings" }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "cargo build -p llmlint --bin llmlint --locked" },
+      "outputs": ["{workspaceRoot}/target/debug/llmlint", "{workspaceRoot}/target/debug/llmlint.exe"],
+      "//": "Produces target/debug/llmlint, the binary the e2e journeys spawn when they run uninstrumented (the macOS/Windows cross jobs); under coverage they drive the instrumented copy tools/coverage/coverage.sh builds."
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["coverage:coverage-clear"],
+      "options": { "command": "bash tools/coverage/coverage.sh test llmlint" },
+      "outputs": ["{workspaceRoot}/target/llvm-cov-target/*.profraw"],
+      "cache": false,
+      "//": "Unit tests under cargo-llvm-cov (--no-report): raw profiles land in target/llvm-cov-target for coverage:coverage to merge. Uncached: cargo-llvm-cov names every profile after the workspace, not the crate, so a replay could not restore this crate's profiles alone."
+    },
+    "doc": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo doc --no-deps -p llmlint --locked",
+        "env": { "RUSTDOCFLAGS": "-D warnings" }
+      }
+    }
+  }
+}

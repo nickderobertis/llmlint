@@ -7,7 +7,7 @@ reports numbers on a PR rather than blocking it. The hard gate is `just check`.
 - Bench the **pure engine surface** (`configfs::parse`, `plan::build`,
   `template::render`, `schema::build`, `vote::tally`, `report::Report`) so the
   numbers track what the binary actually runs. The `oneharness` subprocess — the
-  network/model boundary — is deliberately excluded here; `scripts/bench.sh`
+  network/model boundary — is deliberately excluded here; `benches/bench.sh`
   covers the end-to-end CLI cost including it.
 - Load fixtures from the **bundled assets** (`io::assets`: the `init` starter
   config, the `config-lint` plugin, the default template) once, outside every
