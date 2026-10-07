@@ -1,5 +1,6 @@
 // The boundary rule against a real (tiny) Cargo workspace: cargo metadata is the
 // edge source, so the test builds one rather than feeding canned JSON.
+// llmlint: ignore-file[shell_test_tiers_stay_split] these tests are offline and hermetic: they run the boundary checker and Nx's own graph resolution (the gate's orchestrator, installed from bun.lock) and cargo metadata --offline over scratch or the real workspace; nothing reaches a network, and the files they read are this project's inputs, so a separate project would be selected by exactly the same edits
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";

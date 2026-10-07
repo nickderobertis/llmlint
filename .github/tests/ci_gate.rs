@@ -5,6 +5,8 @@
 //! the real script, `jq` and `git` run). Unix-only, like the script.
 #![cfg(unix)]
 
+// llmlint: ignore-file[shell_test_tiers_stay_split] every journey here is offline and hermetic: it drives the script in a scratch git repository with GitHub's API answered by a stand-in gh, and the only host tools used (git, jq, bash) are the gate's own required tools or the base system's; nothing reaches a network, so a separate project would be selected by exactly the same edits
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

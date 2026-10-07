@@ -3,6 +3,7 @@
 // project's shellcheck, the workflows are under actionlint, and `just check`
 // runs the targets those checks hang off. Dropping one of them would silently
 // un-gate a whole class of files while every remaining target stayed green.
+// llmlint: ignore-file[shell_test_tiers_stay_split] these tests are offline and hermetic: they run the boundary checker and Nx's own graph resolution (the gate's orchestrator, installed from bun.lock) and cargo metadata --offline over scratch or the real workspace; nothing reaches a network, and the files they read are this project's inputs, so a separate project would be selected by exactly the same edits
 import { beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
