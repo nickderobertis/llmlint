@@ -129,13 +129,13 @@ verdict() {
   [[ "$attempts" =~ ^[1-9][0-9]{0,3}$ ]] || usage "CI_WAIT_ATTEMPTS '$attempts' is not a whole number of polls (1-9999, no leading zero)"
   [[ "$delay" =~ ^(0|[1-9][0-9]{0,3})$ ]] || usage "CI_WAIT_DELAY '$delay' is not a whole number of seconds (0-9999, no leading zero)"
 
+  # llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] GitHub owns these response shapes and its API is the only authority, which no gate run can reach offline; every field read is one GitHub's REST docs define for workflow runs and jobs, and an answer missing any of them is refused as unreadable rather than trusted
   local commit tree
   commit="$(gh_api "repos/$repo/commits/$sha")"
   if ! tree="$(jq -r '.commit.tree.sha // ""' <<<"$commit" 2>&1)" || ! is_sha "$tree"; then
     refuse "GitHub returned no tree for $sha (repos/$repo/commits/$sha answered: ${commit:0:200})" "check that $sha is pushed to $repo and the token can read it, then re-run the release"
   fi
 
-  # llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] GitHub owns these response shapes and its API is the only authority, which no gate run can reach offline; every field read is one GitHub's REST docs define for workflow runs and jobs, and an answer missing any of them is refused as unreadable rather than trusted
   local poll runs run run_id run_url run_status jobs state
   for ((poll = 1; poll <= attempts; poll++)); do
     runs="$(

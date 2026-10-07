@@ -69,8 +69,8 @@ pinned_bun() {
 
 asset_name() {
   local os arch
-  os="$(uname -s)"
-  arch="$(uname -m)"
+  os="$(uname -s)" || fail "'uname -s' failed (above); cannot pick a bun build for this host."
+  arch="$(uname -m)" || fail "'uname -m' failed (above); cannot pick a bun build for this host."
   case "$os/$arch" in
     Linux/x86_64) echo "bun-linux-x64" ;;
     Linux/aarch64 | Linux/arm64) echo "bun-linux-aarch64" ;;

@@ -968,6 +968,13 @@ fn check_all_runs_the_full_sweep_and_a_mistyped_tier_runs_nothing() {
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown flag(s) '--al'"));
     assert!(calls.is_empty(), "{calls:?}");
+
+    // An explicitly empty argument is a flag too, not "no flag".
+    for args in [&["check", ""][..], &["check", "--all", ""][..]] {
+        let (out, calls) = repo.just(args, None);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
+        assert!(calls.is_empty(), "{args:?}: {calls:?}");
+    }
 }
 
 #[cfg(unix)]

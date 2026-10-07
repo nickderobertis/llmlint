@@ -264,7 +264,6 @@ const GREEN: &[(&str, &str, &str)] = &[
     ("cross (windows-latest)", "completed", "success"),
     ("deny", "completed", "success"),
 ];
-// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 impl Github {
     fn new(pr_runs: &[String], dispatch_runs: &[String]) -> Self {
@@ -289,6 +288,7 @@ impl Github {
             )
             .unwrap();
         }
+        // llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
         fs::create_dir_all(p.join("bin")).unwrap();
         let gh = p.join("bin/gh");
         fs::write(

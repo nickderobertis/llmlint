@@ -17,11 +17,11 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || { echo "nx-tier: cannot enter the repository root; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
 
-case "$*" in
-  --all) echo all ;;
-  "") bash scripts/nx-base.sh ;;
-  *)
-    echo "nx-tier: unknown flag(s) '$*' — pass --all for the full sweep, or nothing for the affected tier." >&2
-    exit 2
-    ;;
-esac
+if [ "$#" -eq 0 ]; then
+  bash scripts/nx-base.sh
+elif [ "$#" -eq 1 ] && [ "$1" = --all ]; then
+  echo all
+else
+  echo "nx-tier: unknown flag(s) '$*' — pass --all for the full sweep, or nothing for the affected tier." >&2
+  exit 2
+fi

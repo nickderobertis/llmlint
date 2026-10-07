@@ -45,7 +45,7 @@
         "^default",
         "{workspaceRoot}/justfile"
       ],
-      "//": "Offline: only the_tier_pins_the_multi_file_floor, which holds the justfile's oneharness-cli-version pin to LAYERED_CONFIG_MIN_VERSION. The suite itself is the network target."
+      "//": "Offline: the_tier_pins_the_multi_file_floor, which holds the justfile's oneharness-cli-version pin to LAYERED_CONFIG_MIN_VERSION, and the installer's refusal of a malformed pin. The suite itself is the network target."
     },
     "network": {
       "executor": "nx:run-commands",
