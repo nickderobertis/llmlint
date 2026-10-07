@@ -25,9 +25,15 @@ jobs:
           # Full history so the version-bump check below can diff the PR against
           # its base (a shallow clone can't resolve the merge-base).
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      # Installs the pinned channel + components from rust-toolchain.toml, so CI
+      # gates on the toolchain contributors build with. `cache: false` keeps the
+      # one rust-cache step below; `rustflags: ""` drops the action's default
+      # `-D warnings` RUSTFLAGS — the gate denies warnings where it means to
+      # (clippy, rustdoc), and a global RUSTFLAGS would change what it builds.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: rustfmt, clippy, llvm-tools
+          cache: false
+          rustflags: ""
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
@@ -61,9 +67,11 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # The pinned toolchain from rust-toolchain.toml, as in `gate` (same inputs).
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: rustfmt, clippy
+          cache: false
+          rustflags: ""
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
@@ -102,6 +110,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # Deliberately a stock rustup + stable rather than the pinned dev toolchain
+      # the gate jobs install: this job stands in for an end user's machine, and
+      # the documented install is `cargo install` on whatever rustup they have.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install (recommended end-user method)
@@ -137,6 +148,28 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install llmlint toolchain
         run: ./scripts/setup-llmlint.sh
+      # llmlint judges THROUGH oneharness, whose committed `oneharness.toml`
+      # selects codex first (claude-code is the fallback). setup-llmlint.sh
+      # installs llmlint + oneharness only, not a harness, so without this every
+      # run falls through the whole chain and errors ("codex not found on PATH").
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Install Codex CLI
+        run: |
+          npm install -g @openai/codex
+          codex --version
+      # Codex ignores OPENAI_API_KEY for headless runs; its documented CI pattern
+      # is `codex login --with-api-key` (writes ~/.codex/auth.json). Skipped when
+      # the secret is withheld (a fork PR) — the lint step below still fails
+      # loudly on the missing key rather than passing.
+      - name: Authenticate Codex with the API key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            printenv OPENAI_API_KEY | codex login --with-api-key
+          fi
       - name: Validate llmlint config
         run: just lint-llm-validate --diff-base origin/main
       - name: Lint changed files
