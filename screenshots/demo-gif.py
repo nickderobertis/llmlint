@@ -78,19 +78,30 @@ def run_report(binp: str, mock: str, fixture: str) -> list[str]:
 
 
 # A frame is a list of lines; a line is a list of (text, color) segments.
+# One entry per serialized `Outcome` (src/domain/verdict.rs). An outcome this
+# table lacks stops the render naming it, so a new one can never draw stale.
+OUTCOME_STYLE = {
+    "pass": ("✓", "passed", GREEN),
+    "fail": ("✗", "failed", RED),
+    "skipped": ("–", "skipped", YELLOW),
+    "ignored": ("–", "ignored", YELLOW),
+    "not_relevant": ("–", "not relevant", YELLOW),
+}
+
+
 def status_seg(name: str, outcome: str) -> tuple[str, tuple[int, int, int]]:
-    glyph, word, color = {
-        "pass": ("✓", "passed", GREEN),
-        "fail": ("✗", "failed", RED),
-        "skipped": ("–", "skipped", YELLOW),
-        "not_relevant": ("–", "not relevant", YELLOW),
-    }[outcome]
+    if outcome not in OUTCOME_STYLE:
+        sys.exit(
+            f"demo-gif: rule {name!r} has outcome {outcome!r}, which OUTCOME_STYLE "
+            "does not draw; add it there (see src/domain/verdict.rs's Outcome)."
+        )
+    glyph, word, color = OUTCOME_STYLE[outcome]
     return (f"{glyph} {name}  {word}", color)
 
 
 def build_frames(rules: list[dict], report: list[str]) -> list[tuple[list, int]]:
     judged = [r for r in rules if r["outcome"] in ("pass", "fail")]
-    resolved_upfront = [r for r in rules if r["outcome"] in ("skipped", "not_relevant")]
+    resolved_upfront = [r for r in rules if r["outcome"] in ("skipped", "ignored", "not_relevant")]
     order = sorted(rules, key=lambda r: r["name"])
     total = sum(int(r.get("votes_total", 1)) for r in judged) or 1
 

@@ -54,6 +54,8 @@
 //!   clean exit proves `N` invocations ran concurrently (i.e. `--max-parallel`
 //!   actually overlapped them); a serial wave never reaches `N` and times out.
 
+// llmlint: ignore-file[contracts_have_one_source_or_a_drift_gate] this is the wire double of an external tool, moved here verbatim from tests/support/mock_oneharness.rs; the wire it restates is owned by oneharness, not this repo, and its drift gate is the live tier (tests/live, live.yml on every pull request), which drives llmlint's same response parsing against the real released oneharness
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};

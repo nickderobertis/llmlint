@@ -48,6 +48,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 seconds="${PROFILE_SECONDS:-10}"
 repeat="${PROFILE_REPEAT:-3000}"
+top="${PROFILE_TOP:-30}"
 # Optional flags, split on whitespace only (never glob-expanded).
 read -r -a samply_args <<<"${SAMPLY_ARGS:-}"
 
@@ -55,6 +56,14 @@ fail() {
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
 }
+
+# Each count reaches bash arithmetic or a tool's numeric flag, so only a plain
+# positive decimal is accepted (never an expression, zero, or a negative).
+for _setting in "PROFILE_SECONDS=$seconds" "PROFILE_REPEAT=$repeat" "PROFILE_TOP=$top"; do
+    [[ "${_setting#*=}" =~ ^[1-9][0-9]{0,5}$ ]] ||
+        fail "${_setting%%=*} must be a whole number from 1 to 999999 (got '${_setting#*=}'); unset it to use the default."
+done
+unset _setting
 
 # Build the profiling binary + mock fixture and set up a hermetic sandbox that
 # the cli/callgrind modes run `llmlint` inside. Exports `bin`, `proj`, and the
@@ -115,8 +124,8 @@ if [[ "$mode" == "callgrind" ]]; then
     valgrind --tool=callgrind --callgrind-out-file="$cg_out" -- \
         "$bin" "$@" --cwd "$proj" >/dev/null || true
     echo
-    echo "» top ${PROFILE_TOP:-30} functions by instruction count (full data: $cg_out)"
-    callgrind_annotate --threshold=99 "$cg_out" | head -n "$((${PROFILE_TOP:-30} + 12))"
+    echo "» top $top functions by instruction count (full data: $cg_out)"
+    callgrind_annotate --threshold=99 "$cg_out" | head -n "$((top + 12))"
     exit 0
 fi
 
