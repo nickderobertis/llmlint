@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "workspace",
-  "//": "Repo-level checks over the whole graph: the project-boundary check (tools/check-project-boundaries.mjs against tools/project-boundaries.json) with its tests, and the supply-chain check. It depends on every other project so any change re-runs the cheap boundary check; that check reads every project.json and Cargo.toml, which its inputs name, so it replays from cache when none changed. The coverage gate is the nested coverage project.",
+  "//": "Repo-level checks over the whole graph: the project-boundary check (tools/check-project-boundaries.mjs against tools/project-boundaries.json) with its tests, and the supply-chain check. It depends on every other project so any change re-runs the cheap boundary check. Its lint and test are uncached: they read the graph's edges, and Nx does not count a change to another project's implicitDependencies as a change to a task's inputs, so a cached pass could replay over a newly forbidden edge. The coverage gate is the nested coverage project.",
   "projectType": "library",
   "tags": [
     "type:workspace"
@@ -24,23 +24,14 @@
       "options": {
         "command": "bun tools/check-project-boundaries.mjs"
       },
-      "inputs": [
-        "default"
-      ]
+      "cache": false
     },
     "test": {
       "executor": "nx:run-commands",
-      "cache": true,
+      "cache": false,
       "options": {
         "command": "bun test tools/tests"
-      },
-      "inputs": [
-        "default",
-        "{workspaceRoot}/justfile",
-        "{workspaceRoot}/**/*.sh",
-        "{workspaceRoot}/.githooks/*",
-        "{workspaceRoot}/scripts/nx"
-      ]
+      }
     },
     "supply-chain": {
       "executor": "nx:run-commands",

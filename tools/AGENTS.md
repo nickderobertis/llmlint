@@ -1,9 +1,10 @@
 # tools/AGENTS.md — the workspace project
 
 Repo-level checks over the whole project graph. It depends on every other
-project, so any change selects it; its targets read only `project.json` and
-`Cargo.toml` files (and the scripts and justfile its tests check), so they replay
-from the Nx cache when none of those changed.
+project, so any change selects it. Its `lint` and `test` are uncached (about a
+second each): they judge the graph's edges, and Nx does not count a change to
+another project's `implicitDependencies` as a change to a task's inputs, so a
+cached pass could replay over a newly forbidden edge.
 
 - **Boundaries.** `check-project-boundaries.mjs` (this project's `lint`) reads
   every project's `type:*` tag and every edge — each Cargo path dependency between
