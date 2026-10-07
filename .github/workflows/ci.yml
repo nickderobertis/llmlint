@@ -157,24 +157,21 @@ jobs:
           npm install -g @openai/codex
           codex --version
       # Codex ignores OPENAI_API_KEY for headless runs; its documented CI pattern
-      # is `codex login --with-api-key` (writes ~/.codex/auth.json). Skipped when
-      # the secret is withheld (a fork PR) — the lint step below still fails
-      # loudly on the missing key rather than passing.
+      # is `codex login --with-api-key` (writes ~/.codex/auth.json). The judge
+      # cannot run without the key, so a missing secret (including a fork PR,
+      # which receives no secrets) fails here, before any lint runs.
       - name: Authenticate Codex with the API key
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [ -n "${OPENAI_API_KEY:-}" ]; then
-            printenv OPENAI_API_KEY | codex login --with-api-key
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::llmlint needs the OPENAI_API_KEY secret for the Codex harness; set it under Settings > Secrets and variables > Actions" >&2
+            exit 1
           fi
+          printenv OPENAI_API_KEY | codex login --with-api-key
       - name: Validate llmlint config
         run: just lint-llm-validate --diff-base origin/main
       - name: Lint changed files
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "::error::llmlint needs OPENAI_API_KEY for the Codex harness" >&2
-            exit 1
-          fi
-          just lint-llm-diff origin/main
+        run: just lint-llm-diff origin/main
