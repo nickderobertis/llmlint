@@ -42,15 +42,15 @@ sums_file="${FREEZE_SHA256_FILE-$(dirname "$0")/freeze.sha256}"
 # Validate the three overrides before anything is fetched or written: each one
 # steers a download or a filesystem write, so a malformed value must fail here
 # with its own name attached, not deep inside curl/awk/install.
-case "$base_url" in
-https://* | file://*) ;;
-*)
-  echo "ci-install-freeze: FREEZE_BASE_URL must be an https:// or file:// URL" >&2
+# The whole shape, not just the scheme: a host (or, for file://, a path) must
+# follow it, and no whitespace may appear anywhere in the value.
+if ! [[ $base_url =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ || $base_url =~ ^file:///[^[:space:]]+$ ]]; then
+  echo "ci-install-freeze: FREEZE_BASE_URL must be an https:// or file:// URL:" >&2
+  echo "                   https://<host>[/path] or file:///<path>, with no whitespace" >&2
   echo "                   got: ${base_url:-<empty>}" >&2
   echo "                   Unset it to use the default release base." >&2
   exit 1
-  ;;
-esac
+fi
 case "$install_dir" in
 /*) ;;
 *)

@@ -28,15 +28,15 @@ base_url="${ACTIONLINT_BASE_URL-https://github.com/rhysd/actionlint/releases/dow
 install_dir="${ACTIONLINT_INSTALL_DIR-$LOCAL_BIN}"
 sums_file="${ACTIONLINT_SHA256_FILE-$ROOT/scripts/actionlint.sha256}"
 
-case "$base_url" in
-https://* | file://*) ;;
-*)
-  echo "install-actionlint: ACTIONLINT_BASE_URL must be an https:// or file:// URL" >&2
+# The whole shape, not just the scheme: a host (or, for file://, a path) must
+# follow it, and no whitespace may appear anywhere in the value.
+if ! [[ $base_url =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ || $base_url =~ ^file:///[^[:space:]]+$ ]]; then
+  echo "install-actionlint: ACTIONLINT_BASE_URL must be an https:// or file:// URL:" >&2
+  echo "                    https://<host>[/path] or file:///<path>, with no whitespace" >&2
   echo "                    got: ${base_url:-<empty>}" >&2
   echo "                    Unset it to use the default release base." >&2
   exit 1
-  ;;
-esac
+fi
 if [ -z "$install_dir" ]; then
   echo "install-actionlint: ACTIONLINT_INSTALL_DIR is empty; it must name a directory" >&2
   echo "                    to install into. Unset it to use $LOCAL_BIN." >&2

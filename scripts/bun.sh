@@ -117,10 +117,11 @@ install_pinned() {
   # shellcheck disable=SC2064
   trap "rm -rf $(printf '%q' "$tmp") || echo 'bun.sh: could not remove $(printf '%q' "$tmp"); delete it by hand' >&2" EXIT
   base="${BUN_SH_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}"
-  case "$base" in
-    https://* | file://*) ;;
-    *) fail "BUN_SH_DOWNLOAD_BASE must be an https:// or file:// URL (got '${base}'); unset it to download from bun's GitHub release." ;;
-  esac
+  # The whole shape, not just the scheme: a host (or, for file://, a path) must
+  # follow it, and no whitespace may appear anywhere in the value.
+  if ! [[ $base =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ || $base =~ ^file:///[^[:space:]]+$ ]]; then
+    fail "BUN_SH_DOWNLOAD_BASE must be an https:// or file:// URL: https://<host>[/path] or file:///<path>, with no whitespace (got '${base}'); unset it to download from bun's GitHub release."
+  fi
   base="$base/bun-v$VERSION"
   echo "bun.sh: installing bun $VERSION into $CACHE_DIR" >&2
   curl -fsSL --retry 3 -o "$tmp/$asset.zip" "$base/$asset.zip" \

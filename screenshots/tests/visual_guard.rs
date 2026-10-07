@@ -711,6 +711,15 @@ fn ci_install_freeze_refuses_a_malformed_override_before_fetching() {
             "ftp://example.invalid",
             "FREEZE_BASE_URL",
         ),
+        // A scheme with no host or path, or a value carrying whitespace.
+        ("FREEZE_BASE_URL", "https://", "FREEZE_BASE_URL"),
+        ("FREEZE_BASE_URL", "file://", "FREEZE_BASE_URL"),
+        (
+            "FREEZE_BASE_URL",
+            "https://example.invalid/a b",
+            "FREEZE_BASE_URL",
+        ),
+        ("FREEZE_BASE_URL", "file:///srv/a b", "FREEZE_BASE_URL"),
         ("FREEZE_INSTALL_DIR", "", "FREEZE_INSTALL_DIR"),
         ("FREEZE_INSTALL_DIR", "relative/bin", "FREEZE_INSTALL_DIR"),
         (

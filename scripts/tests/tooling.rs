@@ -613,6 +613,19 @@ fn install_actionlint_refuses_a_malformed_override_before_fetching() {
             "ftp://example.invalid",
             "ACTIONLINT_BASE_URL",
         ),
+        // A scheme with no host or path, or a value carrying whitespace.
+        ("ACTIONLINT_BASE_URL", "https://", "ACTIONLINT_BASE_URL"),
+        ("ACTIONLINT_BASE_URL", "file://", "ACTIONLINT_BASE_URL"),
+        (
+            "ACTIONLINT_BASE_URL",
+            "https://example.invalid/a b",
+            "ACTIONLINT_BASE_URL",
+        ),
+        (
+            "ACTIONLINT_BASE_URL",
+            "file:///srv/a b",
+            "ACTIONLINT_BASE_URL",
+        ),
         ("ACTIONLINT_INSTALL_DIR", "", "ACTIONLINT_INSTALL_DIR"),
         (
             "ACTIONLINT_SHA256_FILE",
@@ -1303,6 +1316,12 @@ fn bun_sh_refuses_a_download_base_that_is_not_an_https_or_file_url() {
         "http://example.invalid/bun",
         "ftp://example.invalid",
         "/srv/bun",
+        // The scheme alone, or a scheme with whitespace in the value, is not a
+        // URL either: a host (or a file:// path) must follow, unbroken.
+        "https://",
+        "file://",
+        "https://example.invalid/bun releases",
+        "file:///srv/bun releases",
     ] {
         let repo = BunRepo::new(&pin);
         let out = repo.bun_sh("ensure", &repo.p.path().join("empty"), base);
