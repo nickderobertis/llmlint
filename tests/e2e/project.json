@@ -30,6 +30,7 @@
       }
     },
     "test": {
+      "//suppression": "llmlint: ignore-block[e2e_not_mocked] the mock-oneharness fixture is this suite's double for the oneharness subprocess, the one genuinely external boundary (AGENTS.md: the layer under test is llmlint); the journeys still drive the real freshly built llmlint binary as a subprocess over real temp files, and the real oneharness is driven by the real-oneharness and live projects",
       "executor": "nx:run-commands",
       "dependsOn": [
         "llmlint:build",
@@ -43,7 +44,8 @@
         "{workspaceRoot}/target/llvm-cov-target/*.profraw"
       ],
       "cache": false,
-      "//": "dependsOn both builds, so a broken binary or fixture fails here, named, before any journey runs, and an uninstrumented run (LLMLINT_COVERAGE=off, the cross jobs) drives exactly what they built. Under coverage the journeys drive the instrumented copies coverage.sh builds, so their lines count toward coverage:coverage. Uncached for the same reason as llmlint:test."
+      "//": "dependsOn both builds, so a broken binary or fixture fails here, named, before any journey runs, and an uninstrumented run (LLMLINT_COVERAGE=off, the cross jobs) drives exactly what they built. Under coverage the journeys drive the instrumented copies coverage.sh builds, so their lines count toward coverage:coverage. Uncached for the same reason as llmlint:test.",
+      "//suppression-end": "llmlint: ignore-end[e2e_not_mocked]"
     }
   }
 }
