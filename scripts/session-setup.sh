@@ -41,6 +41,7 @@ ensure_llmlint() {
   command -v llmlint >/dev/null 2>&1 && return 0
   command -v python3 >/dev/null 2>&1 || return 0
   mkdir -p .dev
+  # shellcheck disable=SC2016  # $HOME and the loop expand in the detached inner bash.
   "$launcher" bash -c '
     exec 9>.dev/llmlint-pip.lock; flock -n 9 || exit 0
     python3 -m venv .dev/llmlint-venv

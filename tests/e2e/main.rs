@@ -12839,6 +12839,98 @@ fn check_runs_the_workflow_lint() {
     assert!(plan.contains("bash scripts/lint-workflows.sh"), "{plan}");
 }
 
+#[test]
+fn check_runs_the_shell_lint() {
+    // Bash quality is gated only because `just check` (what CI's gate job runs)
+    // includes `lint-sh`; dropping it from the recipe's dependencies would
+    // silently un-gate every script.
+    let out = std::process::Command::new("just")
+        .args(["--dry-run", "check"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+    let plan = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{plan}");
+    assert!(
+        plan.contains("shellcheck scripts/*.sh .githooks/pre-push"),
+        "{plan}"
+    );
+}
+
+/// The real justfile, `scripts/*.sh` and the pre-push hook, copied into a
+/// scratch dir so a test can break one script without touching the tree.
+#[cfg(target_os = "linux")]
+fn shell_lint_scratch() -> TempDir {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("scripts")).unwrap();
+    fs::create_dir_all(dir.path().join(".githooks")).unwrap();
+    for entry in fs::read_dir(root.join("scripts")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|x| x == "sh") {
+            fs::copy(
+                &path,
+                dir.path().join("scripts").join(path.file_name().unwrap()),
+            )
+            .unwrap();
+        }
+    }
+    for file in ["justfile", ".githooks/pre-push"] {
+        fs::copy(root.join(file), dir.path().join(file)).unwrap();
+    }
+    dir
+}
+
+#[cfg(target_os = "linux")]
+fn run_just(dir: &Path, recipe: &str) -> (bool, String) {
+    let out = std::process::Command::new("just")
+        .arg(recipe)
+        .current_dir(dir)
+        .output()
+        .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), text)
+}
+
+// Linux-only: the gate that runs `lint-sh` (CI's `gate` job) is Linux, where the
+// runner ships shellcheck; the macOS/Windows `cross` job runs neither.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_shellcheck_finding_in_a_script_fails_lint_sh_and_check() {
+    // The committed scripts pass as they stand; one unquoted expansion added to
+    // a copy of one of them fails `lint-sh` with shellcheck's own finding, and
+    // `check` with it, before any cargo step runs.
+    let dir = shell_lint_scratch();
+    let (ok, text) = run_just(dir.path(), "lint-sh");
+    assert!(ok, "the committed scripts must pass shellcheck:\n{text}");
+
+    let script = dir.path().join("scripts/host-arch.sh");
+    let mut body = fs::read_to_string(&script).unwrap();
+    body.push_str("echo $1\n");
+    fs::write(&script, body).unwrap();
+    for recipe in ["lint-sh", "check"] {
+        let (ok, text) = run_just(dir.path(), recipe);
+        assert!(
+            !ok,
+            "`just {recipe}` passed over a shellcheck finding:\n{text}"
+        );
+        assert!(text.contains("scripts/host-arch.sh"), "{recipe}: {text}");
+        assert!(text.contains("SC2086"), "{recipe}: {text}");
+        assert!(
+            text.contains("Recipe `lint-sh` failed"),
+            "{recipe} did not fail on lint-sh: {text}"
+        );
+    }
+}
+
 // llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/tar/install/bash; a test cannot own the host's OS/CPU, rhysd's release server, or a second actionlint release, so only `uname`, the release tree, and (for the version/exit-code journeys) the actionlint binary are stood in
 /// Read from the justfile, as both scripts do, so these journeys follow a pin
 /// bump instead of going stale.

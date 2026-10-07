@@ -67,7 +67,7 @@ setup_cli_sandbox() {
     [ -x "$mock" ] || fail "profiling mock-oneharness fixture not found at $mock"
 
     sandbox="$(mktemp -d)"
-    # shellcheck disable=SC2317  # invoked via the EXIT trap.
+    # shellcheck disable=SC2317,SC2329  # invoked via the EXIT trap.
     cleanup() { rm -rf "$sandbox"; }
     trap cleanup EXIT
 
@@ -131,7 +131,7 @@ if [[ "$mode" == "engine" ]]; then
     artifact="$(cargo build --profile profiling --bench engine --locked --message-format=json -q |
         grep -F '"name":"engine"' | grep -F '"executable":' | tail -1)"
     bench_exe="$(printf '%s' "$artifact" | grep -o '"executable":"[^"]*"' | cut -d'"' -f4)"
-    [ -n "$bench_exe" ] && [ -x "$bench_exe" ] || fail "could not locate the profiling bench executable"
+    { [ -n "$bench_exe" ] && [ -x "$bench_exe" ]; } || fail "could not locate the profiling bench executable"
     echo "» profiling engine for ${seconds}s (${filter:-all benchmarks})"
     # `--profile-time` makes Criterion run the bench in a plain loop with no
     # statistical analysis — exactly what an external sampler wants.
@@ -145,6 +145,7 @@ if [[ "$mode" == "cli" ]]; then
     [[ $# -ge 1 ]] || fail "usage: profile.sh cli <llmlint args…> (e.g. cli lint)"
     setup_cli_sandbox
     echo "» profiling '$bin $* --cwd $proj' over $repeat invocations"
+    # shellcheck disable=SC2016  # the loop is expanded by the inner bash, from its own "$@".
     samply record "${samply_args[@]}" -- \
         bash -c 'n="$1"; shift; proj="$1"; shift; for ((i = 0; i < n; i++)); do "$@" --cwd "$proj" >/dev/null 2>&1 || true; done' \
         _ "$repeat" "$proj" "$bin" "$@"

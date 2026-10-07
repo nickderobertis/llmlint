@@ -60,10 +60,16 @@ bootstrap:
     rustup component add rustfmt clippy llvm-tools
     cargo fetch --locked
 
-# Full quality gate: format check, lint, tests (unit + integration + e2e) with
-# coverage enforced, and docs. Fails on any issue.
-check: fmt-check lint-workflows lint test doc
+# Full quality gate: shell lint, format check, workflow lint, clippy, tests
+# (unit + integration + e2e) with coverage enforced, and docs. Fails on any issue.
+check: lint-sh fmt-check lint-workflows lint test doc
     @echo "check: ok"
+
+# Part of `check` (first: it is the cheapest step): fix a finding at its site.
+# Shellcheck every Bash script under scripts/ and the pre-push hook.
+lint-sh:
+    @command -v shellcheck >/dev/null || { echo "shellcheck not installed: 'apt-get install shellcheck' / 'brew install shellcheck' / https://github.com/koalaman/shellcheck#installing" >&2; exit 1; }
+    shellcheck scripts/*.sh .githooks/pre-push
 
 # Part of `check`: fix a workflow finding at its site rather than suppress it.
 lint-workflows:

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared helpers for the local-setup scripts (setup.sh, setup-check.sh) and the
 # session hook (session-setup.sh). Sourced, not executed: callers set their own
 # `set -eu`. All functions assume the current directory is the repo root.
@@ -17,6 +18,7 @@ REQUIRED_BINS="rustc cargo just cargo-nextest cargo-llvm-cov actionlint"
 # oneharness is a *runtime* prerequisite (the harness llmlint shells out to), not
 # a build/test input — the e2e suite drives a mock fixture, so the gate passes
 # without it. `just doctor` reports it; setup never installs it.
+# shellcheck disable=SC2034  # read by setup.sh / setup-check.sh, which source this file.
 OPTIONAL_BINS="oneharness"
 
 # Where `just` is installed by setup.sh when it is missing (the official
@@ -73,7 +75,7 @@ _fingerprint() {
   {
     [ -f rust-toolchain.toml ] && cat rust-toolchain.toml
     [ -f .tool-versions ] && cat .tool-versions
-    [ -f justfile ] && grep -E '^[a-z][a-z-]*-version :=' justfile || true
+    { [ -f justfile ] && grep -E '^[a-z][a-z-]*-version :=' justfile; } || true
   } 2>/dev/null | _sha256_stdin
 }
 
@@ -103,10 +105,12 @@ _check_ready() {
   want="$(_fingerprint)"
   have_fp="$(cat "$STAMP" 2>/dev/null || true)"
   if [ -z "$have_fp" ]; then
+    # shellcheck disable=SC2034  # REASON is the caller's to print (setup-check.sh, session-setup.sh).
     REASON="no setup stamp (first run on this machine)"
     return 1
   fi
   if [ "$want" != "$have_fp" ]; then
+    # shellcheck disable=SC2034  # REASON is the caller's to print (setup-check.sh, session-setup.sh).
     REASON="toolchain or tool versions changed since last setup"
     return 1
   fi
