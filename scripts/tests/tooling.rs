@@ -1161,6 +1161,34 @@ impl BunRepo {
 
 #[cfg(unix)]
 #[test]
+fn bun_sh_cleans_up_a_temporary_dir_whose_path_holds_quotes_and_spaces() {
+    // The EXIT trap removes the download directory under TMPDIR; a path with an
+    // apostrophe or a space must be removed as given, not re-parsed as shell
+    // text (which broke the trap and leaked the directory).
+    let version = pinned_bun_version();
+    let repo = BunRepo::new(&format!("bun {version}\n"));
+    let base = repo.release(&version, &version, false);
+    let tmpdir = repo.p.path().join("it's a tmp");
+    fs::create_dir_all(&tmpdir).unwrap();
+    let out = repo.bun_sh_with(
+        "ensure",
+        &repo.p.path().join("empty"),
+        &base,
+        &[("TMPDIR", tmpdir.to_str().unwrap())],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("could not remove"), "{err}");
+    assert!(
+        fs::read_dir(&tmpdir).unwrap().next().is_none(),
+        "the download directory was left under {}",
+        tmpdir.display()
+    );
+    assert!(repo.cached_bun(&version).exists(), "bun was installed");
+}
+
+#[cfg(unix)]
+#[test]
 fn bun_sh_installs_the_pinned_release_verified_into_its_cache() {
     let version = pinned_bun_version();
     let repo = BunRepo::new(&format!("just 1.0.0\nbun {version}\n"));

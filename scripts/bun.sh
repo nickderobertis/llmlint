@@ -104,6 +104,10 @@ sha256_of() {
   fi
 }
 
+remove_tmp() {
+  rm -rf "$BUN_SH_TMP" || echo "bun.sh: could not remove $BUN_SH_TMP; delete it by hand" >&2
+}
+
 install_pinned() {
   local asset tmp base expected actual
   asset="$(asset_name)"
@@ -112,10 +116,11 @@ install_pinned() {
   command -v unzip >/dev/null 2>&1 \
     || fail "unzip is required to install bun $VERSION; install it with your package manager (e.g. 'apt-get install unzip'), then re-run 'just bootstrap'."
   tmp="$(mktemp -d)" || fail "could not create a temporary directory; check TMPDIR is writable, then re-run 'just bootstrap'."
-  # Expanded now (quoted for the shell): the EXIT trap fires after this
-  # function's locals are gone.
-  # shellcheck disable=SC2064
-  trap "rm -rf $(printf '%q' "$tmp") || echo 'bun.sh: could not remove $(printf '%q' "$tmp"); delete it by hand' >&2" EXIT
+  # Held in a global the trap reads when it fires (this function's locals are
+  # gone by then), so the path is never re-parsed as shell text: any TMPDIR,
+  # quotes and spaces included, is removed as given.
+  BUN_SH_TMP="$tmp"
+  trap remove_tmp EXIT
   base="${BUN_SH_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}"
   # The whole shape, not just the scheme: a host (or, for file://, a path) must
   # follow it, and no whitespace may appear anywhere in the value.
