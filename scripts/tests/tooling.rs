@@ -1504,7 +1504,7 @@ fn run_nx_wrapper(repo: &BunRepo, args: &[&str], env: &[(&str, &str)]) -> std::p
         &tools.join("nx-stub"),
         "#!/usr/bin/env bash\n\
          { printf 'args=%s\\n' \"$*\"\n\
-           printf 'daemon=%s\\ncache=%s\\ndata=%s\\n' \"$NX_DAEMON\" \"$NX_CACHE_DIRECTORY\" \"$NX_WORKSPACE_DATA_DIRECTORY\"\n\
+           printf 'daemon=%s\\nisolate=%s\\nno_timeouts=%s\\ncache=%s\\ndata=%s\\n' \"$NX_DAEMON\" \"$NX_ISOLATE_PLUGINS\" \"$NX_PLUGIN_NO_TIMEOUTS\" \"$NX_CACHE_DIRECTORY\" \"$NX_WORKSPACE_DATA_DIRECTORY\"\n\
          } >> \"$NX_CALLS\"\n",
     );
     write_exe(
@@ -1549,7 +1549,7 @@ fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkou
     let out = run_nx_wrapper(&repo, &["show", "projects"], &[]);
     assert!(out.status.success(), "{out:?}");
     let expected = format!(
-        "bun install --frozen-lockfile\nargs=show projects\ndaemon=false\ncache={0}/.nx/cache\ndata={0}/.nx/workspace-data\n",
+        "bun install --frozen-lockfile\nargs=show projects\ndaemon=false\nisolate=false\nno_timeouts=true\ncache={0}/.nx/cache\ndata={0}/.nx/workspace-data\n",
         root.display()
     );
     assert_eq!(
@@ -1558,13 +1558,28 @@ fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkou
         "first run: install, then Nx in this checkout's .nx/"
     );
 
-    // A fresh install stamp: no reinstall. An explicit cache dir is honoured.
+    // A fresh install stamp: no reinstall. An explicit cache dir is honoured;
+    // an ambient plugin-isolation or timeout setting is not, so a graph computed
+    // from inside another Nx task never waits on plugin workers' load window.
     let _ = fs::remove_file(repo.p.path().join("nx-calls"));
-    let out = run_nx_wrapper(&repo, &["graph"], &[("NX_CACHE_DIRECTORY", "/elsewhere")]);
+    let out = run_nx_wrapper(
+        &repo,
+        &["graph"],
+        &[
+            ("NX_CACHE_DIRECTORY", "/elsewhere"),
+            ("NX_ISOLATE_PLUGINS", "true"),
+            ("NX_PLUGIN_NO_TIMEOUTS", "false"),
+        ],
+    );
     assert!(out.status.success(), "{out:?}");
     assert!(!calls().contains("bun install"), "{}", calls());
     assert!(
         calls().contains("args=graph\n") && calls().contains("cache=/elsewhere\n"),
+        "{}",
+        calls()
+    );
+    assert!(
+        calls().contains("isolate=false\nno_timeouts=true\n"),
         "{}",
         calls()
     );

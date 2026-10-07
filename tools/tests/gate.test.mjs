@@ -67,3 +67,40 @@ test("the check recipe runs every gate target, the shell and workflow lint inclu
   expect(body).toContain(`bash scripts/nx run-many --all ${targets};`);
   expect(body).toContain(`bash scripts/nx affected --base="$tier" ${targets};`);
 });
+
+// scripts/nx is the one place the Nx environment is set, plugin loading without
+// the 10-second worker window among it; a graph computed from inside another Nx
+// task that bypassed it would start plugin workers that a cold Windows runner
+// lets time out. So every Nx this repo starts from a task's code or command
+// line goes through scripts/nx — and the known nested callers do.
+test("every Nx started from inside a task goes through scripts/nx", () => {
+  const spawn = /\b(?:spawnSync|spawn|execFileSync|execFile|execSync|exec|run)\(/;
+  const direct = /["'`](?:[^"'`\s]*\/)?(?:nx|bunx|npx)["'`]|\b(?:bunx|npx|bun x)\s+nx\b/;
+  const viaWrapper = /["'`]scripts\/nx["'`]/;
+  const files = run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "--", "tools/*.mjs", "tools/**/*.mjs"])
+    .stdout.split("\n")
+    .filter(Boolean);
+  const bypass = [];
+  const wrapped = new Set();
+  for (const f of files) {
+    readFileSync(join(REPO, f), "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (!spawn.test(line)) return;
+        if (direct.test(line.replace(viaWrapper, '""'))) bypass.push(`${f}:${i + 1}: ${line.trim()}`);
+        if (viaWrapper.test(line)) wrapped.add(f);
+      });
+  }
+  for (const [name, node] of Object.entries(nodes)) {
+    for (const [target, def] of Object.entries(node.data.targets ?? {})) {
+      const commands = [def.options?.command, ...(def.options?.commands ?? [])].filter((c) => typeof c === "string");
+      for (const c of commands) {
+        if (/(?:^|[;&|(]\s*)(?:\S*\/)?(?:nx|bunx nx|npx nx)\s/.test(c)) bypass.push(`${name}:${target}: ${c}`);
+      }
+    }
+  }
+  expect(bypass, "Nx started without scripts/nx").toEqual([]);
+  for (const f of ["tools/check-project-boundaries.mjs", "tools/tests/affected.test.mjs", "tools/tests/gate.test.mjs"]) {
+    expect([...wrapped], "the known nested Nx callers").toContain(f);
+  }
+});

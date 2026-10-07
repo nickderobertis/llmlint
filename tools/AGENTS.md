@@ -20,6 +20,12 @@ cached pass could replay over a newly forbidden edge.
   `lint-workflows`, that `just check` runs every gate target, and that an edit
   selects exactly its owning project and that project's dependents
   (`affected.test.mjs`, asking `nx show projects --affected --files=`).
+- **Nested Nx goes through `scripts/nx`.** The checker and these tests compute
+  the graph from inside an Nx task; `scripts/nx` is the one place that runs Nx
+  with its plugins loaded in-process and no 10-second worker load window (a cold
+  Windows runner missed it, and `nx graph` exited with empty stderr). A
+  `gate.test.mjs` test fails on any task code or target command that starts Nx
+  another way.
 - **Supply chain.** `supply-chain` (`cargo deny` + `cargo machete`) is
   workspace-wide and needs a network advisory DB, so it is outside the gate tiers:
   `just deps-check` and CI's `deny` job run it.

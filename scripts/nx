@@ -8,7 +8,15 @@
 #     instead of "nx: command not found";
 #   * Nx runs without its background daemon, cloud, or interactive TUI — every
 #     invocation is one foreground process that finishes, the same locally and
-#     in CI — and with its cache in this checkout's .nx/cache.
+#     in CI — and with its cache in this checkout's .nx/cache;
+#   * Nx loads its project-graph plugins in-process with no load timeout. Nx 23
+#     otherwise starts each plugin in a worker that exits unless it is loaded
+#     within 10 seconds, and a graph computed from inside another Nx task (the
+#     workspace project's boundary check and its tests under tools/tests/) starts
+#     a second set of workers beside the outer run's: on a cold Windows runner
+#     those missed the window and `nx graph` exited non-zero with nothing on
+#     stderr. Nx already turns isolation off when it detects an agent sandbox,
+#     so this also keeps a local run and CI on the same plugin path.
 #
 # Usage: scripts/nx <nx arguments...>
 set -euo pipefail
@@ -22,6 +30,7 @@ bun_path="$(bash scripts/bun.sh path)"
 PATH="$(dirname "$bun_path"):$PATH"
 export PATH
 export NX_DAEMON=false NX_NO_CLOUD=true NX_TUI=false NX_SKIP_NX_CACHE_WARNING=true
+export NX_ISOLATE_PLUGINS=false NX_PLUGIN_NO_TIMEOUTS=true
 # The cache and its task database stay in this checkout (.nx/, gitignored). Nx
 # otherwise shares the main git worktree's across every worktree, writing
 # outside the checkout it runs in.
