@@ -5,6 +5,8 @@
 //! only the host's OS/CPU, the release server, and third-party binaries stood in.
 //! This is the `repo-tooling` project's `test` target.
 
+// llmlint: ignore-file[shell_test_tiers_stay_split] every journey here is offline and hermetic: installers fetch stand-in releases over file:// into scratch directories, and the only host tools used (just, curl, tar, unzip, install, sha256sum) are the gate's own required tools or the base system's, so no journey reaches a network or installs a real version; they exercise only the scripts this project owns, so a separate project would be selected by exactly the same edits
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
