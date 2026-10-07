@@ -96,8 +96,9 @@ trap _ll_cleanup EXIT
 # A bad value fails before any paid call, naming the variable.
 validate_settings() {
     local timeout="${LL_TIMEOUT:-120}" model="${LL_MODEL:-}"
-    [[ "$timeout" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$timeout" -le 86400 ] \
-        || fail "LL_TIMEOUT must be a whole number of seconds from 1 to 86400, got '$timeout'; fix it or unset it to use 120"
+    if ! [[ "$timeout" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$timeout" -gt 86400 ]; then
+        fail "LL_TIMEOUT must be a whole number of seconds from 1 to 86400, got '$timeout'; fix it or unset it to use 120"
+    fi
     [ -z "$model" ] || [[ "$model" =~ ^[A-Za-z0-9._:/@-]+$ ]] \
         || fail "LL_MODEL must be a plain model id (letters, digits and . _ - : / @), got '$model'; fix it (CLAUDE_E2E_MODEL for live-claude.sh) or unset it to use the harness default"
 }
