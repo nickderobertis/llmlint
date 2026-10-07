@@ -382,7 +382,6 @@ fn a_green_release_pr_sweep_of_the_released_tree_lets_the_release_ship() {
     assert!(out.status.success(), "{out:?}");
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(said.contains("CI run 7") && said.contains(TREE), "{said}");
-    // It read the released commit's tree and the deciding run's jobs.
     let calls = gh.calls();
     assert!(
         calls.contains(&format!("repos/{REPO}/commits/{SHA}")),
@@ -552,6 +551,84 @@ fn the_newest_sweep_of_the_tree_decides_and_a_running_one_is_waited_for() {
         stderr(&out)
     );
     assert!(!gh.calls().contains("runs/5/jobs"), "{}", gh.calls());
+}
+
+/// A sweep run created at `created_at` (an ISO-8601 UTC time), on the tree.
+fn run_at(id: u64, created_at: &str) -> String {
+    run(
+        id,
+        "pull_request",
+        "release-plz-2026",
+        REPO,
+        TREE,
+        "completed",
+    )
+    .replace(
+        &format!("\"created_at\":\"2026-10-07T12:00:{id:02}Z\""),
+        &format!("\"created_at\":\"{created_at}\""),
+    )
+}
+
+#[test]
+fn the_newest_sweep_is_chosen_by_creation_time_then_id_whatever_order_github_lists() {
+    // GitHub's listing order is not trusted, and ids need not follow creation
+    // time: the latest created_at decides, and id breaks an exact tie.
+    let red = jobs(&[
+        ("gate", "completed", "failure"),
+        ("cross (macos-latest)", "completed", "success"),
+        ("cross (windows-latest)", "completed", "success"),
+    ]);
+
+    // The newest run by time (id 10) has the lower id and is listed first.
+    let gh = Github::new(
+        &[
+            run_at(10, "2026-10-07T13:00:00Z"),
+            run_at(30, "2026-10-07T12:00:00Z"),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-10.json", &jobs(GREEN))
+        .jobs("jobs-30.json", &red);
+    let out = gh.verdict(&[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("CI run 10"));
+    assert!(!gh.calls().contains("runs/30/jobs"), "{}", gh.calls());
+
+    // Reversed: the newest by time is red, so the older green one never ships it.
+    let gh = Github::new(
+        &[
+            run_at(10, "2026-10-07T12:00:00Z"),
+            run_at(30, "2026-10-07T13:00:00Z"),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-10.json", &jobs(GREEN))
+        .jobs("jobs-30.json", &red);
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("CI run 30 job gate"),
+        "{}",
+        stderr(&out)
+    );
+
+    // Created in the same second: the higher id is the newer run.
+    let gh = Github::new(
+        &[
+            run_at(41, "2026-10-07T13:00:00Z"),
+            run_at(40, "2026-10-07T13:00:00Z"),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-41.json", &red)
+        .jobs("jobs-40.json", &jobs(GREEN));
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("CI run 41 job gate"),
+        "{}",
+        stderr(&out)
+    );
 }
 
 #[test]
