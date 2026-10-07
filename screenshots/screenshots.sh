@@ -67,7 +67,7 @@ cd "$repo_root" || { echo "screenshots: cannot enter $repo_root; make it readabl
 # This host's capture lane (shots/current/<arch>), named the same way the pre-push
 # guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT per lane.
 arch="$(bash "$repo_root/screenshots/host-arch.sh")" \
-  || { echo "screenshots: could not name this host's lane (host-arch.sh's error above)." >&2; exit 1; }
+  || { echo "screenshots: could not name this host's lane (host-arch.sh's error above); fix what it names, then re-run just screenshots." >&2; exit 1; }
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
 # The capture starts by deleting $SHOTS_OUT, so it must lie inside this
 # repository's shots/ tree, where every capture lane lives (shots/current/<arch>

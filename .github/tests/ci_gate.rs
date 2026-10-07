@@ -382,7 +382,7 @@ fn a_green_release_pr_sweep_of_the_released_tree_lets_the_release_ship() {
     assert!(out.status.success(), "{out:?}");
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(said.contains("CI run 7") && said.contains(TREE), "{said}");
-    // It asked about the released commit and that run's jobs, nothing else.
+    // It read the released commit's tree and the deciding run's jobs.
     let calls = gh.calls();
     assert!(
         calls.contains(&format!("repos/{REPO}/commits/{SHA}")),
