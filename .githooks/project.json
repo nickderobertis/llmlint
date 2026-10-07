@@ -1,0 +1,17 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "git-hooks",
+  "//": "The repository's git hooks (core.hooksPath .githooks): pre-push runs `just lint-llm-validate`, then the screencomp visual guard over the screenshots project's capture scripts. Its own project so a hook edit selects only what reads the hook: its shellcheck here, and the screenshots project, whose journeys drive it.",
+  "projectType": "library",
+  "tags": [
+    "type:tooling"
+  ],
+  "targets": {
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck .githooks/pre-push"
+      }
+    }
+  }
+}

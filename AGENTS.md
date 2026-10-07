@@ -84,6 +84,8 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   the actionlint installer and workflow lint, with their journeys.
 - `ci-workflows` (`type:tooling`, `.github/`) — the workflows, the CI routing and
   release-verdict script, and their drift gates; actionlint is its `lint-workflows`.
+- `git-hooks` (`type:tooling`, `.githooks/`) — the pre-push hook (its journeys are
+  the screenshots project's).
 - `workspace` (`type:workspace`, `tools/`) — the boundary check and the
   supply-chain check; `coverage` (`type:workspace`, `tools/coverage/`) — the
   aggregate coverage gate.
@@ -110,15 +112,16 @@ Deliberately excluded or deviating (so it isn't re-litigated):
   root `Cargo.toml` is both the `llmlint` package and the `[workspace]`, and the
   `llmlint` Nx project is rooted at `.` — Nx gives a file to the deepest project
   root containing it, so every unclaimed repo-root file (the justfile, README,
-  `AGENTS.md`, `.githooks/`, `.claude/`, `docs/`, `shots/`, the root configs)
+  `AGENTS.md`, `.claude/`, `docs/`, `shots/`, the root configs)
   belongs to `llmlint` and an edit there selects every project downstream of it.
-  That is why the workflows (`.github/`), the scripts (`scripts/`) and each
-  suite's own scripts live in project directories of their own.
+  That is why the workflows (`.github/`), the git hooks (`.githooks/`), the
+  scripts (`scripts/`) and each suite's own scripts live in project directories
+  of their own.
 - **Moved from the requested split, with reasons**: actionlint is
   `ci-workflows`' `lint-workflows`, not `repo-tooling`'s, because the workflow
   files are that project's (`repo-tooling` keeps the script it runs);
-  `ci-workflows` and `workspace`/`coverage` are projects the split did not name,
-  for the ownership reason above and the aggregate gates; the pre-push guard's
+  `ci-workflows`, `git-hooks` and `workspace`/`coverage` are projects the split
+  did not name, for the ownership reason above and the aggregate gates; the pre-push guard's
   journeys sit in `screenshots`, whose capture scripts the hook drives.
 - **No remote Nx cache** — the repo runs on the Nx local cache only
   (`.nx/cache`, gitignored). CI starts every run from a cold cache and persists
@@ -188,8 +191,8 @@ Use the `just` recipes; do not hand-roll equivalents.
   `just lint`, `just lint-sh`, `just lint-workflows`, `just fmt-check`,
   `just format` (writes) and `just doc` take the same flag and run that one
   target; `just test-e2e` and `just coverage` run one project's.
-- `just lint-sh` — shellcheck over every project's scripts and
-  `.githooks/pre-push` (each project's `lint-sh` target). Fix a finding at its
+- `just lint-sh` — shellcheck over every project's scripts and the git hooks
+  (each project's `lint-sh` target). Fix a finding at its
   site; a `# shellcheck disable=` is site-scoped and carries its reason. `just
   setup` does not install shellcheck yet (CI's ubuntu runner ships it).
 - `just lint-workflows` — the pinned actionlint (`actionlint-version` in the
@@ -219,8 +222,8 @@ Use the `just` recipes; do not hand-roll equivalents.
   against `llmlint.yml` + `oneharness.toml`. CI's `llmlint` job runs validate, then
   the judge, and must provision and authenticate the harness `oneharness.toml`
   selects first (codex, keyed by `OPENAI_API_KEY`); a missing key fails the job,
-  never a green no-op. `.githooks/pre-push` runs `just lint-llm-validate` on every push
-  before the visual guard: a failure blocks, a missing llmlint warns and skips.
+  never a green no-op. The pre-push hook runs `just lint-llm-validate` too (see
+  `.githooks/AGENTS.md`).
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the paid **live e2e tier** (the live project): runs on PRs

@@ -8,7 +8,7 @@
     { "sourceTag": "type:e2e", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture"] },
     { "sourceTag": "type:external", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture", "type:tooling"] },
     { "sourceTag": "type:live", "onlyDependOnTags": ["type:app", "type:contract"] },
-    { "sourceTag": "type:capture", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture"] },
+    { "sourceTag": "type:capture", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture", "type:tooling"] },
     { "sourceTag": "type:bench", "onlyDependOnTags": ["type:app", "type:contract", "type:fixture"] },
     { "sourceTag": "type:workspace", "onlyDependOnTags": ["*"] }
   ]

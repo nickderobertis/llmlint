@@ -46,7 +46,9 @@ test("every shell script is shellchecked by some project's lint-sh", () => {
   }
   const scripts = run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.sh", ".githooks/*", "scripts/nx"])
     .stdout.split("\n")
-    .filter(Boolean);
+    // A hook is any file in .githooks/ but the project's own definition and docs.
+    .filter((f) => f && !(f.startsWith(".githooks/") && /\.(md|json)$/.test(f)));
+  expect(scripts).toContain(".githooks/pre-push");
   expect(scripts.length).toBeGreaterThan(10);
   const missed = scripts.filter((f) => !covered.has(f));
   expect(missed, "shell scripts no project's lint-sh checks").toEqual([]);

@@ -10,10 +10,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-# shellcheck source=scripts/setup-lib.sh
-. scripts/setup-lib.sh
-# `|| true`: under pipefail a missing pin would otherwise exit here silently.
-version="$(_justfile_pin oneharness-cli || true)"
+# The pin, read the way scripts/setup-lib.sh's `_justfile_pin` reads every
+# `<name>-version := "x.y.z"` pin (inlined so this project needs nothing from
+# scripts/). `|| true`: under pipefail a missing pin would otherwise exit here
+# silently.
+version="$(grep -E '^oneharness-cli-version :=' justfile 2>/dev/null | head -n1 | cut -d'"' -f2 || true)"
 if [ -z "$version" ]; then
   echo "install-oneharness: no oneharness-cli-version pin in $ROOT/justfile" >&2
   echo "                    Restore the line: oneharness-cli-version := \"<version>\"" >&2
