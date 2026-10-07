@@ -189,6 +189,9 @@ impl Model {
 
     /// The recursive placement. Returns `None` if the node budget was blown (so the
     /// whole exact attempt aborts to the heuristic).
+    // The arguments are the recursion's fixed inputs plus its mutable search
+    // state, threaded by reference through every level; bundling them into a
+    // struct would only trade parameters for field borrows on this hot path.
     #[allow(clippy::too_many_arguments)]
     fn search(
         &self,

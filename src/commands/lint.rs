@@ -823,6 +823,10 @@ fn print_traces(traces: &[(String, oneharness::RunTrace)]) {
     }
 }
 
+// Each argument is a distinct piece of one judge call's context (the client, the
+// planned run, where/how long to run it, the oneharness config layers, the model,
+// tracing, and the diffs + suppressions trimming its prompt); a struct used only
+// for this one call would add a type, not clarity.
 #[allow(clippy::too_many_arguments)]
 fn execute(
     client: &oneharness::Client,

@@ -179,6 +179,9 @@ fn civil(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
 /// caller-supplied run labels: written as a top-level `labels` object (keys
 /// sorted) only when there is at least one, so an unlabelled record keeps its
 /// previous shape and a reader treats absence as `{}`.
+// Each argument is one field of the persisted record (or the report it embeds),
+// so the signature mirrors the record's shape; a struct used only to call this
+// would restate those fields, not clarify them.
 #[allow(clippy::too_many_arguments)]
 pub fn build_record(
     id: &str,
