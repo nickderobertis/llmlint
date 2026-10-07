@@ -269,19 +269,36 @@ impl DiffProvider for GitDiff {
         // subdirectory; target paths and the eligibility boundary are cwd-relative.
         let prefix = self.git(root, &["rev-parse", "--show-prefix"])?;
         let prefix = Path::new(prefix.trim_end());
-        let repo = self.git(root, &["rev-parse", "--show-toplevel"])?;
-        let repo = Path::new(repo.trim_end());
+        // Preserve the caller's Windows drive/verbatim-prefix spelling rather
+        // than mixing it with git's absolute-path spelling at the scope boundary.
+        let absolute_root = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|e| Error::Io(e.to_string()))?
+                .join(root)
+        };
+        let mut repo = crate::io::configfs::normalize(&absolute_root);
+        for _ in prefix.components() {
+            repo.pop();
+        }
         let mut entries = changed.split('\0').filter(|entry| !entry.is_empty());
         let mut renames = BTreeMap::new();
         while let Some(status) = entries.next() {
             let Some(old) = entries.next() else { break };
             if status.starts_with('R') {
                 let Some(new) = entries.next() else { break };
-                let old = Path::new(old)
-                    .strip_prefix(prefix)
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|_| repo.join(old));
-                renames.insert(PathBuf::from(new), old);
+                let old = Path::new(old);
+                let common = prefix
+                    .ancestors()
+                    .find(|ancestor| old.starts_with(ancestor))
+                    .expect("repository-relative paths share the empty prefix");
+                let mut relative = PathBuf::new();
+                for _ in prefix.strip_prefix(common).unwrap().components() {
+                    relative.push("..");
+                }
+                relative.push(old.strip_prefix(common).unwrap());
+                renames.insert(PathBuf::from(new), relative);
             }
         }
         let mut out = BTreeMap::new();
@@ -291,7 +308,7 @@ impl DiffProvider for GitDiff {
             let rel = files::to_slash(file);
             let absolute = crate::io::configfs::normalize(&repo.join(prefix).join(file));
             let old = absolute
-                .strip_prefix(repo)
+                .strip_prefix(&repo)
                 .ok()
                 .and_then(|p| renames.get(p));
             let retain = match old {
@@ -342,6 +359,33 @@ mod tests {
         git(dir, &["config", "user.name", "t"]);
         // Keep commits from depending on the host's default branch name.
         git(dir, &["checkout", "-q", "-b", "main"]);
+    }
+
+    #[test]
+    fn rename_source_outside_cwd_is_cwd_relative() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        init_repo(root);
+        fs::create_dir_all(root.join("src/sub")).unwrap();
+        fs::write(root.join("src/old.rs"), "fn unchanged() {}\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-qm", "initial"]);
+        git(root, &["mv", "src/old.rs", "src/sub/new.rs"]);
+
+        let diffs = GitDiff::new()
+            .diffs_with_renames(
+                &root.join("src/sub"),
+                &[PathBuf::from("new.rs")],
+                &|old, new| {
+                    assert_eq!(old, Path::new("../old.rs"));
+                    assert_eq!(new, Path::new("new.rs"));
+                    Ok(true)
+                },
+            )
+            .unwrap();
+        assert!(diffs[Path::new("new.rs")].contains("similarity index 100%"));
+        assert!(diffs[Path::new("new.rs")].contains("rename from src/old.rs"));
+        assert!(!diffs[Path::new("new.rs")].contains("new file mode"));
     }
 
     #[test]
