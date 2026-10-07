@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "bench",
-  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format and lint (which compiles the benches and shellchecks the harness scripts). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
+  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format, lint (which compiles the benches) and lint-sh (which shellchecks the harness scripts). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
   "projectType": "application",
   "tags": [
     "type:bench"

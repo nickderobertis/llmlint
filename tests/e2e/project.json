@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "llmlint-e2e",
-  "//": "The binary journeys: the real freshly built llmlint against the mock fixture. Depends on exactly what it drives (the crate, which owns the repo-root files the journeys read, such as README.md, and the fixture), and no project depends on it but the coverage aggregate.",
+  "//": "The binary journeys: the real freshly built llmlint against the mock fixture. Depends on exactly what it drives (the crate, which owns the repo-root files the journeys read, such as README.md, and the fixture), and no project depends on it but the coverage aggregate and the workspace checks, which depend on every project.",
   "projectType": "application",
   "tags": [
     "type:e2e",

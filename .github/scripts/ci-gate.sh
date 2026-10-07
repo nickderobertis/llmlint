@@ -34,7 +34,6 @@ set -euo pipefail
 # (release-plz.yml's auto-merge step selects them by the same prefix; the
 # ci-workflows tests hold the two equal).
 readonly RELEASE_PR_PREFIX="release-plz-"
-# The CI workflow and the jobs a sweep verdict is read from.
 readonly CI_WORKFLOW="ci.yml"
 readonly SWEEP_JOBS='["gate", "cross (macos-latest)", "cross (windows-latest)"]'
 
