@@ -27,13 +27,11 @@ jobs:
           fetch-depth: 0
       # Installs the pinned channel + components from rust-toolchain.toml, so CI
       # gates on the toolchain contributors build with. `cache: false` keeps the
-      # one rust-cache step below; `rustflags: ""` drops the action's default
-      # `-D warnings` RUSTFLAGS — the gate denies warnings where it means to
-      # (clippy, rustdoc), and a global RUSTFLAGS would change what it builds.
+      # one rust-cache step below; the action's default `RUSTFLAGS=-D warnings`
+      # stays, so a compiler warning in the test/coverage build fails too.
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: false
-          rustflags: ""
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
@@ -71,7 +69,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: false
-          rustflags: ""
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:

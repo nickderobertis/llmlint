@@ -769,15 +769,11 @@ arch, so the suite is not x86_64-only. A companion check holds every declared
 lane's baseline present and byte-equal — the identical-bytes contract that lets
 one host bless its own lane and CI's job for the other check it.
 
-The hook's first step runs `just lint-llm-validate` (the real recipe from the
-real justfile, copied in) on every push, ahead of each of the guard's early
-exits; only the `llmlint` it calls is stubbed. The hook runs with a PATH of the
-stubs, a lone `just` link, and the system dirs, and a scratch HOME, so a real
-llmlint on the host can neither stand in for the stub nor for its absence.
-Journeys cover validate running before every guard exit (CI, no screencomp, an
-undeclared lane) with the `origin/main` diff base when it resolves, a failing
-validate blocking before any capture, and a missing llmlint warning and skipping
-without blocking.
+The hook's `just lint-llm-validate` step runs the real recipe from a copied-in
+justfile with only `llmlint` stubbed. Keep the hook's PATH to the stubs, a lone
+`just` link, and the system dirs, and HOME scratch: the recipe also looks in
+`~/.local/bin`, so a host llmlint would otherwise stand in for the stub or for
+its absence.
 
 ## CI's `freeze` installer (`scripts/ci-install-freeze.sh`)
 
@@ -803,14 +799,11 @@ file and the journeys cannot drift from what it can choose.
 
 ## Required status-check contexts (`.github/workflows/`)
 
-`every_required_context_is_reported_on_every_pull_request` parses the committed
-workflows and holds them to the fixed context contract (`PR_CONTEXTS`): each name
-is reported by exactly one job of a `pull_request`-triggered workflow, under
-exactly that name (matrix values and screencomp's `visual-docs / report (<arch>)`
-lanes, read from `screencomp.toml`, included), and no trigger filter, `if:` or
-`needs` edge can leave it unreported on a PR to `main`. Only conditions true on
-every PR (`PR_TRUE_CONDITIONS`) are allowed. A companion journey holds the
-notignored review workflow to its shape and outside the contract.
+`PR_CONTEXTS` in `tests/e2e/main.rs` is the fixed context contract, and it moves
+only with AGENTS.md's required-checks list and the branch protection that
+governance applies. A job condition is allowed on a contract job only when it is
+true on every PR (`PR_TRUE_CONDITIONS`); a reusable workflow's inner job name is
+modelled by hand (screencomp's `report`), so update `job_contexts` if one changes.
 
 ## Release declaration + probe (`tests/release_targets.rs`)
 

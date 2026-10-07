@@ -101,11 +101,7 @@ main() {
   ok "setup complete — stamp written to ${STAMP}"
   if [ -n "$(_missing_bins "$OPTIONAL_BINS")" ]; then
     # shellcheck disable=SC2016  # the backticks are literal command names in the message.
-    {
-      printf '\nnote: oneharness is not on PATH. It is a runtime prerequisite for\n'
-      printf 'live runs (`just lint-live`); the gate (`just check`) drives a mock and\n'
-      printf 'does not need it. See `just doctor`.\n'
-    }
+    printf 'note: oneharness is not on PATH; only live runs (`just lint-live`) need it — see `just doctor`.\n'
   fi
 }
 

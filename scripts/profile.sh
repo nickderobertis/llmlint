@@ -131,7 +131,7 @@ if [[ "$mode" == "engine" ]]; then
     artifact="$(cargo build --profile profiling --bench engine --locked --message-format=json -q |
         grep -F '"name":"engine"' | grep -F '"executable":' | tail -1)"
     bench_exe="$(printf '%s' "$artifact" | grep -o '"executable":"[^"]*"' | cut -d'"' -f4)"
-    { [ -n "$bench_exe" ] && [ -x "$bench_exe" ]; } || fail "could not locate the profiling bench executable"
+    { [ -n "$bench_exe" ] && [ -x "$bench_exe" ]; } || fail "could not locate the profiling bench executable; check that 'cargo bench --profile profiling --bench engine --no-run' builds"
     echo "» profiling engine for ${seconds}s (${filter:-all benchmarks})"
     # `--profile-time` makes Criterion run the bench in a plain loop with no
     # statistical analysis — exactly what an external sampler wants.

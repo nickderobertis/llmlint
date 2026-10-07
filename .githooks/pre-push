@@ -2,8 +2,7 @@
 # Local pre-push gate: llmlint's deterministic `validate` step, then the
 # screencomp visual guard (adapted from `screencomp init`).
 #
-# --- llmlint validate (every push) -------------------------------------------
-# `just lint-llm-validate` — config structure, every `llmlint: ignore` directive
+# First, `just lint-llm-validate` — config structure, every `llmlint: ignore` directive
 # naming a real rule, and versioned-plugin bumps — is fast and model-free, so it
 # runs on every push this hook evaluates, ahead of (and independent of) the
 # visual guard's own early exits below. A failure blocks the push; with no
@@ -11,11 +10,11 @@
 # enforces it regardless). The version-bump check diffs against `origin/main`
 # when that ref resolves, as CI does.
 #
-# --- screencomp visual guard -------------------------------------------------
-# Local half of the STRICT gate: CI fails on unexpected screenshot drift, and
-# this hook lets you regenerate and commit the baseline BEFORE pushing so CI
-# stays green. It re-captures only when screenshot-relevant files change
-# ([guard].paths in screencomp.toml) and blocks the push on drift.
+# Then the screencomp visual guard, the local half of the STRICT gate: CI fails
+# on unexpected screenshot drift, and this hook lets you regenerate and commit the
+# baseline BEFORE pushing so CI stays green. It re-captures only when
+# screenshot-relevant files change ([guard].paths in screencomp.toml) and blocks
+# the push on drift.
 #
 # Unlike the scaffold's web-app capture, llmlint's shots are deterministic SVGs
 # (a vendored, pinned font), so the capture runs NATIVELY here — no Docker, no

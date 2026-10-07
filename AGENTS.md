@@ -41,17 +41,11 @@ follow-ups (see "After the main task").
 
 ## Stack and composition
 
-Built with the `create-repo` skill from one **product shape** (CLI), two
-**languages** (Rust, Bash), and the **CI**, **releasing** and **llmlint**
-cross-cutting references — composing `base.md` + `shapes/cli.md` +
+Composes the `create-repo` skill's `base.md` + `shapes/cli.md` +
 `languages/rust.md` + `languages/bash.md` + `intersections/rust-cli.md` + `ci.md`
-+ `releasing.md` + `llmlint.md`. The judged tier's `llmlint.yml` composes the
-matching rule fragments (`base`, `shapes/cli`, `languages/rust`,
-`languages/bash`, `ci`, `releasing`, plus llmlint's own `config_lint`), each
-pinned at `@1`. Bash is composed because `scripts/*.sh` and the
-`.githooks/pre-push` hook carry real logic (setup, install, capture, the hook);
-two other languages appear only as **supporting tooling**, not composed
-languages:
++ `releasing.md` + `llmlint.md` (`llmlint.yml` pins each one's rule fragment).
+Bash is a composed language because `scripts/*.sh` and `.githooks/pre-push`
+carry real logic; two other languages are **supporting tooling** only:
 
 - **PowerShell** — `scripts/win-console-color.ps1`, one script: it must drive a
   real Windows console buffer, which only PowerShell can read back.
@@ -612,9 +606,9 @@ harness reads target files on-demand with its own tools.
   capture lane); plus linear history, conversation resolution, no
   force-push/deletion. `llmlint` (the judged tier, `ci.yml`) is the blocking PR
   check the create-repo skill requires to be required too — else auto-merge lands
-  a PR past a red judge run; requiring it is applied in a separate governance step
-  (`gov-llmlint`), whose `setup_github_governance.py --verify` comparison is what
-  reconciles this list with the live branch protection. An e2e journey
+  a PR past a red judge run. Branch protection is applied outside this repo (the
+  `gov-llmlint` governance step requires `llmlint`); `setup_github_governance.py
+  --verify` reconciles this list with the live settings. An e2e journey
   (`every_required_context_is_reported_on_every_pull_request`) holds the
   workflows to these names: renaming a job or adding a filter, `if:` or `needs`
   that could leave one unreported on a PR fails the gate. `notignored`
