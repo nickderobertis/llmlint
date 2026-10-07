@@ -1202,6 +1202,11 @@ mod probe {
             "http://user:secret@127.0.0.1:9",
             "http://127.0.0.1:9/elsewhere?x=1",
             "crates.io",
+            // A scheme with no host, or a value carrying whitespace.
+            "https://",
+            "http://",
+            "https://crates.io /",
+            "https://crates .io",
         ] {
             let (output, elapsed, _home) = run(&["crate:llmlint"], &[(CRATES_URL, base)]);
             assert_not_answered(
