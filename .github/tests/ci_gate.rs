@@ -534,7 +534,7 @@ fn the_newest_sweep_of_the_tree_decides_and_a_running_one_is_waited_for() {
     assert!(out.status.success(), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("CI run 6"));
     assert!(
-        stderr(&out).contains("gate (in_progress); waiting (1/3)"),
+        stderr(&out).contains("gate (in_progress); waiting (up to 3 polls"),
         "{}",
         stderr(&out)
     );

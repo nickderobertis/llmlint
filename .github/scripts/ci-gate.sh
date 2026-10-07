@@ -188,7 +188,10 @@ verdict() {
     if [ "$run_status" = completed ]; then
       refuse "CI run $run_id finished without a verdict from job ${state#pending } ($run_url)" "re-run that job (or the CI workflow on $sha by hand), then re-run this release"
     fi
-    printf 'ci-gate: CI run %s: %s; waiting (%s/%s)\n' "$run_id" "${state#pending }" "$poll" "$attempts" >&2
+    # Narrated once, on the first wait: the later polls add nothing a reader needs.
+    if [ "$poll" -eq 1 ]; then
+      printf 'ci-gate: CI run %s: %s; waiting (up to %s polls, %ss apart)\n' "$run_id" "${state#pending }" "$attempts" "$delay" >&2
+    fi
     [ "$poll" -lt "$attempts" ] && sleep "$delay"
   done
   # llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
