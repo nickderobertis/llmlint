@@ -12666,6 +12666,12 @@ fn pr_trigger_gap(doc: &serde_yaml_ng::Value) -> Option<String> {
     None
 }
 
+/// The screencomp reusable workflow `visual-docs.yml` calls, at the pin whose
+/// inner job is named `report` (so its contexts are `<caller> / report (<arch>)`).
+/// A pin bump fails here until that name is confirmed for the new version.
+const VISUAL_DOCS_REUSABLE: &str =
+    "nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2";
+
 /// The contexts a job reports, as GitHub names them: its `name:` (else its id),
 /// suffixed with the matrix value for a one-axis matrix. A reusable-workflow call
 /// (`uses:`) to screencomp's visual-docs reports `<caller> / report (<arch>)`
@@ -12674,6 +12680,12 @@ fn job_contexts(id: &str, job: &serde_yaml_ng::Value) -> Vec<String> {
     let base = job["name"].as_str().unwrap_or(id).to_string();
     if let Some(uses) = job["uses"].as_str() {
         if uses.contains("/visual-docs-reusable.yml@") {
+            assert_eq!(
+                uses, VISUAL_DOCS_REUSABLE,
+                "job {id} moved screencomp's reusable workflow off the pin whose inner \
+                 job is `report`: confirm the new version's job name, then update \
+                 VISUAL_DOCS_REUSABLE"
+            );
             let toml_text =
                 fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("screencomp.toml"))
                     .unwrap();
@@ -12750,6 +12762,37 @@ fn every_required_context_is_reported_on_every_pull_request() {
             Some((_, None)) => {}
         }
     }
+}
+
+/// AGENTS.md's required-checks bullet is the human-facing copy of the contract:
+/// it names every `PR_CONTEXTS` entry (and no stale `check` context), so the list a
+/// maintainer reads cannot drift from the one the workflows are held to. The
+/// live branch protection is reconciled by governance's `--verify`, off-repo.
+#[test]
+fn agents_md_lists_the_required_context_contract() {
+    let text = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("AGENTS.md")).unwrap();
+    let start = text
+        .find("- **Required status checks**")
+        .expect("AGENTS.md has a Required status checks bullet");
+    let bullet = &text[start..];
+    let bullet = &bullet[..bullet[2..].find("\n- ").map_or(bullet.len(), |i| i + 2)];
+    // Backticked names, with line-wrapping inside a name collapsed.
+    let named: std::collections::BTreeSet<String> = bullet
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(|n| n.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    for ctx in PR_CONTEXTS {
+        assert!(
+            named.contains(*ctx),
+            "AGENTS.md's list omits {ctx}: {named:?}"
+        );
+    }
+    assert!(
+        !named.contains("check"),
+        "AGENTS.md names a `check` context; the gate's context is `gate`"
+    );
 }
 
 /// notignored is a review artifact, not a gate: its own workflow (a `needs` edge

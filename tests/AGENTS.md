@@ -800,10 +800,11 @@ file and the journeys cannot drift from what it can choose.
 ## Required status-check contexts (`.github/workflows/`)
 
 `PR_CONTEXTS` in `tests/e2e/main.rs` is the fixed context contract, and it moves
-only with AGENTS.md's required-checks list and the branch protection that
-governance applies. A job condition is allowed on a contract job only when it is
-true on every PR (`PR_TRUE_CONDITIONS`); a reusable workflow's inner job name is
-modelled by hand (screencomp's `report`), so update `job_contexts` if one changes.
+only with AGENTS.md's required-checks list (a journey holds that list to it) and
+the branch protection that governance applies. A job condition is allowed on a
+contract job only when it is true on every PR (`PR_TRUE_CONDITIONS`). screencomp's
+inner `report` job name is known only for the pinned `VISUAL_DOCS_REUSABLE`, so a
+pin bump fails until that name is re-confirmed.
 
 ## Release declaration + probe (`tests/release_targets.rs`)
 

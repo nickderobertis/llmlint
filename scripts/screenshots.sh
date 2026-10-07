@@ -254,12 +254,15 @@ cp "$mock_bin" "$doctor_bin/oneharness"
 out="$tmp_state/doctor.txt"
 # The scene is a passing doctor (rendered with exit 0), so a failing one is a
 # broken capture, not a scene: stop with doctor's own stderr rather than render it.
+# llmlint: ignore-block[changed_behavior_has_e2e] this capture needs the pinned freeze, which neither `just setup` nor the gate installs, so no hermetic journey can run it; its real run is the Visual docs workflow on every PR, whose fail-on-drift classify holds the output to the committed shots byte for byte, and this change only turns a broken capture into a failed job instead of a rendered one
 if ! ( cd "$tmp_state" && PATH="$doctor_bin:$PATH" \
     LLMLINT_ONEHARNESS_BIN='' "$llmlint_bin" doctor ) >"$out" 2>"$out.err"; then
   echo "screenshots: 'llmlint doctor' failed against the mock fixture:" >&2
   cat "$out.err" >&2
+  echo "screenshots: fix that doctor failure (it ran against the mock oneharness), then re-run: just screenshots" >&2
   exit 1
 fi
+# llmlint: ignore-end[changed_behavior_has_e2e]
 render_scene "doctor" "{}" "doctor.svg" "$out" 0
 
 # Write captures.json, shots sorted by identity, schema 1, trailing newline — the
@@ -267,9 +270,11 @@ render_scene "doctor" "{}" "doctor.svg" "$out" 0
 # ASCII (names, toggle values, hex digests, file names), so plain printf is sound.
 {
   printf '{\n  "schema": 1,\n  "shots": [\n'
+  # llmlint: ignore-block[changed_behavior_has_e2e] this capture needs the pinned freeze, which neither `just setup` nor the gate installs, so no hermetic journey can run it; its real run is the Visual docs workflow on every PR, whose fail-on-drift classify holds the output to the committed shots byte for byte, and this change only turns a broken capture into a failed job instead of a rendered one
   sorted_text="$(printf '%s\n' "${entries[@]}" | sort)"   # a failing sort stops here
   sorted=()
   while IFS= read -r entry; do sorted+=("$entry"); done <<<"$sorted_text"
+  # llmlint: ignore-end[changed_behavior_has_e2e]
   last=$((${#sorted[@]} - 1))
   for i in "${!sorted[@]}"; do
     IFS='|' read -r name toggles hash image <<<"${sorted[$i]}"

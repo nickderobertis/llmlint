@@ -65,8 +65,7 @@ bootstrap:
 check: lint-sh fmt-check lint-workflows lint test doc
     @echo "check: ok"
 
-# Part of `check` (first: it is the cheapest step): fix a finding at its site.
-# Shellcheck every Bash script under scripts/ and the pre-push hook.
+# Part of `check`, first as its cheapest step: fix a finding, or disable it at its site with a reason.
 lint-sh:
     @command -v shellcheck >/dev/null || { echo "shellcheck not installed: 'apt-get install shellcheck' / 'brew install shellcheck' / https://github.com/koalaman/shellcheck#installing" >&2; exit 1; }
     shellcheck scripts/*.sh .githooks/pre-push
