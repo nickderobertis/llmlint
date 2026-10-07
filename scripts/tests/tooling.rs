@@ -822,8 +822,6 @@ fn setup_check_reports_a_missing_actionlint_as_not_ready() {
 }
 // llmlint: ignore-end[e2e_not_mocked]
 
-// ---- gate recipes: the tier and its explicit base ---------------------------
-
 /// A scratch repository carrying the real justfile and the real
 /// `scripts/nx-tier.sh` + `scripts/nx-base.sh`, with only `scripts/nx` (Nx
 /// itself, the orchestrator the recipes hand off to) stood in by a stub that
@@ -980,6 +978,7 @@ fn every_gate_recipe_takes_the_same_tier() {
         ("fmt-check", "-t format"),
         ("format", "-t format --configuration=write"),
         ("doc", "-t doc"),
+        ("check-portable", "-t format lint test"),
     ] {
         let (out, calls) = repo.just(&[recipe], None);
         assert!(out.status.success(), "{recipe}: {out:?}");
@@ -992,3 +991,342 @@ fn every_gate_recipe_takes_the_same_tier() {
         assert_eq!(calls, vec![format!("run-many --all {targets}")]);
     }
 }
+
+// llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/unzip/sha256sum/bash; a test cannot own the host's OS/CPU, bun's release server, or a second bun release, so only `uname`, the release tree, and `bun`/`node`/`nx` themselves are stood in
+/// The bun the repository pins, read from `.tool-versions` as `scripts/bun.sh`
+/// reads it.
+#[cfg(unix)]
+fn pinned_bun_version() -> String {
+    fs::read_to_string(repo_root().join(".tool-versions"))
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("bun "))
+        .expect(".tool-versions pins bun")
+        .trim()
+        .to_string()
+}
+
+/// A scratch checkout holding the real `scripts/bun.sh` and `scripts/nx` beside
+/// a `.tool-versions`, with `HOME`/`XDG_CACHE_HOME` scratch and a `uname` that
+/// says Linux/x86_64, so the asset bun.sh picks is the same on every host.
+#[cfg(unix)]
+struct BunRepo {
+    p: Project,
+}
+
+#[cfg(unix)]
+impl BunRepo {
+    fn new(tool_versions: &str) -> Self {
+        let p = Project::new();
+        for file in ["scripts/bun.sh", "scripts/nx"] {
+            p.write(file, &fs::read_to_string(repo_root().join(file)).unwrap());
+        }
+        p.write(".tool-versions", tool_versions);
+        write_exe(
+            &p.path().join("stubs/uname"),
+            "#!/bin/sh\ncase \"$1\" in -s) echo Linux ;; *) echo x86_64 ;; esac\n",
+        );
+        BunRepo { p }
+    }
+
+    /// A stand-in bun release for `version` served over `file://`: the
+    /// `bun-linux-x64.zip` asset (whose `bun` prints `prints`) and the release's
+    /// `SHASUMS256.txt`, naming the archive's real digest or, with
+    /// `tampered`, another one.
+    fn release(&self, version: &str, prints: &str, tampered: bool) -> String {
+        let dir = self.p.path().join(format!("releases/bun-v{version}"));
+        let stage = self.p.path().join("stage/bun-linux-x64");
+        write_exe(&stage.join("bun"), &format!("#!/bin/sh\necho {prints}\n"));
+        fs::create_dir_all(&dir).unwrap();
+        let zip = dir.join("bun-linux-x64.zip");
+        let made = std::process::Command::new("python3")
+            .args([
+                "-c",
+                "import sys, zipfile\n\
+                 with zipfile.ZipFile(sys.argv[1], 'w') as z:\n    \
+                 z.write(sys.argv[2], 'bun-linux-x64/bun')",
+            ])
+            .arg(&zip)
+            .arg(stage.join("bun"))
+            .status()
+            .expect("python3 builds the stand-in release archive");
+        assert!(made.success());
+        let digest = if tampered {
+            "0".repeat(64)
+        } else {
+            sha256_hex(&zip)
+        };
+        fs::write(
+            dir.join("SHASUMS256.txt"),
+            format!("{digest}  bun-linux-x64.zip\n"),
+        )
+        .unwrap();
+        format!("file://{}", self.p.path().join("releases").display())
+    }
+
+    /// Run `bash scripts/bun.sh <mode>` with only the stubs, `extra_path` and the
+    /// system dirs on PATH (never the host's own bun).
+    fn bun_sh(&self, mode: &str, extra_path: &Path, base: &str) -> std::process::Output {
+        std::process::Command::new("bash")
+            .arg(self.p.path().join("scripts/bun.sh"))
+            .arg(mode)
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}:/usr/bin:/bin",
+                    self.p.path().join("stubs").display(),
+                    extra_path.display()
+                ),
+            )
+            .env("HOME", self.p.path().join("home"))
+            .env("XDG_CACHE_HOME", self.p.path().join("cache"))
+            .env("BUN_SH_DOWNLOAD_BASE", base)
+            .output()
+            .unwrap()
+    }
+
+    fn cached_bun(&self, version: &str) -> PathBuf {
+        self.p
+            .path()
+            .join(format!("cache/llmlint-dev/bun-{version}/bin/bun"))
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn bun_sh_installs_the_pinned_release_verified_into_its_cache() {
+    let version = pinned_bun_version();
+    let repo = BunRepo::new(&format!("just 1.0.0\nbun {version}\n"));
+    let base = repo.release(&version, &version, false);
+    let none = repo.p.path().join("empty");
+    let out = repo.bun_sh("ensure", &none, &base);
+    assert!(out.status.success(), "{out:?}");
+    let installed = repo.cached_bun(&version);
+    let said = std::process::Command::new(&installed).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&said.stdout).trim(), version);
+    let out = repo.bun_sh("path", &none, &base);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        installed.display().to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bun_sh_uses_a_pinned_bun_on_path_and_never_an_off_pin_one() {
+    let version = pinned_bun_version();
+    let repo = BunRepo::new(&format!("bun {version}\n"));
+    let unreachable = format!("file://{}", repo.p.path().join("no-releases").display());
+    let on_path = repo.p.path().join("pinned");
+    write_exe(
+        &on_path.join("bun"),
+        &format!("#!/bin/sh\necho {version}\n"),
+    );
+    let out = repo.bun_sh("ensure", &on_path, &unreachable);
+    assert!(
+        out.status.success(),
+        "a pinned bun on PATH needs no download: {out:?}"
+    );
+    let out = repo.bun_sh("path", &on_path, &unreachable);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        on_path.join("bun").display().to_string()
+    );
+    assert!(!repo.cached_bun(&version).exists());
+
+    let off_pin = repo.p.path().join("off-pin");
+    write_exe(&off_pin.join("bun"), "#!/bin/sh\necho 0.0.1\n");
+    let out = repo.bun_sh("path", &off_pin, &unreachable);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(&format!(
+            "bun {version} (pinned in .tool-versions) is not installed"
+        )),
+        "{err}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bun_sh_refuses_a_release_that_fails_its_checksum() {
+    let version = pinned_bun_version();
+    let repo = BunRepo::new(&format!("bun {version}\n"));
+    let base = repo.release(&version, &version, true);
+    let out = repo.bun_sh("ensure", &repo.p.path().join("empty"), &base);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("checksum mismatch for bun-linux-x64.zip"),
+        "{err}"
+    );
+    assert!(
+        !repo.cached_bun(&version).exists(),
+        "a tampered bun was installed"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bun_sh_refuses_a_missing_repeated_or_malformed_pin_before_anything_runs() {
+    for (tool_versions, says) in [
+        ("just 1.0.0\n", "found 0 bun lines"),
+        ("bun 1.3.14\nbun 1.3.15\n", "found 2 bun lines"),
+        ("bun latest\n", "(got 'latest')"),
+        ("bun 1.3.14/../../x\n", "(got '1.3.14/../../x')"),
+    ] {
+        let repo = BunRepo::new(tool_versions);
+        let out = repo.bun_sh("path", &repo.p.path().join("empty"), "file:///nowhere");
+        assert_eq!(out.status.code(), Some(1), "{tool_versions:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(says), "{tool_versions:?}: {err}");
+    }
+}
+
+/// Run the real `scripts/nx` in `repo` with a pinned `bun` stub on PATH (it
+/// records `bun install` and lays down a `node_modules/.bin/nx` stub that
+/// records its argv and the Nx environment), plus a `node`. Returns the output.
+#[cfg(unix)]
+fn run_nx_wrapper(repo: &BunRepo, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let version = pinned_bun_version();
+    let tools = repo.p.path().join("tools");
+    write_exe(
+        &tools.join("nx-stub"),
+        "#!/usr/bin/env bash\n\
+         { printf 'args=%s\\n' \"$*\"\n\
+           printf 'daemon=%s\\ncache=%s\\ndata=%s\\n' \"$NX_DAEMON\" \"$NX_CACHE_DIRECTORY\" \"$NX_WORKSPACE_DATA_DIRECTORY\"\n\
+         } >> \"$NX_CALLS\"\n",
+    );
+    write_exe(
+        &tools.join("bun"),
+        &format!(
+            "#!/usr/bin/env bash\n\
+             case \"$1\" in\n\
+               --version) echo {version} ;;\n\
+               install) printf 'bun %s\\n' \"$*\" >> \"$NX_CALLS\"; mkdir -p node_modules/.bin; \
+             cp \"$(dirname \"$0\")/nx-stub\" node_modules/.bin/nx ;;\n\
+             esac\n"
+        ),
+    );
+    write_exe(&tools.join("node"), "#!/bin/sh\nexit 0\n");
+    std::process::Command::new("bash")
+        .arg(repo.p.path().join("scripts/nx"))
+        .args(args)
+        .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+        .env("HOME", repo.p.path().join("home"))
+        .env("XDG_CACHE_HOME", repo.p.path().join("cache"))
+        .env("NX_CALLS", repo.p.path().join("nx-calls"))
+        .env_remove("NX_CACHE_DIRECTORY")
+        .env_remove("NX_WORKSPACE_DATA_DIRECTORY")
+        .envs(env.iter().copied())
+        .output()
+        .unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkout() {
+    let repo = BunRepo::new(&format!("bun {}\n", pinned_bun_version()));
+    repo.p
+        .write("package.json", "{}\n")
+        .write("bun.lock", "{}\n");
+    let root = fs::canonicalize(repo.p.path()).unwrap();
+    let calls = || fs::read_to_string(repo.p.path().join("nx-calls")).unwrap_or_default();
+
+    let out = run_nx_wrapper(&repo, &["show", "projects"], &[]);
+    assert!(out.status.success(), "{out:?}");
+    let expected = format!(
+        "bun install --frozen-lockfile\nargs=show projects\ndaemon=false\ncache={0}/.nx/cache\ndata={0}/.nx/workspace-data\n",
+        root.display()
+    );
+    assert_eq!(
+        calls(),
+        expected,
+        "first run: install, then Nx in this checkout's .nx/"
+    );
+
+    // A fresh install stamp: no reinstall. An explicit cache dir is honoured.
+    let _ = fs::remove_file(repo.p.path().join("nx-calls"));
+    let out = run_nx_wrapper(&repo, &["graph"], &[("NX_CACHE_DIRECTORY", "/elsewhere")]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(!calls().contains("bun install"), "{}", calls());
+    assert!(
+        calls().contains("args=graph\n") && calls().contains("cache=/elsewhere\n"),
+        "{}",
+        calls()
+    );
+
+    // A lockfile newer than the install reinstalls before Nx runs.
+    let _ = fs::remove_file(repo.p.path().join("nx-calls"));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    repo.p.write("bun.lock", "{\"changed\":true}\n");
+    let out = run_nx_wrapper(&repo, &["graph"], &[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        calls().starts_with("bun install --frozen-lockfile\nargs=graph\n"),
+        "{}",
+        calls()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_check_reports_a_missing_pinned_bun_as_not_ready() {
+    // bun installs and runs Nx, so a machine without the pinned one is not
+    // ready, even with every other gate tool on PATH; with it, readiness moves
+    // on to the setup stamp.
+    let p = Project::new();
+    let root = repo_root();
+    for file in [
+        "scripts/setup-check.sh",
+        "scripts/setup-lib.sh",
+        "scripts/bun.sh",
+        ".tool-versions",
+        "justfile",
+        "rust-toolchain.toml",
+    ] {
+        p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+    }
+    let tools = p.path().join("tools");
+    for bin in [
+        "rustc",
+        "cargo",
+        "just",
+        "cargo-nextest",
+        "cargo-llvm-cov",
+        "actionlint",
+        "node",
+    ] {
+        write_exe(&tools.join(bin), "#!/bin/sh\nexit 0\n");
+    }
+    let check = |path: String| {
+        std::process::Command::new("bash")
+            .arg(p.path().join("scripts/setup-check.sh"))
+            .env("PATH", path)
+            .env("HOME", p.path().join("home"))
+            .env("XDG_CACHE_HOME", p.path().join("cache"))
+            .output()
+            .unwrap()
+    };
+    let out = check(format!("{}:/usr/bin:/bin", tools.display()));
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("missing tools: bun (the .tool-versions pin)"),
+        "{stdout}"
+    );
+
+    write_exe(
+        &p.path().join("pinned/bun"),
+        &format!("#!/bin/sh\necho {}\n", pinned_bun_version()),
+    );
+    let out = check(format!(
+        "{}:{}:/usr/bin:/bin",
+        tools.display(),
+        p.path().join("pinned").display()
+    ));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("no setup stamp"), "{stdout}");
+}
+// llmlint: ignore-end[e2e_not_mocked]

@@ -183,8 +183,7 @@ llmlint's layers map onto the existing tiers (`tests/e2e/AGENTS.md`):
    is *free* because `assert_cmd` already gives non-TTY pipes: a piped run must emit
    **zero cursor-control bytes** (`\x1b[`, bare `\r`) on stdout **and** stderr, and
    the stdout report must be byte-identical to today. A second journey sets an agent
-   env var (`CLAUDECODE=1`) and asserts the run stays plain. See the journeys added
-   to `tests/e2e/AGENTS.md`.
+   env var (`CLAUDECODE=1`) and asserts the run stays plain.
 
 4. **Real interactive path → PTY tier.** To exercise the `isTTY == true` branch end
    to end, spawn the real binary under a pseudo-terminal (`portable-pty` — WezTerm's

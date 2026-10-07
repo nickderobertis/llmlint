@@ -76,7 +76,11 @@ sha256() {
   fi
 }
 
-curl -fsSL -o "$tmp/freeze.tar.gz" "$base_url/v${freeze_version}/${stem}.tar.gz"
+if ! curl -fsSL -o "$tmp/freeze.tar.gz" "$base_url/v${freeze_version}/${stem}.tar.gz"; then
+  echo "ci-install-freeze: could not download $base_url/v${freeze_version}/${stem}.tar.gz" >&2
+  echo "                   Check the network and that freeze v${freeze_version} publishes it, then re-run." >&2
+  exit 1
+fi
 
 # Validate the archive before unpacking it: the expected digest is pinned in THIS
 # repository, not fetched beside the archive — a checksum served from the
@@ -101,7 +105,11 @@ if [ "$actual" != "$expected" ]; then
   exit 1
 fi
 
-tar -xzf "$tmp/freeze.tar.gz" -C "$tmp"
+if ! tar -xzf "$tmp/freeze.tar.gz" -C "$tmp"; then
+  echo "ci-install-freeze: ${stem}.tar.gz matched its pinned digest but would not unpack" >&2
+  echo "                   (tar's error above); check $tmp has space, then re-run." >&2
+  exit 1
+fi
 if [ ! -f "$tmp/$stem/freeze" ]; then
   echo "ci-install-freeze: ${stem}.tar.gz matched its pinned digest but holds no" >&2
   echo "                   $stem/freeze — upstream changed the archive layout." >&2
@@ -110,6 +118,9 @@ if [ ! -f "$tmp/$stem/freeze" ]; then
   exit 1
 fi
 
-install -d "$install_dir"
-install "$tmp/$stem/freeze" "$install_dir/freeze"
+if ! install -d "$install_dir" || ! install "$tmp/$stem/freeze" "$install_dir/freeze"; then
+  echo "ci-install-freeze: could not install freeze into $install_dir (error above)" >&2
+  echo "                   Make it writable, or point FREEZE_INSTALL_DIR elsewhere, then re-run." >&2
+  exit 1
+fi
 echo "ci-install-freeze: installed freeze v$freeze_version ($asset_arch) to $install_dir"

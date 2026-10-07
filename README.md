@@ -1120,8 +1120,7 @@ The live tier (`just live-claude`, and the ad-hoc `just lint-live`) drives the
 whole stack end to end against a real, authenticated harness — the only thing that
 makes real model calls, and out of the `check` gate. It runs on PRs in its own
 workflow across Linux/macOS/Windows, so a missing CLI, auth, or oneharness is a
-hard failure, not a skip. See `AGENTS.md`, `tests/e2e/AGENTS.md` and
-`tests/live/AGENTS.md`.
+hard failure, not a skip.
 
 ## License
 

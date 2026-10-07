@@ -42,27 +42,7 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
 
 ## Running
 
-- `just live-claude` — the **live e2e tier**: builds a release binary, then drives
-  the real `llmlint` → real `oneharness` → the real claude-code harness through
-  `tests/live/live-claude.sh`, asserting a clean file passes (exit 0), a planted
-  `TODO` is flagged (exit 1), and a **fallback** run (issue #146 — an absent
-  primary harness ahead of the canonical one via a `oneharness.toml`
-  `run_mode = "fallback"`) still passes, proving llmlint reads the real
-  `fallback.ran` winner and not the skipped `results[0]`. It runs on PRs in its own
-  workflow
-  (`.github/workflows/live.yml`) across **Linux, macOS, and Windows** — the point
-  is to prove the built binary + oneharness + a real harness work on each OS.
-  Harness *breadth* is oneharness's test surface (every harness is the same
-  `--harness <id>` to llmlint), so one canonical harness is enough. The harness
-  CLI + auth are configured in CI, so a missing CLI, auth, or oneharness — or any
-  failure to complete the run — is a **hard failure** (red build); the tier never
-  skips. Auth + the `CLAUDE_E2E_MODEL` override are documented above.
-  Makes real (paid) model calls — out of `check`.
-- A live tier (`just live-claude`, plus the ad-hoc `just lint-live`) hits real
-  oneharness + a real harness; it is opt-in and out of the `just check` gate. It
-  runs on PRs in its own workflow (`.github/workflows/live.yml`) across Linux,
-  macOS, and Windows to prove the built binary + oneharness + a real harness work
-  on each OS. It expects the harness CLI + auth configured, so a missing
-  CLI/auth/oneharness is a **hard failure**, not a skip. The scripted journeys
-  live in `tests/live/live-claude.sh` + `tests/live/live-lib.sh` and are described
-  above.
+`just live-claude` runs this project's `live` target: it builds the release
+binary, then runs `live-claude.sh` (the ad-hoc `just lint-live` drives the same
+stack by hand). Its own workflow (`.github/workflows/live.yml`) runs it on PRs;
+no gate tier does — the gate tiers reach only this project's `lint-sh`. It makes real (paid) model calls.

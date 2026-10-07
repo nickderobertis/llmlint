@@ -84,6 +84,21 @@ check *flags:
     fi
     @echo "check: ok"
 
+# The portable part of the gate, which CI's macOS/Windows `cross` jobs run:
+# format, clippy and the boundary check, and every test uninstrumented
+# (LLMLINT_COVERAGE=off). Coverage, shellcheck and actionlint are platform-
+# independent and run in `check` on Linux. Same tier flag as `check`.
+[positional-arguments]
+check-portable *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    export LLMLINT_COVERAGE=off; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format lint test; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format lint test; \
+    fi
+    @echo "check-portable: ok"
+
 # The test targets (each coverage-measured one writes its profiles; no floor).
 [positional-arguments]
 test *flags:
@@ -268,13 +283,16 @@ bench-tools:
     @command -v cargo-binstall >/dev/null || { echo "cargo-binstall not found: see https://github.com/cargo-bins/cargo-binstall, or 'cargo install' each tool" >&2; exit 1; }
     cargo binstall --no-confirm --disable-telemetry hyperfine@{{hyperfine-version}} critcmp@{{critcmp-version}} samply@{{samply-version}}
 
-# Engine micro-benchmarks (Criterion); saves the `current` baseline for bench-compare.
-bench:
-    @bash scripts/nx run bench:bench
+# Engine micro-benchmarks (Criterion), saved as BASELINE (default `current`, what
+# bench-compare reads); extra arguments go to Criterion (e.g. --measurement-time 3).
+[positional-arguments]
+bench baseline="current" *criterion_args:
+    @for a in "$@"; do printf '%s' "$a" | grep -Eq '^[A-Za-z0-9_./=:-]+$' || { printf "bench: argument '%s' is not a plain baseline name or Criterion option\n" "$a" >&2; exit 2; }; done
+    @bash scripts/nx run bench:bench -- --save-baseline "$@"
 
 # Save current engine benchmarks as the `base` baseline (run on the comparison point).
 bench-base:
-    @bash scripts/nx run bench:bench-base
+    @just bench base
 
 # Diff the latest `bench` run against `base` (run `bench-base` first; needs critcmp).
 bench-compare:

@@ -13,6 +13,10 @@
 # file is edited). CI provisions the pin itself (oven-sh/setup-bun reading
 # .tool-versions), so `ensure` finds it on PATH there and installs nothing.
 #
+# BUN_SH_DOWNLOAD_BASE replaces the release URL prefix (any curl URL, e.g.
+# file://) so the repo-tooling journeys can drive the download-and-verify path
+# offline; it exists for those tests only.
+#
 # Exit status: 0 the pinned bun is available (`path` prints it); 1 it is not and
 # could not be installed, or the invocation was wrong (the message says which).
 set -euo pipefail
@@ -28,9 +32,14 @@ fail() {
 
 [ $# -eq 1 ] || fail "expected exactly one mode; usage: scripts/bun.sh ensure | path"
 [ -r "$ROOT/.tool-versions" ] || fail "cannot read $ROOT/.tool-versions; restore it (it pins bun) from git."
-VERSION="$(awk '$1 == "bun" { print $2 }' "$ROOT/.tool-versions")"
+# Exactly one `bun X.Y.Z` line: the value lands in a cache path and a download
+# URL, so a second pin or anything but a plain version is refused, not guessed at.
+pins="$(awk '$1 == "bun" { print $2 }' "$ROOT/.tool-versions")"
+[ "$(printf '%s\n' "$pins" | grep -c .)" -eq 1 ] \
+  || fail ".tool-versions must pin bun exactly once, as 'bun X.Y.Z' (found $(printf '%s\n' "$pins" | grep -c .) bun lines)."
+VERSION="$pins"
 readonly VERSION
-printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || fail ".tool-versions must pin bun as 'bun X.Y.Z' (got '${VERSION}')."
 
 readonly CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/llmlint-dev/bun-$VERSION"
@@ -83,7 +92,7 @@ install_pinned() {
   # function's locals are gone.
   # shellcheck disable=SC2064
   trap "rm -rf $(printf '%q' "$tmp")" EXIT
-  base="https://github.com/oven-sh/bun/releases/download/bun-v$VERSION"
+  base="${BUN_SH_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}/bun-v$VERSION"
   echo "bun.sh: installing bun $VERSION into $CACHE_DIR" >&2
   curl -fsSL --retry 3 -o "$tmp/$asset.zip" "$base/$asset.zip" \
     || fail "downloading $base/$asset.zip failed; check your network and re-run 'just bootstrap'."

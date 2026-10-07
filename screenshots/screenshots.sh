@@ -46,11 +46,11 @@ set -euo pipefail
 # drifts against a baseline CI captured with a clean environment. Clear every
 # steering variable (and `ONEHARNESS_*`, which llmlint forwards to the harness)
 # before setting the ones this capture itself needs.
-for _var in $(compgen -e); do
+while IFS= read -r _var; do
   case "$_var" in
   LLMLINT_* | ONEHARNESS_*) unset "$_var" ;;
   esac
-done
+done < <(compgen -e)
 unset _var
 
 # Deterministic, side-effect-free capture: results logging is on by default and
@@ -204,12 +204,13 @@ out="$tmp_state/lint-debug.ansi"
     && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
        LLMLINT_MOCK_STATE="$tmp_state/state-debug" \
        "${mock_run[@]}" -v ) >/dev/null 2>"$out" || true
-sed -i \
+# A temp file, not `sed -i`: BSD/macOS sed takes `-i` with a required suffix.
+sed \
   -e "s|$mock_bin|oneharness|g" \
   -e "s|$fixture|.|g" \
   -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
   -e 's#/[^ ]*/llmlint-system-[A-Za-z0-9]*\.txt#/tmp/llmlint-system.txt#g' \
-  "$out"
+  "$out" >"$out.sed" && mv "$out.sed" "$out"
 render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
 
 # --- multi-judge: the per-judge breakdown, its own fixture + scene ------------
@@ -241,7 +242,7 @@ render_scene "init" "{}" "init.svg" "$out" 0
 out="$tmp_state/config.txt"
 ( cd "$fixture" && "$llmlint_bin" config -c "$fixture/llmlint.yml" --cwd "$fixture" ) \
   >"$out" 2>/dev/null || true
-sed -i "s|$fixture/||g" "$out"
+sed "s|$fixture/||g" "$out" >"$out.sed" && mv "$out.sed" "$out"
 render_scene "config" "{}" "config.svg" "$out" 0
 
 # --- doctor: the oneharness preflight check -----------------------------------

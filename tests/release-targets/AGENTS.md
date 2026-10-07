@@ -21,15 +21,11 @@ that `schema_version = 1` is still in the range it reads).
 
 ## Running
 
-- `just test-release-targets` — this project's `network` target: its two
-  `#[ignore]`-d network tests: the probe against the live crates.io/PyPI APIs,
-  and the restated schema reconciled against onevcs's canonical implementation
-  (its drift gate — the schema is onevcs's, not ours); the `Release targets`
-  workflow (`.github/workflows/release-targets.yml`) runs this recipe on a
-  change to what it reads and weekly. The offline tests
-  (the release declaration held to `release.yml`, and the probe against a local
-  stand-in registry) are this project's `test` target, in the gate tiers. `release-targets.toml` is the
-  canonical release-target declaration (schema defined in onevcs's
-  `docs/contract.md`) other repositories wait on; its target ids and short names
-  (`crate:llmlint`/`crate`, `pypi:llmlint-cli`/`cli`) are named by consumers'
-  plans, so never rename them unilaterally.
+The offline tests are this project's `test` target, in the gate tiers. `just
+test-release-targets` runs the two network tests (its `network` target); the
+`Release targets` workflow (`.github/workflows/release-targets.yml`) runs it on a
+change to what they read and weekly. `release-targets.toml` is the canonical
+release-target declaration (schema defined in onevcs's `docs/contract.md`) other
+repositories wait on; its target ids and short names (`crate:llmlint`/`crate`,
+`pypi:llmlint-cli`/`cli`) are named by consumers' plans, so never rename them
+unilaterally.

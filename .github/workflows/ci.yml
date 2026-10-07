@@ -118,20 +118,16 @@ jobs:
           bun-version-file: .tool-versions
       - name: Bootstrap
         run: just bootstrap
-      - name: Format + lint + tests (unit, integration, e2e)
+      - name: Portable gate (format, clippy + boundaries, tests uninstrumented)
         env:
           TIER: ${{ steps.tier.outputs.tier }}
           BASE: ${{ steps.tier.outputs.base }}
-          # Plain nextest, uninstrumented: the floor is the Linux gate's.
-          LLMLINT_COVERAGE: "off"
         run: |
-          flag=""
-          [ "$TIER" = all ] && flag="--all"
-          export NX_BASE="$BASE"
-          [ -n "$NX_BASE" ] || unset NX_BASE
-          just fmt-check $flag
-          just lint $flag
-          just test $flag
+          if [ "$TIER" = all ]; then
+            just check-portable --all
+          else
+            NX_BASE="$BASE" just check-portable
+          fi
 
   # Advisory + license audit and unused-dependency check (own job: needs a
   # network advisory DB).

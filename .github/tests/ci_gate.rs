@@ -217,8 +217,6 @@ fn the_release_pr_prefix_is_the_one_release_plz_auto_merges() {
     );
 }
 
-// ---- verdict ---------------------------------------------------------------
-
 const SHA: &str = "1111111111111111111111111111111111111111";
 const TREE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OTHER_TREE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -599,4 +597,95 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     assert!(stderr(&out).contains("not a full 40-character commit sha"));
     assert!(gh.calls().is_empty() || !gh.calls().contains("abc123"));
+}
+
+/// The jobs of ci.yml as status-check contexts (a matrix job reports one per
+/// `os`), read from the workflow itself.
+fn ci_contexts(job: &str) -> Vec<String> {
+    let ci: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).unwrap(),
+    )
+    .unwrap();
+    let body = &ci["jobs"][job];
+    assert!(!body.is_null(), "ci.yml has no `{job}` job");
+    match body["strategy"]["matrix"]["os"].as_sequence() {
+        Some(oses) => oses
+            .iter()
+            .map(|os| format!("{job} ({})", os.as_str().unwrap()))
+            .collect(),
+        None => vec![job.to_string()],
+    }
+}
+
+#[test]
+fn the_sweep_jobs_the_verdict_reads_are_ci_yml_s_gate_and_cross() {
+    // The verdict trusts exactly these jobs; renaming one in ci.yml (or adding
+    // a cross OS) without the script would read a verdict that never reports.
+    let gate = fs::read_to_string(script()).unwrap();
+    let line = gate
+        .lines()
+        .find_map(|l| l.strip_prefix("readonly SWEEP_JOBS='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("ci-gate.sh declares SWEEP_JOBS");
+    let declared: Vec<String> = serde_yaml_ng::from_str(line).unwrap();
+    let mut expected = ci_contexts("gate");
+    expected.extend(ci_contexts("cross"));
+    assert_eq!(declared, expected);
+}
+
+#[test]
+fn every_release_build_and_publish_waits_for_the_sweep_verdict_and_nothing_regates() {
+    let release: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap(),
+    )
+    .unwrap();
+    let jobs = release["jobs"].as_mapping().unwrap();
+    let needs = |job: &str| -> Vec<String> {
+        match &release["jobs"][job]["needs"] {
+            serde_yaml_ng::Value::String(n) => vec![n.clone()],
+            serde_yaml_ng::Value::Sequence(ns) => {
+                ns.iter().map(|n| n.as_str().unwrap().to_string()).collect()
+            }
+            _ => vec![],
+        }
+    };
+    let runs = |job: &str| -> String {
+        release["jobs"][job]["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["run"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        runs("verdict").contains("bash .github/scripts/ci-gate.sh verdict"),
+        "the verdict job must run the verdict script"
+    );
+    for job in ["upload", "publish-crate", "build-wheels"] {
+        assert!(
+            needs(job).iter().any(|n| n == "verdict"),
+            "release.yml `{job}` must need `verdict`"
+        );
+    }
+    assert!(needs("publish-pypi").iter().any(|n| n == "build-wheels"));
+    // A build is not a gate: no job re-runs a lint or test target over the
+    // tree the sweep already proved.
+    for (name, _) in jobs {
+        let name = name.as_str().unwrap();
+        let script = runs(name);
+        for regate in [
+            "just check",
+            "just lint",
+            "just test",
+            "nextest",
+            "cargo test",
+            "cargo clippy",
+        ] {
+            assert!(
+                !script.contains(regate),
+                "release.yml `{name}` re-gates with `{regate}`"
+            );
+        }
+    }
 }

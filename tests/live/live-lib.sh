@@ -94,14 +94,15 @@ _ll_cleanup() {
 trap _ll_cleanup EXIT
 
 # Write a minimal real config that pins `harness` (and an optional model/timeout)
-# and declares one crisp invariant. Echoes the project dir; the caller fills in
-# `src/lib.rs`.
+# and declares one crisp invariant. Echoes the project dir; the caller registers
+# it for cleanup (this runs in a command substitution, whose variable changes the
+# caller never sees) and fills in `src/lib.rs`. Every scaffolding step fails
+# loudly: errexit does not reach inside a command substitution's caller check.
 make_project() {
     local harness="$1"
     local proj
-    proj="$(mktemp -d)"
-    LL_PROJECTS+=("$proj")
-    mkdir -p "$proj/src"
+    proj="$(mktemp -d)" || fail "could not create a temporary project directory (check TMPDIR)"
+    mkdir -p "$proj/src" || fail "could not create $proj/src"
     {
         echo "version: 1"
         echo "files:"
@@ -119,7 +120,7 @@ make_project() {
         echo "      The property HOLDS when no source file contains a TODO or FIXME"
         echo "      marker, and is VIOLATED by any file that contains one."
         echo "    agent: judge"
-    } >"$proj/llmlint.yml"
+    } >"$proj/llmlint.yml" || fail "could not write $proj/llmlint.yml"
     printf '%s' "$proj"
 }
 
@@ -140,9 +141,8 @@ _fallback_primary() {
 make_fallback_project() {
     local harness="$1" primary proj
     primary="$(_fallback_primary "$harness")"
-    proj="$(mktemp -d)"
-    LL_PROJECTS+=("$proj")
-    mkdir -p "$proj/src"
+    proj="$(mktemp -d)" || fail "could not create a temporary project directory (check TMPDIR)"
+    mkdir -p "$proj/src" || fail "could not create $proj/src"
     {
         echo "version: 1"
         echo "files:"
@@ -156,11 +156,11 @@ make_fallback_project() {
         echo "      Every source file under src/ is free of TODO and FIXME comments."
         echo "      The property HOLDS when no source file contains a TODO or FIXME"
         echo "      marker, and is VIOLATED by any file that contains one."
-    } >"$proj/llmlint.yml"
+    } >"$proj/llmlint.yml" || fail "could not write $proj/llmlint.yml"
     {
         echo 'run_mode = "fallback"'
         echo "harnesses = [\"${primary}\", \"${harness}\"]"
-    } >"$proj/oneharness.toml"
+    } >"$proj/oneharness.toml" || fail "could not write $proj/oneharness.toml"
     printf '%s' "$proj"
 }
 
@@ -175,7 +175,7 @@ ll_run() {
     shift
     local bin
     bin="$(ll_bin)"
-    [ -n "$bin" ] || fail "llmlint binary not found (build it: \`just _live-build\`, or set LLMLINT_BIN)"
+    [ -n "$bin" ] || fail "llmlint binary not found (build it: \`cargo build --release --locked -p llmlint --bin llmlint\`, or set LLMLINT_BIN)"
     local errf
     errf="$(mktemp)"
     note "  driving: llmlint --cwd <proj> --format json $* (timeout ${LL_TIMEOUT:-120}s${LL_MODEL:+, model $LL_MODEL})"
@@ -240,6 +240,7 @@ assert_fail() {
 ll_live_pass() {
     local harness="$1" proj
     proj="$(make_project "$harness")"
+    LL_PROJECTS+=("$proj")
     printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs"
     note "  journey: a satisfied rule -> exit 0"
     ll_run "$proj"
@@ -251,6 +252,7 @@ ll_live_pass() {
 ll_live_fail() {
     local harness="$1" proj
     proj="$(make_project "$harness")"
+    LL_PROJECTS+=("$proj")
     printf '%s\n' \
         "// TODO: replace this placeholder with the real implementation" \
         "pub fn add(a: i32, b: i32) -> i32 {" \
@@ -271,6 +273,7 @@ ll_live_fail() {
 ll_live_fallback() {
     local harness="$1" proj
     proj="$(make_fallback_project "$harness")"
+    LL_PROJECTS+=("$proj")
     printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs"
     note "  journey: fallback chain skips an absent primary and runs $harness -> exit 0"
     ll_run "$proj"

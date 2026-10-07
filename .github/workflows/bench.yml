@@ -93,7 +93,7 @@ jobs:
         run: rm -rf target/criterion
 
       - name: Benchmark this revision (Criterion)
-        run: cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline pr
+        run: just bench pr --measurement-time 3
 
       - name: Benchmark this revision (hyperfine CLI)
         run: just bench-cli
@@ -123,9 +123,9 @@ jobs:
           # under the repo root so its own root resolution still finds this repo.
           cp benches/bench-instructions.sh target/bench-instructions-pr.sh
           git checkout -q "$base"
-          # `--workspace` finds the engine bench in either layout: the bench crate
-          # at the PR, the root package at a base that predates the workspace.
-          cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline base
+          # The base revision's own recipe (a base that predates `just bench
+          # <baseline>` fails here, and the report goes out without a delta).
+          just bench base --measurement-time 3
           BENCH_OUT="$PWD/target/bench-base" bash target/bench-instructions-pr.sh || true
           git checkout -q -
           critcmp base pr | tee target/bench/critcmp.txt

@@ -20,12 +20,9 @@ flag over both. The tests are `#[ignore]`-d; run without the recipe's
 
 ## Running
 
-- `just test-oneharness` — the **real-oneharness tier** (this project's
-  `network` target: `real_oneharness.rs`'s `#[ignore]`-d tests, via `network.sh`): installs the released `oneharness-cli` at the
-  justfile's `oneharness-cli-version` pin (`tests/real-oneharness/install-oneharness.sh`, a venv
-  under `.dev/`; needs PyPI), then feeds the `--config` layers llmlint forwards
-  (recorded by the mock) to the real `oneharness config --format json` and asserts
-  the highest layer's settings win. Free and model-free, but networked, so outside
-  the gate tiers. The pin is the multi-file floor
-  (`oneharness::LAYERED_CONFIG_MIN_VERSION`); an always-run test (this project's `test`
-  target, in the gate tiers) holds them equal.
+`just test-oneharness` runs this project's `network` target (`network.sh`:
+`install-oneharness.sh` puts `oneharness-cli` at the pin in a venv under `.dev/`
+and prints its path, then the `#[ignore]`-d tests run with it as
+`LLMLINT_REAL_ONEHARNESS`). Free and model-free but networked, so it is outside
+the gate tiers; `the_tier_pins_the_multi_file_floor` is this project's `test`
+target, in them.

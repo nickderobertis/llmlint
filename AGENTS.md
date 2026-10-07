@@ -117,12 +117,12 @@ Deliberately excluded or deviating (so it isn't re-litigated):
   That is why the workflows (`.github/`), the git hooks (`.githooks/`), the
   scripts (`scripts/`) and each suite's own scripts live in project directories
   of their own.
-- **Moved from the requested split, with reasons**: actionlint is
-  `ci-workflows`' `lint-workflows`, not `repo-tooling`'s, because the workflow
-  files are that project's (`repo-tooling` keeps the script it runs);
-  `ci-workflows`, `git-hooks` and `workspace`/`coverage` are projects the split
-  did not name, for the ownership reason above and the aggregate gates; the pre-push guard's
-  journeys sit in `screenshots`, whose capture scripts the hook drives.
+- **Where checks live**: actionlint is `ci-workflows`' `lint-workflows`, not
+  `repo-tooling`'s, because the workflow files are that project's (`repo-tooling`
+  keeps the script it runs); `ci-workflows` and `git-hooks` exist for the
+  ownership reason above, `workspace`/`coverage` for the repo-level gates; the
+  pre-push guard's journeys sit in `screenshots`, whose capture scripts the hook
+  drives.
 - **No remote Nx cache** — the repo runs on the Nx local cache only
   (`.nx/cache`, gitignored), kept per checkout: `scripts/nx` pins it there,
   since Nx 23 otherwise shares the main git worktree's cache across worktrees.
@@ -192,7 +192,9 @@ Use the `just` recipes; do not hand-roll equivalents.
   sweep** (`nx run-many --all`). Must pass before any commit or PR. `just test`,
   `just lint`, `just lint-sh`, `just lint-workflows`, `just fmt-check`,
   `just format` (writes) and `just doc` take the same flag and run that one
-  target; `just test-e2e` and `just coverage` run one project's.
+  target; `just check-portable` (same flag) is the macOS/Windows part of the
+  gate — `format`, `lint` and every test uninstrumented — which CI's `cross`
+  jobs run; `just test-e2e` and `just coverage` run one project's.
 - `just lint-sh` — shellcheck over every project's scripts and the git hooks
   (each project's `lint-sh` target). Fix a finding at its
   site; a `# shellcheck disable=` is site-scoped and carries its reason. `just
@@ -249,40 +251,12 @@ Use the `just` recipes; do not hand-roll equivalents.
   critcmp, samply) are *not* installed by `just setup` — `just bench-tools`
   installs them on demand; CI installs them via `taiki-e/install-action`.
 - **Terminal screenshots** (`just screenshots`, `screenshots-tools`,
-  `screenshots-bless`) — *informational, never a gate*. See `screenshots/AGENTS.md`.
-  `screenshots/screenshots.sh` drives the real binary against the **mock-oneharness
-  fixture** (`screenshots/fixture/`) — one scene per command (`lint`, with a
-  `view` toggle over `default`/`-v` `verbose`/`-v` `debug` (the stderr oneharness
-  debug view), plus `init`, `config`, `doctor`) — and renders the real output to
-  **deterministic SVGs** via `freeze` + a vendored, pinned font, all at one fixed
-  width (`--width`/`--wrap`) so on-page text size is uniform (the `default`/
-  `verbose` lint views are colorized via `--color always`; the rest are plain
-  text) — byte-identical on every machine (no container), so [screencomp](https://github.com/nickderobertis/screencomp)
-  can hash-gate them. The `Visual docs` workflow (`.github/workflows/visual-docs.yml`,
-  screencomp's reusable workflow) classifies against the committed baseline
-  (`shots/baseline/<arch>.json`), publishes a GitHub Pages gallery, and posts a
-  sticky before/after PR comment; `fail-on-drift` makes unexpected drift a red
-  build. **Two lanes** are declared in `[capture].arches` — `x86_64` and `arm64`
-  (CI runs the arm64 one on `ubuntu-24.04-arm`) — each with its own committed
-  baseline, because the local pre-push guard (`.githooks/pre-push`) classifies and
-  re-blesses the lane of the **host it runs on** and refuses a host arch no lane
-  declares; llmlint is developed on arm64 and released from CI's x86_64, so both
-  are real hosts. The SVGs are identical across arches, so the two baselines are
-  the same bytes (a screenshots journey holds them equal) and one host's
-  `just screenshots-bless` — which rewrites **its own** lane only, named by
-  `screenshots/host-arch.sh` — is checked by CI's job for the other lane. `freeze` is
-  *not* installed by `just setup` — `just screenshots-tools` installs the pinned
-  version; screencomp is installed separately (CI installs both, `freeze` via
-  `screenshots/ci-install-freeze.sh`, which picks the prebuilt release matching the
-  runner's arch). Keep the two `freeze` version pins in sync (`freeze-version` in
-  the justfile, `freeze_version` in `screenshots/ci-install-freeze.sh`; a screenshots
-  journey gates them against each other). The capture renders through `freeze`,
-  so the screenshots project's `capture` target is left to the Visual docs
-  workflow and the pre-push guard; its `lint-sh` and `test` are in the gate tiers. The README **hero** is a separate animated GIF of the
-  live-progress view (`docs/screenshots/demo.gif`, `just screenshots-gif`,
-  `screenshots/demo-gif.py`) — same real-binary-against-the-fixture approach, rendered
-  to frames with the vendored font (Pillow, no `ttyd`/`ffmpeg`); it is *not*
-  hash-gated (a GIF isn't byte-reproducible), so it is regenerated on demand.
+  `screenshots-bless`, `screenshots-gif`) — *informational, never a gate*:
+  deterministic SVGs of the real CLI output, hash-gated by the `Visual docs`
+  workflow (screencomp, `fail-on-drift`) per declared capture lane, which also
+  publishes a GitHub Pages gallery. The screenshots project's `lint-sh` and `test`
+  are in the gate tiers; its `capture` needs `freeze`, so it is left to that
+  workflow and the pre-push guard. See `screenshots/AGENTS.md`.
 
 ## How llmlint drives oneharness
 
@@ -673,9 +647,9 @@ harness reads target files on-demand with its own tools.
   `.github/scripts/ci-gate.sh tier` decides it for every run of `ci.yml`): a pull
   request and a push to `main` (merge-to-main) run the **affected tier** —
   `NX_BASE=<base> just check`, from the PR's merge base with its base branch, or
-  from the previous tip of `main` — in `gate`, and the affected tests (plus fmt
-  and clippy) in `cross`. The **full sweep** (`just check --all` in `gate`, every
-  test in `cross`) runs at **release-prep, on the release-plz release PR**, checked
+  from the previous tip of `main` — in `gate`, and `just check-portable` at the
+  same tier in `cross`. The **full sweep** (`just check --all` in `gate`, `just
+  check-portable --all` in `cross`) runs at **release-prep, on the release-plz release PR**, checked
   out at its head. Why there: release-plz batches merged changes behind one
   release PR that can accumulate several merges, so the commit that ships is not
   one any merge job swept; sweeping at merge-to-main would sweep trees that never
@@ -686,8 +660,7 @@ harness reads target files on-demand with its own tools.
   tested commit has the released commit's **tree** and needs its `gate` and both
   `cross` jobs green; a red, missing, or different-tree verdict stops the release,
   and `upload`, `publish-crate` and `build-wheels` (hence `publish-pypi`) all
-  `need` it. No gate-time threshold is recorded yet: measuring and deriving one
-  (`ci.md` "Measure, then derive") is deferred by the 2026-10-06 budgets ruling.
+  `need` it.
 - **Releases**: Conventional Commits drive release-plz (pre-1.0: `feat`→minor,
   `fix`/`perf`→patch, `!`/`BREAKING`→minor; `docs`/`test`/`chore`/`ci`→no release).
   release-plz opens a release PR, auto-merges it on green, tags `vX.Y.Z`, and cuts

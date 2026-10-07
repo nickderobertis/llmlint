@@ -37,15 +37,9 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "cargo bench --locked -p llmlint-bench --bench engine -- --save-baseline current"
-      }
-    },
-    "bench-base": {
-      "executor": "nx:run-commands",
-      "cache": false,
-      "options": {
-        "command": "cargo bench --locked -p llmlint-bench --bench engine -- --save-baseline base"
-      }
+        "command": "cargo bench --locked -p llmlint-bench --bench engine --"
+      },
+      "//": "The forwarded arguments are Criterion's: `just bench <baseline> [options]` passes `--save-baseline <baseline>` and the options."
     },
     "bench-allocs": {
       "executor": "nx:run-commands",

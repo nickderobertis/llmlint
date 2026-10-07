@@ -27,14 +27,7 @@ renders; this tier proves that end result.
 
 ## Running
 
-- `just win-color` — the **Windows color-rendering gate**: builds the release
-  binary + mock oneharness and runs `tests/win-color/win-console-color.ps1`, which drives
-  llmlint against the mock-oneharness fixture with `--color always` into a real
-  Windows console screen buffer, then reads the buffer back and asserts the
-  `FAIL`/`PASS` labels carry the red/green console attributes (and no raw ESC
-  survives). The hermetic e2e + screenshots only prove ANSI is *emitted*
-  (platform-independent); this proves a Windows console *renders* it — the thing
-  anstream's `AutoStream` exists to guarantee (enable VT, else translate to Win32
-  console calls). Windows-only, no model/cost; CI runs it on `windows-latest`
-  (`.github/workflows/win-color.yml`) as a real gate, separate from the paid live
-  tier.
+`just win-color` runs this project's `win-color` target: it builds the release
+binary and the mock, then runs `win-console-color.ps1`. It is Windows-only, so
+the Linux gate tiers never run it; `.github/workflows/win-color.yml` does, on
+`windows-latest`, on every PR.

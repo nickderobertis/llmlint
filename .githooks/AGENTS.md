@@ -4,6 +4,7 @@
 `git config core.hooksPath .githooks`). `.githooks/pre-push` runs `just
 lint-llm-validate` on every push before the visual guard: a failure blocks, a
 missing llmlint warns and skips. The visual guard then re-captures and classifies
-the screenshots when a guarded path changed; its journeys, and the rules for
-changing the hook, are in `screenshots/AGENTS.md` ("The pre-push visual guard").
-This project's `lint-sh` shellchecks the hook.
+the screenshots when a guarded path changed. The hook's journeys are the
+screenshots project's (`screenshots/tests/visual_guard.rs`), since the guard
+drives that project's capture scripts; a change to the hook's logic gets one
+there. This project's `lint-sh` shellchecks the hook.

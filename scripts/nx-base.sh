@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Print the base commit the AFFECTED gate tier keys off — always explicit, never
-# Nx's implicit default. The justfile's gate recipes call this and hand the
-# result to `nx affected --base=...`.
+# Nx's implicit default. The justfile's gate recipes reach this through
+# scripts/nx-tier.sh and hand the result to `nx affected --base=...`.
 #
-#   * NX_BASE when set (CI exports the base scripts/ci-gate-tier.mjs derived).
+#   * NX_BASE when set (CI exports the base .github/scripts/ci-gate.sh derived).
 #     Only a plain ref name or a commit SHA is accepted — letters, digits and
 #     `. _ / -`, not starting with `-` and without `..` — and it must resolve to
 #     a commit; any other value is refused here, before a single target runs.

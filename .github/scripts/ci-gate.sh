@@ -132,7 +132,7 @@ verdict() {
   is_sha "$tree" || refuse "GitHub returned no tree for $sha" "check that $sha is pushed to $repo, then re-run the release"
 
   local poll runs run run_id run_url run_status jobs state
-  for poll in $(seq 1 "$attempts"); do
+  for ((poll = 1; poll <= attempts; poll++)); do
     runs="$(
       {
         gh_api "repos/$repo/actions/workflows/$CI_WORKFLOW/runs?event=pull_request&per_page=100"

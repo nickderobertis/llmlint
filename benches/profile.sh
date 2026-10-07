@@ -47,8 +47,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 seconds="${PROFILE_SECONDS:-10}"
 repeat="${PROFILE_REPEAT:-3000}"
-# shellcheck disable=SC2206  # intentional word-splitting of optional flags.
-samply_args=(${SAMPLY_ARGS:-})
+# Optional flags, split on whitespace only (never glob-expanded).
+read -r -a samply_args <<<"${SAMPLY_ARGS:-}"
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2

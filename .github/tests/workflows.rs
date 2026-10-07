@@ -3,7 +3,7 @@
 //! comment kept outside it, and the Performance workflow's trigger lists. GitHub
 //! is the only thing that runs these files, which a test cannot reach, so the
 //! workflow files themselves are the interface under test. This is the
-//! `ci-workflows` project's `test` target (actionlint is its `lint`).
+//! `ci-workflows` project's `test` target (actionlint is its `lint-workflows`).
 
 use std::fs;
 use std::path::{Path, PathBuf};

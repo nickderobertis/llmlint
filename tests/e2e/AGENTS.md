@@ -197,7 +197,7 @@ resolves the oneharness the test put on PATH.
   exactly as before
   (`explicit_cli_files_that_resolve_are_unaffected_by_the_resolvability_check`).
   A **glob** that matches nothing is deliberately *not* an error and gets no
-  warning either (see AGENTS.md for the argument); the decision is pinned by
+  warning either; the decision is pinned by
   `a_config_glob_that_matches_nothing_is_reported_not_rejected`, which asserts
   exit 0 *and* that the narrowing is reported on all three surfaces — the default
   summary's skip count, `-v`'s `SKIP <rule> (no files matched)`, and
@@ -643,4 +643,4 @@ resolves the oneharness the test put on PATH.
 Pure domain logic (validation, planning, voting, schema, rendering, reporting)
 and the oneharness client's process handling are unit-tested in-module. The
 `#[cfg(unix)]` subprocess timeout/capture tests run on Linux/macOS; the coverage
-threshold is therefore enforced on Linux CI (see the root `AGENTS.md`).
+threshold is therefore enforced on Linux CI.

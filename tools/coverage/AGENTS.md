@@ -12,7 +12,10 @@ binary and the fixture they drive.
 - The test and coverage targets are uncached: cargo-llvm-cov names every profile
   after the workspace, not the crate, so no replay could restore one crate's
   profiles alone, and a report over a partial set would mean nothing.
-- `LLMLINT_COVERAGE=off` (the macOS/Windows `cross` jobs) runs the tests with
-  plain nextest and skips the report; the floor is the Linux gate's.
+- `LLMLINT_COVERAGE=off` (`just check-portable`, which the macOS/Windows `cross`
+  jobs run) runs the tests with plain nextest and skips the report; the floor is
+  the Linux gate's.
+- `tests/coverage.test.mjs` (this project's `test`) drives `coverage.sh` against
+  a scratch Cargo workspace under the real cargo-llvm-cov.
 - Never lower the floor, or drop a project from `coverage:profiles`, to make the
   number pass: cover the missed lines with a test that drives the real behaviour.
