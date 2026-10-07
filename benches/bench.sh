@@ -59,6 +59,23 @@ fail() {
     exit 1
 }
 
+# Validate the overrides before anything is built or run: the warmup count
+# reaches hyperfine's numeric flag, BENCH_KEEP decides whether the sandbox is
+# deleted, and BENCH_OUT is where the exports are written — so a bad value fails
+# here, naming its variable, rather than deep inside hyperfine or mkdir.
+[[ "$warmup" =~ ^(0|[1-9][0-9]{0,3})$ ]] ||
+    fail "BENCH_WARMUP must be a whole number of warmup runs from 0 to 9999 (got '$warmup'); unset it to use the default (10)."
+case "${BENCH_KEEP:-0}" in
+    0 | 1) ;;
+    *) fail "BENCH_KEEP must be 1 (keep the sandbox) or 0 (got '${BENCH_KEEP}'); unset it to delete the sandbox." ;;
+esac
+case "$out" in
+    -*) fail "BENCH_OUT must be a directory path, not an option (got '$out'); unset it to use $repo_root/target/bench." ;;
+esac
+if [ -e "$out" ] && [ ! -d "$out" ]; then
+    fail "BENCH_OUT must name a directory (got '$out', which exists and is not one); unset it to use $repo_root/target/bench."
+fi
+
 if ! command -v hyperfine >/dev/null 2>&1; then
     fail "hyperfine not found on PATH. Install it with 'just bench-tools' (or 'cargo binstall hyperfine')."
 fi

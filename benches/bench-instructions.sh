@@ -71,6 +71,15 @@ out="${BENCH_OUT:-$repo_root/target/bench}"
 
 note() { printf '%s\n' "$*"; }
 
+# BENCH_OUT is where the counts are written (the TSV is truncated first), so it is
+# checked before anything is built or measured, naming the variable.
+case "$out" in
+    -*) fail "BENCH_OUT must be a directory path, not an option (got '$out'); unset it to use $repo_root/target/bench." ;;
+esac
+if [ -e "$out" ] && [ ! -d "$out" ]; then
+    fail "BENCH_OUT must name a directory (got '$out', which exists and is not one); unset it to use $repo_root/target/bench."
+fi
+
 command -v valgrind >/dev/null 2>&1 ||
     fail "valgrind not found on PATH (Linux-only; install it with your package manager, e.g. 'apt-get install valgrind')."
 

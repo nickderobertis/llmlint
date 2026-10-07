@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "bench",
-  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format, lint (which compiles the benches) and lint-sh (which shellchecks the harness scripts). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
+  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format, lint (which compiles the benches), lint-sh (which shellchecks the harness scripts) and test (the harness scripts' offline input checks, which measure nothing). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
   "projectType": "application",
   "tags": [
     "type:bench"
@@ -32,6 +32,18 @@
       "options": {
         "command": "shellcheck benches/*.sh"
       }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo nextest run -p llmlint-bench --locked"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "//": "Offline: harness_inputs drives bench.sh and bench-instructions.sh up to their own hyperfine/valgrind check, so a bad BENCH_* override is shown refused by name; nothing is built or timed."
     },
     "bench": {
       "executor": "nx:run-commands",

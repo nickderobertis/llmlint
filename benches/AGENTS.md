@@ -3,6 +3,9 @@
 The informational performance suite. These targets **measure, they do not
 gate**: timings are noisy on shared CI runners, so the `Performance` workflow
 reports numbers on a PR rather than blocking it. The hard gate is `just check`.
+The one exception measures nothing: the `test` target (`tests/harness_inputs.rs`)
+drives the CLI harness scripts offline up to their own tool check, so every
+documented `BENCH_*` override is shown refused by name before anything is built.
 
 - Bench the **pure engine surface** (`configfs::parse`, `plan::build`,
   `template::render`, `schema::build`, `vote::tally`, `report::Report`) so the

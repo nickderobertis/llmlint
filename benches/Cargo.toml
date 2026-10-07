@@ -29,6 +29,13 @@ name = "engine_allocs"
 path = "engine_allocs.rs"
 harness = false
 
+# The CLI harness scripts' input checks (bench.sh, bench-instructions.sh), driven
+# offline up to their own tool check: this project's `test` target.
+[[test]]
+name = "harness_inputs"
+path = "tests/harness_inputs.rs"
+
 [dev-dependencies]
 criterion.workspace = true
 llmlint.workspace = true
+tempfile.workspace = true
