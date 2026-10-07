@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.6](https://github.com/nickderobertis/llmlint/compare/v0.4.5...v0.4.6) - 2026-10-07
+
+### Fixed
+
+- *(diff)* review a renamed file by its edits, and bump-check edited renames ([#226](https://github.com/nickderobertis/llmlint/pull/226))
+
 ## [0.4.4](https://github.com/nickderobertis/llmlint/compare/v0.4.3...v0.4.4) - 2026-09-29
 
 ### Added
