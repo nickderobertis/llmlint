@@ -87,15 +87,21 @@ pub fn is_bumped(diff: &str) -> bool {
 }
 
 /// The verdict for one versioned config: it fails only when it **changed** (has a
-/// non-empty diff) but was **not** bumped. An unchanged file (`diff` is `None`,
-/// or an empty/whitespace-only diff) passes trivially — there is nothing to bump.
+/// content hunk) but was **not** bumped. An unchanged file (`diff` is `None`,
+/// empty, or a hunkless rename) passes trivially — there is nothing to bump.
 pub fn changed_without_bump(diff: Option<&str>) -> bool {
-    matches!(diff, Some(d) if !d.trim().is_empty() && !is_bumped(d))
+    matches!(diff, Some(d) if d.lines().any(|line| line.starts_with("@@ ")) && !is_bumped(d))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hunkless_rename_has_no_content_to_bump() {
+        let diff = "diff --git a/old.yml b/new.yml\nsimilarity index 100%\nrename from old.yml\nrename to new.yml\n";
+        assert!(!changed_without_bump(Some(diff)));
+    }
 
     #[test]
     fn declares_version_only_for_a_top_level_key() {
