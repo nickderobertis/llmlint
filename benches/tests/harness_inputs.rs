@@ -1,4 +1,5 @@
-//! The CLI harness scripts' input checks (`bench.sh`, `bench-instructions.sh`):
+//! The CLI harness scripts' input checks (`bench.sh`, `bench-instructions.sh`,
+//! `profile.sh`, and the `just bench`/`just profile` recipes that forward to them):
 //! each environment override reaches a tool flag or a filesystem write, so a bad
 //! value must be refused by name before anything is built or measured. Each
 //! journey drives the real script the way `just bench-cli` does, with a PATH
@@ -205,4 +206,112 @@ fn the_bench_and_profile_recipes_refuse_shell_syntax_before_reaching_nx() {
         }
     }
     assert!(!Path::new(&marker).exists(), "an argument was executed");
+}
+
+#[cfg(unix)]
+/// Run `benches/profile.sh` with `args` and `env` from `cwd`, PATH holding only
+/// the base tools its engine mode runs plus stand-ins for its two third-party
+/// seams: a `cargo` that reports a built bench executable instead of building
+/// one, and a `samply` that records its argv to `calls` instead of profiling.
+fn profile(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> (Output, String) {
+    use std::os::unix::fs::PermissionsExt;
+    let tools = TempDir::new().unwrap();
+    for tool in ["dirname", "grep", "tail", "cut"] {
+        symlink(which(tool), tools.path().join(tool)).unwrap();
+    }
+    let calls = tools.path().join("calls");
+    let bench_exe = tools.path().join("engine-bench");
+    let stubs = [
+        (
+            "cargo",
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' '{{\"reason\":\"compiler-artifact\",\"target\":{{\"name\":\"engine\"}},\"executable\":\"{}\"}}'\n",
+                bench_exe.display()
+            ),
+        ),
+        (
+            "samply",
+            format!(
+                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}'\n",
+                calls.display()
+            ),
+        ),
+        ("engine-bench", "#!/bin/sh\nexit 0\n".to_owned()),
+    ];
+    for (name, body) in stubs {
+        let path = tools.path().join(name);
+        fs::write(&path, body).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut cmd = Command::new(which("bash"));
+    cmd.arg(repo_root().join("benches/profile.sh"))
+        .args(args)
+        .current_dir(cwd)
+        .env("PATH", tools.path());
+    for (name, _) in std::env::vars_os() {
+        let name_s = name.to_string_lossy();
+        if name_s.starts_with("PROFILE_") || name_s == "SAMPLY_ARGS" {
+            cmd.env_remove(&name);
+        }
+    }
+    for (name, value) in env {
+        cmd.env(name, value);
+    }
+    let out = cmd.output().unwrap();
+    let recorded = fs::read_to_string(&calls).unwrap_or_default();
+    (out, recorded)
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_refuses_a_count_that_is_not_a_small_positive_whole_number() {
+    let cwd = TempDir::new().unwrap();
+    for var in ["PROFILE_SECONDS", "PROFILE_REPEAT", "PROFILE_TOP"] {
+        for bad in ["0", "-3", "abc", "1+1", "1000000", "05"] {
+            let (out, recorded) = profile(cwd.path(), &[], &[(var, bad)]);
+            assert_refused(&out, var, &format!("{var}={bad}"));
+            assert!(recorded.is_empty(), "{var}={bad}: profiled anyway");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_forwards_its_settings_and_splits_samply_args_on_whitespace_only() {
+    // A file in the working directory a glob would match: `*` must reach samply
+    // as itself, never as the directory listing.
+    let cwd = TempDir::new().unwrap();
+    fs::write(cwd.path().join("would-glob"), "").unwrap();
+    let (out, recorded) = profile(
+        cwd.path(),
+        &["engine", "schema_build"],
+        &[
+            ("PROFILE_SECONDS", "7"),
+            ("SAMPLY_ARGS", "  --save-only   -r 1 * "),
+        ],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let argv: Vec<&str> = recorded.lines().collect();
+    let exe = argv
+        .iter()
+        .position(|a| a.ends_with("engine-bench"))
+        .expect("samply was handed the bench executable");
+    assert_eq!(
+        argv[..exe],
+        ["record", "--save-only", "-r", "1", "*", "--"],
+        "{recorded}"
+    );
+    assert_eq!(
+        argv[exe + 1..],
+        ["--bench", "--profile-time", "7", "schema_build"],
+        "{recorded}"
+    );
+
+    // Unset, each setting takes its documented default (10 seconds here) and
+    // SAMPLY_ARGS adds nothing.
+    let (out, recorded) = profile(cwd.path(), &[], &[]);
+    assert!(out.status.success(), "{out:?}");
+    let argv: Vec<&str> = recorded.lines().collect();
+    assert_eq!(argv[..2], ["record", "--"], "{recorded}");
+    assert_eq!(argv[3..], ["--bench", "--profile-time", "10"], "{recorded}");
 }

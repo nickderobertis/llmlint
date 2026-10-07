@@ -43,7 +43,7 @@
         "default",
         "^default"
       ],
-      "//": "Offline: harness_inputs drives bench.sh and bench-instructions.sh up to their own hyperfine/valgrind check, so a bad BENCH_* override is shown refused by name; nothing is built or timed."
+      "//": "Offline: harness_inputs drives bench.sh and bench-instructions.sh up to their own hyperfine/valgrind check and profile.sh against stand-in cargo/samply, so a bad BENCH_* or PROFILE_* override is shown refused by name; nothing is built, timed or profiled."
     },
     "bench": {
       "executor": "nx:run-commands",
