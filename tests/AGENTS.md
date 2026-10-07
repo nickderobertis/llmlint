@@ -791,6 +791,17 @@ how the lint script treats actionlint's answer, the `actionlint` binary itself.
 The installer's supported-platform matrix is read from the script, so the pin
 file and the journeys cannot drift from what it can choose.
 
+## Required status-check contexts (`.github/workflows/`)
+
+`every_required_context_is_reported_on_every_pull_request` parses the committed
+workflows and holds them to the fixed context contract (`PR_CONTEXTS`): each name
+is reported by exactly one job of a `pull_request`-triggered workflow, under
+exactly that name (matrix values and screencomp's `visual-docs / report (<arch>)`
+lanes, read from `screencomp.toml`, included), and no trigger filter, `if:` or
+`needs` edge can leave it unreported on a PR to `main`. Only conditions true on
+every PR (`PR_TRUE_CONDITIONS`) are allowed. A companion journey holds the
+notignored review workflow to its shape and outside the contract.
+
 ## Release declaration + probe (`tests/release_targets.rs`)
 
 `release-targets.toml` is parsed by a restatement of the canonical release-target
