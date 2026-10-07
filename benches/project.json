@@ -45,9 +45,9 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "mkdir -p target/bench && cargo bench --locked --quiet -p llmlint-bench --bench engine_allocs | tee target/bench/allocs.md"
+        "command": "mkdir -p target/bench && cargo bench --locked --quiet -p llmlint-bench --bench engine_allocs > target/bench/allocs.md && cat target/bench/allocs.md"
       },
-      "//": "Also written to target/bench/allocs.md, which the Performance workflow's report embeds (Nx's own run banners stay out of it)."
+      "//": "Also written to target/bench/allocs.md, which the Performance workflow's report embeds (Nx's own run banners stay out of it). Redirected, then printed, rather than piped through tee, so a failed bench fails the target."
     },
     "bench-cli": {
       "executor": "nx:run-commands",

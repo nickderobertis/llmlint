@@ -28,10 +28,6 @@ LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
 
 note() { printf '%s\n' "$*" >&2; }
 
-# A missing prerequisite is a HARD FAILURE, not a skip: the live tier is meant to
-# run in CI with the harness CLI + auth configured, so an absent prerequisite is a
-# broken setup that should turn the build red — same exit path as a regression.
-# Nothing in this tier ever skips: if the stack can't complete, that's a failure.
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 need() {
@@ -258,13 +254,8 @@ ll_live_fail() {
     assert_fail
 }
 
-# Fallback selection (issue #146). oneharness runs a fallback chain whose primary
-# (`codex`) is absent on the runner, so it falls through and runs `$harness`,
-# naming it in `fallback.ran` while the skipped primary is `results[0]`. A clean
-# file must still pass (exit 0) — the real-stack regression guard: the pre-fix
-# llmlint read the skipped `results[0]` and errored the run (exit 2), which
-# `assert_pass` (a hard fail on exit 2) catches. Proves llmlint consumes the
-# real oneharness fallback JSON shape, which the mock only approximates.
+# Fallback selection (issue #146; the chain is make_fallback_project's): a clean
+# file must still pass, which `assert_pass` (a hard fail on exit 2) checks.
 ll_live_fallback() {
     local harness="$1" proj
     proj="$(make_fallback_project "$harness")"

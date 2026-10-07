@@ -99,6 +99,7 @@ if [ -z "$expected" ]; then
 fi
 if ! actual="$(sha256 "$tmp/freeze.tar.gz")"; then
   echo "ci-install-freeze: could not hash the downloaded ${stem}.tar.gz (error above)" >&2
+  echo "                   Install sha256sum (coreutils) or shasum (perl), then re-run." >&2
   exit 1
 fi
 if [ "$actual" != "$expected" ]; then

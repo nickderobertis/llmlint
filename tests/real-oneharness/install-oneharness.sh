@@ -21,6 +21,13 @@ if [ -z "$version" ]; then
   echo "                    Restore the line: oneharness-cli-version := \"<version>\"" >&2
   exit 1
 fi
+# The pin names a directory this script deletes and rebuilds, so it must be a
+# plain release version: digits and dots, never a path.
+if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+  echo "install-oneharness: oneharness-cli-version in $ROOT/justfile is '$version', not a release version" >&2
+  echo "                    Set it to one like: oneharness-cli-version := \"0.14.0\"" >&2
+  exit 1
+fi
 
 venv="$ROOT/.dev/oneharness-cli-$version"
 # A venv lays its executables out in `bin/` on Unix and `Scripts/` on Windows.

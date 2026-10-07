@@ -135,8 +135,6 @@ verdict() {
     refuse "GitHub returned no tree for $sha (repos/$repo/commits/$sha answered: ${commit:0:200})" "check that $sha is pushed to $repo and the token can read it, then re-run the release"
   fi
 
-  # The run and job fields read below (event, head_branch, head_repository,
-  # head_commit.tree_id, status, conclusion, name) are GitHub's REST shapes.
   # llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] GitHub owns these response shapes and its API is the only authority, which no gate run can reach offline; every field read is one GitHub's REST docs define for workflow runs and jobs, and an answer missing any of them is refused as unreadable rather than trusted
   local poll runs run run_id run_url run_status jobs state
   for ((poll = 1; poll <= attempts; poll++)); do

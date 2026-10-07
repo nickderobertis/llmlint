@@ -862,3 +862,57 @@ fn the_capture_refuses_to_delete_a_shots_out_that_is_not_a_capture_directory() {
         assert!(err.contains("'freeze' not on PATH"), "{dir}: {err}");
     }
 }
+
+/// `demo-gif.py` draws each rule by its serialized report outcome from a table
+/// of its own (`OUTCOME_STYLE`); it is an ungated Pillow helper, so this is the
+/// gate that keeps that table equal to the report's `Outcome`. The match below
+/// has no wildcard, so a new variant fails to compile here until it is listed —
+/// and then fails this test until the helper draws it.
+#[test]
+fn the_demo_gif_draws_every_report_outcome() {
+    use llmlint::domain::verdict::Outcome;
+    let every = [
+        Outcome::Pass,
+        Outcome::Fail,
+        Outcome::Skipped,
+        Outcome::Ignored,
+        Outcome::NotRelevant,
+    ];
+    for o in every {
+        match o {
+            Outcome::Pass
+            | Outcome::Fail
+            | Outcome::Skipped
+            | Outcome::Ignored
+            | Outcome::NotRelevant => {}
+        }
+    }
+    let mut serialized: Vec<String> = every
+        .iter()
+        .map(|o| {
+            serde_json::to_value(o)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    serialized.sort();
+
+    let helper = fs::read_to_string(repo_root().join("screenshots/demo-gif.py")).unwrap();
+    let table = helper
+        .split_once("OUTCOME_STYLE = {")
+        .and_then(|(_, rest)| rest.split_once("\n}"))
+        .expect("demo-gif.py defines OUTCOME_STYLE as a dict literal")
+        .0;
+    let mut drawn: Vec<String> = table
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix('"')?.split_once("\":"))
+        .map(|(key, _)| key.to_owned())
+        .collect();
+    drawn.sort();
+    assert_eq!(
+        drawn, serialized,
+        "OUTCOME_STYLE in screenshots/demo-gif.py"
+    );
+}

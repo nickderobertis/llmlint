@@ -25,6 +25,8 @@ fi
 
 if ! lane="$(bash "$(dirname "$0")/host-arch.sh")"; then
   echo "bless-baseline: could not name this host's lane (host-arch.sh's error above)" >&2
+  echo "                It reads 'uname -m'; make that work on this host, then re-run" >&2
+  echo "                just screenshots-bless." >&2
   exit 1
 fi
 if ! screencomp manifest --input "$current" --arch "$lane" --output "shots/baseline/${lane}.json"; then

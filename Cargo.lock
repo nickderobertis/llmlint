@@ -652,6 +652,8 @@ dependencies = [
 name = "llmlint-screenshots"
 version = "0.0.0"
 dependencies = [
+ "llmlint",
+ "serde_json",
  "tempfile",
 ]
 

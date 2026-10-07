@@ -78,8 +78,8 @@ def run_report(binp: str, mock: str, fixture: str) -> list[str]:
 
 
 # A frame is a list of lines; a line is a list of (text, color) segments.
-# One entry per serialized `Outcome` (src/domain/verdict.rs). An outcome this
-# table lacks stops the render naming it, so a new one can never draw stale.
+# One entry per serialized `Outcome` (src/domain/verdict.rs); the screenshots
+# project's `the_demo_gif_draws_every_report_outcome` test holds the two equal.
 OUTCOME_STYLE = {
     "pass": ("✓", "passed", GREEN),
     "fail": ("✗", "failed", RED),
@@ -90,18 +90,19 @@ OUTCOME_STYLE = {
 
 
 def status_seg(name: str, outcome: str) -> tuple[str, tuple[int, int, int]]:
-    if outcome not in OUTCOME_STYLE:
-        sys.exit(
-            f"demo-gif: rule {name!r} has outcome {outcome!r}, which OUTCOME_STYLE "
-            "does not draw; add it there (see src/domain/verdict.rs's Outcome)."
-        )
     glyph, word, color = OUTCOME_STYLE[outcome]
     return (f"{glyph} {name}  {word}", color)
 
 
 def build_frames(rules: list[dict], report: list[str]) -> list[tuple[list, int]]:
+    unknown = sorted({r["outcome"] for r in rules} - OUTCOME_STYLE.keys())
+    if unknown:
+        sys.exit(
+            f"demo-gif: the report has outcome(s) {unknown} that OUTCOME_STYLE does "
+            "not draw; add them there (see src/domain/verdict.rs's Outcome)."
+        )
     judged = [r for r in rules if r["outcome"] in ("pass", "fail")]
-    resolved_upfront = [r for r in rules if r["outcome"] in ("skipped", "ignored", "not_relevant")]
+    resolved_upfront = [r for r in rules if r["outcome"] not in ("pass", "fail")]
     order = sorted(rules, key=lambda r: r["name"])
     total = sum(int(r.get("votes_total", 1)) for r in judged) or 1
 

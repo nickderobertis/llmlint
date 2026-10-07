@@ -289,3 +289,32 @@ fn the_flag_wins_over_env_and_config() {
         "c.toml",
     );
 }
+
+/// `install-oneharness.sh` turns the pin into a directory it deletes and
+/// rebuilds, so a pin that is not a plain release version — a path, a range, a
+/// word — is refused before anything is created or fetched. Offline: the script
+/// stops at the pin check, ahead of any PyPI call.
+#[cfg(unix)]
+#[test]
+fn the_installer_refuses_a_pin_that_is_not_a_release_version() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("install-oneharness.sh");
+    for pin in ["../../elsewhere", "0.14.0/x", ">=0.14", "latest", "0.14.0 "] {
+        let root = TempDir::new().unwrap();
+        let dir = root.path().join("tests/real-oneharness");
+        fs::create_dir_all(&dir).unwrap();
+        fs::copy(&script, dir.join("install-oneharness.sh")).unwrap();
+        fs::write(
+            root.path().join("justfile"),
+            format!("oneharness-cli-version := \"{pin}\"\n"),
+        )
+        .unwrap();
+        let out = std::process::Command::new("bash")
+            .arg(dir.join("install-oneharness.sh"))
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{pin}: {out:?}");
+        assert!(err.contains("not a release version"), "{pin}: {err}");
+        assert!(!root.path().join(".dev").exists(), "{pin}: nothing created");
+    }
+}
