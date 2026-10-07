@@ -1282,6 +1282,29 @@ fn bun_sh_picks_the_asset_for_each_supported_host_and_refuses_the_rest() {
 
 #[cfg(unix)]
 #[test]
+fn bun_sh_refuses_a_download_base_that_is_not_an_https_or_file_url() {
+    let pin = format!("bun {}\n", pinned_bun_version());
+    for base in [
+        "http://example.invalid/bun",
+        "ftp://example.invalid",
+        "/srv/bun",
+    ] {
+        let repo = BunRepo::new(&pin);
+        let out = repo.bun_sh("ensure", &repo.p.path().join("empty"), base);
+        assert_eq!(out.status.code(), Some(1), "{base}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("BUN_SH_DOWNLOAD_BASE must be an https:// or file:// URL"),
+            "{base}: {err}"
+        );
+        assert!(
+            !repo.p.path().join("cache").exists(),
+            "{base}: nothing is installed"
+        );
+    }
+}
+
+#[test]
 fn bun_sh_refuses_a_failed_download_a_wrong_layout_a_wrong_version_and_an_unwritable_cache() {
     use std::os::unix::fs::PermissionsExt;
     let version = pinned_bun_version();

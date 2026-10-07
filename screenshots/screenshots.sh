@@ -72,6 +72,15 @@ if [ -e "$SHOTS_OUT" ] && [ ! -d "$SHOTS_OUT" ]; then
   echo "             $SHOTS_OUT is not one. Unset it or point it elsewhere." >&2
   exit 1
 fi
+# The capture starts by deleting $SHOTS_OUT, so an existing directory must be
+# one a capture owns — empty, or holding a previous capture's captures.json —
+# never an arbitrary tree an override happened to name.
+if [ -d "$SHOTS_OUT" ] && [ -n "$(ls -A "$SHOTS_OUT")" ] && [ ! -f "$SHOTS_OUT/captures.json" ]; then
+  echo "screenshots: SHOTS_OUT=$SHOTS_OUT holds files but no captures.json, so it is" >&2
+  echo "             not a capture directory and will not be deleted. Point SHOTS_OUT" >&2
+  echo "             at an empty or previous-capture directory, or unset it." >&2
+  exit 1
+fi
 font="$repo_root/screenshots/fonts/JetBrainsMono-Regular.ttf"
 fixture="$repo_root/screenshots/fixture"
 docs_dir="$repo_root/docs/screenshots"

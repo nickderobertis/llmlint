@@ -19,6 +19,9 @@
 # `live_run_journeys` is harness-agnostic, so an ad-hoc script for another harness
 # is a few lines (see `tests/live/AGENTS.md`).
 
+# Strict mode is the library's own, not inherited from whichever script sources it.
+set -euo pipefail
+
 # llmlint: ignore-file[tool_output_is_signal] the paid live tier's per-journey narration is the only log of a run that cannot be replayed for free (live.yml's CI output)
 LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
     || { printf 'FAIL: cannot resolve the repository root\n' >&2; exit 1; }

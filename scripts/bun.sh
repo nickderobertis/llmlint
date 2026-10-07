@@ -13,9 +13,9 @@
 # file is edited). CI provisions the pin itself (oven-sh/setup-bun reading
 # .tool-versions), so `ensure` finds it on PATH there and installs nothing.
 #
-# BUN_SH_DOWNLOAD_BASE replaces the release URL prefix (any curl URL, e.g.
-# file://) so the repo-tooling journeys can drive the download-and-verify path
-# offline; it exists for those tests only.
+# BUN_SH_DOWNLOAD_BASE replaces the release URL prefix (an https:// or file://
+# URL; anything else is refused) so the repo-tooling journeys can drive the
+# download-and-verify path offline; it exists for those tests only.
 #
 # Exit status: 0 the pinned bun is available (`path` prints it); 1 it is not and
 # could not be installed (the message says why); 2 a usage error (no mode, more
@@ -102,7 +102,12 @@ install_pinned() {
   # function's locals are gone.
   # shellcheck disable=SC2064
   trap "rm -rf $(printf '%q' "$tmp") || echo 'bun.sh: could not remove $(printf '%q' "$tmp"); delete it by hand' >&2" EXIT
-  base="${BUN_SH_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}/bun-v$VERSION"
+  base="${BUN_SH_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}"
+  case "$base" in
+    https://* | file://*) ;;
+    *) fail "BUN_SH_DOWNLOAD_BASE must be an https:// or file:// URL (got '${base}'); unset it to download from bun's GitHub release." ;;
+  esac
+  base="$base/bun-v$VERSION"
   echo "bun.sh: installing bun $VERSION into $CACHE_DIR" >&2
   curl -fsSL --retry 3 -o "$tmp/$asset.zip" "$base/$asset.zip" \
     || fail "downloading $base/$asset.zip failed; check your network and re-run 'just bootstrap'."

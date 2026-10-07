@@ -814,3 +814,43 @@ fn ci_install_freeze_pins_the_version_the_justfile_pins() {
     assert_eq!(ci_freeze_version(), pinned);
 }
 // llmlint: ignore-end[e2e_not_mocked]
+
+/// The real `screenshots.sh` with `freeze` absent from PATH, capturing into
+/// `shots_out`: it stops at the capture-directory guard or at the `freeze`
+/// check, before it builds or renders anything.
+fn capture_into(shots_out: &Path) -> std::process::Output {
+    let mut cmd = std::process::Command::new("bash");
+    cmd.arg(repo_root().join("screenshots/screenshots.sh"))
+        .env("PATH", "/usr/bin:/bin")
+        .env("SHOTS_OUT", shots_out);
+    clear_git_env(&mut cmd);
+    cmd.output().unwrap()
+}
+
+#[test]
+fn the_capture_refuses_to_delete_a_shots_out_that_is_not_a_capture_directory() {
+    let p = Project::new();
+    p.write("unrelated/keep.txt", "not a capture\n");
+    let out = capture_into(&p.path().join("unrelated"));
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("holds files but no captures.json") && err.contains("SHOTS_OUT="),
+        "{err}"
+    );
+    assert!(
+        p.path().join("unrelated/keep.txt").exists(),
+        "nothing deleted"
+    );
+
+    // A previous capture, an empty directory and an absent one pass the guard:
+    // each run goes on to the freeze check, the next step.
+    p.write("previous/captures.json", "{}\n");
+    fs::create_dir_all(p.path().join("empty")).unwrap();
+    for dir in ["previous", "empty", "absent"] {
+        let out = capture_into(&p.path().join(dir));
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{dir}: {out:?}");
+        assert!(err.contains("'freeze' not on PATH"), "{dir}: {err}");
+    }
+}
