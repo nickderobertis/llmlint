@@ -87,6 +87,29 @@ _ll_cleanup() {
 }
 trap _ll_cleanup EXIT
 
+# LL_TIMEOUT and LL_MODEL are written into each project's llmlint.yml, so they
+# are checked before anything is generated: the timeout must be a whole number of
+# seconds and the model a plain model id (letters, digits, `.`, `_`, `-`, `:`,
+# `/`, `@`), which can never close the YAML string or start a new key. A bad
+# value fails before any paid call, naming the variable.
+validate_settings() {
+    local timeout="${LL_TIMEOUT:-120}" model="${LL_MODEL:-}"
+    [[ "$timeout" =~ ^[1-9][0-9]*$ ]] \
+        || fail "LL_TIMEOUT must be a positive whole number of seconds, got '$timeout'"
+    [ -z "$model" ] || [[ "$model" =~ ^[A-Za-z0-9._:/@-]+$ ]] \
+        || fail "LL_MODEL must be a plain model id (letters, digits and . _ - : / @), got '$model'"
+}
+
+# The `oneharness:` block both project constructors share, from the settings
+# validate_settings admitted; the model is double-quoted so YAML reads it as a
+# string whatever it looks like (`1.5`, `yes`).
+oneharness_settings() {
+    validate_settings
+    echo "oneharness:"
+    echo "  timeout: ${LL_TIMEOUT:-120}"
+    if [ -n "${LL_MODEL:-}" ]; then echo "  model: \"${LL_MODEL}\""; fi
+}
+
 # Write a minimal real config that pins `harness` (and an optional model/timeout)
 # and declares one crisp invariant. Echoes the project dir; the caller registers
 # it for cleanup (this runs in a command substitution, whose variable changes the
@@ -101,9 +124,7 @@ make_project() {
         echo "version: 1"
         echo "files:"
         echo '  include: ["src/**"]'
-        echo "oneharness:"
-        echo "  timeout: ${LL_TIMEOUT:-120}"
-        [ -n "${LL_MODEL:-}" ] && echo "  model: ${LL_MODEL}"
+        oneharness_settings
         echo "agents:"
         echo "  judge:"
         echo "    harness: ${harness}"
@@ -141,9 +162,7 @@ make_fallback_project() {
         echo "version: 1"
         echo "files:"
         echo '  include: ["src/**"]'
-        echo "oneharness:"
-        echo "  timeout: ${LL_TIMEOUT:-120}"
-        [ -n "${LL_MODEL:-}" ] && echo "  model: ${LL_MODEL}"
+        oneharness_settings
         echo "rules:"
         echo "  - name: no_todo_comments"
         echo "    description: >-"
@@ -273,6 +292,7 @@ live_run_journeys() {
     local harness="$1"
     need jq
     require_oneharness
+    validate_settings
     note "== llmlint live e2e: $harness =="
     ll_live_pass "$harness"
     ll_live_fail "$harness"

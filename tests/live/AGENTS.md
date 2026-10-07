@@ -38,7 +38,9 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
   different harness ad hoc, call `live_run_journeys <id>` with that harness's CLI
   installed and authed (`tests/live/live-lib.sh` is harness-agnostic).
 - **Overrides:** `CLAUDE_E2E_MODEL` picks the judge model (defaults to `haiku`);
-  `LL_TIMEOUT` (default 120s) becomes the config's `oneharness.timeout`;
+  `LL_TIMEOUT` (default 120s) becomes the config's `oneharness.timeout`; both
+  are checked before any paid call (`validate_settings`: whole seconds, a plain
+  model id) since they are written into the generated YAML;
   `LLMLINT_BIN` / `LLMLINT_ONEHARNESS_BIN` override binary resolution.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
