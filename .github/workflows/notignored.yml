@@ -1,0 +1,35 @@
+# One sticky PR comment listing the suppressions the change adds (an
+# `llmlint: ignore`, an `#[allow]`, a `# shellcheck disable`), each with its rule,
+# reason, and line — so a reviewer sees every bypass without reading the diff.
+#
+# Deliberately NOT a required status check. It skips fork pull requests (whose
+# read-only token cannot upsert a comment), and a required context that never
+# reports would block them forever. It is a review artifact, not a gate — the gate
+# is `just check`. See the create-repo skill's references/ci.md.
+
+name: notignored
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel superseded runs on the same ref: only the newest comment is wanted.
+concurrency:
+  group: notignored-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suppressions:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The scan diffs against the base branch, which a shallow checkout omits.
+          fetch-depth: 0
+
+      # The floating major: a review comment wants fixes, not reproducibility.
+      - uses: nickderobertis/notignored@v0

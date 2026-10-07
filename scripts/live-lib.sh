@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared helpers for the llmlint LIVE end-to-end tier.
 #
 # These drive the REAL built `llmlint` binary against the REAL `oneharness` and a

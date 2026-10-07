@@ -13,7 +13,7 @@
 #      resolution fetches both wheels — no Rust toolchain and no github.com
 #      reachability (works in restricted-egress sessions where PyPI is reachable).
 #      `uv tool` links only the *requested* package's executable onto PATH, but
-#      llmlint >= 0.3.17 finds `oneharness` beside its own binary in the tool venv —
+#      llmlint >= 0.3.23 finds `oneharness` beside its own binary in the tool venv —
 #      so this one install is a complete setup; no separate oneharness install /
 #      PATH entry. `--upgrade` bumps an older cached tool, honouring the floor below
 #      (`just lint-llm-diff` needs the changed-file-scoped `--diff` and three-dot
@@ -33,15 +33,17 @@ set -uo pipefail
 # Version floor, as a PyPI constraint (the `llmlint-cli` package version tracks the
 # wrapped binary version). `uv tool install --upgrade` installs the newest release
 # satisfying it; oneharness comes along transitively at a compatible version.
-# llmlint >= 0.3.17 finds `oneharness` beside its own executable (so a lone
+# llmlint >= 0.3.23 finds `oneharness` beside its own executable (so a lone
 # `uv tool install llmlint-cli` works), gives the whole-tree default the composed
 # llmlint.yml relies on (it omits `files.include`), restricts `--diff` to the
 # changed files (skipping empty diffs) so `just lint-llm-diff` judges only the
 # branch's changes, treats a plain `--diff-base <ref>` as three-dot/merge-base
 # (0.3.15), and ships the deterministic `validate` gate — config structure +
 # `llmlint: ignore` directives + fragment version bumps — that `just
-# lint-llm-validate` runs with no model call (0.3.17).
-readonly LLMLINT_MIN="0.3.17"
+# lint-llm-validate` runs with no model call (0.3.17), and bundles config_lint v1.2
+# so `line_localizable_rules_require_attribution` is enforced (0.3.23).
+# llmlint: ignore[changed_behavior_has_e2e] this dependency floor selects the validator release used by the existing real `just lint-llm-validate` gate; installer control flow and its user-visible contract are unchanged.
+readonly LLMLINT_MIN="0.3.23"
 readonly BIN_DIR="$HOME/.local/bin"
 
 log() { printf 'setup-llmlint: %s\n' "$*" >&2; }

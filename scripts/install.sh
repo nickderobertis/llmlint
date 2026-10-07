@@ -383,7 +383,7 @@ main() {
         # taiki-e/upload-rust-binary-action keeps the binary at the archive
         # root, but fall back to a search so a leading-dir layout still works.
         src="$(find "${tmp}/unpack" -type f -name "$BIN_FILE" -print 2>/dev/null | head -n1)"
-        [ -n "$src" ] && [ -f "$src" ] || err "binary '$BIN_FILE' not found in ${archive}"
+        { [ -n "$src" ] && [ -f "$src" ]; } || err "binary '$BIN_FILE' not found in ${archive}; pick another release with --version <tag>"
     fi
 
     mkdir -p "$bindir" || err "could not create install directory: $bindir"
@@ -391,7 +391,7 @@ main() {
     if have install; then
         install -m 0755 "$src" "$dest" || err "could not install to $dest"
     else
-        cp "$src" "$dest" && chmod 0755 "$dest" || err "could not install to $dest"
+        { cp "$src" "$dest" && chmod 0755 "$dest"; } || err "could not install to $dest; choose a writable directory with --to <dir>"
     fi
 
     say "installed ${BIN} ${version} to ${dest}"

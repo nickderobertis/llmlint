@@ -11840,12 +11840,36 @@ impl GuardRepo {
              classify) exit \"${STUB_CLASSIFY_EXIT:-0}\" ;;\n  *) exit 0 ;;\nesac\n",
         );
         p.write("bin/freeze", "#!/usr/bin/env bash\nexit 0\n");
+        // The hook's validate step runs the real `lint-llm-validate` recipe from
+        // the real justfile; only the `llmlint` it calls is stubbed, recording
+        // its argv and answering with a chosen exit (as the suite stubs oneharness).
+        p.write(
+            "justfile",
+            &fs::read_to_string(root.join("justfile")).unwrap(),
+        );
+        p.write(
+            "bin/llmlint",
+            "#!/usr/bin/env bash\nprintf 'llmlint %s\\n' \"$*\" >> \"$STUB_CALLS\"\n\
+             [ \"${STUB_VALIDATE_EXIT:-0}\" = 0 ] || echo 'stub validate: ignore names no rule' >&2\n\
+             exit \"${STUB_VALIDATE_EXIT:-0}\"\n",
+        );
+        // `just` itself is real, linked alone into a dir of its own so the hook's
+        // PATH can carry it without whatever else (a real llmlint) sits beside it.
+        // llmlint: ignore-block[shell_test_tiers_stay_split] `just` is the gate's own required tool (REQUIRED_BINS in scripts/setup-lib.sh), present wherever this suite runs, and the hook under test invokes the real recipe through it; splitting test tiers into projects is the Nx retrofit's, which this repo has not had yet
+        let just = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|d| d.join("just"))
+            .find(|j| j.is_file())
+            .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+        // llmlint: ignore-end[shell_test_tiers_stay_split]
+        fs::create_dir_all(p.path().join("tools")).unwrap();
+        std::os::unix::fs::symlink(just, p.path().join("tools/just")).unwrap();
+        fs::create_dir_all(p.path().join("home")).unwrap();
         p.write(
             "scripts/screenshots.sh",
             "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n\
              mkdir -p \"$SHOTS_OUT\"\n",
         );
-        for stub in ["bin/screencomp", "bin/freeze"] {
+        for stub in ["bin/screencomp", "bin/freeze", "bin/llmlint"] {
             fs::set_permissions(p.path().join(stub), fs::Permissions::from_mode(0o755)).unwrap();
         }
         init_repo(p.path());
@@ -11859,23 +11883,35 @@ impl GuardRepo {
     }
 
     /// Run the hook over `HEAD~1..HEAD`; returns its output and the stubs' call
-    /// log (one line per screencomp call: its argv; plus the capture dir).
+    /// log (one line per screencomp call: its argv; plus the capture dir; plus
+    /// `llmlint <argv>` for the validate step).
     fn run(&self, classify_exit: i32) -> (std::process::Output, String) {
+        self.run_with(classify_exit, &[])
+    }
+
+    /// [`Self::run`] with extra environment (e.g. `CI`, `STUB_VALIDATE_EXIT`).
+    /// PATH is the stubs, `just`, and the system dirs only — never the host's
+    /// own PATH, whose real llmlint would shadow the stub (or its absence) — and
+    /// HOME is a scratch dir, since the recipe also looks in `~/.local/bin`.
+    fn run_with(&self, classify_exit: i32, env: &[(&str, &str)]) -> (std::process::Output, String) {
         let calls = self.p.path().join("calls");
         let _ = fs::remove_file(&calls);
         let path = format!(
-            "{}:{}",
+            "{}:{}:/usr/bin:/bin",
             self.p.path().join("bin").display(),
-            std::env::var("PATH").unwrap_or_default()
+            self.p.path().join("tools").display(),
         );
         let mut c = std::process::Command::new("bash");
         c.arg(".githooks/pre-push")
             .current_dir(self.p.path())
             .env("PATH", path)
+            .env("HOME", self.p.path().join("home"))
             .env("STUB_CALLS", &calls)
             .env("STUB_CLASSIFY_EXIT", classify_exit.to_string())
             .env("SCREENCOMP_GUARD_RANGE", "HEAD~1..HEAD")
             .env_remove("CI")
+            .env_remove("LLMLINT_FILES_EXCLUDE")
+            .envs(env.iter().copied())
             .stdin(std::process::Stdio::null());
         // The suite's own gate runs inside a pre-push hook; the hook under test
         // must diff the scratch repo, not the one this test fired in.
@@ -12026,9 +12062,109 @@ fn pre_push_guard_refuses_a_host_lane_the_config_does_not_declare() {
         "{stderr}"
     );
     assert!(
-        calls.is_empty(),
+        calls.lines().all(|l| l.starts_with("llmlint ")),
         "no capture or screencomp call should run:\n{calls}"
     );
+}
+
+/// The `llmlint validate` the hook must issue: the real recipe's argv, with the
+/// version-bump base CI uses when `origin/main` resolves.
+#[cfg(unix)]
+fn validate_call(diff_base: bool) -> String {
+    if diff_base {
+        "llmlint validate --diff-base origin/main\n".into()
+    } else {
+        "llmlint validate\n".into()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_runs_llmlint_validate_on_every_push() {
+    // The deterministic validate step runs on every push the hook evaluates —
+    // ahead of, and regardless of, each early exit the visual guard takes (under
+    // CI, a host lane it refuses, no screencomp installed) — and leaves the
+    // guard's own outcome unchanged when it passes.
+    let (toml, _) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    let (out, calls) = repo.run(0);
+    assert!(out.status.success(), "{out:?}");
+    assert!(calls.starts_with(&validate_call(false)), "{calls}");
+    assert!(calls.contains("classify "), "the guard still ran:\n{calls}");
+
+    // With origin/main present the version-bump check diffs against it, as CI does.
+    git(
+        repo.p.path(),
+        &["update-ref", "refs/remotes/origin/main", "HEAD~1"],
+    );
+    let (out, calls) = repo.run(0);
+    assert!(out.status.success(), "{out:?}");
+    assert!(calls.starts_with(&validate_call(true)), "{calls}");
+
+    // Under CI the guard no-ops — validate still ran first.
+    let (out, calls) = repo.run_with(0, &[("CI", "1")]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(calls, validate_call(true));
+
+    // No screencomp: the guard warns and skips — validate still ran first.
+    fs::remove_file(repo.p.path().join("bin/screencomp")).unwrap();
+    let (out, calls) = repo.run(0);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("screencomp is NOT on PATH"), "{stderr}");
+    assert_eq!(calls, validate_call(true));
+
+    // A host lane the config does not declare: refused — validate still ran first.
+    let repo = GuardRepo::new("[capture]\narches = [\"riscv64\", \"s390x\"]\n");
+    let (out, calls) = repo.run(0);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(calls, validate_call(false));
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_blocks_the_push_when_llmlint_validate_fails() {
+    // A failing validate blocks the push with llmlint's own finding on stderr and
+    // the bypass named, before any capture is spent.
+    let (toml, _) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    let (out, calls) = repo.run_with(0, &[("STUB_VALIDATE_EXIT", "1")]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("stub validate: ignore names no rule"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("'just lint-llm-validate' failed — push blocked"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("git push --no-verify"), "{stderr}");
+    assert_eq!(
+        calls,
+        validate_call(false),
+        "no capture after a failed validate"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_skips_llmlint_validate_when_llmlint_is_not_installed() {
+    // No llmlint on PATH (nor in ~/.local/bin): warn, point at the installer, and
+    // carry on to the visual guard — never block the push on a missing tool.
+    let (toml, _) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    fs::remove_file(repo.p.path().join("bin/llmlint")).unwrap();
+    let (out, calls) = repo.run(0);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("llmlint is not installed; skipping 'just lint-llm-validate'"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("just setup-llmlint"), "{stderr}");
+    assert!(!calls.contains("llmlint "), "{calls}");
+    assert!(calls.contains("classify "), "the guard still ran:\n{calls}");
 }
 // llmlint: ignore-end[e2e_not_mocked]
 
@@ -12460,6 +12596,243 @@ fn bench_workflow_spells_out_equal_push_and_pull_request_paths() {
 }
 // llmlint: ignore-end[tests_mirror_real_usage]
 
+/// The status-check contexts branch protection is built against: every pull
+/// request to `main` must report each of these under exactly this name, or a PR
+/// either waits forever on a context that never reports or merges past one that
+/// was dropped. `llmlint` is the judged tier's blocking check.
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] the third copy, the live branch protection, is applied and reconciled off-repo by the governance step (`setup_github_governance.py --verify`); this repo's gate has no settings-API access by design, and the two in-repo copies (the workflows and AGENTS.md) are both held to this list
+const PR_CONTEXTS: &[&str] = &[
+    "gate",
+    "deny",
+    "pr-title",
+    "cross (macos-latest)",
+    "cross (windows-latest)",
+    "install (ubuntu-latest)",
+    "install (macos-latest)",
+    "install (windows-latest)",
+    "visual-docs / report (x86_64)",
+    "visual-docs / report (arm64)",
+    "llmlint",
+];
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
+
+/// The `if:` conditions a contract job may carry: each is true on every
+/// `pull_request` event, so it can never leave the context unreported.
+const PR_TRUE_CONDITIONS: &[&str] = &["github.event_name == 'pull_request'"];
+
+fn workflow_docs() -> Vec<(String, serde_yaml_ng::Value)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+    let mut docs: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
+        .map(|p| {
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            let doc = serde_yaml_ng::from_str(&fs::read_to_string(&p).unwrap()).unwrap();
+            (name, doc)
+        })
+        .collect();
+    docs.sort_by(|a, b| a.0.cmp(&b.0));
+    docs
+}
+
+/// Why a workflow would not run on every pull request to `main`, or `None`
+/// when it always does.
+fn pr_trigger_gap(doc: &serde_yaml_ng::Value) -> Option<String> {
+    let on = &doc["on"];
+    let pr = match on.as_mapping() {
+        Some(m) => match m.get("pull_request") {
+            Some(pr) => pr,
+            None => return Some("no pull_request trigger".into()),
+        },
+        None => return Some(format!("triggers {on:?}, not a pull_request mapping")),
+    };
+    if pr.is_null() {
+        return None;
+    }
+    if let Some(branches) = pr["branches"].as_sequence() {
+        if !branches.iter().any(|b| b.as_str() == Some("main")) {
+            return Some(format!("pull_request branches {branches:?} omit main"));
+        }
+    }
+    for filter in ["paths", "paths-ignore", "branches-ignore"] {
+        if !pr[filter].is_null() {
+            return Some(format!("pull_request carries a `{filter}` filter"));
+        }
+    }
+    if let Some(types) = pr["types"].as_sequence() {
+        for needed in ["opened", "synchronize", "reopened"] {
+            if !types.iter().any(|t| t.as_str() == Some(needed)) {
+                return Some(format!("pull_request types {types:?} omit {needed}"));
+            }
+        }
+    }
+    None
+}
+
+/// The screencomp reusable workflow `visual-docs.yml` calls, at the pin whose
+/// inner job is named `report` (so its contexts are `<caller> / report (<arch>)`).
+/// A pin bump fails here until that name is confirmed for the new version.
+const VISUAL_DOCS_REUSABLE: &str =
+    "nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2";
+
+/// The contexts a job reports, as GitHub names them: its `name:` (else its id),
+/// suffixed with the matrix value for a one-axis matrix. A reusable-workflow call
+/// (`uses:`) to screencomp's visual-docs reports `<caller> / report (<arch>)`
+/// per `[capture].arches` lane in screencomp.toml, which the reusable reads.
+fn job_contexts(id: &str, job: &serde_yaml_ng::Value) -> Vec<String> {
+    let base = job["name"].as_str().unwrap_or(id).to_string();
+    if let Some(uses) = job["uses"].as_str() {
+        if uses.contains("/visual-docs-reusable.yml@") {
+            assert_eq!(
+                uses, VISUAL_DOCS_REUSABLE,
+                "job {id} moved screencomp's reusable workflow off the pin whose inner \
+                 job is `report`: confirm the new version's job name, then update \
+                 VISUAL_DOCS_REUSABLE"
+            );
+            let toml_text =
+                fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("screencomp.toml"))
+                    .unwrap();
+            let cfg: toml::Value = toml::from_str(&toml_text).unwrap();
+            return cfg["capture"]["arches"]
+                .as_array()
+                .expect("screencomp.toml declares [capture].arches")
+                .iter()
+                .map(|a| format!("{base} / report ({})", a.as_str().unwrap()))
+                .collect();
+        }
+        return vec![base];
+    }
+    match job["strategy"]["matrix"].as_mapping() {
+        Some(m) if m.len() == 1 => {
+            let values = m.values().next().unwrap().as_sequence().unwrap();
+            values
+                .iter()
+                .map(|v| format!("{base} ({})", v.as_str().unwrap()))
+                .collect()
+        }
+        Some(m) => panic!("job {id}: a multi-axis matrix {m:?} is not modelled here"),
+        None => vec![base],
+    }
+}
+
+/// Why a job could be skipped on a pull request (its own `if:` or one along its
+/// `needs` chain), or `None` when it always runs once its workflow triggers.
+fn pr_job_gap(jobs: &serde_yaml_ng::Mapping, id: &str) -> Option<String> {
+    let job = &jobs[id];
+    if let Some(cond) = job["if"].as_str() {
+        if !PR_TRUE_CONDITIONS.contains(&cond.trim()) {
+            return Some(format!("job {id} is conditioned on `{cond}`"));
+        }
+    }
+    let needs: Vec<&str> = match &job["needs"] {
+        serde_yaml_ng::Value::String(n) => vec![n.as_str()],
+        serde_yaml_ng::Value::Sequence(ns) => ns.iter().map(|n| n.as_str().unwrap()).collect(),
+        _ => vec![],
+    };
+    needs
+        .into_iter()
+        .find_map(|n| pr_job_gap(jobs, n).map(|gap| format!("job {id} needs {n}, and {gap}")))
+}
+
+// llmlint: ignore-block[tests_mirror_real_usage] a drift gate over the committed workflows: GitHub is the only thing that turns them into status checks, which a test run cannot reach, so the workflow files are the interface under test
+/// Every context in the fixed contract is reported, under exactly its name, by a
+/// job that runs on every pull request to `main`: no trigger filter, `if:`, or
+/// `needs` edge can leave one unreported. Read from the committed workflows, so
+/// adding a workflow or a condition is checked against the contract.
+#[test]
+fn every_required_context_is_reported_on_every_pull_request() {
+    let mut reported = std::collections::BTreeMap::new();
+    for (file, doc) in workflow_docs() {
+        if doc["on"].get("pull_request").is_none() {
+            continue;
+        }
+        let jobs = doc["jobs"].as_mapping().unwrap();
+        for (id, job) in jobs {
+            let id = id.as_str().unwrap();
+            for ctx in job_contexts(id, job) {
+                let gap = pr_trigger_gap(&doc).or_else(|| pr_job_gap(jobs, id));
+                let prev = reported.insert(ctx.clone(), (file.clone(), gap));
+                assert!(prev.is_none(), "context {ctx} is reported by two jobs");
+            }
+        }
+    }
+    for ctx in PR_CONTEXTS {
+        match reported.get(*ctx) {
+            None => panic!("no workflow job reports the required context {ctx}"),
+            Some((file, Some(gap))) => {
+                panic!("{file} may leave required context {ctx} unreported: {gap}")
+            }
+            Some((_, None)) => {}
+        }
+    }
+}
+
+/// AGENTS.md's required-checks bullet is the human-facing copy of the contract:
+/// it names every `PR_CONTEXTS` entry (and no stale `check` context), so the list a
+/// maintainer reads cannot drift from the one the workflows are held to. The
+/// live branch protection is reconciled by governance's `--verify`, off-repo.
+#[test]
+fn agents_md_lists_the_required_context_contract() {
+    let text = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("AGENTS.md")).unwrap();
+    let start = text
+        .find("- **Required status checks**")
+        .expect("AGENTS.md has a Required status checks bullet");
+    let bullet = &text[start..];
+    let bullet = &bullet[..bullet[2..].find("\n- ").map_or(bullet.len(), |i| i + 2)];
+    // Backticked names, with line-wrapping inside a name collapsed.
+    let named: std::collections::BTreeSet<String> = bullet
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(|n| n.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    for ctx in PR_CONTEXTS {
+        assert!(
+            named.contains(*ctx),
+            "AGENTS.md's list omits {ctx}: {named:?}"
+        );
+    }
+    assert!(
+        !named.contains("check"),
+        "AGENTS.md names a `check` context; the gate's context is `gate`"
+    );
+}
+
+/// notignored is a review artifact, not a gate: its own workflow (a `needs` edge
+/// cannot cross workflows, so no contract job can wait on it), skipping fork PRs
+/// (whose read-only token cannot comment), and so never a required context.
+#[test]
+fn notignored_runs_on_pull_requests_outside_the_required_contexts() {
+    let docs = workflow_docs();
+    let (_, doc) = docs
+        .iter()
+        .find(|(f, _)| f == "notignored.yml")
+        .expect(".github/workflows/notignored.yml exists");
+    assert_eq!(pr_trigger_gap(doc), None);
+    assert_eq!(doc["permissions"]["contents"].as_str(), Some("read"));
+    assert_eq!(doc["permissions"]["pull-requests"].as_str(), Some("write"));
+    let jobs = doc["jobs"].as_mapping().unwrap();
+    assert_eq!(jobs.len(), 1, "{jobs:?}");
+    let (id, job) = jobs.iter().next().unwrap();
+    assert_eq!(
+        job["if"].as_str(),
+        Some("github.event.pull_request.head.repo.full_name == github.repository")
+    );
+    let steps = job["steps"].as_sequence().unwrap();
+    assert!(steps.iter().any(|s| s["uses"]
+        .as_str()
+        .is_some_and(|u| u.starts_with("actions/checkout@"))
+        && s["with"]["fetch-depth"].as_u64() == Some(0)));
+    assert!(steps
+        .iter()
+        .any(|s| s["uses"].as_str() == Some("nickderobertis/notignored@v0")));
+    for ctx in job_contexts(id.as_str().unwrap(), job) {
+        assert!(!PR_CONTEXTS.contains(&ctx.as_str()), "{ctx} is required");
+    }
+}
+// llmlint: ignore-end[tests_mirror_real_usage]
+
 #[test]
 fn allowlisted_just_commands_are_declared_recipes() {
     // `.claude/settings.json` pre-approves routine recipes by name; a renamed or
@@ -12510,6 +12883,28 @@ fn check_runs_the_workflow_lint() {
     );
     assert!(out.status.success(), "{plan}");
     assert!(plan.contains("bash scripts/lint-workflows.sh"), "{plan}");
+}
+
+#[test]
+fn check_runs_the_shell_lint() {
+    // Dropping `lint-sh` from `check`'s dependencies would silently un-gate
+    // every script.
+    // llmlint: ignore[shell_test_tiers_stay_split] `--dry-run` of the gate's own required tool (REQUIRED_BINS), runs nothing it names, exactly as check_runs_the_workflow_lint does beside it
+    let out = std::process::Command::new("just")
+        .args(["--dry-run", "check"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+    let plan = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{plan}");
+    assert!(
+        plan.contains("shellcheck scripts/*.sh .githooks/pre-push"),
+        "{plan}"
+    );
 }
 
 // llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/tar/install/bash; a test cannot own the host's OS/CPU, rhysd's release server, or a second actionlint release, so only `uname`, the release tree, and (for the version/exit-code journeys) the actionlint binary are stood in
