@@ -627,7 +627,8 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
         );
     }
 
-    // A run id that is not a positive integer never reaches the jobs endpoint.
+    // A numeric run id that is not a positive integer never reaches the jobs
+    // endpoint (a non-numeric one is refused earlier, with the run ordering).
     let bad_id = Github::new(
         &[run(
             7,
@@ -637,7 +638,7 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
             TREE,
             "completed",
         )
-        .replace("\"id\":7", "\"id\":\"7/../../x\"")],
+        .replace("\"id\":7", "\"id\":-7")],
         &[],
     );
     let out = bad_id.verdict(&[]);
@@ -715,6 +716,62 @@ fn a_runs_or_jobs_answer_without_its_collection_stops_the_release() {
     let out = gh.verdict(&[]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(stderr(&out).contains("no jobs"), "{}", stderr(&out));
+}
+
+#[test]
+fn a_sweep_run_without_a_usable_creation_time_or_id_stops_the_release() {
+    // The newest sweep of the tree decides, so a candidate whose created_at is
+    // missing or not an ISO-8601 UTC timestamp (or whose id is not a number)
+    // could reorder which sweep wins: it is refused before any run is trusted.
+    let good = run(
+        8,
+        "pull_request",
+        "release-plz-2026",
+        REPO,
+        TREE,
+        "completed",
+    );
+    for (broken, says) in [
+        (
+            good.replace(
+                "\"created_at\":\"2026-10-07T12:00:08Z\"",
+                "\"created_at\":\"yesterday\"",
+            ),
+            "has no usable created_at (yesterday)",
+        ),
+        (
+            good.replace("\"created_at\":\"2026-10-07T12:00:08Z\",", ""),
+            "has no usable created_at (missing)",
+        ),
+        (
+            good.replace("\"id\":8,", "\"id\":\"8\","),
+            "a run has no numeric id (8)",
+        ),
+    ] {
+        assert_ne!(broken, good, "the fixture edit applied");
+        let gh = Github::new(
+            &[
+                run(
+                    7,
+                    "pull_request",
+                    "release-plz-2026",
+                    REPO,
+                    TREE,
+                    "completed",
+                ),
+                broken,
+            ],
+            &[],
+        );
+        let out = gh.verdict(&[]);
+        assert_eq!(out.status.code(), Some(1), "{says}: {out:?}");
+        let err = stderr(&out);
+        assert!(
+            err.contains("ci.yml runs was unreadable") && err.contains(says),
+            "{says}: {err}"
+        );
+        assert!(!gh.calls().contains("/jobs"), "{says}: {}", gh.calls());
+    }
 }
 
 /// The jobs of ci.yml as status-check contexts (a matrix job reports one per

@@ -159,6 +159,15 @@ verdict() {
                    or (.event == "pull_request"
                        and ((.head_branch // "") | startswith($prefix))
                        and .head_repository.full_name == $repo)) ]
+        # The newest sweep decides, so every candidate must carry the ordering
+        # it is sorted by: an ISO-8601 UTC created_at (which sorts as text) and
+        # a numeric id. A record missing either is refused, never sorted.
+        | map(if (.id | type) != "number" then
+                error("a run has no numeric id (\(.id // "missing"))")
+              elif (.created_at | type) != "string"
+                   or (.created_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") | not) then
+                error("run \(.id) has no usable created_at (\(.created_at // "missing"))")
+              else . end)
         | sort_by(.created_at, .id)' 2>&1
     )" || refuse "GitHub's answer for the $CI_WORKFLOW runs was unreadable: $runs" "inspect the API response, then re-run the release"
     run="$(jq -c --arg tree "$tree" '[ .[] | select(.head_commit.tree_id == $tree) ] | last // empty' <<<"$runs")"
