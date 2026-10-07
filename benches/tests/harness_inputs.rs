@@ -165,3 +165,44 @@ fn every_documented_override_has_a_named_refusal() {
         }
     }
 }
+
+/// `just bench` and `just profile` forward their arguments through Nx, which
+/// rebuilds them into a shell command line, so each recipe refuses anything but
+/// a plain word before Nx (or a build) is reached: a `$(…)` or `;` in an
+/// argument is never run.
+#[cfg(unix)]
+#[test]
+fn the_bench_and_profile_recipes_refuse_shell_syntax_before_reaching_nx() {
+    let scratch = TempDir::new().unwrap();
+    let marker = scratch.path().join("ran");
+    let marker = marker.display().to_string();
+    for (recipe, says) in [
+        ("bench", "is not a plain baseline name or Criterion option"),
+        (
+            "profile",
+            "is not a plain mode, llmlint argument or bench filter",
+        ),
+    ] {
+        for bad in [
+            format!("$(touch {marker})"),
+            format!("`touch {marker}`"),
+            format!("x;touch {marker}"),
+            "two words".to_owned(),
+        ] {
+            let out = Command::new("just")
+                .arg(recipe)
+                .arg(&bad)
+                .current_dir(repo_root())
+                .output()
+                .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(2), "{recipe} {bad}: {stderr}");
+            assert!(stderr.contains(says), "{recipe} {bad}: {stderr}");
+            assert!(
+                !stderr.contains("NX"),
+                "{recipe} {bad}: reached Nx: {stderr}"
+            );
+        }
+    }
+    assert!(!Path::new(&marker).exists(), "an argument was executed");
+}

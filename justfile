@@ -325,6 +325,7 @@ bench-all: bench bench-cli bench-allocs
 # Record a sampling/callgrind profile to find bottlenecks; see benches/profile.sh for modes.
 [positional-arguments]
 profile *ARGS:
+    @for a in "$@"; do printf '%s' "$a" | grep -Eq '^[A-Za-z0-9_./=:-]+$' || { printf "profile: argument '%s' is not a plain mode, llmlint argument or bench filter; use letters, digits and _./=:- only (e.g. just profile cli lint)\n" "$a" >&2; exit 2; }; done
     @bash scripts/nx run bench:profile -- "$@"
 
 # --- Terminal screenshots (informational; never part of `check` or CI's gate) -
