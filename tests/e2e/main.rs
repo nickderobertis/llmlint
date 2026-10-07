@@ -2732,6 +2732,306 @@ fn committed_repo(rules: &str, initial: &[(&str, &str)]) -> Project {
     p
 }
 
+// Long enough to keep a one-line edit above git's default rename similarity.
+fn rename_body() -> String {
+    (0..20)
+        .map(|i| format!("fn unchanged_{i}() {{}}\n"))
+        .collect()
+}
+
+fn rename_prompt(p: &Project, base: Option<&str>) -> String {
+    let dump = p.path().join("system.txt");
+    let mut cmd = p.lint();
+    cmd.arg("--diff").arg("--max-parallel").arg("1");
+    if let Some(base) = base {
+        cmd.arg("--diff-base").arg(base);
+    }
+    cmd.env("LLMLINT_MOCK_DUMP", &dump).assert().success();
+    fs::read_to_string(dump).unwrap()
+}
+
+fn content_changes(system: &str) -> Vec<&str> {
+    system
+        .lines()
+        .filter(|l| {
+            (l.starts_with('+') && !l.starts_with("+++"))
+                || (l.starts_with('-') && !l.starts_with("---") && !l.starts_with("- "))
+        })
+        .collect()
+}
+
+#[test]
+fn diff_rename_pure_and_edited_committed_and_staged() {
+    for (edited, committed) in [(false, true), (true, true), (true, false)] {
+        let body = rename_body();
+        let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+        let p = committed_repo(&rules, &[("src/old.rs", &body)]);
+        git(p.path(), &["checkout", "-q", "-b", "feature"]);
+        git(p.path(), &["config", "diff.renames", "false"]);
+        git(p.path(), &["mv", "src/old.rs", "src/new.rs"]);
+        if edited {
+            p.write("src/new.rs", &format!("{body}fn added() {{}}\n"));
+        }
+        git(p.path(), &["add", "."]);
+        if committed {
+            git(p.path(), &["commit", "-qm", "rename"]);
+        }
+        let system = rename_prompt(&p, committed.then_some("main"));
+        assert!(system.contains("- src/new.rs"), "{system}");
+        assert!(
+            system.contains("rename from src/old.rs\nrename to src/new.rs"),
+            "{system}"
+        );
+        assert!(system.contains("similarity index"), "{system}");
+        assert!(
+            !system.contains("new file mode") && !system.contains("deleted file mode"),
+            "{system}"
+        );
+        if edited {
+            assert_eq!(content_changes(&system), ["+fn added() {}"]);
+        } else {
+            assert!(system.contains("similarity index 100%"), "{system}");
+            assert!(content_changes(&system).is_empty(), "{system}");
+            p.lint()
+                .args(["--diff", "--diff-base", "main", "src/old.rs"])
+                .assert()
+                .success();
+        }
+        for guidance in [
+            "rename from",
+            "rename to",
+            "copy from",
+            "copy to",
+            "similarity index",
+            "carried over unchanged",
+            "rename without hunks",
+        ] {
+            assert!(system.contains(guidance), "missing {guidance}: {system}");
+        }
+    }
+}
+
+#[test]
+fn diff_rename_moves_in_and_copies_are_reviewed_whole() {
+    for case in ["excluded", "outside", "one-rule", "copy", "cli-exclude"] {
+        let body = rename_body();
+        let old = if case == "outside" {
+            "other/old.rs"
+        } else {
+            "src/old.rs"
+        };
+        let rules = if case == "one-rule" {
+            format!("  - {{ name: r, description: \"{RULE}\" }}\n  - {{ name: narrow, description: \"{RULE}\", files: {{ include: [src/new.rs] }} }}\n")
+        } else {
+            format!("  - {{ name: r, description: \"{RULE}\" }}\n")
+        };
+        let p = committed_repo(&rules, &[(old, &body)]);
+        if case == "excluded" {
+            p.write(
+                "llmlint.yml",
+                &format!("files:\n  include: [src/**]\n  exclude: [src/old.rs]\nrules:\n{rules}"),
+            );
+            git(p.path(), &["commit", "-qam", "exclude old"]);
+        }
+        git(p.path(), &["checkout", "-q", "-b", "feature"]);
+        if case == "copy" {
+            p.write("src/new.rs", &body);
+            git(p.path(), &["config", "diff.renames", "copies"]);
+        } else {
+            fs::create_dir_all(p.path().join("src")).unwrap();
+            git(p.path(), &["mv", old, "src/new.rs"]);
+        }
+        git(p.path(), &["add", "."]);
+        git(p.path(), &["commit", "-qm", "move or copy"]);
+        let system = if case == "cli-exclude" {
+            let dump = p.path().join("system.txt");
+            p.lint()
+                .args([
+                    "--diff",
+                    "--diff-base",
+                    "main",
+                    "--exclude",
+                    "src/old.rs",
+                    "--max-parallel",
+                    "1",
+                ])
+                .env("LLMLINT_MOCK_DUMP", &dump)
+                .assert()
+                .success();
+            fs::read_to_string(dump).unwrap()
+        } else {
+            rename_prompt(&p, Some("main"))
+        };
+        assert!(system.contains("new file mode"), "{case}: {system}");
+        assert!(!system.contains("deleted file mode"), "{system}");
+        let changes = content_changes(&system);
+        for line in body.lines() {
+            assert!(
+                changes.contains(&format!("+{line}").as_str()),
+                "{case}: {system}"
+            );
+        }
+    }
+}
+
+#[test]
+fn diff_rename_eligibility_respects_each_rules_directory_scope() {
+    for crosses_scope in [true, false] {
+        let body = rename_body();
+        let old = if crosses_scope {
+            "src/old.rs"
+        } else {
+            "src/nested/old.rs"
+        };
+        let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+        let p = committed_repo(&rules, &[(old, &body)]);
+        p.write("src/nested/llmlint.yml", &format!(
+            "files:\n  include: [\"*.rs\"]\nrules:\n  - {{ name: nested, description: \"{RULE}\" }}\n"
+        ));
+        git(p.path(), &["add", "."]);
+        git(p.path(), &["commit", "-qm", "nested scope"]);
+        git(p.path(), &["checkout", "-q", "-b", "feature"]);
+        git(p.path(), &["mv", old, "src/nested/new.rs"]);
+        git(p.path(), &["commit", "-qam", "rename"]);
+        let system = rename_prompt(&p, Some("main"));
+        assert!(system.contains("### nested"), "{system}");
+        assert!(!system.contains("deleted file mode"), "{system}");
+        if crosses_scope {
+            assert!(system.contains("new file mode"), "{system}");
+            assert_eq!(content_changes(&system).len(), 20, "{system}");
+        } else {
+            assert!(
+                system.contains("rename from src/nested/old.rs\nrename to src/nested/new.rs"),
+                "{system}"
+            );
+            assert!(content_changes(&system).is_empty(), "{system}");
+        }
+    }
+}
+
+#[test]
+fn diff_rename_from_a_subdirectory_keeps_cwd_relative_targets() {
+    for (dir, scoped, outside) in [
+        ("src", false, false),
+        ("src/sub", false, false),
+        ("src/sub", true, false),
+        ("src/sub", false, true),
+    ] {
+        let body = rename_body();
+        let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+        let p = committed_repo(&rules, &[("src/old.rs", &body)]);
+        fs::create_dir_all(p.path().join(dir)).unwrap();
+        if scoped {
+            p.write("src/sub/llmlint.yml", &format!(
+                "files:\n  include: [\"*.rs\"]\nrules:\n  - {{ name: scoped, description: \"{RULE}\" }}\n"
+            ));
+            git(p.path(), &["add", "."]);
+            git(p.path(), &["commit", "-qm", "subdirectory scope"]);
+        }
+        git(p.path(), &["checkout", "-q", "-b", "feature"]);
+        let new = format!("{}/new.rs", if outside { "src" } else { dir });
+        git(p.path(), &["mv", "src/old.rs", &new]);
+        git(p.path(), &["commit", "-qam", "rename"]);
+        let dump = p.path().join("system.txt");
+        let mut cmd = p.lint();
+        if outside {
+            cmd.arg("../new.rs");
+        }
+        cmd.arg("--cwd")
+            .arg(p.path().join(dir))
+            .args(["--diff", "--diff-base", "main"])
+            .env("LLMLINT_MOCK_DUMP", &dump)
+            .assert()
+            .success();
+        let system = fs::read_to_string(&dump).unwrap();
+        let target = if outside { "- ../new.rs" } else { "- new.rs" };
+        assert!(system.contains(target), "{system}");
+        assert!(!system.contains("deleted file mode"), "{system}");
+        if scoped {
+            assert!(system.contains("### scoped"), "{system}");
+            assert!(system.contains("new file mode"), "{system}");
+            assert_eq!(content_changes(&system).len(), 20, "{system}");
+        } else {
+            assert!(
+                system.contains(&format!("rename from src/old.rs\nrename to {new}")),
+                "{system}"
+            );
+            assert!(content_changes(&system).is_empty(), "{system}");
+            if outside {
+                p.lint()
+                    .arg(p.path().join(&new))
+                    .arg("--cwd")
+                    .arg(p.path().join(dir))
+                    .args(["--diff", "--diff-base", "main"])
+                    .env("LLMLINT_MOCK_DUMP", &dump)
+                    .assert()
+                    .success();
+                let absolute_system = fs::read_to_string(&dump).unwrap();
+                assert!(
+                    absolute_system.contains(&format!("rename from src/old.rs\nrename to {new}")),
+                    "{absolute_system}"
+                );
+                assert!(
+                    content_changes(&absolute_system).is_empty(),
+                    "{absolute_system}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn diff_rename_move_out_makes_no_judge_call() {
+    let body = rename_body();
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/old.rs", &body)]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    fs::create_dir_all(p.path().join("other")).unwrap();
+    git(p.path(), &["mv", "src/old.rs", "other/new.rs"]);
+    git(p.path(), &["commit", "-qam", "move out"]);
+    let dump = p.path().join("system.txt");
+    p.lint()
+        .args(["--diff", "--diff-base", "main"])
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success();
+    assert!(!dump.exists());
+}
+
+#[test]
+fn diff_rename_limit_warns_and_reviews_whole() {
+    let a = rename_body();
+    let b = a.replace("unchanged", "different");
+    let rules = format!("  - {{ name: r, description: \"{RULE}\" }}\n");
+    let p = committed_repo(&rules, &[("src/a.rs", &a), ("src/b.rs", &b)]);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    git(p.path(), &["config", "diff.renameLimit", "1"]);
+    git(p.path(), &["mv", "src/a.rs", "src/new_a.rs"]);
+    git(p.path(), &["mv", "src/b.rs", "src/new_b.rs"]);
+    p.write("src/new_a.rs", &format!("{a}fn added_a() {{}}\n"));
+    p.write("src/new_b.rs", &format!("{b}fn added_b() {{}}\n"));
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-qm", "inexact renames"]);
+    let dump = p.path().join("system.txt");
+    p.lint()
+        .args(["--diff", "--diff-base", "main", "--max-parallel", "1"])
+        .env("LLMLINT_MOCK_DUMP", &dump)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("rename detection was skipped"))
+        .stderr(predicate::str::contains("reviewed whole"))
+        .stderr(predicate::str::contains("diff.renameLimit"));
+    let system = fs::read_to_string(dump).unwrap();
+    assert_eq!(system.matches("new file mode").count(), 2, "{system}");
+    assert!(!system.contains("deleted file mode"), "{system}");
+    for line in a.lines().chain(b.lines()) {
+        assert!(
+            content_changes(&system).contains(&format!("+{line}").as_str()),
+            "{system}"
+        );
+    }
+}
+
 #[test]
 fn diff_flag_adds_changed_lines_to_the_prompt() {
     let p = Project::new();
@@ -4267,6 +4567,38 @@ fn versioned_repo(config: &str) -> Project {
 }
 
 const VERSIONED_CONFIG: &str = "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  - name: r\n    description: \"true when ok; false otherwise.\"\n";
+
+#[test]
+fn version_bump_renames_require_a_bump_only_for_content_edits() {
+    let body = format!(
+        "{VERSIONED_CONFIG}{}",
+        (0..20)
+            .map(|i| format!("# context {i}\n"))
+            .collect::<String>()
+    );
+    let p = versioned_repo(&body);
+    git(p.path(), &["checkout", "-q", "-b", "feature"]);
+    git(p.path(), &["mv", "llmlint.yml", "moved.llmlint.yml"]);
+    git(p.path(), &["commit", "-qam", "rename"]);
+    p.check_version_bump()
+        .args(["--diff-base", "main"])
+        .assert()
+        .success();
+    p.write("moved.llmlint.yml", &format!("{body}# edited\n"));
+    p.check_version_bump()
+        .args(["--diff-base", "main"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("moved.llmlint.yml"));
+    p.write(
+        "moved.llmlint.yml",
+        &format!("{}# edited\n", body.replace("version: 1", "version: 2")),
+    );
+    p.check_version_bump()
+        .args(["--diff-base", "main"])
+        .assert()
+        .success();
+}
 
 #[test]
 fn version_bump_ok_when_the_config_is_unchanged() {

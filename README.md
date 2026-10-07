@@ -429,8 +429,8 @@ These variables are in scope when a template renders:
 | --- | --- | --- |
 | `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
 | `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), `.rationale` (whether this rule wants a justification), `.relevance` (the relevance condition string, or unset for an always-evaluated rule), `.require_line_attribution` (whether every violation must cite a `file` + `line`), and `.files` (the subset of `files` this rule applies to). |
-| `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), and `.diff` (that file's unified diff, present only under `--diff` when the file changed). The default template's "Target files" section is built from this. |
-| `diffs` | list of objects | Per-file changed-line diffs — one entry per *changed* file, present only under `--diff` (empty otherwise). Each has `.file` (matching its entry in `files`) and `.diff` (the unified diff text). Under `--diff` `files` is itself narrowed to the changed files, so there is one diff per target. The default template inlines these per file via `file_rules`; kept separately for custom templates. |
+| `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), and `.diff` (that file's unified diff (which may be a rename diff), present only under `--diff` when the file changed). The default template's "Target files" section is built from this. |
+| `diffs` | list of objects | Per-file changed-line diffs — one entry per *changed* file, present only under `--diff` (empty otherwise). Each has `.file` (matching its entry in `files`) and `.diff` (the unified diff text, which may be a rename diff). Under `--diff` `files` is itself narrowed to the changed files, so there is one diff per target. The default template inlines these per file via `file_rules`; kept separately for custom templates. |
 | `rationales` | bool | True when any rule in this batch wants a rationale — gate the rationale guidance on it. |
 | `relevance` | bool | True when any rule in this batch carries a relevance condition — gate the relevance guidance on it. |
 | `line_attribution` | bool | True when any rule in this batch requires line attribution — gate the line-attribution guidance on it. |
@@ -1024,7 +1024,18 @@ source.
   base is skipped with no model call — an empty intersection is a clean exit 0,
   so `--diff` is self-sufficient for the PR-review case without a caller-side
   changed-file computation. Bare `--diff` uses the `git` backend (compared
-  against `HEAD`). Add `--diff-base <REF>` to compare against a different git
+  against `HEAD`). Git renames are detected at the default similarity threshold:
+  the destination carries `rename from`/`rename to` headers and only edited
+  hunks; a pure rename remains a target with no changed lines to review. This
+  applies only when **every selected rule that selects the destination also
+  selects the old path**, using that rule's directory scope, own or config
+  include globs, and config/global/`--exclude` denylists. A move in from an
+  unselected path is reviewed whole as a new file; a move out stays unlinted.
+  Copies are not detected and are reviewed whole because they add duplicated
+  code. Git's `diff.renameLimit` is honoured: if git skips rename detection,
+  llmlint warns on stderr that affected files are reviewed whole and names
+  `diff.renameLimit` as the setting to raise.
+  Add `--diff-base <REF>` to compare against a different git
   revision instead of `HEAD` — a branch, tag, commit, or `A..B`/`A...B` range —
   so `--diff --diff-base main` reviews exactly what the current branch changed
   versus `main` (the PR-review case). A **plain ref uses three-dot / merge-base
@@ -1055,7 +1066,8 @@ source.
   `--diff-base main` to check what your branch changed) and `--diff <backend>`
   (default `git`). A config with no `version:` is a clean no-op that never touches
   git; exit `0` when every versioned config that changed was bumped, exit `2`
-  listing any that weren't.
+  listing any that weren't. A rename without hunks has unchanged content and
+  needs no bump; a rename with edits must bump its version like any other edit.
 - `llmlint validate` — run **every deterministic, model-free check in one pass**:
   config structure, `llmlint: ignore` directives, and version bumps. The fast
   static gate for a project — it chains the standalone checks above through the

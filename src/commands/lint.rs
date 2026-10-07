@@ -175,7 +175,30 @@ pub(crate) fn run_loaded(
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
-            diff::provider(backend, config.diff_base.clone()).diffs(&cwd, &all)?
+            diff::provider(backend, config.diff_base.clone()).diffs_with_renames(
+                &cwd,
+                &all,
+                &|old, new| {
+                    for rule in &selected {
+                        let fallback = RuleScope {
+                            dir: cwd.clone(),
+                            files: config.files.clone(),
+                        };
+                        let scope = scopes.get(&rule.name).unwrap_or(&fallback);
+                        let paths = ignores::resolve_files(
+                            &cwd,
+                            rule,
+                            &[old.to_path_buf(), new.to_path_buf()],
+                            scope,
+                            &config.files.exclude,
+                        )?;
+                        if paths.iter().any(|p| p == new) && !paths.iter().any(|p| p == old) {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                },
+            )?
         }
         None => BTreeMap::new(),
     };

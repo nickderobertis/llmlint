@@ -96,7 +96,10 @@ a missed one is still suppressed — but honor them so your verdict reads true.)
 When a file was modified in the change under review, its unified diff is shown
 right under it —
 **focus your review on those `+`/`-` lines**; unchanged code is context, not the
-subject of this review.
+subject of this review. A `rename from`/`rename to` (or `copy from`/`copy to`)
+header with a `similarity index` means the file moved or was copied. Content
+carried over unchanged is context, not the subject of the review. Only the hunk
+lines are the change; a rename without hunks has no changed lines to review.
 
 {% for fr in file_rules %}- {{ fr.file }}
 {% if fr.diff %}
