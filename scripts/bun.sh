@@ -56,7 +56,9 @@ readonly CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/llmlint-dev/bun-$VERSION"
 pinned_bun() {
   local candidate
   for candidate in "$(command -v bun 2>/dev/null || true)" "$CACHE_DIR/bin/bun"; do
-    [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+    if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then
+      continue
+    fi
     if [ "$("$candidate" --version 2>/dev/null)" = "$VERSION" ]; then
       printf '%s\n' "$candidate"
       return 0
@@ -110,8 +112,9 @@ install_pinned() {
     || fail "could not read $tmp/SHASUMS256.txt; re-run 'just bootstrap'."
   actual="$(sha256_of "$tmp/$asset.zip")" \
     || fail "could not hash $tmp/$asset.zip; re-run 'just bootstrap'."
-  [ -n "$expected" ] && [ "$expected" = "$actual" ] \
-    || fail "checksum mismatch for $asset.zip (expected '${expected}', got '${actual}'); not installing. Re-run 'just bootstrap' (a truncated download heals); if it persists, report it — do not bypass the check."
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    fail "checksum mismatch for $asset.zip (expected '${expected}', got '${actual}'); not installing. Re-run 'just bootstrap' (a truncated download heals); if it persists, report it — do not bypass the check."
+  fi
   unzip -q "$tmp/$asset.zip" -d "$tmp" \
     || fail "could not unpack $asset.zip (above); re-run 'just bootstrap', and report it if it persists."
   [ -f "$tmp/$asset/bun" ] \
