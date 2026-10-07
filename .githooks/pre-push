@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
-# screencomp local pre-push guard (adapted from `screencomp init`).
+# Local pre-push gate: llmlint's deterministic `validate` step, then the
+# screencomp visual guard (adapted from `screencomp init`).
 #
+# --- llmlint validate (every push) -------------------------------------------
+# `just lint-llm-validate` — config structure, every `llmlint: ignore` directive
+# naming a real rule, and versioned-plugin bumps — is fast and model-free, so it
+# runs on every push this hook evaluates, ahead of (and independent of) the
+# visual guard's own early exits below. A failure blocks the push; with no
+# `llmlint` installed it warns and skips without blocking (the CI `llmlint` job
+# enforces it regardless). The version-bump check diffs against `origin/main`
+# when that ref resolves, as CI does.
+#
+# --- screencomp visual guard -------------------------------------------------
 # Local half of the STRICT gate: CI fails on unexpected screenshot drift, and
 # this hook lets you regenerate and commit the baseline BEFORE pushing so CI
 # stays green. It re-captures only when screenshot-relevant files change
@@ -31,6 +42,27 @@
 #
 # llmlint: ignore-file[changed_behavior_has_e2e] the `pre_push_guard_*` journeys in tests/e2e/main.rs drive this real script the way git does, with screencomp/freeze/the capture stubbed at the subprocess seam (as the suite stubs oneharness); those third-party tools are not installed by `just setup` or CI's gate, and their own behavior is theirs to test
 set -euo pipefail
+
+# --- 0. llmlint validate: runs before every exit of the visual guard below ---
+# The recipe looks in ~/.local/bin (where `just setup-llmlint` installs), so the
+# presence check does too.
+if ! PATH="$HOME/.local/bin:$PATH" command -v llmlint >/dev/null 2>&1; then
+  echo "pre-push: llmlint is not installed; skipping 'just lint-llm-validate'" >&2
+  echo "          (install it: just setup-llmlint). CI's llmlint job still gates it." >&2
+elif ! command -v just >/dev/null 2>&1; then
+  echo "pre-push: just is not installed; skipping 'just lint-llm-validate'" >&2
+  echo "          (install it: ./scripts/setup.sh). CI's llmlint job still gates it." >&2
+else
+  validate_args=()
+  if git rev-parse --verify --quiet origin/main >/dev/null; then
+    validate_args=(--diff-base origin/main)
+  fi
+  if ! just lint-llm-validate ${validate_args[@]+"${validate_args[@]}"} </dev/null; then
+    echo "pre-push: 'just lint-llm-validate' failed — push blocked. Fix the findings" >&2
+    echo "          above, or bypass intentionally with: git push --no-verify" >&2
+    exit 1
+  fi
+fi
 
 # The declared [capture].arches lanes, read from screencomp.toml so they live in
 # exactly one place, and this host's own lane among them. Anything else is a host

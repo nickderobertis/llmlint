@@ -11840,12 +11840,34 @@ impl GuardRepo {
              classify) exit \"${STUB_CLASSIFY_EXIT:-0}\" ;;\n  *) exit 0 ;;\nesac\n",
         );
         p.write("bin/freeze", "#!/usr/bin/env bash\nexit 0\n");
+        // The hook's validate step runs the real `lint-llm-validate` recipe from
+        // the real justfile; only the `llmlint` it calls is stubbed, recording
+        // its argv and answering with a chosen exit (as the suite stubs oneharness).
+        p.write(
+            "justfile",
+            &fs::read_to_string(root.join("justfile")).unwrap(),
+        );
+        p.write(
+            "bin/llmlint",
+            "#!/usr/bin/env bash\nprintf 'llmlint %s\\n' \"$*\" >> \"$STUB_CALLS\"\n\
+             [ \"${STUB_VALIDATE_EXIT:-0}\" = 0 ] || echo 'stub validate: ignore names no rule' >&2\n\
+             exit \"${STUB_VALIDATE_EXIT:-0}\"\n",
+        );
+        // `just` itself is real, linked alone into a dir of its own so the hook's
+        // PATH can carry it without whatever else (a real llmlint) sits beside it.
+        let just = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|d| d.join("just"))
+            .find(|j| j.is_file())
+            .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+        fs::create_dir_all(p.path().join("tools")).unwrap();
+        std::os::unix::fs::symlink(just, p.path().join("tools/just")).unwrap();
+        fs::create_dir_all(p.path().join("home")).unwrap();
         p.write(
             "scripts/screenshots.sh",
             "#!/usr/bin/env bash\nprintf 'SHOTS_OUT=%s\\n' \"$SHOTS_OUT\" >> \"$STUB_CALLS\"\n\
              mkdir -p \"$SHOTS_OUT\"\n",
         );
-        for stub in ["bin/screencomp", "bin/freeze"] {
+        for stub in ["bin/screencomp", "bin/freeze", "bin/llmlint"] {
             fs::set_permissions(p.path().join(stub), fs::Permissions::from_mode(0o755)).unwrap();
         }
         init_repo(p.path());
@@ -11859,23 +11881,35 @@ impl GuardRepo {
     }
 
     /// Run the hook over `HEAD~1..HEAD`; returns its output and the stubs' call
-    /// log (one line per screencomp call: its argv; plus the capture dir).
+    /// log (one line per screencomp call: its argv; plus the capture dir; plus
+    /// `llmlint <argv>` for the validate step).
     fn run(&self, classify_exit: i32) -> (std::process::Output, String) {
+        self.run_with(classify_exit, &[])
+    }
+
+    /// [`Self::run`] with extra environment (e.g. `CI`, `STUB_VALIDATE_EXIT`).
+    /// PATH is the stubs, `just`, and the system dirs only — never the host's
+    /// own PATH, whose real llmlint would shadow the stub (or its absence) — and
+    /// HOME is a scratch dir, since the recipe also looks in `~/.local/bin`.
+    fn run_with(&self, classify_exit: i32, env: &[(&str, &str)]) -> (std::process::Output, String) {
         let calls = self.p.path().join("calls");
         let _ = fs::remove_file(&calls);
         let path = format!(
-            "{}:{}",
+            "{}:{}:/usr/bin:/bin",
             self.p.path().join("bin").display(),
-            std::env::var("PATH").unwrap_or_default()
+            self.p.path().join("tools").display(),
         );
         let mut c = std::process::Command::new("bash");
         c.arg(".githooks/pre-push")
             .current_dir(self.p.path())
             .env("PATH", path)
+            .env("HOME", self.p.path().join("home"))
             .env("STUB_CALLS", &calls)
             .env("STUB_CLASSIFY_EXIT", classify_exit.to_string())
             .env("SCREENCOMP_GUARD_RANGE", "HEAD~1..HEAD")
             .env_remove("CI")
+            .env_remove("LLMLINT_FILES_EXCLUDE")
+            .envs(env.iter().copied())
             .stdin(std::process::Stdio::null());
         // The suite's own gate runs inside a pre-push hook; the hook under test
         // must diff the scratch repo, not the one this test fired in.
@@ -12026,9 +12060,109 @@ fn pre_push_guard_refuses_a_host_lane_the_config_does_not_declare() {
         "{stderr}"
     );
     assert!(
-        calls.is_empty(),
+        calls.lines().all(|l| l.starts_with("llmlint ")),
         "no capture or screencomp call should run:\n{calls}"
     );
+}
+
+/// The `llmlint validate` the hook must issue: the real recipe's argv, with the
+/// version-bump base CI uses when `origin/main` resolves.
+#[cfg(unix)]
+fn validate_call(diff_base: bool) -> String {
+    if diff_base {
+        "llmlint validate --diff-base origin/main\n".into()
+    } else {
+        "llmlint validate\n".into()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_runs_llmlint_validate_on_every_push() {
+    // The deterministic validate step runs on every push the hook evaluates —
+    // ahead of, and regardless of, each early exit the visual guard takes (under
+    // CI, a host lane it refuses, no screencomp installed) — and leaves the
+    // guard's own outcome unchanged when it passes.
+    let (toml, _) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    let (out, calls) = repo.run(0);
+    assert!(out.status.success(), "{out:?}");
+    assert!(calls.starts_with(&validate_call(false)), "{calls}");
+    assert!(calls.contains("classify "), "the guard still ran:\n{calls}");
+
+    // With origin/main present the version-bump check diffs against it, as CI does.
+    git(
+        repo.p.path(),
+        &["update-ref", "refs/remotes/origin/main", "HEAD~1"],
+    );
+    let (out, calls) = repo.run(0);
+    assert!(out.status.success(), "{out:?}");
+    assert!(calls.starts_with(&validate_call(true)), "{calls}");
+
+    // Under CI the guard no-ops — validate still ran first.
+    let (out, calls) = repo.run_with(0, &[("CI", "1")]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(calls, validate_call(true));
+
+    // No screencomp: the guard warns and skips — validate still ran first.
+    fs::remove_file(repo.p.path().join("bin/screencomp")).unwrap();
+    let (out, calls) = repo.run(0);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("screencomp is NOT on PATH"), "{stderr}");
+    assert_eq!(calls, validate_call(true));
+
+    // A host lane the config does not declare: refused — validate still ran first.
+    let repo = GuardRepo::new("[capture]\narches = [\"riscv64\", \"s390x\"]\n");
+    let (out, calls) = repo.run(0);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(calls, validate_call(false));
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_blocks_the_push_when_llmlint_validate_fails() {
+    // A failing validate blocks the push with llmlint's own finding on stderr and
+    // the bypass named, before any capture is spent.
+    let (toml, _) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    let (out, calls) = repo.run_with(0, &[("STUB_VALIDATE_EXIT", "1")]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("stub validate: ignore names no rule"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("'just lint-llm-validate' failed — push blocked"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("git push --no-verify"), "{stderr}");
+    assert_eq!(
+        calls,
+        validate_call(false),
+        "no capture after a failed validate"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_guard_skips_llmlint_validate_when_llmlint_is_not_installed() {
+    // No llmlint on PATH (nor in ~/.local/bin): warn, point at the installer, and
+    // carry on to the visual guard — never block the push on a missing tool.
+    let (toml, _) = repo_screencomp_toml();
+    let repo = GuardRepo::new(&toml);
+    fs::remove_file(repo.p.path().join("bin/llmlint")).unwrap();
+    let (out, calls) = repo.run(0);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("llmlint is not installed; skipping 'just lint-llm-validate'"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("just setup-llmlint"), "{stderr}");
+    assert!(!calls.contains("llmlint "), "{calls}");
+    assert!(calls.contains("classify "), "the guard still ran:\n{calls}");
 }
 // llmlint: ignore-end[e2e_not_mocked]
 

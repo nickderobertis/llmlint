@@ -769,6 +769,16 @@ arch, so the suite is not x86_64-only. A companion check holds every declared
 lane's baseline present and byte-equal — the identical-bytes contract that lets
 one host bless its own lane and CI's job for the other check it.
 
+The hook's first step runs `just lint-llm-validate` (the real recipe from the
+real justfile, copied in) on every push, ahead of each of the guard's early
+exits; only the `llmlint` it calls is stubbed. The hook runs with a PATH of the
+stubs, a lone `just` link, and the system dirs, and a scratch HOME, so a real
+llmlint on the host can neither stand in for the stub nor for its absence.
+Journeys cover validate running before every guard exit (CI, no screencomp, an
+undeclared lane) with the `origin/main` diff base when it resolves, a failing
+validate blocking before any capture, and a missing llmlint warning and skipping
+without blocking.
+
 ## CI's `freeze` installer (`scripts/ci-install-freeze.sh`)
 
 CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the
