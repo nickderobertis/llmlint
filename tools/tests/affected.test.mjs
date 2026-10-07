@@ -4,13 +4,18 @@
 // else. A file landing in the wrong project, or an edge missing from the graph,
 // would let a change skip the suites that exercise it while the gate stayed green.
 // llmlint: ignore-file[shell_test_tiers_stay_split] these tests are offline and hermetic: they ask Nx's own graph resolution (the gate's orchestrator, installed from bun.lock) about the real workspace and run nothing it selects; the files they read are this project's inputs, so a separate project would be selected by exactly the same edits
-import { beforeAll, expect, test } from "bun:test";
+import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const REPO = resolve(import.meta.dir, "../..");
+
+// Each test spawns Nx several times, and the graph hook resolves the whole
+// workspace: bun's 5s default is shorter than one cold Nx start on a Windows
+// runner, where the hook timed out before Nx answered.
+setDefaultTimeout(120_000);
 
 function nx(args) {
   const r = spawnSync("bash", ["scripts/nx", ...args], { encoding: "utf8", cwd: REPO });
