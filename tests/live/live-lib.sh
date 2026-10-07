@@ -17,7 +17,7 @@
 # own. The entrypoint declares its harness id, the CLI it needs, the auth env vars
 # it accepts, and an optional model override, then calls `live_run_journeys <id>`.
 # `live_run_journeys` is harness-agnostic, so an ad-hoc script for another harness
-# is a few lines (see `tests/AGENTS.md`).
+# is a few lines (see `tests/live/AGENTS.md`).
 
 # Repo root = two levels above this script (it lives in tests/live/).
 LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -1,40 +1,14 @@
-# tests/AGENTS.md
+# tests/e2e/AGENTS.md
 
 The e2e suite (`tests/e2e/`) is the source of truth for what llmlint does. It
 drives the **real `llmlint` binary** (via `assert_cmd`) against the deterministic
 `llmlint-mock-oneharness` fixture (passed with `--oneharness-bin`), which stands
 in for the one genuinely-external boundary. **Never mock llmlint's own logic**
 (config load/merge/include, file globbing, template render, batching, voting,
-reporting). Add a journey here when a user-facing behavior lands.
+reporting). Add a journey here when a user-facing behavior lands. The fixture's
+own controls (the `LLMLINT_MOCK_*` variables) are in
+`tests/mock-oneharness/AGENTS.md`.
 
-## Fixture control (env vars read by the mock)
-
-- `LLMLINT_MOCK_VERDICTS=<path>` — JSON map `rule -> spec`; a spec is a bool
-  (`holds`), an object (`{holds, violations}`, optionally `{relevant, rationale}`
-  for a relevance-gated rule), or an array of specs (one per judge call).
-- `LLMLINT_MOCK_STATE=<dir>` — per-rule call counter backing array specs; use
-  `--max-parallel 1` so the sequence is deterministic.
-- `LLMLINT_MOCK_DUMP=<file>` — record the rendered `--system` prompt, to assert
-  which files/rules reached the judge (globbing + template render).
-- `LLMLINT_MOCK_FAIL_SCHEMA` / `LLMLINT_MOCK_NO_STRUCTURED` / `LLMLINT_MOCK_GARBAGE`
-  — force oneharness failure shapes.
-- `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
-  which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
-- `LLMLINT_MOCK_DUMP_HISTORY_LABELS=<dir>` — record the history-label environment
-  seen by `--version` and `run` separately, to assert session-only label injection.
-- `LLMLINT_MOCK_DUMP_SCHEMA=<file>` — copy the generated `--schema` JSON, to
-  assert its shape (e.g. each rule's `name`/`rationale`/`holds` ordering).
-- `LLMLINT_MOCK_RUNLOG=<dir>` — one file per invocation listing the rules it
-  judged, to count oneharness calls and assert how rules were batched.
-- `LLMLINT_MOCK_SPAWNLOG=<dir>` — one file per **process spawn** (the arg vector),
-  written before any subcommand branching so it covers the `--version` pre-flight
-  too. `RUNLOG`/`DUMP` only prove no *judge* ran; an empty spawn log proves the
-  binary was never executed — what a guard that must cost nothing needs to show.
-  Pair it with a resolving control invocation, so an empty log can't mean "never
-  wired".
-- `LLMLINT_MOCK_BARRIER=<dir>` (+ `_N`, `_MS`) — a rendezvous that releases only
-  when `N` invocations are present at once, to prove `--max-parallel` overlapped
-  them (a serial wave times out instead).
 
 Plugin-fetch journeys also set `LLMLINT_CACHE_DIR=<dir>` (an isolated cache),
 and the one `http://` journey drives the real built-in HTTPS client (`ureq`)
@@ -664,170 +638,9 @@ resolves the oneharness the test put on PATH.
   (nothing ran) errors naming every attempted harness rather than one skipped
   harness's "no structured output" (`+ LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
 
-## Real-oneharness tier (`tests/real_oneharness.rs`)
-
-The hermetic suite doubles oneharness, so it can prove which `--config` files
-llmlint forwards and in what order, but not that a later file's settings win.
-`just test-oneharness` closes that gap without a model: it installs the released
-`oneharness-cli` at the justfile's `oneharness-cli-version` pin — the multi-file
-floor, `LAYERED_CONFIG_MIN_VERSION` — runs the real `llmlint` against the mock
-(which records the argv), and hands the recorded `--config` list, verbatim and
-from the same working directory, to the real `oneharness config --format json`.
-Each journey asserts the forwarded list, that oneharness loaded exactly those
-files, and that the resolved `mode` is the highest layer's, attributed to it:
-the later of two configured files; a repository config over its plugin's; the
-nearest of nested llmlint configs (with a path configured at both levels);
-`LLMLINT_ONEHARNESS_CONFIG` over the config files; and a `--oneharness-config`
-flag over both. The tests are `#[ignore]`-d; run without the recipe's
-`LLMLINT_REAL_ONEHARNESS` they fail rather than skip. The one non-ignored test,
-`the_tier_pins_the_multi_file_floor`, holds the pin to the constant in every run.
-
-## Live tier (`tests/live/live-*.sh`)
-
-The hermetic e2e suite above proves llmlint's logic against a mock oneharness. The
-**live tier** proves the *real* stack — the built `llmlint` binary → real
-`oneharness` → a real, authenticated harness. It is opt-in (`just live-claude`),
-makes real (paid) model calls, and is out of the `just check` gate — it runs on
-PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
-
-- **What it covers that the hermetic suite can't:** the built binary + the
-  oneharness subprocess + a real harness round-trip, on **Linux, macOS, and
-  Windows** (the workflow's OS matrix). That cross-OS proof is the point. Harness
-  *breadth* (codex, cursor, …) is **oneharness's** test surface, not llmlint's —
-  from llmlint's side every harness is the same `--harness <id>` forwarded to
-  oneharness, so one canonical harness (claude-code) is enough here.
-- **Never skips.** A missing harness CLI, missing auth, or missing oneharness — or
-  any exit 2 (the stack couldn't complete) — is a **hard failure** (red build). A
-  silent skip would let a broken live setup pass unnoticed, so the live tier has no
-  skip path at all (matching oneharness's own e2e, which fails rather than skips).
-  This runs the full round-trip on Linux, macOS, **and Windows**.
-- **Journeys** (`live_run_journeys` in `tests/live/live-lib.sh`): scaffold a throwaway
-  project with one crisp invariant (`no_todo_comments`) pinned to the harness, then
-  (1) a clean `src/lib.rs` must pass → exit 0, rule `pass`; (2) a file with a
-  planted `TODO` must be flagged → exit 1, rule `fail`; (3) a **fallback** journey
-  (issue #146): a project that pins *no* harness plus a `oneharness.toml` with
-  `run_mode = "fallback"` and an **absent primary** (`codex`, never installed on the
-  runner) ahead of the canonical harness — oneharness skips the primary and runs the
-  canonical one, naming it in `fallback.ran` while the skipped primary is
-  `results[0]`. A clean file must still pass → exit 0. This is the real-stack
-  regression guard: the pre-fix llmlint read the skipped `results[0]` and errored
-  the run, so it validates llmlint consumes the *real* oneharness fallback JSON
-  shape the hermetic mock only approximates. Exit 2 (the live stack could not
-  complete) is also a failure.
-- **Harness CLI + auth** (required; absent → fail): `claude-code` needs the
-  `claude` CLI and `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`). To drive a
-  different harness ad hoc, call `live_run_journeys <id>` with that harness's CLI
-  installed and authed (`tests/live/live-lib.sh` is harness-agnostic).
-- **Overrides:** `CLAUDE_E2E_MODEL` picks the judge model (defaults to `haiku`);
-  `LL_TIMEOUT` (default 120s) becomes the config's `oneharness.timeout`;
-  `LLMLINT_BIN` / `LLMLINT_ONEHARNESS_BIN` override binary resolution.
-
-## Windows color-rendering tier (`tests/win-color/win-console-color.ps1`)
-
-Color has two separable questions: does llmlint **emit** the right ANSI, and does
-a terminal **render** it? The first is platform-independent and already covered —
-the hermetic e2e (`color_is_off_when_piped_but_forced_by_color_always`) and the
-screenshot tooling both assert the escape bytes. The second is the one that can
-actually break on Windows: a legacy console (no virtual-terminal processing)
-prints bare ANSI as `<-[31m` garbage. llmlint routes its report through anstream's
-`AutoStream` (enable VT, else translate to Win32 console attribute calls) so it
-renders; this tier proves that end result.
-
-- **What it covers that nothing else does:** a *real Windows console* interpreting
-  llmlint's color. `tests/win-color/win-console-color.ps1` drives the **release binary**
-  against the **mock-oneharness fixture** (`screenshots/fixture/`, no model/network/
-  cost — deterministic) with `--color always` into a freshly created console screen
-  buffer, then reads the buffer back with `ReadConsoleOutput` and asserts the per
-  -cell *attributes*: the `FAIL` label is red, `PASS` is green, and no cell holds a
-  raw ESC (0x1b). A pre-`AutoStream` build (bare ANSI to a fresh buffer, VT off)
-  leaves raw escapes in the cells and fails here.
-- **It is a gate, not informational.** A Windows rendering regression is a hard
-  failure. Run it with `just win-color`; CI runs it on `windows-latest`
-  (`.github/workflows/win-color.yml`). It needs no harness CLI, auth, or
-  oneharness — only the binary + the fixture — so unlike the live tier it is free
-  and runs on every PR.
-
-## The pre-push visual guard (`.githooks/pre-push`)
-
-The `pre_push_guard_*` journeys drive the **real hook script** the way git does
-(cwd = a scratch repo, the range on `SCREENCOMP_GUARD_RANGE`), with stubs at its
-subprocess seams (`GuardRepo`): a `screencomp` that records argv and answers with
-a chosen exit, a `freeze`, and a `screenshots/screenshots.sh`. The real tools are not
-installed by `just setup` or CI's gate, so they are stubbed as the suite stubs
-oneharness; a change to the hook's own logic gets its journey here. The hook's own
-lane helper (`screenshots/host-arch.sh`) is **not** stubbed — the real one is copied
-in, so the lane under test is the one this host would really guard. They are
-`#[cfg(unix)]` — the hook is bash.
-
-The invariant they pin: `[capture].arches` declares one lane per arch, each with
-its own committed baseline, and the guard is **local** — it classifies and
-re-blesses the lane of the **host it runs on**, refusing a host arch no lane
-declares. Journeys cover the clean push, drift (which rewrites that lane's
-manifest and blocks), and the undeclared-host refusal; each drives configurations
-that discriminate the host's lane from the first declared one on **every** CI
-arch, so the suite is not x86_64-only. A companion check holds every declared
-lane's baseline present and byte-equal — the identical-bytes contract that lets
-one host bless its own lane and CI's job for the other check it.
-
-The hook's `just lint-llm-validate` step runs the real recipe from a copied-in
-justfile with only `llmlint` stubbed. Keep the hook's PATH to the stubs, a lone
-`just` link, and the system dirs, and HOME scratch: the recipe also looks in
-`~/.local/bin`, so a host llmlint would otherwise stand in for the stub or for
-its absence.
-
-## CI's `freeze` installer (`screenshots/ci-install-freeze.sh`)
-
-CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the
-`freeze` release matching the **runner's** architecture, and validate it against
-digests pinned in this repository. The `ci_install_freeze_*` journeys drive the
-real script with real `curl`/`tar`/`install`; only what a test cannot own is stood
-in — the runner's CPU (a `uname` ahead of the real one on `PATH`) and
-charmbracelet's release server (a local release tree over `file://`, with its own
-pin file). They cover every `uname -m` spelling installing the matching asset
-(proven by running the installed binary), an architecture freeze does not publish
-for, an archive failing its pinned digest, one missing the binary, and the pin
-agreeing with the justfile's.
-
-## Workflow lint (`scripts/lint-workflows.sh`, `scripts/install-actionlint.sh`)
-
-These scripts' journeys run the real scripts with real `curl`/`tar`/`install`;
-only what a test cannot own is stood in — the host (`uname`), rhysd's release
-server (a local release tree over `file://`), and, where the journey is about
-how the lint script treats actionlint's answer, the `actionlint` binary itself.
-The installer's supported-platform matrix is read from the script, so the pin
-file and the journeys cannot drift from what it can choose.
-
-## Required status-check contexts (`.github/workflows/`)
-
-`PR_CONTEXTS` in `tests/e2e/main.rs` is the fixed context contract, and it moves
-only with AGENTS.md's required-checks list (a journey holds that list to it) and
-the branch protection that governance applies. A job condition is allowed on a
-contract job only when it is true on every PR (`PR_TRUE_CONDITIONS`). screencomp's
-inner `report` job name is known only for the pinned `VISUAL_DOCS_REUSABLE`, so a
-pin bump fails until that name is re-confirmed.
-
-## Release declaration + probe (`tests/release_targets.rs`)
-
-`release-targets.toml` is parsed by a restatement of the canonical release-target
-schema and held to the real release configuration in both directions: the
-published set is *derived* from the workflows' publish steps (`cargo publish`,
-`pypa/gh-action-pypi-publish`, a publishing `release-plz release`) and the
-manifests' package names, and an unrecognised registry publish (`npm publish`,
-`twine upload`, …) fails the gate. The drift check is also driven over the real
-`release.yml`/manifests edited to disagree. `scripts/release-probe.sh` runs for
-real, with a cleared environment, against a stand-in registry on localhost
-(`LLMLINT_RELEASE_PROBE_{CRATES,PYPI}_URL`): a served version for each target,
-404 → no release yet, error status / refused connection / a stalled connection
-(within the 60s bound) → not answered, planted credentials never sent, and any
-identifier but the two declared ids → not answered. Unix-only. Two tests need
-the network and are `#[ignore]`-d (`just test-release-targets`): the probe
-against the live registries, and the restated schema reconciled against onevcs's
-canonical implementation (constants, version-1 key sets, rule expressions, and
-that `schema_version = 1` is still in the range it reads).
-
 ## Unit vs e2e
 
 Pure domain logic (validation, planning, voting, schema, rendering, reporting)
 and the oneharness client's process handling are unit-tested in-module. The
 `#[cfg(unix)]` subprocess timeout/capture tests run on Linux/macOS; the coverage
-threshold is therefore enforced on Linux CI (see `AGENTS.md`).
+threshold is therefore enforced on Linux CI (see the root `AGENTS.md`).

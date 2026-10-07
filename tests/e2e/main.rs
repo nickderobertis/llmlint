@@ -2,7 +2,7 @@
 //! against the deterministic `llmlint-mock-oneharness` fixture (the genuinely
 //! external boundary) via `--oneharness-bin`. No network, no real LLM. Every
 //! user-facing journey — happy path and failure/recovery — lands here as the
-//! source of truth for what's covered (see `tests/AGENTS.md`).
+//! source of truth for what's covered (see `AGENTS.md` beside this file).
 
 use std::fs;
 use std::io::{Read, Write};

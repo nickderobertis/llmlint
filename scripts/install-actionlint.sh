@@ -20,9 +20,9 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
-# Overridable so the e2e journeys can drive the real script against a stand-in
-# release tree and digest pin instead of the network; setup and CI use the
-# defaults. `-` rather than `:-`: an override that is SET but empty is a
+# Overridable so the journeys in tests/tooling.rs can drive the real script
+# against a stand-in release tree and digest pin instead of the network; setup
+# and CI use the defaults. `-` rather than `:-`: an override that is SET but empty is a
 # misconfigured caller, which the checks below reject.
 base_url="${ACTIONLINT_BASE_URL-https://github.com/rhysd/actionlint/releases/download}"
 install_dir="${ACTIONLINT_INSTALL_DIR-$LOCAL_BIN}"

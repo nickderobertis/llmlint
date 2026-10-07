@@ -58,7 +58,9 @@ test("the workflows are linted by actionlint, ci-workflows' lint-workflows", () 
 
 test("the check recipe runs every gate target, the shell and workflow lint included, at either tier", () => {
   const justfile = readFileSync(join(REPO, "justfile"), "utf8");
-  const recipe = justfile.slice(justfile.indexOf("\ncheck *flags:"));
-  const body = recipe.split("\n").slice(1).filter((l) => l.startsWith("    "))[0];
-  expect(body).toContain('scripts/nx-tier.sh "$@" -- -t format lint lint-sh lint-workflows build test doc coverage');
+  const recipe = justfile.slice(justfile.indexOf("\ncheck *flags:") + 1);
+  const body = recipe.slice(0, recipe.indexOf("\n\n"));
+  const targets = "-t format lint lint-sh lint-workflows build test doc coverage";
+  expect(body).toContain(`bash scripts/nx run-many --all ${targets};`);
+  expect(body).toContain(`bash scripts/nx affected --base="$tier" ${targets};`);
 });

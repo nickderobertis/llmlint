@@ -20,6 +20,17 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// Drop every inherited `GIT_*` variable from a command: git's
+/// repository-selection variables outrank `-C`, and the repository's own gate
+/// runs inside a `pre-push` hook that exports `GIT_DIR` for its own repository.
+fn clear_git_env(cmd: &mut std::process::Command) {
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            cmd.env_remove(&name);
+        }
+    }
+}
+
 /// A throwaway directory with helpers to write files into it.
 struct Project {
     dir: TempDir,
@@ -810,3 +821,174 @@ fn setup_check_reports_a_missing_actionlint_as_not_ready() {
     assert!(stdout.contains("just setup"), "{stdout}");
 }
 // llmlint: ignore-end[e2e_not_mocked]
+
+// ---- gate recipes: the tier and its explicit base ---------------------------
+
+/// A scratch repository carrying the real justfile and the real
+/// `scripts/nx-tier.sh` + `scripts/nx-base.sh`, with only `scripts/nx` (Nx
+/// itself, the orchestrator the recipes hand off to) stood in by a stub that
+/// records its argv. History: `base` -> `feature` (HEAD) on one side, and
+/// `origin/main` moved on to `upstream` on the other, so the merge base with
+/// `origin/main` (`base`) is not `origin/main` itself.
+#[cfg(unix)]
+struct GateRepo {
+    p: Project,
+    base: String,
+    upstream: String,
+}
+
+#[cfg(unix)]
+impl GateRepo {
+    fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let p = Project::new();
+        let root = repo_root();
+        for file in ["justfile", "scripts/nx-tier.sh", "scripts/nx-base.sh"] {
+            p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+        }
+        p.write(
+            "scripts/nx",
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$NX_CALLS\"\n",
+        );
+        fs::set_permissions(
+            p.path().join("scripts/nx"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let git_out = |args: &[&str]| {
+            let mut cmd = std::process::Command::new("git");
+            cmd.arg("-C").arg(p.path()).args(args);
+            clear_git_env(&mut cmd);
+            let out = cmd.output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        git_out(&["init", "-q", "-b", "main"]);
+        git_out(&["config", "user.email", "t@t.t"]);
+        git_out(&["config", "user.name", "t"]);
+        git_out(&["add", "."]);
+        git_out(&["commit", "-q", "-m", "base"]);
+        let base = git_out(&["rev-parse", "HEAD"]);
+        git_out(&["commit", "-q", "--allow-empty", "-m", "upstream"]);
+        let upstream = git_out(&["rev-parse", "HEAD"]);
+        git_out(&["update-ref", "refs/remotes/origin/main", &upstream]);
+        git_out(&["checkout", "-q", "-b", "feature", &base]);
+        git_out(&["commit", "-q", "--allow-empty", "-m", "feature"]);
+        GateRepo { p, base, upstream }
+    }
+
+    /// Run `just <args>` here, with `NX_BASE` set to `nx_base` (or unset);
+    /// returns the output and the argv each `scripts/nx` call received.
+    fn just(&self, args: &[&str], nx_base: Option<&str>) -> (std::process::Output, Vec<String>) {
+        let calls = self.p.path().join("nx-calls");
+        let _ = fs::remove_file(&calls);
+        let mut cmd = std::process::Command::new("just");
+        cmd.args(args)
+            .current_dir(self.p.path())
+            .env("NX_CALLS", &calls)
+            .env_remove("NX_BASE");
+        clear_git_env(&mut cmd);
+        if let Some(base) = nx_base {
+            cmd.env("NX_BASE", base);
+        }
+        let out = cmd
+            .output()
+            .expect("`just` is a required dev tool (see scripts/setup-lib.sh)");
+        let recorded = fs::read_to_string(&calls).unwrap_or_default();
+        (out, recorded.lines().map(str::to_string).collect())
+    }
+}
+
+#[cfg(unix)]
+const GATE_TARGETS: &str = "-t format lint lint-sh lint-workflows build test doc coverage";
+
+#[cfg(unix)]
+#[test]
+fn check_runs_the_affected_tier_from_the_merge_base_with_origin_main_by_default() {
+    let repo = GateRepo::new();
+    let (out, calls) = repo.just(&["check"], None);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        calls,
+        vec![format!("affected --base={} {GATE_TARGETS}", repo.base)]
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("merge-base with origin/main"));
+}
+
+#[cfg(unix)]
+#[test]
+fn check_takes_its_base_from_a_valid_nx_base() {
+    let repo = GateRepo::new();
+    for base in [repo.upstream.as_str(), "origin/main", "main"] {
+        let (out, calls) = repo.just(&["check"], Some(base));
+        assert!(out.status.success(), "{base}: {out:?}");
+        assert_eq!(
+            calls,
+            vec![format!("affected --base={base} {GATE_TARGETS}")]
+        );
+        assert!(String::from_utf8_lossy(&out.stderr).contains("(NX_BASE)"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn check_refuses_an_invalid_nx_base_before_any_target_runs() {
+    let repo = GateRepo::new();
+    // `HEAD~1` resolves, so only the plain-ref-or-SHA rule refuses it; the
+    // rest are malformed or name nothing.
+    for bad in [
+        "HEAD~1",
+        "main..feature",
+        "-x",
+        "main;rm",
+        "",
+        "no-such-ref",
+    ] {
+        let (out, calls) = repo.just(&["check"], Some(bad));
+        assert!(!out.status.success(), "{bad:?} was accepted: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("NX_BASE"), "{bad:?}: {err}");
+        assert!(calls.is_empty(), "{bad:?} reached Nx: {calls:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn check_all_runs_the_full_sweep_and_a_mistyped_tier_runs_nothing() {
+    let repo = GateRepo::new();
+    let (out, calls) = repo.just(&["check", "--all"], Some("main..feature"));
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(calls, vec![format!("run-many --all {GATE_TARGETS}")]);
+
+    let (out, calls) = repo.just(&["check", "--al"], None);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown flag(s) '--al'"));
+    assert!(calls.is_empty(), "{calls:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn every_gate_recipe_takes_the_same_tier() {
+    // The test/lint/format/doc recipes are the same tier choice over one
+    // target each, so `just test` in CI's cross jobs and `just check` agree.
+    let repo = GateRepo::new();
+    for (recipe, targets) in [
+        ("test", "-t test"),
+        ("lint", "-t lint"),
+        ("lint-sh", "-t lint-sh"),
+        ("lint-workflows", "-t lint-workflows"),
+        ("fmt-check", "-t format"),
+        ("format", "-t format --configuration=write"),
+        ("doc", "-t doc"),
+    ] {
+        let (out, calls) = repo.just(&[recipe], None);
+        assert!(out.status.success(), "{recipe}: {out:?}");
+        assert_eq!(
+            calls,
+            vec![format!("affected --base={} {targets}", repo.base)]
+        );
+        let (out, calls) = repo.just(&[recipe, "--all"], None);
+        assert!(out.status.success(), "{recipe} --all: {out:?}");
+        assert_eq!(calls, vec![format!("run-many --all {targets}")]);
+    }
+}

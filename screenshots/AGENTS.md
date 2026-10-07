@@ -150,6 +150,48 @@ or the scenes in `screenshots/screenshots.sh` will change the SVGs. That is expe
 run `just screenshots-bless` and commit the new baseline + `docs/screenshots/`.
 Bumping `freeze-version` or the vendored font reflows every shot; bless once and
 keep the two `freeze` version pins in sync (`freeze-version` in the justfile and
-`freeze_version` in `screenshots/ci-install-freeze.sh` — an e2e journey holds them
+`freeze_version` in `screenshots/ci-install-freeze.sh` — a journey here holds them
 equal). A reflow changes every lane identically, so one host's bless covers both
 baselines.
+
+## The pre-push visual guard (`.githooks/pre-push`)
+
+The `pre_push_guard_*` journeys (`tests/visual_guard.rs`) drive the **real hook
+script** the way git does (cwd = a scratch repo, the range on
+`SCREENCOMP_GUARD_RANGE`), with stubs at its
+subprocess seams (`GuardRepo`): a `screencomp` that records argv and answers with
+a chosen exit, a `freeze`, and a `screenshots/screenshots.sh`. The real tools are not
+installed by `just setup` or CI's gate, so they are stubbed as the suite stubs
+oneharness; a change to the hook's own logic gets its journey here. The hook's own
+lane helper (`screenshots/host-arch.sh`) is **not** stubbed — the real one is copied
+in, so the lane under test is the one this host would really guard. They are
+`#[cfg(unix)]` — the hook is bash.
+
+The invariant they pin: `[capture].arches` declares one lane per arch, each with
+its own committed baseline, and the guard is **local** — it classifies and
+re-blesses the lane of the **host it runs on**, refusing a host arch no lane
+declares. Journeys cover the clean push, drift (which rewrites that lane's
+manifest and blocks), and the undeclared-host refusal; each drives configurations
+that discriminate the host's lane from the first declared one on **every** CI
+arch, so the suite is not x86_64-only. A companion check holds every declared
+lane's baseline present and byte-equal — the identical-bytes contract that lets
+one host bless its own lane and CI's job for the other check it.
+
+The hook's `just lint-llm-validate` step runs the real recipe from a copied-in
+justfile with only `llmlint` stubbed. Keep the hook's PATH to the stubs, a lone
+`just` link, and the system dirs, and HOME scratch: the recipe also looks in
+`~/.local/bin`, so a host llmlint would otherwise stand in for the stub or for
+its absence.
+
+## CI's `freeze` installer (`screenshots/ci-install-freeze.sh`)
+
+CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the
+`freeze` release matching the **runner's** architecture, and validate it against
+digests pinned in this repository. The `ci_install_freeze_*` journeys
+(`tests/visual_guard.rs`) drive the real script with real `curl`/`tar`/`install`;
+only what a test cannot own is stood in — the runner's CPU (a `uname` ahead of the real one on `PATH`) and
+charmbracelet's release server (a local release tree over `file://`, with its own
+pin file). They cover every `uname -m` spelling installing the matching asset
+(proven by running the installed binary), an architecture freeze does not publish
+for, an archive failing its pinned digest, one missing the binary, and the pin
+agreeing with the justfile's.

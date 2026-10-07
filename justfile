@@ -5,12 +5,13 @@
 # quality gate and fails on any issue (no warnings-only mode). Recipes are quiet
 # on success and specific on failure.
 #
-# The gate recipes (check, test, lint, format, doc) DELEGATE to Nx through
-# scripts/nx-tier.sh: each project declares what its targets do (cargo fmt,
-# clippy, nextest under cargo-llvm-cov, shellcheck, actionlint), and the root only
-# chooses which projects run them. With no flag they run the AFFECTED tier —
-# `nx affected` from the explicit base scripts/nx-base.sh prints (NX_BASE, else
-# the merge base with origin/main); `--all` runs the FULL SWEEP (`nx run-many
+# The gate recipes (check, test, lint, lint-sh, lint-workflows, fmt-check,
+# format, doc) DELEGATE to Nx (scripts/nx runs it on the pinned bun): each project
+# declares what its targets do (cargo fmt, clippy, nextest under cargo-llvm-cov,
+# shellcheck, actionlint), and the root only chooses which projects run them.
+# scripts/nx-tier.sh picks the tier: with no flag the AFFECTED tier — `nx
+# affected` from the explicit base scripts/nx-base.sh prints (NX_BASE, validated,
+# else the merge base with origin/main); `--all` the FULL SWEEP (`nx run-many
 # --all`). See AGENTS.md "Commits, releases, and merging" for which CI run uses
 # which tier.
 
@@ -75,35 +76,65 @@ bootstrap:
 # by default; `just check --all` is the full sweep. Fails on any issue.
 [positional-arguments]
 check *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t format lint lint-sh lint-workflows build test doc coverage
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format lint lint-sh lint-workflows build test doc coverage; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format lint lint-sh lint-workflows build test doc coverage; \
+    fi
     @echo "check: ok"
 
 # The test targets (each coverage-measured one writes its profiles; no floor).
 [positional-arguments]
 test *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t test
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t test; \
+    else \
+      bash scripts/nx affected --base="$tier" -t test; \
+    fi
 
 # Lint: clippy per crate (-D warnings) and the project-boundary check. Shell and
 # workflow lint are `lint-sh` and `lint-workflows` (separate so the macOS/Windows
 # cross jobs can run this one without shellcheck or actionlint); `check` runs all.
 [positional-arguments]
 lint *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t lint
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t lint; \
+    else \
+      bash scripts/nx affected --base="$tier" -t lint; \
+    fi
 
 # Format the affected crates in place (`--all` for every crate).
 [positional-arguments]
 format *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t format --configuration=write
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format --configuration=write; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format --configuration=write; \
+    fi
 
 # Verify formatting without modifying files (the gate's `format` target).
 [positional-arguments]
 fmt-check *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t format
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format; \
+    fi
 
 # Build the docs with warnings denied (kept in the gate so doc links don't rot).
 [positional-arguments]
 doc *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t doc
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t doc; \
+    else \
+      bash scripts/nx affected --base="$tier" -t doc; \
+    fi
 
 # Every coverage-measured project's tests under cargo-llvm-cov, then the 95% line
 # floor over their union (lower it only with a documented reason in AGENTS.md).
@@ -114,13 +145,23 @@ coverage:
 # `check`. Fix a finding, or disable it at its site with a reason.
 [positional-arguments]
 lint-sh *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t lint-sh
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t lint-sh; \
+    else \
+      bash scripts/nx affected --base="$tier" -t lint-sh; \
+    fi
 
 # actionlint over every workflow (the ci-workflows project); part of `check`.
 # Fix a workflow finding at its site rather than suppress it.
 [positional-arguments]
 lint-workflows *flags:
-    @bash scripts/nx-tier.sh "$@" -- -t lint-workflows
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t lint-workflows; \
+    else \
+      bash scripts/nx affected --base="$tier" -t lint-workflows; \
+    fi
 
 # Install the pinned actionlint into ~/.local/bin; a no-op when it is already there.
 actionlint-tools:
@@ -319,7 +360,7 @@ lint-llm *paths:
 # suppressions. llmlint *defines* the ignore-directive syntax, so check-ignores
 # can't tell an example from the real thing and flags them all. Keep this list
 # current as those examples move between files.
-ignore-scan-exclude := "README.md:AGENTS.md:tests/AGENTS.md:assets/default_template.md:scripts/setup-llmlint.sh:src/domain/ignore.rs:src/io/files.rs:src/commands/check_ignores.rs:src/errors.rs:src/domain/plan.rs:tests/e2e/main.rs"
+ignore-scan-exclude := "README.md:AGENTS.md:tests/e2e/AGENTS.md:assets/default_template.md:scripts/setup-llmlint.sh:src/domain/ignore.rs:src/io/files.rs:src/commands/check_ignores.rs:src/errors.rs:src/domain/plan.rs:tests/e2e/main.rs"
 
 # Deterministic llmlint config/ignore/version-bump validation. The exclude above is
 # applied via the LLMLINT_FILES_EXCLUDE env layer (issue #152: CLI > env > config;

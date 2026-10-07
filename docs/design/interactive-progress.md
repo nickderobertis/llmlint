@@ -153,7 +153,7 @@ function + a couple of real end-to-end checks). Jest does exactly this —
 `isInteractive` is its own tiny tested module and `DefaultReporter` is
 snapshot-tested with the flag forced both ways.
 
-llmlint's layers map onto the existing tiers (`tests/AGENTS.md`):
+llmlint's layers map onto the existing tiers (`tests/e2e/AGENTS.md`):
 
 | Layer | Tier | In `just check`? | New deps |
 |---|---|---|---|
@@ -184,7 +184,7 @@ llmlint's layers map onto the existing tiers (`tests/AGENTS.md`):
    **zero cursor-control bytes** (`\x1b[`, bare `\r`) on stdout **and** stderr, and
    the stdout report must be byte-identical to today. A second journey sets an agent
    env var (`CLAUDECODE=1`) and asserts the run stays plain. See the journeys added
-   to `tests/AGENTS.md`.
+   to `tests/e2e/AGENTS.md`.
 
 4. **Real interactive path → PTY tier.** To exercise the `isTTY == true` branch end
    to end, spawn the real binary under a pseudo-terminal (`portable-pty` — WezTerm's

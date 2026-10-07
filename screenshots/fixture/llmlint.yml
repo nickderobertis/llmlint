@@ -1,4 +1,4 @@
-# Fixture project for the terminal screenshots (see screenshots/screenshots.sh).
+# Fixture project for the terminal screenshots (see scripts/screenshots.sh).
 # It is linted by the real llmlint binary driving the mock oneharness fixture
 # (no model, no network), so the captured output is real CLI output — only the
 # verdicts are scripted (screenshots/fixture/verdicts.json). The rules are chosen

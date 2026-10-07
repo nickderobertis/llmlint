@@ -4,7 +4,7 @@
 #
 # Shared by `just screenshots-bless` (an intended output change) and the pre-push
 # guard's drift path (.githooks/pre-push), so the two can never disagree about the
-# lane or the manifest path; the guard's drift journey in tests/e2e/main.rs drives
+# lane or the manifest path; the guard's drift journey in tests/visual_guard.rs drives
 # this script through the real hook. $SHOTS_CURRENT overrides the capture root.
 #
 set -euo pipefail

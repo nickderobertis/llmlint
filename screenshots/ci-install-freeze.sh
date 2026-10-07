@@ -9,7 +9,7 @@
 # (Go), which is why this lives beside CI rather than in that recipe.
 #
 # Keep `freeze_version` below in sync with `freeze-version` in the justfile — the
-# `ci_install_freeze_*` journeys in tests/e2e/main.rs gate them against each other.
+# `ci_install_freeze_*` journeys in tests/visual_guard.rs gate them against each other.
 set -euo pipefail
 
 freeze_version="0.2.2"
@@ -30,8 +30,8 @@ arm64 | aarch64) asset_arch="arm64" ;;
   ;;
 esac
 
-# Overridable so the e2e journeys can drive the real script against a stand-in
-# release tree and digest pin instead of the network; CI uses the defaults. `-`
+# Overridable so the journeys in tests/visual_guard.rs can drive the real script
+# against a stand-in release tree and digest pin instead of the network; CI uses the defaults. `-`
 # rather than `:-`: an override that is SET but empty is a misconfigured caller
 # (an unset variable expanded into it), which the checks below reject — silently
 # falling back to the default would install somewhere nobody asked for.
