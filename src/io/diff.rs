@@ -80,6 +80,18 @@ pub trait DiffProvider {
     /// an error — the user asked for diffs, so a silent empty result would be a
     /// false "nothing changed".
     fn diffs(&self, root: &Path, files: &[PathBuf]) -> Result<BTreeMap<PathBuf, String>>;
+
+    /// Compute diffs, retaining a rename only when the caller permits its old
+    /// and new paths. Backends without rename support use ordinary diffs.
+    fn diffs_with_renames(
+        &self,
+        root: &Path,
+        files: &[PathBuf],
+        eligible: &dyn Fn(&Path, &Path) -> Result<bool>,
+    ) -> Result<BTreeMap<PathBuf, String>> {
+        let _ = eligible;
+        self.diffs(root, files)
+    }
 }
 
 /// Build the [`DiffProvider`] for `backend`, comparing against `base` (a git
@@ -158,6 +170,10 @@ impl GitDiff {
                 ),
             });
         }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("rename detection was skipped") {
+            eprintln!("llmlint: warning: rename detection was skipped; affected files are reviewed whole. Raise git's diff.renameLimit to enable detection.");
+        }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
@@ -197,6 +213,15 @@ impl GitDiff {
 
 impl DiffProvider for GitDiff {
     fn diffs(&self, root: &Path, files: &[PathBuf]) -> Result<BTreeMap<PathBuf, String>> {
+        self.diffs_with_renames(root, files, &|_, _| Ok(true))
+    }
+
+    fn diffs_with_renames(
+        &self,
+        root: &Path,
+        files: &[PathBuf],
+        eligible: &dyn Fn(&Path, &Path) -> Result<bool>,
+    ) -> Result<BTreeMap<PathBuf, String>> {
         // Validate the boundary once: a non-repo (or missing git) is a clear
         // error rather than a per-file failure or a silent empty result.
         let inside = self.git(root, &["rev-parse", "--is-inside-work-tree"])?;
@@ -227,12 +252,61 @@ impl DiffProvider for GitDiff {
             None => "--cached".to_string(),
         };
 
+        // Detect across the whole range, before applying any target pathspec.
+        // Disable copies explicitly even when the user's git config enables them.
+        let changed = self.git(
+            root,
+            &[
+                "diff",
+                "--no-renames",
+                "-M",
+                "--name-status",
+                "-z",
+                &base_arg,
+            ],
+        )?;
+        // Name-status paths are repository-relative even when invoked in a
+        // subdirectory; target paths and the eligibility boundary are cwd-relative.
+        let prefix = self.git(root, &["rev-parse", "--show-prefix"])?;
+        let prefix = Path::new(prefix.trim_end());
+        let repo = self.git(root, &["rev-parse", "--show-toplevel"])?;
+        let repo = Path::new(repo.trim_end());
+        let mut entries = changed.split('\0').filter(|entry| !entry.is_empty());
+        let mut renames = BTreeMap::new();
+        while let Some(status) = entries.next() {
+            let Some(old) = entries.next() else { break };
+            if status.starts_with('R') {
+                let Some(new) = entries.next() else { break };
+                let old = Path::new(old)
+                    .strip_prefix(prefix)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|_| repo.join(old));
+                renames.insert(PathBuf::from(new), old);
+            }
+        }
         let mut out = BTreeMap::new();
         for file in files {
             // `to_slash` so the pathspec is the forward-slash form git speaks on
             // every platform; `--no-color` keeps the diff plain for the prompt.
             let rel = files::to_slash(file);
-            let args = ["diff", "--no-color", base_arg.as_str(), "--", &rel];
+            let absolute = crate::io::configfs::normalize(&repo.join(prefix).join(file));
+            let old = absolute
+                .strip_prefix(repo)
+                .ok()
+                .and_then(|p| renames.get(p));
+            let retain = match old {
+                Some(old) => eligible(old, file)?,
+                None => false,
+            };
+            let old_rel = old.map(|p| files::to_slash(p));
+            let mut args = vec!["diff", "--no-color", "--no-renames"];
+            if retain {
+                args.push("-M");
+            }
+            args.extend([base_arg.as_str(), "--", &rel]);
+            if retain {
+                args.push(old_rel.as_deref().expect("retained rename has an old path"));
+            }
             let diff = self.git(root, &args)?;
             if !diff.trim().is_empty() {
                 out.insert(file.clone(), diff);
