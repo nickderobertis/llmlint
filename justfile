@@ -88,15 +88,17 @@ check *flags:
 # The portable part of the gate, which CI's macOS/Windows `cross` jobs run:
 # format, clippy and the boundary check, and every test uninstrumented
 # (LLMLINT_COVERAGE=off). Coverage, shellcheck and actionlint are platform-
-# independent and run in `check` on Linux. Same tier flag as `check`.
+# independent and run in `check` on Linux, and so do coverage-driver's tests:
+# they exist to drive the instrumented toolchain (cargo-llvm-cov), which the
+# cross jobs do not install. Same tier flag as `check`.
 [positional-arguments]
 check-portable *flags:
     @tier="$(bash scripts/nx-tier.sh "$@")"; \
     export LLMLINT_COVERAGE=off; \
     if [ "$tier" = all ]; then \
-      bash scripts/nx run-many --all -t format lint test; \
+      bash scripts/nx run-many --all -t format lint test --exclude=coverage-driver; \
     else \
-      bash scripts/nx affected --base="$tier" -t format lint test; \
+      bash scripts/nx affected --base="$tier" -t format lint test --exclude=coverage-driver; \
     fi
     @echo "check-portable: ok"
 # llmlint: ignore-end[diagnostics_error_or_absent]

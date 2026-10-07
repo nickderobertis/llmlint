@@ -20,7 +20,8 @@ binary and the fixture they drive.
   profiles alone, and a report over a partial set would mean nothing.
 - `LLMLINT_COVERAGE=off` (`just check-portable`, which the macOS/Windows `cross`
   jobs run) runs the tests with plain nextest and skips the report; the floor is
-  the Linux gate's.
+  the Linux gate's. `check-portable` excludes `coverage-driver`: its self-tests
+  drive cargo-llvm-cov, which the cross jobs do not install.
 - `tests/coverage.test.mjs` (`coverage-driver`'s `test`) drives `coverage.sh`
   against a scratch Cargo workspace under the real cargo-llvm-cov.
 - Never lower the floor, or drop a project from `coverage:profiles`, to make the

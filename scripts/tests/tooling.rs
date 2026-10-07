@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+#[cfg(unix)]
 use tempfile::TempDir;
 
 /// The repository root: this crate's manifest sits one level below it, and
@@ -22,6 +23,7 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+#[cfg(unix)]
 /// Drop every inherited `GIT_*` variable from a command: git's
 /// repository-selection variables outrank `-C`, and the repository's own gate
 /// runs inside a `pre-push` hook that exports `GIT_DIR` for its own repository.
@@ -33,11 +35,13 @@ fn clear_git_env(cmd: &mut std::process::Command) {
     }
 }
 
+#[cfg(unix)]
 /// A throwaway directory with helpers to write files into it.
 struct Project {
     dir: TempDir,
 }
 
+#[cfg(unix)]
 impl Project {
     fn new() -> Self {
         Project {
@@ -981,7 +985,10 @@ fn every_gate_recipe_takes_the_same_tier() {
         ("fmt-check", "-t format"),
         ("format", "-t format --configuration=write"),
         ("doc", "-t doc"),
-        ("check-portable", "-t format lint test"),
+        (
+            "check-portable",
+            "-t format lint test --exclude=coverage-driver",
+        ),
     ] {
         let (out, calls) = repo.just(&[recipe], None);
         assert!(out.status.success(), "{recipe}: {out:?}");
@@ -1281,6 +1288,7 @@ fn bun_sh_picks_the_asset_for_each_supported_host_and_refuses_the_rest() {
 }
 
 #[cfg(unix)]
+#[cfg(unix)]
 #[test]
 fn bun_sh_refuses_a_download_base_that_is_not_an_https_or_file_url() {
     let pin = format!("bun {}\n", pinned_bun_version());
@@ -1304,6 +1312,7 @@ fn bun_sh_refuses_a_download_base_that_is_not_an_https_or_file_url() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn bun_sh_refuses_a_failed_download_a_wrong_layout_a_wrong_version_and_an_unwritable_cache() {
     use std::os::unix::fs::PermissionsExt;
@@ -1389,7 +1398,10 @@ fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkou
     repo.p
         .write("package.json", "{}\n")
         .write("bun.lock", "{}\n");
-    let root = fs::canonicalize(repo.p.path()).unwrap();
+    // The wrapper names its root by the logical path it was run through (`pwd`),
+    // not a canonical one: macOS's temp dir sits behind the /var -> /private/var
+    // symlink, so canonicalizing here would expect a path it never prints.
+    let root = repo.p.path();
     let calls = || fs::read_to_string(repo.p.path().join("nx-calls")).unwrap_or_default();
 
     let out = run_nx_wrapper(&repo, &["show", "projects"], &[]);

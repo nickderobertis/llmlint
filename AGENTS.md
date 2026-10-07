@@ -195,8 +195,9 @@ Use the `just` recipes; do not hand-roll equivalents.
   `just lint`, `just lint-sh`, `just lint-workflows`, `just fmt-check`,
   `just format` (writes) and `just doc` take the same flag and run that one
   target; `just check-portable` (same flag) is the macOS/Windows part of the
-  gate — `format`, `lint` and every test uninstrumented — which CI's `cross`
-  jobs run; `just test-e2e` and `just coverage` run one project's.
+  gate — `format`, `lint` and every test uninstrumented, except
+  `coverage-driver`'s, which drive cargo-llvm-cov and so stay on Linux — which
+  CI's `cross` jobs run; `just test-e2e` and `just coverage` run one project's.
 - `just lint-sh` — shellcheck over every project's scripts and the git hooks
   (each project's `lint-sh` target). Fix a finding at its
   site; a `# shellcheck disable=` is site-scoped and carries its reason. `just

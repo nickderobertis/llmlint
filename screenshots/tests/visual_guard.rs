@@ -12,6 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 use tempfile::TempDir;
 
 /// The repository root: this crate's manifest sits one level below it, and
@@ -23,11 +24,13 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+#[cfg(unix)]
 /// A throwaway directory with helpers to write files into it.
 struct Project {
     dir: TempDir,
 }
 
+#[cfg(unix)]
 impl Project {
     fn new() -> Self {
         Project {
@@ -45,6 +48,7 @@ impl Project {
     }
 }
 
+#[cfg(unix)]
 /// Drop every inherited `GIT_*` variable from a command. git's
 /// repository-selection variables outrank `-C`, and a `pre-push` hook (where the
 /// repository's own gate runs) exports `GIT_DIR` and `GIT_INDEX_FILE` for the
@@ -59,6 +63,7 @@ fn clear_git_env(cmd: &mut std::process::Command) {
     }
 }
 
+#[cfg(unix)]
 /// Run `git` in `dir`, asserting success, with no ambient `GIT_*` variable.
 fn git(dir: &Path, args: &[&str]) {
     let mut cmd = std::process::Command::new("git");
@@ -68,6 +73,7 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(ok, "git {args:?} failed");
 }
 
+#[cfg(unix)]
 /// `git init` + identity + a `main` branch, so commits don't depend on the
 /// host's git defaults.
 fn init_repo(dir: &Path) {
@@ -815,6 +821,7 @@ fn ci_install_freeze_pins_the_version_the_justfile_pins() {
 }
 // llmlint: ignore-end[e2e_not_mocked]
 
+#[cfg(unix)]
 /// The real `screenshots.sh` with `freeze` absent from PATH, capturing into
 /// `shots_out`: it stops at the capture-directory guard or at the `freeze`
 /// check, before it builds or renders anything.
@@ -827,6 +834,7 @@ fn capture_into(shots_out: &Path) -> std::process::Output {
     cmd.output().unwrap()
 }
 
+#[cfg(unix)]
 #[test]
 fn the_capture_refuses_to_delete_a_shots_out_that_is_not_a_capture_directory() {
     let p = Project::new();
