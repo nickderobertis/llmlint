@@ -124,7 +124,9 @@ Deliberately excluded or deviating (so it isn't re-litigated):
   did not name, for the ownership reason above and the aggregate gates; the pre-push guard's
   journeys sit in `screenshots`, whose capture scripts the hook drives.
 - **No remote Nx cache** — the repo runs on the Nx local cache only
-  (`.nx/cache`, gitignored). CI starts every run from a cold cache and persists
+  (`.nx/cache`, gitignored), kept per checkout: `scripts/nx` pins it there,
+  since Nx 23 otherwise shares the main git worktree's cache across worktrees.
+  CI starts every run from a cold cache and persists
   none, so a cached result can never stand in for a CI verdict; locally the cache
   replays unchanged targets (inputs are declared per target, so an edit outside
   them replays and an edit inside reruns).

@@ -8,7 +8,7 @@
 #     instead of "nx: command not found";
 #   * Nx runs without its background daemon, cloud, or interactive TUI — every
 #     invocation is one foreground process that finishes, the same locally and
-#     in CI.
+#     in CI — and with its cache in this checkout's .nx/cache.
 #
 # Usage: scripts/nx <nx arguments...>
 set -euo pipefail
@@ -21,6 +21,11 @@ bun_path="$(bash scripts/bun.sh path)"
 PATH="$(dirname "$bun_path"):$PATH"
 export PATH
 export NX_DAEMON=false NX_NO_CLOUD=true NX_TUI=false NX_SKIP_NX_CACHE_WARNING=true
+# The cache and its task database stay in this checkout (.nx/, gitignored). Nx
+# otherwise shares the main git worktree's across every worktree, writing
+# outside the checkout it runs in.
+export NX_CACHE_DIRECTORY="${NX_CACHE_DIRECTORY:-$ROOT/.nx/cache}"
+export NX_WORKSPACE_DATA_DIRECTORY="${NX_WORKSPACE_DATA_DIRECTORY:-$ROOT/.nx/workspace-data}"
 
 if [ ! -x node_modules/.bin/nx ] || [ bun.lock -nt node_modules/.bun-install-stamp ] \
   || [ package.json -nt node_modules/.bun-install-stamp ]; then
