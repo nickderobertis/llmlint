@@ -1,6 +1,6 @@
 # tests/e2e/AGENTS.md
 
-<!-- llmlint: ignore-file[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
+<!-- llmlint: ignore-file[agents_md_durable_and_terse] this journey list is the suite's source of truth for what is covered (a feature is not done until its journey lands here), so it is kept complete — every behaviour and its failure path — rather than terse -->
 
 The e2e suite (`tests/e2e/`) is the source of truth for what llmlint does. It
 drives the **real `llmlint` binary** (via `assert_cmd`) against the deterministic

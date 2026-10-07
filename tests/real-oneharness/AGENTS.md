@@ -1,6 +1,6 @@
 # tests/real-oneharness/AGENTS.md
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] the tier's journey list is the only reference for what this out-of-gate tier proves, since no gate run shows it, so it is kept complete rather than terse -->
 ## Real-oneharness tier (`real_oneharness.rs`)
 
 The hermetic suite doubles oneharness, so it can prove which `--config` files

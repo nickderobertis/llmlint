@@ -21,7 +21,8 @@
 # could not be installed, or the invocation was wrong (the message says which).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
+  || { echo "bun.sh: cannot resolve the repository root from ${BASH_SOURCE[0]}" >&2; exit 1; }
 readonly ROOT
 readonly MODE="${1:-}"
 
@@ -34,7 +35,8 @@ fail() {
 [ -r "$ROOT/.tool-versions" ] || fail "cannot read $ROOT/.tool-versions; restore it (it pins bun) from git."
 # Exactly one `bun X.Y.Z` line: the value lands in a cache path and a download
 # URL, so a second pin or anything but a plain version is refused, not guessed at.
-pins="$(awk '$1 == "bun" { print $2 }' "$ROOT/.tool-versions")"
+pins="$(awk '$1 == "bun" { print $2 }' "$ROOT/.tool-versions")" \
+  || fail "cannot read the bun pin from $ROOT/.tool-versions; restore it from git."
 [ "$(printf '%s\n' "$pins" | grep -c .)" -eq 1 ] \
   || fail ".tool-versions must pin bun exactly once, as 'bun X.Y.Z' (found $(printf '%s\n' "$pins" | grep -c .) bun lines)."
 VERSION="$pins"
@@ -91,15 +93,17 @@ install_pinned() {
   # Expanded now (quoted for the shell): the EXIT trap fires after this
   # function's locals are gone.
   # shellcheck disable=SC2064
-  trap "rm -rf $(printf '%q' "$tmp")" EXIT
+  trap "rm -rf $(printf '%q' "$tmp") || echo 'bun.sh: could not remove $(printf '%q' "$tmp"); delete it by hand' >&2" EXIT
   base="${BUN_SH_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}/bun-v$VERSION"
   echo "bun.sh: installing bun $VERSION into $CACHE_DIR" >&2
   curl -fsSL --retry 3 -o "$tmp/$asset.zip" "$base/$asset.zip" \
     || fail "downloading $base/$asset.zip failed; check your network and re-run 'just bootstrap'."
   curl -fsSL --retry 3 -o "$tmp/SHASUMS256.txt" "$base/SHASUMS256.txt" \
     || fail "downloading $base/SHASUMS256.txt failed; check your network and re-run 'just bootstrap'."
-  expected="$(awk -v f="$asset.zip" '$2 == f { print $1 }' "$tmp/SHASUMS256.txt")"
-  actual="$(sha256_of "$tmp/$asset.zip")"
+  expected="$(awk -v f="$asset.zip" '$2 == f { print $1 }' "$tmp/SHASUMS256.txt")" \
+    || fail "could not read $tmp/SHASUMS256.txt; re-run 'just bootstrap'."
+  actual="$(sha256_of "$tmp/$asset.zip")" \
+    || fail "could not hash $tmp/$asset.zip; re-run 'just bootstrap'."
   [ -n "$expected" ] && [ "$expected" = "$actual" ] \
     || fail "checksum mismatch for $asset.zip (expected '${expected}', got '${actual}'); not installing. Re-run 'just bootstrap' (a truncated download heals); if it persists, report it — do not bypass the check."
   unzip -q "$tmp/$asset.zip" -d "$tmp" \

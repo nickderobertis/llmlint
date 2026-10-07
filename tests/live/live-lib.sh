@@ -19,8 +19,9 @@
 # `live_run_journeys` is harness-agnostic, so an ad-hoc script for another harness
 # is a few lines (see `tests/live/AGENTS.md`).
 
-# llmlint: ignore-file[tool_output_is_signal] the paid live tier's per-journey narration is the only log of a run that cannot be replayed for free (live.yml's CI output); moved unchanged from scripts/ when tests/live/ became its own Nx project
-LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# llmlint: ignore-file[tool_output_is_signal] the paid live tier's per-journey narration is the only log of a run that cannot be replayed for free (live.yml's CI output)
+LL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
+    || { printf 'FAIL: cannot resolve the repository root\n' >&2; exit 1; }
 
 note() { printf '%s\n' "$*" >&2; }
 
@@ -82,7 +83,7 @@ LL_PROJECTS=()
 _ll_cleanup() {
     local d
     for d in "${LL_PROJECTS[@]+"${LL_PROJECTS[@]}"}"; do
-        [ -n "$d" ] && rm -rf "$d"
+        [ -z "$d" ] || rm -rf "$d" || note "could not remove the scratch project $d; delete it by hand"
     done
 }
 trap _ll_cleanup EXIT
@@ -169,14 +170,14 @@ ll_run() {
     bin="$(ll_bin)"
     [ -n "$bin" ] || fail "llmlint binary not found (build it: \`cargo build --release --locked -p llmlint --bin llmlint\`, or set LLMLINT_BIN)"
     local errf
-    errf="$(mktemp)"
+    errf="$(mktemp)" || fail "could not create a temporary file for llmlint's stderr (check TMPDIR)"
     note "  driving: llmlint --cwd <proj> --format json $* (timeout ${LL_TIMEOUT:-120}s${LL_MODEL:+, model $LL_MODEL})"
     set +e
     LL_REPORT="$("$bin" --cwd "$proj" --format json "$@" 2>"$errf")"
     LL_EXIT=$?
     set -e
-    LL_STDERR="$(cat "$errf")"
-    rm -f "$errf"
+    LL_STDERR="$(cat "$errf")" || fail "could not read llmlint's captured stderr ($errf)"
+    rm -f "$errf" || note "could not remove $errf; delete it by hand"
 }
 
 _ll_dump() {
@@ -231,7 +232,8 @@ ll_live_pass() {
     local harness="$1" proj
     proj="$(make_project "$harness")"
     LL_PROJECTS+=("$proj")
-    printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs"
+    printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs" \
+        || fail "could not write $proj/src/lib.rs"
     note "  journey: a satisfied rule -> exit 0"
     ll_run "$proj"
     assert_pass
@@ -247,7 +249,7 @@ ll_live_fail() {
         "// TODO: replace this placeholder with the real implementation" \
         "pub fn add(a: i32, b: i32) -> i32 {" \
         "    a + b" \
-        "}" >"$proj/src/lib.rs"
+        "}" >"$proj/src/lib.rs" || fail "could not write $proj/src/lib.rs"
     note "  journey: a clear violation -> exit 1"
     ll_run "$proj"
     assert_fail
@@ -264,7 +266,8 @@ ll_live_fallback() {
     local harness="$1" proj
     proj="$(make_fallback_project "$harness")"
     LL_PROJECTS+=("$proj")
-    printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs"
+    printf '%s\n' "pub fn add(a: i32, b: i32) -> i32 {" "    a + b" "}" >"$proj/src/lib.rs" \
+        || fail "could not write $proj/src/lib.rs"
     note "  journey: fallback chain skips an absent primary and runs $harness -> exit 0"
     ll_run "$proj"
     assert_pass

@@ -40,6 +40,7 @@
       }
     },
     "test": {
+      "//suppression": "llmlint: ignore-block[shell_test_tiers_stay_split] this project holds one script, coverage.sh, which exists only to drive cargo-llvm-cov and nextest; its offline and its host-tool tiers are the same thing, so no unrelated script edit can pay for this suite, and only an edit to the driver (or the cargo/cargo-llvm-cov/nextest versions, runtime inputs of this cached target) reruns it",
       "executor": "nx:run-commands",
       "cache": true,
       "options": {
@@ -57,7 +58,8 @@
           "runtime": "cargo nextest --version"
         }
       ],
-      "//": "The driver against a scratch Cargo workspace under the real cargo-llvm-cov: profiles combine across crates, the floor fails below 95%, and bad input is a usage error."
+      "//": "The driver against a scratch Cargo workspace under the real cargo-llvm-cov: profiles combine across crates, the floor fails below 95%, and bad input is a usage error.",
+      "//suppression-end": "llmlint: ignore-end[shell_test_tiers_stay_split]"
     }
   },
   "namedInputs": {

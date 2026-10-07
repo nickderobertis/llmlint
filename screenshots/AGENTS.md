@@ -154,7 +154,7 @@ keep the two `freeze` version pins in sync (`freeze-version` in the justfile and
 equal). A reflow changes every lane identically, so one host's bless covers both
 baselines.
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] text moved verbatim from tests/AGENTS.md when the suites became Nx projects; this change is scoped to moving each project's rules without rewriting or trimming them, so condensing them is a separate follow-up -->
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] the guard's and the freeze installer's journey lists are the reference for what their script journeys prove about two tools the gate never installs, so they are kept complete rather than terse -->
 ## The pre-push visual guard (`.githooks/pre-push`)
 
 The `pre_push_guard_*` journeys (`tests/visual_guard.rs`) drive the **real hook

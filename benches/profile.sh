@@ -42,7 +42,7 @@
 #   PROFILE_TOP       callgrind mode: function rows to print (default: 30)
 #   SAMPLY_ARGS       extra args passed to `samply record` (e.g. --save-only)
 
-# llmlint: ignore-file[robust_shell, tool_output_is_signal] profile.sh moved unchanged from scripts/ when benches/ became its own Nx project; it is the informational performance harness (benches/AGENTS.md: it measures, never gates), whose stage-by-stage progress and best-effort measurement of commands that exit non-zero by design are its documented behaviour; reworking them is a drafted follow-up, outside this graph change
+# llmlint: ignore-file[robust_shell, tool_output_is_signal] an interactive, informational performance harness (benches/AGENTS.md: it measures, never gates): its stage-by-stage progress is what a person running it watches, and it measures commands that exit non-zero by design (a failing lint verdict), so their statuses are deliberately not required
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

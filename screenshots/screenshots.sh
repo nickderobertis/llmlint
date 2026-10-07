@@ -37,7 +37,7 @@
 # README + gallery.
 #
 # Requires `freeze` on PATH (install the pinned version with `just screenshots-tools`).
-# llmlint: ignore-file[robust_shell] the captures moved unchanged from scripts/ when screenshots/ became its own Nx project: each scene command's exit status is deliberately not required (the lint scene's verdict is a failure, exit 1, by design) and render_scene validates the captured output instead, so a failed run cannot render; tightening per-scene status checks is a drafted follow-up, outside this graph change
+# llmlint: ignore-file[robust_shell] each scene command's exit status is deliberately not required (the lint scene's verdict is a failure, exit 1, by design); render_scene validates the captured output instead, so a failed run cannot render
 set -euo pipefail
 
 # Byte-determinism starts with the environment: the scenes render the REAL

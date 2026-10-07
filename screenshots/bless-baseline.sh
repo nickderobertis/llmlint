@@ -23,5 +23,12 @@ if [ ! -d "$current" ]; then
   exit 1
 fi
 
-lane="$(bash "$(dirname "$0")/host-arch.sh")"
-screencomp manifest --input "$current" --arch "$lane" --output "shots/baseline/${lane}.json"
+if ! lane="$(bash "$(dirname "$0")/host-arch.sh")"; then
+  echo "bless-baseline: could not name this host's lane (host-arch.sh's error above)" >&2
+  exit 1
+fi
+if ! screencomp manifest --input "$current" --arch "$lane" --output "shots/baseline/${lane}.json"; then
+  echo "bless-baseline: screencomp could not write shots/baseline/${lane}.json (error above)" >&2
+  echo "                Check shots/baseline/ is writable and screencomp is installed, then re-run." >&2
+  exit 1
+fi

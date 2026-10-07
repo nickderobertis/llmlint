@@ -1017,6 +1017,11 @@ struct BunRepo {
 #[cfg(unix)]
 impl BunRepo {
     fn new(tool_versions: &str) -> Self {
+        Self::on_host(tool_versions, "Linux", "x86_64")
+    }
+
+    /// As [`Self::new`], on a host whose `uname -s`/`uname -m` say `os`/`arch`.
+    fn on_host(tool_versions: &str, os: &str, arch: &str) -> Self {
         let p = Project::new();
         for file in ["scripts/bun.sh", "scripts/nx"] {
             p.write(file, &fs::read_to_string(repo_root().join(file)).unwrap());
@@ -1024,7 +1029,7 @@ impl BunRepo {
         p.write(".tool-versions", tool_versions);
         write_exe(
             &p.path().join("stubs/uname"),
-            "#!/bin/sh\ncase \"$1\" in -s) echo Linux ;; *) echo x86_64 ;; esac\n",
+            &format!("#!/bin/sh\ncase \"$1\" in -s) echo {os} ;; *) echo {arch} ;; esac\n"),
         );
         BunRepo { p }
     }
@@ -1034,20 +1039,39 @@ impl BunRepo {
     /// `SHASUMS256.txt`, naming the archive's real digest or, with
     /// `tampered`, another one.
     fn release(&self, version: &str, prints: &str, tampered: bool) -> String {
+        self.release_of(
+            "bun-linux-x64",
+            "bun-linux-x64/bun",
+            version,
+            prints,
+            tampered,
+        )
+    }
+
+    /// [`Self::release`] for any `asset`, its `bun` stored at `inner` in the zip.
+    fn release_of(
+        &self,
+        asset: &str,
+        inner: &str,
+        version: &str,
+        prints: &str,
+        tampered: bool,
+    ) -> String {
         let dir = self.p.path().join(format!("releases/bun-v{version}"));
-        let stage = self.p.path().join("stage/bun-linux-x64");
+        let stage = self.p.path().join(format!("stage/{asset}"));
         write_exe(&stage.join("bun"), &format!("#!/bin/sh\necho {prints}\n"));
         fs::create_dir_all(&dir).unwrap();
-        let zip = dir.join("bun-linux-x64.zip");
+        let zip = dir.join(format!("{asset}.zip"));
         let made = std::process::Command::new("python3")
             .args([
                 "-c",
                 "import sys, zipfile\n\
                  with zipfile.ZipFile(sys.argv[1], 'w') as z:\n    \
-                 z.write(sys.argv[2], 'bun-linux-x64/bun')",
+                 z.write(sys.argv[2], sys.argv[3])",
             ])
             .arg(&zip)
             .arg(stage.join("bun"))
+            .arg(inner)
             .status()
             .expect("python3 builds the stand-in release archive");
         assert!(made.success());
@@ -1058,7 +1082,7 @@ impl BunRepo {
         };
         fs::write(
             dir.join("SHASUMS256.txt"),
-            format!("{digest}  bun-linux-x64.zip\n"),
+            format!("{digest}  {asset}.zip\n"),
         )
         .unwrap();
         format!("file://{}", self.p.path().join("releases").display())
@@ -1067,6 +1091,16 @@ impl BunRepo {
     /// Run `bash scripts/bun.sh <mode>` with only the stubs, `extra_path` and the
     /// system dirs on PATH (never the host's own bun).
     fn bun_sh(&self, mode: &str, extra_path: &Path, base: &str) -> std::process::Output {
+        self.bun_sh_with(mode, extra_path, base, &[])
+    }
+
+    fn bun_sh_with(
+        &self,
+        mode: &str,
+        extra_path: &Path,
+        base: &str,
+        env: &[(&str, &str)],
+    ) -> std::process::Output {
         std::process::Command::new("bash")
             .arg(self.p.path().join("scripts/bun.sh"))
             .arg(mode)
@@ -1081,6 +1115,9 @@ impl BunRepo {
             .env("HOME", self.p.path().join("home"))
             .env("XDG_CACHE_HOME", self.p.path().join("cache"))
             .env("BUN_SH_DOWNLOAD_BASE", base)
+            .env_remove("OS")
+            .env_remove("OSTYPE")
+            .envs(env.iter().copied())
             .output()
             .unwrap()
     }
@@ -1182,6 +1219,78 @@ fn bun_sh_refuses_a_missing_repeated_or_malformed_pin_before_anything_runs() {
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains(says), "{tool_versions:?}: {err}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn bun_sh_picks_the_asset_for_each_supported_host_and_refuses_the_rest() {
+    let version = pinned_bun_version();
+    for (os, arch, asset) in [
+        ("Linux", "aarch64", "bun-linux-aarch64"),
+        ("Linux", "arm64", "bun-linux-aarch64"),
+        ("Darwin", "arm64", "bun-darwin-aarch64"),
+        ("Darwin", "x86_64", "bun-darwin-x64"),
+    ] {
+        let repo = BunRepo::on_host(&format!("bun {version}\n"), os, arch);
+        let base = repo.release_of(asset, &format!("{asset}/bun"), &version, &version, false);
+        let out = repo.bun_sh("ensure", &repo.p.path().join("empty"), &base);
+        assert!(out.status.success(), "{os}/{arch}: {out:?}");
+        assert!(repo.cached_bun(&version).is_file(), "{os}/{arch}");
+    }
+    let repo = BunRepo::on_host(&format!("bun {version}\n"), "FreeBSD", "amd64");
+    let out = repo.bun_sh("ensure", &repo.p.path().join("empty"), "file:///nowhere");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no bun build for FreeBSD/amd64"));
+
+    // Windows never downloads: bun.sh names the manual install instead.
+    let repo = BunRepo::new(&format!("bun {version}\n"));
+    let out = repo.bun_sh_with(
+        "ensure",
+        &repo.p.path().join("empty"),
+        "file:///nowhere",
+        &[("OS", "Windows_NT")],
+    );
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("first on PATH"));
+}
+
+#[cfg(unix)]
+#[test]
+fn bun_sh_refuses_a_failed_download_a_wrong_layout_a_wrong_version_and_an_unwritable_cache() {
+    use std::os::unix::fs::PermissionsExt;
+    let version = pinned_bun_version();
+    let pin = format!("bun {version}\n");
+    let empty = |r: &BunRepo| r.p.path().join("empty");
+    let refuses = |r: &BunRepo, base: &str, says: &str| {
+        let out = r.bun_sh("ensure", &empty(r), base);
+        assert_eq!(out.status.code(), Some(1), "{says}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(says), "{says}: {err}");
+    };
+
+    let repo = BunRepo::new(&pin);
+    let missing = format!("file://{}", repo.p.path().join("no-releases").display());
+    refuses(&repo, &missing, "bun-linux-x64.zip failed");
+
+    let repo = BunRepo::new(&pin);
+    let base = repo.release_of("bun-linux-x64", "elsewhere/bun", &version, &version, false);
+    refuses(&repo, &base, "holds no bun-linux-x64/bun");
+
+    let repo = BunRepo::new(&pin);
+    let base = repo.release(&version, "0.0.1", false);
+    refuses(
+        &repo,
+        &base,
+        &format!("installed bun does not report {version}"),
+    );
+
+    let repo = BunRepo::new(&pin);
+    let base = repo.release(&version, &version, false);
+    let cache = repo.p.path().join("cache");
+    fs::create_dir_all(&cache).unwrap();
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o555)).unwrap();
+    refuses(&repo, &base, "could not install into");
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 /// Run the real `scripts/nx` in `repo` with a pinned `bun` stub on PATH (it

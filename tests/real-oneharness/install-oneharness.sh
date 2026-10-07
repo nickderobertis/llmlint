@@ -8,8 +8,9 @@
 # (PyPI) the first time.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
+  || { echo "install-oneharness: cannot resolve the repository root" >&2; exit 1; }
+cd "$ROOT" || { echo "install-oneharness: cannot enter $ROOT" >&2; exit 1; }
 # The pin, read the way scripts/setup-lib.sh's `_justfile_pin` reads every
 # `<name>-version := "x.y.z"` pin (inlined so this project needs nothing from
 # scripts/). `|| true`: under pipefail a missing pin would otherwise exit here
@@ -37,7 +38,10 @@ if ! bin="$(find_bin)" || ! "$bin" --version 2>/dev/null | grep -qF "oneharness 
     echo "                    Install Python 3 (with its venv module), then re-run just test-oneharness." >&2
     exit 1
   fi
-  rm -rf "$venv"
+  if ! rm -rf "$venv"; then
+    echo "install-oneharness: could not remove the stale venv $venv (error above); delete it by hand, then re-run just test-oneharness." >&2
+    exit 1
+  fi
   if ! "$py" -m venv "$venv" >&2; then
     echo "install-oneharness: $py -m venv could not create $venv" >&2
     echo "                    Install Python's venv module (e.g. python3-venv), then re-run just test-oneharness." >&2

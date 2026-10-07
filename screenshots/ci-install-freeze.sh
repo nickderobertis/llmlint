@@ -64,8 +64,8 @@ if [ ! -r "$sums_file" ]; then
 fi
 
 stem="freeze_${freeze_version}_Linux_${asset_arch}"
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)" || { echo "ci-install-freeze: could not create a temporary directory (check TMPDIR)" >&2; exit 1; }
+trap 'rm -rf "$tmp" || echo "ci-install-freeze: could not remove $tmp; delete it by hand" >&2' EXIT
 
 # Portable SHA-256 (Linux coreutils vs macOS/BSD), as in screenshots/screenshots.sh.
 sha256() {
@@ -87,14 +87,20 @@ fi
 # download's own origin vouches for nothing (the reasoning scripts/install.sh's
 # `sum_trusted` applies). $sums_file holds the relevant lines of the release's
 # checksums.txt verbatim, so refreshing it on a version bump is a copy.
-expected="$(awk -v want="${stem}.tar.gz" '$2 == want { print $1 }' "$sums_file")"
+if ! expected="$(awk -v want="${stem}.tar.gz" '$2 == want { print $1 }' "$sums_file")"; then
+  echo "ci-install-freeze: could not read $sums_file; restore it from git." >&2
+  exit 1
+fi
 if [ -z "$expected" ]; then
   echo "ci-install-freeze: no pinned sha256 for ${stem}.tar.gz in $sums_file" >&2
   echo "                   Add its line from" >&2
   echo "                   $base_url/v${freeze_version}/checksums.txt" >&2
   exit 1
 fi
-actual="$(sha256 "$tmp/freeze.tar.gz")"
+if ! actual="$(sha256 "$tmp/freeze.tar.gz")"; then
+  echo "ci-install-freeze: could not hash the downloaded ${stem}.tar.gz (error above)" >&2
+  exit 1
+fi
 if [ "$actual" != "$expected" ]; then
   echo "ci-install-freeze: sha256 mismatch for ${stem}.tar.gz — NOT installing" >&2
   echo "                   expected $expected (pinned in $sums_file)" >&2

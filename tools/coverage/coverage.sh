@@ -28,9 +28,10 @@
 set -euo pipefail
 
 readonly MIN_LINES=95
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
+  || { echo "coverage: cannot resolve the repository root from ${BASH_SOURCE[0]}" >&2; exit 1; }
 readonly ROOT
-cd "$ROOT"
+cd "$ROOT" || { echo "coverage: cannot enter $ROOT" >&2; exit 1; }
 
 usage() {
   echo "coverage: $1" >&2
