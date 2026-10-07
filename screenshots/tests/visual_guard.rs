@@ -921,9 +921,31 @@ fn the_capture_refuses_a_shots_out_outside_the_shots_tree() {
             "{shots_out}: {err}"
         );
     }
+    // A symlinked step that leads out of the tree is refused too, even though
+    // the path reads as inside shots/ and its target looks like a capture.
+    let (scratch, rel) = shots_scratch();
+    std::os::unix::fs::symlink(outside.path(), scratch.path().join("link")).unwrap();
+    outside.write("capture/captures.json", "{}\n");
+    for shots_out in [
+        format!("{rel}/link"),
+        format!("{rel}/link/capture"),
+        format!("{rel}/link/new/dir"),
+    ] {
+        let out = capture_into(&shots_out);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{shots_out}: {out:?}");
+        assert!(
+            err.contains("SHOTS_OUT must name a directory inside this repository's shots/"),
+            "{shots_out}: {err}"
+        );
+    }
     assert!(
         outside.path().join("captures.json").exists(),
         "nothing deleted"
+    );
+    assert!(
+        outside.path().join("capture/captures.json").exists(),
+        "nothing deleted through the link"
     );
     assert!(repo_root().join("src/main.rs").exists(), "nothing deleted");
 }

@@ -58,6 +58,7 @@ are **supporting tooling** only:
   project-boundary checker and its `bun test` suite. Nothing JavaScript is built
   or shipped.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] this list is the composition record the create-repo baseline requires "Stack and composition" to carry (the projects in the graph, each with its boundary tag and the one-line reason it is a project), and the only place the tags and ownership read together; project.json files hold each definition, not why the graph is cut this way -->
 **Projects in the graph** (`nx.json` + a `project.json` per project; each Rust
 one beside its `Cargo.toml`, all members of one Cargo workspace with one
 `Cargo.lock`; the tag after each name is its boundary type):
@@ -93,6 +94,7 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   aggregate coverage gate; `coverage-driver` (`type:workspace`, `tools/coverage/`)
   — its driver, `coverage.sh`, and the driver's slow self-tests, a project of
   their own so a product edit (which selects the gate) never selects them.
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 Every project declares the repo-uniform target names that apply to it: `format`
 (a check; `--configuration=write` writes), `lint` (clippy, or the boundary
@@ -193,13 +195,10 @@ Use the `just` recipes; do not hand-roll equivalents.
   **affected tier** — `nx affected` from an explicit base: `NX_BASE` when set
   (only a plain ref name or a commit SHA, else refused before any target runs),
   otherwise the merge base with `origin/main`. `just check --all` runs the **full
-  sweep** (`nx run-many --all`). Must pass before any commit or PR. `just test`,
-  `just lint`, `just lint-sh`, `just lint-workflows`, `just fmt-check`,
-  `just format` (writes) and `just doc` take the same flag and run that one
-  target; `just check-portable` (same flag) is the macOS/Windows part of the
-  gate — `format`, `lint` and every test uninstrumented, except
-  `coverage-driver`'s, which drive cargo-llvm-cov and so stay on Linux — which
-  CI's `cross` jobs run; `just test-e2e` and `just coverage` run one project's.
+  sweep** (`nx run-many --all`). Must pass before any commit or PR. The
+  one-target recipes (`just --list`) take the same flag; `just check-portable` is
+  the macOS/Windows part CI's `cross` jobs run — uninstrumented, so
+  `coverage-driver`'s cargo-llvm-cov tests stay on Linux.
 - `just lint-sh` — shellcheck over every project's scripts and the git hooks
   (each project's `lint-sh` target). Fix a finding at its
   site; a `# shellcheck disable=` is site-scoped and carries its reason. `just

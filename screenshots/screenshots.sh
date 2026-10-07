@@ -82,6 +82,24 @@ case "/$shots_rel/" in
 /shots/?*/) ;;
 *) shots_rel="" ;;
 esac
+# Lexical containment is not enough on its own: a symlinked step (shots/current/
+# link -> /elsewhere) would carry the deletion out of the tree. So the nearest
+# existing ancestor is resolved physically and must still lie inside shots/ — and
+# strictly below it when that ancestor is SHOTS_OUT itself.
+if [ -n "$shots_rel" ]; then
+  shots_root="$(cd -P shots 2>/dev/null && pwd -P)" || shots_root=""
+  probe="$shots_rel"
+  while [ ! -d "$probe" ] && [ "$probe" != shots ]; do
+    probe="$(dirname "$probe")" || { shots_rel=""; break; }
+  done
+  resolved="$(cd -P "$probe" 2>/dev/null && pwd -P)" || resolved=""
+  case "$resolved/" in
+  "$shots_root"/?*/) ;;
+  "$shots_root"/) [ "$probe" != "$shots_rel" ] || shots_rel="" ;;
+  *) shots_rel="" ;;
+  esac
+  [ -n "$shots_root" ] || shots_rel=""
+fi
 if [ -z "$shots_rel" ]; then
   echo "screenshots: SHOTS_OUT must name a directory inside this repository's shots/" >&2
   echo "             tree (e.g. shots/current/$arch), since the capture deletes it first;" >&2
