@@ -11,20 +11,14 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-
-#[cfg(unix)]
-use std::os::unix::fs::{symlink, PermissionsExt};
-#[cfg(unix)]
 use std::process::{Command, Output};
 
-#[cfg(unix)]
 use tempfile::TempDir;
 
 fn lib_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("live-lib.sh")
 }
 
-#[cfg(unix)]
 /// The first `name` on the test's own PATH.
 fn which(name: &str) -> PathBuf {
     std::env::var_os("PATH")
@@ -36,7 +30,12 @@ fn which(name: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("{name} is not on PATH"))
 }
 
-#[cfg(unix)]
+/// Run `tool` from the test's own PATH with `args`, which must succeed.
+fn tool(tool: &str, args: &[&Path]) {
+    let out = Command::new(which(tool)).args(args).output().unwrap();
+    assert!(out.status.success(), "{tool} {args:?}: {out:?}");
+}
+
 /// A clean environment for sourcing the library: a PATH of only the base tools
 /// it runs, a scratch TMPDIR (so a refused constructor can be seen to create
 /// nothing), and none of the caller's variables.
@@ -44,23 +43,44 @@ struct Sandbox {
     dir: TempDir,
 }
 
-#[cfg(unix)]
 impl Sandbox {
-    fn new() -> Self {
+    /// The sandbox, where the host can build one. It narrows PATH to a directory
+    /// of symlinked base tools beside `#!/bin/sh` stand-ins marked executable.
+    /// Windows has no exec bit, an unprivileged runner may not create symlinks,
+    /// and Git for Windows' tools need their MSYS runtime beside them, so there a
+    /// journey says what it did not exercise and returns;
+    /// `strict_mode_comes_first_and_every_written_setting_is_validated` still
+    /// runs everywhere.
+    fn new(journey: &str) -> Option<Self> {
+        if cfg!(windows) {
+            eprintln!(
+                "live_inputs: {journey} not exercised on Windows: it sources live-lib.sh \
+                 under a PATH of symlinked tools and executable shell stand-ins, which \
+                 Windows cannot build; the Linux and macOS jobs run it"
+            );
+            return None;
+        }
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("bin")).unwrap();
         fs::create_dir_all(dir.path().join("tmp")).unwrap();
-        for tool in ["dirname", "mktemp", "mkdir", "rm", "cat"] {
-            symlink(which(tool), dir.path().join("bin").join(tool)).unwrap();
+        for name in ["dirname", "mktemp", "mkdir", "rm", "cat"] {
+            tool(
+                "ln",
+                &[
+                    Path::new("-s"),
+                    &which(name),
+                    &dir.path().join("bin").join(name),
+                ],
+            );
         }
-        Sandbox { dir }
+        Some(Sandbox { dir })
     }
 
     /// An executable stand-in named `name` on the sandbox PATH.
     fn stub(&self, name: &str) -> PathBuf {
         let path = self.dir.path().join("bin").join(name);
         fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        tool("chmod", &[Path::new("755"), &path]);
         path
     }
 
@@ -91,12 +111,10 @@ impl Sandbox {
     }
 }
 
-#[cfg(unix)]
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-#[cfg(unix)]
 /// The run failed with the library's `FAIL:` line naming `needle`.
 fn assert_refused(out: &Output, needle: &str, case: &str) {
     let err = stderr(out);
@@ -107,10 +125,11 @@ fn assert_refused(out: &Output, needle: &str, case: &str) {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_bad_timeout_or_model_is_refused_before_any_journey_runs() {
-    let sb = Sandbox::new();
+    let Some(sb) = Sandbox::new("a_bad_timeout_or_model_is_refused_before_any_journey_runs") else {
+        return;
+    };
     for (var, bad) in [
         ("LL_TIMEOUT", "abc"),
         ("LL_TIMEOUT", "0"),
@@ -142,10 +161,13 @@ fn a_bad_timeout_or_model_is_refused_before_any_journey_runs() {
     assert_refused(&out, "required tool not found on PATH: jq", "admitted");
 }
 
-#[cfg(unix)]
 #[test]
 fn both_project_constructors_refuse_bad_settings_and_harness_ids_without_scaffolding() {
-    let sb = Sandbox::new();
+    let Some(sb) = Sandbox::new(
+        "both_project_constructors_refuse_bad_settings_and_harness_ids_without_scaffolding",
+    ) else {
+        return;
+    };
     for constructor in ["make_project", "make_fallback_project"] {
         for (script, env, needle) in [
             (
@@ -169,10 +191,12 @@ fn both_project_constructors_refuse_bad_settings_and_harness_ids_without_scaffol
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn admitted_settings_are_written_quoted_into_the_scratch_configs() {
-    let sb = Sandbox::new();
+    let Some(sb) = Sandbox::new("admitted_settings_are_written_quoted_into_the_scratch_configs")
+    else {
+        return;
+    };
     let env = [("LL_TIMEOUT", "45"), ("LL_MODEL", "1.5")];
     let out = sb.run("make_project claude-code", &env);
     assert!(out.status.success(), "{out:?}");
@@ -193,10 +217,12 @@ fn admitted_settings_are_written_quoted_into_the_scratch_configs() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_binary_override_that_is_not_an_executable_is_refused_by_name() {
-    let sb = Sandbox::new();
+    let Some(sb) = Sandbox::new("a_binary_override_that_is_not_an_executable_is_refused_by_name")
+    else {
+        return;
+    };
     sb.stub("jq");
     sb.stub("oneharness");
     let missing = sb.dir.path().join("absent/llmlint");
@@ -235,12 +261,13 @@ fn a_binary_override_that_is_not_an_executable_is_refused_by_name() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn the_library_sets_its_own_strict_mode() {
     // Sourced from a shell with every strict option off, the library turns them
     // on itself: errexit, nounset and pipefail.
-    let sb = Sandbox::new();
+    let Some(sb) = Sandbox::new("the_library_sets_its_own_strict_mode") else {
+        return;
+    };
     let mut cmd = Command::new(which("bash"));
     let out = cmd
         .env_clear()
@@ -266,8 +293,8 @@ fn the_library_sets_its_own_strict_mode() {
     assert!(!String::from_utf8_lossy(&out.stdout).contains("reached"));
 }
 
-/// Portable (it reads the library, so it also holds on the Windows `cross` job,
-/// where the journeys above do not run): strict mode is set before any command
+/// Portable (it reads the library, so it also holds on Windows, where the
+/// journeys above report themselves not exercised): strict mode is set before any command
 /// the library runs, and every variable it writes into a scratch config is one
 /// it validates by name.
 #[test]

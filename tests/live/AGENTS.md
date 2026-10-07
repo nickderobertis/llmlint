@@ -19,7 +19,10 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
   harness id are written into scratch configs, and `LLMLINT_BIN` /
   `LLMLINT_ONEHARNESS_BIN` are run, so `live-lib.sh` validates each by name
   first; `live_inputs.rs` (this project's offline `test` target, in the gate)
-  holds every refusal and the library's own strict mode.
+  holds every refusal and the library's own strict mode. It compiles on every
+  platform — no `#[cfg]` gate on a test: a journey Windows cannot host (its
+  sandbox PATH of symlinks and executable stand-ins) says so at run time and
+  returns, while the portable library check still runs there.
 - **Never skips.** A missing harness CLI, missing auth, or missing oneharness — or
   any exit 2 (the stack couldn't complete) — is a **hard failure** (red build). A
   silent skip would let a broken live setup pass unnoticed, so the live tier has no
