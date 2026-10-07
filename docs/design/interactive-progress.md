@@ -153,7 +153,7 @@ function + a couple of real end-to-end checks). Jest does exactly this —
 `isInteractive` is its own tiny tested module and `DefaultReporter` is
 snapshot-tested with the flag forced both ways.
 
-llmlint's layers map onto the existing tiers (`tests/e2e/AGENTS.md`):
+llmlint's layers map onto the existing tiers:
 
 | Layer | Tier | In `just check`? | New deps |
 |---|---|---|---|

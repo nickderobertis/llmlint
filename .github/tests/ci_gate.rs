@@ -614,6 +614,27 @@ fn an_unreadable_api_or_bad_inputs_stop_the_release() {
 
     // An answer that is not the commit object GitHub documents stops the release
     // naming the endpoint, never jq's bare parse error alone.
+    let bad_id = Github::new(
+        &[run(
+            7,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "completed",
+        )
+        .replace("\"id\":7", "\"id\":\"7/../../x\"")],
+        &[],
+    );
+    let out = bad_id.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("not a positive integer"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!bad_id.calls().contains("/jobs"), "{}", bad_id.calls());
+
     fs::write(
         gh.dir.path().join("commit.json"),
         "<html>rate limited</html>",
