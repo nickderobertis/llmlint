@@ -46,7 +46,7 @@ commit_parsers = [
 ]
 
 # The workspace's other members — the mock fixture, the e2e, release-target,
-# real-oneharness, screenshot, tooling and CI-workflow test crates, and the bench
+# real-oneharness, live, screenshot, tooling and CI-workflow test crates, and the bench
 # suite — are not deliverables: they carry `publish = false`, nothing published
 # depends on them, and a version of their own would be noise in the changelog
 # everyone reads. Only the `llmlint` package is versioned and released.
@@ -64,6 +64,10 @@ release = false
 
 [[package]]
 name = "llmlint-real-oneharness"
+release = false
+
+[[package]]
+name = "llmlint-live"
 release = false
 
 [[package]]

@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "live",
-  "//": "The paid live tier: the release llmlint -> real oneharness -> a real, authenticated harness. Its live target runs only in the Live workflow (live.yml); the gate tiers reach only its offline shellcheck.",
+  "//": "The paid live tier: the release llmlint -> real oneharness -> a real, authenticated harness. Its live target runs only in the Live workflow (live.yml); the gate tiers reach only its offline checks: format, lint, lint-sh and test (live_inputs.rs, which spends no model call).",
   "projectType": "application",
   "tags": [
     "type:live"
@@ -10,6 +10,35 @@
     "llmlint"
   ],
   "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-live -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-live"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-live --all-targets --locked -- -D warnings"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo nextest run -p llmlint-live --locked"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "//": "Offline: live_inputs sources the real live-lib.sh and shows every setting it writes into a scratch config, every binary override and the harness id refused by name before any paid call, and its strict mode its own. The paid journeys are the live target."
+    },
     "lint-sh": {
       "executor": "nx:run-commands",
       "options": {

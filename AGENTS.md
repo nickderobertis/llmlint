@@ -75,11 +75,13 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   declaration's offline checks (`test`) and network checks (`network`).
 - `real-oneharness` (`type:external`, `tests/real-oneharness/`) — the PyPI-installed
   oneharness suite (`network`), plus its offline pin check (`test`).
-- `live` (`type:live`, `tests/live/`) — the paid live tier.
+- `live` (`type:live`, `tests/live/`) — the paid live tier, plus its offline
+  input checks (`test`).
 - `win-color` (`type:e2e`, `tests/win-color/`) — the Windows console rendering check.
 - `screenshots` (`type:capture`, `screenshots/`) — the capture, and the pre-push
   guard's and freeze installer's journeys.
-- `bench` (`type:bench`, `benches/`) — the informational performance suite.
+- `bench` (`type:bench`, `benches/`) — the informational performance suite, plus
+  its harness scripts' offline input checks (`test`).
 - `repo-tooling` (`type:tooling`, `scripts/`) — setup, the Nx and gate plumbing,
   the actionlint installer and workflow lint, with their journeys.
 - `ci-workflows` (`type:tooling`, `.github/`) — the workflows, the CI routing and

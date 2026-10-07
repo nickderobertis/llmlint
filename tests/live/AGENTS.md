@@ -15,6 +15,11 @@ PRs in its own workflow (`.github/workflows/live.yml`), not as part of `check`.
   *breadth* (codex, cursor, …) is **oneharness's** test surface, not llmlint's —
   from llmlint's side every harness is the same `--harness <id>` forwarded to
   oneharness, so one canonical harness (claude-code) is enough here.
+- **Inputs are refused before any paid call.** `LL_TIMEOUT`, `LL_MODEL` and the
+  harness id are written into scratch configs, and `LLMLINT_BIN` /
+  `LLMLINT_ONEHARNESS_BIN` are run, so `live-lib.sh` validates each by name
+  first; `live_inputs.rs` (this project's offline `test` target, in the gate)
+  holds every refusal and the library's own strict mode.
 - **Never skips.** A missing harness CLI, missing auth, or missing oneharness — or
   any exit 2 (the stack couldn't complete) — is a **hard failure** (red build). A
   silent skip would let a broken live setup pass unnoticed, so the live tier has no

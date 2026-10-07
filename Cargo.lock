@@ -614,6 +614,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "llmlint-live"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "llmlint-mock-oneharness"
 version = "0.0.0"
 dependencies = [

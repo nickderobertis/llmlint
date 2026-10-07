@@ -52,10 +52,9 @@ ll_bin() {
     local b cand
     if [ -n "${LLMLINT_BIN:-}" ]; then
         for b in "$LLMLINT_BIN" "$LLMLINT_BIN.exe"; do
-            [ -x "$b" ] && { printf '%s' "$b"; return; }
+            [ -f "$b" ] && [ -x "$b" ] && { printf '%s' "$b"; return; }
         done
-        printf '%s' "$LLMLINT_BIN"
-        return
+        fail "LLMLINT_BIN must name an executable llmlint binary (got '$LLMLINT_BIN'); build it with \`cargo build --release --locked -p llmlint --bin llmlint\` or unset LLMLINT_BIN"
     fi
     for cand in "$LL_REPO_ROOT"/target/release/llmlint{,.exe} \
                 "$LL_REPO_ROOT"/target/debug/llmlint{,.exe}; do
@@ -71,8 +70,11 @@ require_oneharness() {
     if [ -n "${LLMLINT_ONEHARNESS_BIN:-}" ]; then
         local b
         for b in "$LLMLINT_ONEHARNESS_BIN" "$LLMLINT_ONEHARNESS_BIN.exe"; do
-            [ -x "$b" ] && return 0
+            [ -f "$b" ] && [ -x "$b" ] && return 0
         done
+        # llmlint itself reads the variable, so a bad one is never papered over
+        # by a oneharness that happens to be on PATH.
+        fail "LLMLINT_ONEHARNESS_BIN must name an executable oneharness binary (got '$LLMLINT_ONEHARNESS_BIN'); fix it or unset it to use the oneharness on PATH"
     fi
     command -v oneharness >/dev/null 2>&1 && return 0
     fail "oneharness not found (install it, or set LLMLINT_ONEHARNESS_BIN)"
@@ -89,15 +91,23 @@ trap _ll_cleanup EXIT
 
 # LL_TIMEOUT and LL_MODEL are written into each project's llmlint.yml, so they
 # are checked before anything is generated: the timeout must be a whole number of
-# seconds and the model a plain model id (letters, digits, `.`, `_`, `-`, `:`,
-# `/`, `@`), which can never close the YAML string or start a new key. A bad
-# value fails before any paid call, naming the variable.
+# seconds (1 to 86400) and the model a plain model id (letters, digits, `.`, `_`,
+# `-`, `:`, `/`, `@`), which can never close the YAML string or start a new key.
+# A bad value fails before any paid call, naming the variable.
 validate_settings() {
     local timeout="${LL_TIMEOUT:-120}" model="${LL_MODEL:-}"
-    [[ "$timeout" =~ ^[1-9][0-9]*$ ]] \
-        || fail "LL_TIMEOUT must be a positive whole number of seconds, got '$timeout'"
+    [[ "$timeout" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$timeout" -le 86400 ] \
+        || fail "LL_TIMEOUT must be a whole number of seconds from 1 to 86400, got '$timeout'"
     [ -z "$model" ] || [[ "$model" =~ ^[A-Za-z0-9._:/@-]+$ ]] \
         || fail "LL_MODEL must be a plain model id (letters, digits and . _ - : / @), got '$model'"
+}
+
+# The harness id is written into llmlint.yml and oneharness.toml, so it must be a
+# plain oneharness harness id (lowercase letters, digits and `-`), which can never
+# close a TOML string or start a new YAML key.
+validate_harness() {
+    [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+        || fail "the harness id must be a plain oneharness id (lowercase letters, digits and -), got '${1:-}'"
 }
 
 # The `oneharness:` block both project constructors share, from the settings
@@ -116,8 +126,10 @@ oneharness_settings() {
 # caller never sees) and fills in `src/lib.rs`. Every scaffolding step fails
 # loudly: errexit does not reach inside a command substitution's caller check.
 make_project() {
-    local harness="$1"
+    local harness="${1:-}"
     local proj
+    validate_harness "$harness"
+    validate_settings
     proj="$(mktemp -d)" || fail "could not create a temporary project directory (check TMPDIR)"
     mkdir -p "$proj/src" || fail "could not create $proj/src"
     {
@@ -154,7 +166,9 @@ _fallback_primary() {
 # `$harness`, naming it in the top-level `fallback.ran`; `results[0]` is the
 # skipped primary. A correct llmlint reads the winner, not `results[0]`.
 make_fallback_project() {
-    local harness="$1" primary proj
+    local harness="${1:-}" primary proj
+    validate_harness "$harness"
+    validate_settings
     primary="$(_fallback_primary "$harness")"
     proj="$(mktemp -d)" || fail "could not create a temporary project directory (check TMPDIR)"
     mkdir -p "$proj/src" || fail "could not create $proj/src"
@@ -185,7 +199,7 @@ ll_run() {
     local proj="$1"
     shift
     local bin
-    bin="$(ll_bin)"
+    bin="$(ll_bin)" || exit 1
     [ -n "$bin" ] || fail "llmlint binary not found (build it: \`cargo build --release --locked -p llmlint --bin llmlint\`, or set LLMLINT_BIN)"
     local errf
     errf="$(mktemp)" || fail "could not create a temporary file for llmlint's stderr (check TMPDIR)"
@@ -289,10 +303,14 @@ ll_live_fallback() {
 # The full live run for one harness: a pass journey, a violation journey, and a
 # fallback-selection journey.
 live_run_journeys() {
-    local harness="$1"
+    local harness="${1:-}" bin
+    validate_harness "$harness"
+    validate_settings
     need jq
     require_oneharness
-    validate_settings
+    # ll_bin refuses a bad LLMLINT_BIN itself; the assignment carries its exit.
+    bin="$(ll_bin)" || exit 1
+    [ -n "$bin" ] || fail "llmlint binary not found (build it: \`cargo build --release --locked -p llmlint --bin llmlint\`, or set LLMLINT_BIN)"
     note "== llmlint live e2e: $harness =="
     ll_live_pass "$harness"
     ll_live_fail "$harness"
