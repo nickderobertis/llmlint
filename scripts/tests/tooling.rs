@@ -1379,6 +1379,18 @@ fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkou
         "{}",
         calls()
     );
+
+    // So does a package.json newer than the install (a bumped Nx pin).
+    let _ = fs::remove_file(repo.p.path().join("nx-calls"));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    repo.p.write("package.json", "{\"changed\":true}\n");
+    let out = run_nx_wrapper(&repo, &["graph"], &[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        calls().starts_with("bun install --frozen-lockfile\nargs=graph\n"),
+        "{}",
+        calls()
+    );
 }
 
 #[cfg(unix)]

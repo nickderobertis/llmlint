@@ -85,6 +85,7 @@ test("the unit run alone is below the floor and the report fails, naming it", ()
   const report = coverage(["report"]);
   expect(report.code, report.out).toBe(1);
   expect(report.out).toContain("below 95% line coverage over every crate's run");
+  expect(report.out).toMatch(/^lib\.rs\s/m);
 }, 600_000);
 
 test("the e2e crate's profiles combine with the unit run's and pass the floor", () => {
@@ -94,9 +95,8 @@ test("the e2e crate's profiles combine with the unit run's and pass the floor", 
   expect(e2e.code, e2e.out).toBe(0);
   const report = coverage(["report"]);
   expect(report.code, report.out).toBe(0);
-  expect(report.out).toMatch(/^lib\.rs\s/m);
-  expect(report.out).not.toContain("e2e/main.rs");
-  expect(report.out).toMatch(/coverage: 100\.00% lines covered \(floor 95%\)/);
+  // Success is one line: the per-file table is printed only on failure.
+  expect(report.out.trim()).toBe("coverage: 100.00% lines covered (floor 95%)");
 }, 600_000);
 
 test("a crate that is not a member, an unknown step, or a bad switch is a usage error", () => {

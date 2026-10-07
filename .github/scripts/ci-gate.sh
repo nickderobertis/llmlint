@@ -70,6 +70,7 @@ route() {
   else
     payload='{}'
   fi
+  # llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] GitHub owns the event payload shape and its webhook docs are the only authority, which no gate run can reach offline; every field read is one GitHub documents for pull_request and push events, and a payload missing one fails safe: no usable base ref or head sha is refused, an unrecognised release PR gets the affected tier (so the release's verdict check finds no sweep and stops), and a push without event.before falls back to HEAD~1
   case "$event" in
     pull_request)
       local head_ref head_repo base_repo head_sha base_ref base
@@ -101,6 +102,7 @@ route() {
         emit "tier=affected"$'\n'"base=$before"$'\nhead=\n' "affected — push: since HEAD~1 (event.before unavailable)"
       fi
       ;;
+    # llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
     workflow_dispatch)
       emit $'tier=all\nbase=\nhead=\n' "all — workflow_dispatch: a manual full sweep of the dispatched commit"
       ;;

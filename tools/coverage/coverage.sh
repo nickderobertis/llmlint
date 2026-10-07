@@ -145,7 +145,6 @@ case "$STEP" in
       echo "coverage: the report passed but has no TOTAL row (format above); check the cargo-llvm-cov version against tools/coverage/coverage.sh." >&2
       exit 1
     fi
-    printf '%s\n' "$out"
     printf '%s\n' "$total" | awk -v min="$MIN_LINES" '{ print "coverage: " $(NF-3) " lines covered (floor " min "%)" }' >&2
     ;;
 esac
