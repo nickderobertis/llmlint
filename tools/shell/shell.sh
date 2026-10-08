@@ -31,6 +31,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
     exit 1
   }
 readonly ROOT
+# The pinned tools install into ~/.local/bin, so HOME locates them.
+if [ -z "${HOME:-}" ]; then
+  echo "shell: HOME is unset or empty; set it to your home directory (just shell-tools installs the pinned tools into \$HOME/.local/bin)." >&2
+  exit 1
+fi
 readonly LOCAL_BIN="$HOME/.local/bin"
 
 usage() {

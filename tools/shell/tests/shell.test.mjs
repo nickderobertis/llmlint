@@ -189,6 +189,17 @@ test("a tool off its pin is refused before it formats anything, naming the pin a
   expect(r.out).toContain("just shell-tools");
 });
 
+test("without HOME the step is refused by name, not with an unbound-variable error", () => {
+  write("scripts/good.sh", FORMATTED);
+  // `undefined` drops the variable from the child's environment.
+  for (const HOME of [undefined, ""]) {
+    const r = shell(["format", "scripts/good.sh"], { HOME });
+    expect(r.code, JSON.stringify(HOME)).toBe(1);
+    expect(r.out).toContain("shell: HOME is unset or empty; set it to your home directory");
+    expect(r.out).not.toContain("unbound variable");
+  }
+});
+
 test("a missing tool or a missing pin is refused with the line that fixes it", () => {
   write("scripts/good.sh", FORMATTED);
   const bare = { HOME: join(dir, "home"), PATH: "/usr/bin:/bin" };

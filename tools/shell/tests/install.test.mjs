@@ -247,6 +247,20 @@ test("a malformed override or a missing pin is refused before anything is fetche
   expect(r.out).toContain("is not a release version (got: ../../x)");
 });
 
+test("without HOME the default install dir is refused by name, while an explicit install dir still installs", () => {
+  // `undefined` drops the variable from the child's environment.
+  for (const HOME of [undefined, ""]) {
+    const r = install({ HOME, SHELL_TOOLS_INSTALL_DIR: undefined });
+    expect(r.code, JSON.stringify(HOME)).toBe(1);
+    expect(r.out).toContain("HOME is unset or empty, so there is no default ~/.local/bin to install into");
+    expect(r.out).toContain("point SHELL_TOOLS_INSTALL_DIR at a directory on PATH");
+    expect(r.out).not.toContain("unbound variable");
+  }
+  const r = install({ HOME: undefined });
+  expect(r.code).toBe(0);
+  expect(build("shfmt").version).toBe(`v${SHFMT}`);
+});
+
 test("a host whose uname fails is refused with the fix, not misdetected", () => {
   write("stubs/uname", "#!/bin/sh\nexit 3\n", 0o755);
   const r = spawnSync("bash", [join(dir, "tools/shell/install-shell-tools.sh")], {

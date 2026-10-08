@@ -37,7 +37,6 @@ esac
 # misconfigured caller, which the checks below reject.
 shfmt_base="${SHFMT_BASE_URL-https://github.com/mvdan/sh/releases/download}"
 shellcheck_base="${SHELLCHECK_BASE_URL-https://github.com/koalaman/shellcheck/releases/download}"
-install_dir="${SHELL_TOOLS_INSTALL_DIR-$HOME/.local/bin}"
 sums_file="${SHELL_TOOLS_SHA256_FILE-$ROOT/tools/shell/shell-tools.sha256}"
 
 fail() {
@@ -47,6 +46,13 @@ fail() {
   done
   exit 1
 }
+
+# The default install dir is under HOME, so HOME is needed only without an override.
+if [ -z "${SHELL_TOOLS_INSTALL_DIR+set}" ] && [ -z "${HOME:-}" ]; then
+  fail "HOME is unset or empty, so there is no default ~/.local/bin to install into;" \
+    "set HOME, or point SHELL_TOOLS_INSTALL_DIR at a directory on PATH."
+fi
+install_dir="${SHELL_TOOLS_INSTALL_DIR-$HOME/.local/bin}"
 
 for url in "$shfmt_base" "$shellcheck_base"; do
   if ! [[ $url =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ || $url =~ ^file:///[^[:space:]]+$ ]]; then
