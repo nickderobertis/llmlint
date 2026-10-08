@@ -6,7 +6,7 @@
 // small bash runners that drive the scratch scripts the way the journeys do.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -221,6 +221,24 @@ test("LLMLINT_COVERAGE=off runs the command unmeasured and stands install and re
     const s = shcov(args, off);
     expect(s.code, args[0]).toBe(0);
     expect(s.out, args[0]).toContain("LLMLINT_COVERAGE=off");
+  }
+});
+
+test("without Ruby or Bundler each step that needs them is refused, naming the fix", () => {
+  // A PATH of only what shcov.sh itself runs, plus (second case) a stand-in ruby.
+  const bin = join(dir, "sandbox");
+  mkdirSync(bin);
+  for (const t of ["bash", "dirname", "grep"]) {
+    symlinkSync(spawnSync("bash", ["-c", `type -P ${t}`], { encoding: "utf8" }).stdout.trim(), join(bin, t));
+  }
+  for (const [missing, extra] of [["ruby", []], ["bundle", ["ruby"]]]) {
+    for (const t of extra) write(`sandbox/${t}`, "#!/bin/sh\nexit 0\n", 0o755);
+    for (const args of [["install"], ["run", "demo", "--", "true"], ["report", "demo"]]) {
+      const r = shcov(args, { PATH: bin });
+      expect(r.code, `${missing} ${args[0]}`).toBe(1);
+      expect(r.out, `${missing} ${args[0]}`).toContain(`shcov: ${missing} not found on PATH`);
+      expect(r.out, `${missing} ${args[0]}`).toContain("then run: just bootstrap");
+    }
   }
 });
 

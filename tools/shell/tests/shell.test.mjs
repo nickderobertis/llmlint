@@ -77,6 +77,28 @@ test("the style is the one .editorconfig records, for a script with no extension
   expect(shell(["format", ".githooks/pre-push"]).code).toBe(0);
 });
 
+test("a file that is missing, a glob that matched nothing, or one shfmt cannot parse is named as that, not as drift", () => {
+  for (const step of ["format", "lint"]) {
+    const r = shell([step, "scripts/*.sh"]);
+    expect(r.code, step).toBe(1);
+    expect(r.out, step).toContain("cannot read scripts/*.sh; check the path");
+  }
+  write("scripts/broken.sh", "#!/usr/bin/env bash\nif then\n");
+  const r = shell(["format", "scripts/broken.sh"]);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("scripts/broken.sh:2:");
+  expect(r.out).toContain("shfmt could not parse a file");
+  expect(r.out).not.toContain("not formatted to the .editorconfig style");
+});
+
+test("format --write that cannot rewrite a file fails naming the fix", () => {
+  write("scripts/bad.sh", UNFORMATTED);
+  write("scripts/broken.sh", "#!/usr/bin/env bash\nif then\n");
+  const r = shell(["format", "--write", "scripts/bad.sh", "scripts/broken.sh"]);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("shfmt could not rewrite the files");
+});
+
 test("lint fails on a shellcheck finding with its code and passes a clean script", () => {
   write("scripts/clean.sh", FORMATTED);
   write("scripts/finding.sh", '#!/usr/bin/env bash\nset -euo pipefail\nf=$1\nrm $f\n');

@@ -116,7 +116,6 @@ main() {
   ensure_just
   ensure_cargo_tool cargo-nextest cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"
-  # llmlint: ignore[changed_behavior_has_e2e] setup provisions a real toolchain over the network, so no hermetic journey can run it; this line only delegates to `just actionlint-tools`, whose installer the install_actionlint_* journeys drive
   just actionlint-tools
   say "fetching dependencies + toolchain components (just bootstrap)"
   just bootstrap

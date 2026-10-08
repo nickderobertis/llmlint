@@ -54,7 +54,7 @@ binary and the fixture they drive.
 - **The measurement behind the 50% floor.** The floor was approved against
   51.81% (1057/2040). Re-taken on the finished tree of the change that set it
   (aarch64 Linux, all 9 projects, `bash scripts/nx run shell-coverage:coverage`),
-  it is 52.26%, 1077/2061:
+  it is 55.09%, 1147/2082:
 
   | script | lines | % |
   |---|---|---|
@@ -76,18 +76,18 @@ binary and the fixture they drive.
   | `scripts/nx-tier.sh` | 8/10 | 80.0 |
   | `scripts/release-probe.sh` | 57/61 | 93.4 |
   | `scripts/session-setup.sh` | 0/46 | 0.0 |
-  | `scripts/setup-check.sh` | 9/14 | 64.3 |
-  | `scripts/setup-lib.sh` | 43/51 | 84.3 |
+  | `scripts/setup-check.sh` | 14/14 | 100.0 |
+  | `scripts/setup-lib.sh` | 49/51 | 96.1 |
   | `scripts/setup-llmlint.sh` | 0/23 | 0.0 |
-  | `scripts/setup.sh` | 0/65 | 0.0 |
+  | `scripts/setup.sh` | 38/68 | 55.9 |
   | `tests/live/live-claude.sh` | 0/12 | 0.0 |
   | `tests/live/live-lib.sh` | 84/180 | 46.7 |
   | `tests/real-oneharness/install-oneharness.sh` | 9/47 | 19.1 |
   | `tests/real-oneharness/network.sh` | 0/6 | 0.0 |
   | `tools/coverage/coverage.sh` | 51/77 | 66.2 |
-  | `tools/coverage/shcov.sh` | 45/57 | 78.9 |
-  | `tools/shell/install-shell-tools.sh` | 83/91 | 91.2 |
-  | `tools/shell/shell.sh` | 82/87 | 94.3 |
+  | `tools/coverage/shcov.sh` | 48/57 | 84.2 |
+  | `tools/shell/install-shell-tools.sh` | 87/92 | 94.6 |
+  | `tools/shell/shell.sh` | 96/104 | 92.3 |
 
   Re-take this table whenever the floor moves.
 [//]: # "llmlint: ignore-end[agents_md_durable_and_terse]"

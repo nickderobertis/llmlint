@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -146,7 +146,7 @@ test("an archive without the expected layout is refused after its digest matches
   expect(r.out).toContain(`holds no shellcheck-v${SHELLCHECK}/shellcheck`);
 });
 
-test("an archive that matches its digest but will not unpack is refused, nothing installed", () => {
+test("an archive that matches its digest but will not unpack is refused, and its tool is not installed", () => {
   const asset = `shellcheck-v${SHELLCHECK}.linux.x86_64.tar.gz`;
   write(`rel/sc/v${SHELLCHECK}/${asset}`, "not a gzip archive\n");
   writeFileSync(
@@ -178,6 +178,39 @@ test("an install dir that cannot be written, or no scratch space, is a failure n
   r = install({ TMPDIR: join(dir, "no-such-tmp") });
   expect(r.code).toBe(1);
   expect(r.out).toContain("could not create a temporary directory");
+});
+
+// A PATH of only the named host tools (and the uname stand-in), so which hash
+// tool the installer finds is up to the journey.
+function sandboxPath(tools) {
+  const bin = join(dir, "sandbox");
+  mkdirSync(bin, { recursive: true });
+  for (const t of tools) {
+    const real = spawnSync("bash", ["-c", `type -P ${t}`], { encoding: "utf8" }).stdout.trim();
+    if (!real) throw new Error(`${t} is not on this host's PATH`);
+    symlinkSync(real, join(bin, t));
+  }
+  return `${join(dir, "stubs")}:${bin}`;
+}
+const BASE = ["bash", "curl", "tar", "gzip", "install", "awk", "grep", "head", "cut", "sed", "mkdir", "rm", "mktemp", "dirname", "cat"];
+
+test("without sha256sum the installer verifies with shasum, and with neither it refuses to install", () => {
+  // shasum is a host tool the installer only falls back to; a stand-in that
+  // hashes with the real sha256sum by absolute path plays it where it is absent.
+  const real = spawnSync("bash", ["-c", "type -P sha256sum"], { encoding: "utf8" }).stdout.trim();
+  write("hash/shasum", `#!/bin/sh\n[ "$1" = -a ] && shift 2\nexec ${real} "$@"\n`, 0o755);
+  const path = sandboxPath(BASE);
+  symlinkSync(join(dir, "hash/shasum"), join(dir, "sandbox/shasum"));
+  let r = install({ PATH: path });
+  expect(r.code, r.out).toBe(0);
+  expect(build("shfmt").version).toBe(`v${SHFMT}`);
+
+  rmSync(join(dir, "bin"), { recursive: true, force: true });
+  rmSync(join(dir, "sandbox/shasum"));
+  r = install({ PATH: path });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("no SHA-256 tool (sha256sum or shasum) on PATH");
+  expect(existsSync(join(dir, "bin"))).toBe(false);
 });
 
 test("an unsupported host is refused by name", () => {

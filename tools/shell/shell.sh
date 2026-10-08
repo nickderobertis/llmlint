@@ -82,6 +82,19 @@ operands() {
   done
 }
 
+# Each file must be there to check: a path that is missing or unreadable is
+# named, rather than left to read as a formatting or lint finding. (After the
+# LLMLINT_SHELL_TOOLS check: a Windows cmd.exe hands a glob over unexpanded.)
+readable() {
+  local f
+  for f in "$@"; do
+    if [ ! -f "$f" ] || [ ! -r "$f" ]; then
+      echo "shell: cannot read $f; check the path (a glob that matched nothing stays literal) and its read permission." >&2
+      exit 1
+    fi
+  done
+}
+
 enabled() {
   case "${LLMLINT_SHELL_TOOLS:-on}" in
     on) return 0 ;;
@@ -147,11 +160,22 @@ case "$STEP" in
       echo "shell: LLMLINT_SHELL_TOOLS=off — shfmt skipped; the Linux gate enforces it." >&2
       exit 0
     fi
+    readable "$@"
     require shfmt
     if "$write"; then
-      shfmt -w -- "$@"
-    elif ! shfmt -d -- "$@" >&2; then
-      echo "shell: the files above are not formatted to the .editorconfig style; write it with: just format" >&2
+      if ! shfmt -w -- "$@"; then
+        echo "shell: shfmt could not rewrite the files (reason above); fix the syntax at the file:line:col it names, or the file's write permission, then re-run: just format" >&2
+        exit 1
+      fi
+    elif ! out="$(shfmt -d -- "$@" 2>&1)"; then
+      printf '%s\n' "$out" >&2
+      # shfmt exits 1 for a diff and for a file it cannot parse alike; only the
+      # latter names a file:line:col, at the start of a line no diff line has.
+      if printf '%s\n' "$out" | grep -qE '^[^-+ @][^ ]*:[0-9]+:[0-9]+: '; then
+        echo "shell: shfmt could not parse a file (its file:line:col is above); fix the syntax there, then re-run." >&2
+      else
+        echo "shell: the files above are not formatted to the .editorconfig style; write it with: just format" >&2
+      fi
       exit 1
     fi
     ;;
@@ -163,11 +187,21 @@ case "$STEP" in
       echo "shell: LLMLINT_SHELL_TOOLS=off — shellcheck skipped; the Linux gate enforces it." >&2
       exit 0
     fi
+    readable "$@"
     require shellcheck
-    if ! shellcheck -- "$@" >&2; then
-      echo "shell: fix each finding above at its file:line, or disable it at that site with its reason (# shellcheck disable=SCxxxx  # why)." >&2
-      exit 1
-    fi
+    status=0
+    shellcheck -- "$@" >&2 || status=$?
+    case "$status" in
+      0) ;;
+      1)
+        echo "shell: fix each finding above at its file:line, or disable it at that site with its reason (# shellcheck disable=SCxxxx  # why)." >&2
+        exit 1
+        ;;
+      *)
+        echo "shell: shellcheck could not check the files (exit $status, reason above); fix what it names, then re-run." >&2
+        exit 1
+        ;;
+    esac
     ;;
 
   *) usage "unknown step '$STEP'" ;;

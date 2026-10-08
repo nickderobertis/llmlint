@@ -1649,6 +1649,18 @@ fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkou
     );
 }
 
+/// Under the shell coverage run (`tools/coverage/shcov.sh`), keep measuring the
+/// script a journey starts with a cleared environment: shcov hands over the
+/// snippet that records each bash process as `SHCOV_BASH_ENV`, and bash reads
+/// `BASH_ENV`. Outside that run there is nothing to keep.
+#[cfg(unix)]
+fn keep_shell_coverage(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    if let Some(snippet) = std::env::var_os("SHCOV_BASH_ENV") {
+        cmd.env("BASH_ENV", snippet);
+    }
+    cmd
+}
+
 /// The first `name` on the test's own PATH, if any.
 #[cfg(unix)]
 fn on_path(name: &str) -> Option<PathBuf> {
@@ -1718,14 +1730,16 @@ fn setup_check_requires_the_shell_toolchain_and_follows_the_gemfile_lock() {
         &format!("#!/bin/sh\necho {}\n", pinned_bun_version()),
     );
     let run = |script: &[&str]| {
-        std::process::Command::new(bin.join("bash"))
-            .args(script)
-            .current_dir(p.path())
-            .env_clear()
-            .env("PATH", &bin)
-            .env("HOME", p.path().join("home"))
-            .output()
-            .unwrap()
+        keep_shell_coverage(
+            std::process::Command::new(bin.join("bash"))
+                .args(script)
+                .current_dir(p.path())
+                .env_clear(),
+        )
+        .env("PATH", &bin)
+        .env("HOME", p.path().join("home"))
+        .output()
+        .unwrap()
     };
     let out = run(&["-c", ". scripts/setup-lib.sh; _write_stamp"]);
     assert!(out.status.success(), "{out:?}");
@@ -1756,6 +1770,99 @@ fn setup_check_requires_the_shell_toolchain_and_follows_the_gemfile_lock() {
         stdout.contains("toolchain or tool versions changed since last setup"),
         "{stdout}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() {
+    // `scripts/setup.sh` checks its prerequisites (Node, and now Ruby with
+    // Bundler, which run bashcov) before it installs anything. The real script
+    // runs here against stand-ins for every tool it would otherwise provision or
+    // call (rustup, cargo, just, ...), each recording that it ran, so the journey
+    // shows the refusal comes first and, once both are present, setup goes on to
+    // `just actionlint-tools` and `just bootstrap` and writes its stamp.
+    let p = Project::new();
+    let root = repo_root();
+    for file in [
+        "scripts/setup.sh",
+        "scripts/setup-lib.sh",
+        ".tool-versions",
+        "justfile",
+        "rust-toolchain.toml",
+        "Gemfile.lock",
+    ] {
+        p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+    }
+    let bin = p.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for base in [
+        "bash",
+        "dirname",
+        "cat",
+        "grep",
+        "head",
+        "cut",
+        "awk",
+        "mkdir",
+        "rm",
+        "sha256sum",
+        "shasum",
+    ] {
+        if let Some(real) = on_path(base) {
+            std::os::unix::fs::symlink(real, bin.join(base)).unwrap();
+        }
+    }
+    let calls = p.path().join("calls");
+    for tool in [
+        "rustup",
+        "rustc",
+        "cargo",
+        "just",
+        "cargo-nextest",
+        "cargo-llvm-cov",
+        "node",
+        "ruby",
+        "bundle",
+    ] {
+        write_exe(
+            &bin.join(tool),
+            &format!("#!/bin/sh\necho \"{tool} $*\" >> \"{}\"\n", calls.display()),
+        );
+    }
+    let setup = || {
+        let _ = fs::remove_file(&calls);
+        let out = keep_shell_coverage(
+            std::process::Command::new(bin.join("bash"))
+                .arg("scripts/setup.sh")
+                .current_dir(p.path())
+                .env_clear(),
+        )
+        .env("PATH", &bin)
+        .env("HOME", p.path().join("home"))
+        .output()
+        .unwrap();
+        (out, fs::read_to_string(&calls).unwrap_or_default())
+    };
+
+    for missing in ["ruby", "bundle"] {
+        fs::rename(bin.join(missing), p.path().join(missing)).unwrap();
+        let (out, ran) = setup();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{missing}: {out:?}");
+        assert!(
+            stderr.contains("Ruby with Bundler is required to run bashcov"),
+            "{missing}: {stderr}"
+        );
+        assert!(!ran.contains("just "), "{missing}: setup went on: {ran}");
+        assert!(!p.path().join(".dev/setup.stamp").exists(), "{missing}");
+        fs::rename(p.path().join(missing), bin.join(missing)).unwrap();
+    }
+
+    let (out, ran) = setup();
+    assert!(out.status.success(), "{out:?}");
+    assert!(ran.contains("just actionlint-tools"), "{ran}");
+    assert!(ran.contains("just bootstrap"), "{ran}");
+    assert!(p.path().join(".dev/setup.stamp").exists());
 }
 
 #[cfg(unix)]
