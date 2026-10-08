@@ -2,8 +2,10 @@
 // repository, under the real bashcov the root Gemfile.lock pins: `run` around a
 // project's test command records what its scripts executed, however deep in the
 // process tree and through a scratch copy of a script, and `report` merges the
-// records and fails below the floor. Nothing is stubbed; the "test commands" are
-// small bash runners that drive the scratch scripts the way the journeys do.
+// records and fails below the floor. bashcov and the driver are never stubbed;
+// the "test commands" are small bash runners that drive the scratch scripts the
+// way the journeys do, and only a host tool a journey must remove (a SHA-256
+// tool, Ruby or Bundler) is ever played by a stand-in.
 // llmlint: ignore-file[shell_test_tiers_stay_split] this project holds only the coverage drivers, which exist to drive bashcov and cargo-llvm-cov; the suite runs the locked bashcov offline over a scratch repository, so its offline and host-tool tiers are the same thing, and only an edit to a driver (or the shell coverage pins) selects it
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
