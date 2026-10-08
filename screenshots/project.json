@@ -1,10 +1,11 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "screenshots",
-  "//": "The terminal screenshots: the capture scripts, fixture and font, CI's freeze installer, and the journeys of the pre-push visual guard (git-hooks), which drives these capture scripts. The capture renders through freeze, so it is left to the Visual docs workflow; lint-sh and test are offline and in the gate tiers.",
+  "//": "The terminal screenshots: the capture scripts, fixture and font, CI's freeze installer, and the journeys of the pre-push visual guard (git-hooks), which drives these capture scripts. The capture renders through freeze, so it is left to the Visual docs workflow; format (cargo fmt, shfmt), lint (clippy, shellcheck) and test are offline and in the gate tiers.",
   "projectType": "application",
   "tags": [
-    "type:capture"
+    "type:capture",
+    "coverage:shell"
   ],
   "implicitDependencies": [
     "llmlint",
@@ -15,30 +16,41 @@
     "format": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo fmt -p llmlint-screenshots -- --check"
+        "commands": [
+          "cargo fmt -p llmlint-screenshots -- --check",
+          "bash tools/shell/shell.sh format screenshots/*.sh"
+        ],
+        "parallel": false
       },
       "configurations": {
         "write": {
-          "command": "cargo fmt -p llmlint-screenshots"
+          "commands": [
+            "cargo fmt -p llmlint-screenshots",
+            "bash tools/shell/shell.sh format --write screenshots/*.sh"
+          ],
+          "parallel": false
         }
       }
     },
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo clippy -p llmlint-screenshots --all-targets --locked -- -D warnings"
-      }
-    },
-    "lint-sh": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "shellcheck screenshots/*.sh"
-      }
+        "commands": [
+          "cargo clippy -p llmlint-screenshots --all-targets --locked -- -D warnings",
+          "bash tools/shell/shell.sh lint screenshots/*.sh"
+        ],
+        "parallel": false
+      },
+      "inputs": [
+        "default",
+        "^default",
+        "shellTools"
+      ]
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo nextest run -p llmlint-screenshots --locked"
+        "command": "bash tools/coverage/shcov.sh run screenshots -- cargo nextest run -p llmlint-screenshots --locked"
       },
       "cache": true,
       "inputs": [
@@ -47,9 +59,13 @@
         "{workspaceRoot}/.githooks/pre-push",
         "{workspaceRoot}/justfile",
         "{workspaceRoot}/screencomp.toml",
-        "{workspaceRoot}/shots/baseline/*.json"
+        "{workspaceRoot}/shots/baseline/*.json",
+        "shellCoverage"
       ],
-      "//": "The guard's offline script journeys and the demo GIF's outcome drift check. Cached: its inputs are every file they read or run, and (^default) the llmlint sources whose Outcome the drift check reads."
+      "//": "The guard's offline script journeys and the demo GIF's outcome drift check. Cached: its inputs are every file they read or run, and (^default) the llmlint sources whose Outcome the drift check reads.",
+      "outputs": [
+        "{workspaceRoot}/target/shcov/screenshots.json"
+      ]
     },
     "capture": {
       "executor": "nx:run-commands",

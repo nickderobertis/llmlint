@@ -19,6 +19,17 @@ fn lib_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("live-lib.sh")
 }
 
+/// Under the shell coverage run (`tools/coverage/shcov.sh`), keep measuring a
+/// library this journey sources from a cleared environment: shcov hands the
+/// snippet that records each bash process over as `SHCOV_BASH_ENV`, and bash reads
+/// `BASH_ENV`. Outside that run there is nothing to keep.
+fn keep_shell_coverage(cmd: &mut Command) -> &mut Command {
+    if let Some(snippet) = std::env::var_os("SHCOV_BASH_ENV") {
+        cmd.env("BASH_ENV", snippet);
+    }
+    cmd
+}
+
 /// The first `name` on the test's own PATH.
 fn which(name: &str) -> PathBuf {
     std::env::var_os("PATH")
@@ -92,7 +103,7 @@ impl Sandbox {
     /// in scope) under `env`.
     fn run(&self, script: &str, env: &[(&str, &str)]) -> Output {
         let mut cmd = Command::new(which("bash"));
-        cmd.env_clear()
+        keep_shell_coverage(cmd.env_clear())
             .env("PATH", self.dir.path().join("bin"))
             .env("HOME", self.dir.path())
             .env("TMPDIR", self.tmp())
@@ -269,8 +280,7 @@ fn the_library_sets_its_own_strict_mode() {
         return;
     };
     let mut cmd = Command::new(which("bash"));
-    let out = cmd
-        .env_clear()
+    let out = keep_shell_coverage(cmd.env_clear())
         .env("PATH", sb.dir.path().join("bin"))
         .env("HOME", sb.dir.path())
         .arg("-c")

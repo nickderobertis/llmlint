@@ -1,10 +1,11 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "live",
-  "//": "The paid live tier: the release llmlint -> real oneharness -> a real, authenticated harness. Its live target runs only in the Live workflow (live.yml); the gate tiers reach only its offline checks: format, lint, lint-sh and test (live_inputs.rs, which spends no model call).",
+  "//": "The paid live tier: the release llmlint -> real oneharness -> a real, authenticated harness. Its live target runs only in the Live workflow (live.yml); the gate tiers reach only its offline checks: format (cargo fmt, shfmt), lint (clippy, shellcheck) and test (live_inputs.rs, which spends no model call, under the shell coverage driver).",
   "projectType": "application",
   "tags": [
-    "type:live"
+    "type:live",
+    "coverage:shell"
   ],
   "implicitDependencies": [
     "llmlint"
@@ -13,37 +14,52 @@
     "format": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo fmt -p llmlint-live -- --check"
+        "commands": [
+          "cargo fmt -p llmlint-live -- --check",
+          "bash tools/shell/shell.sh format tests/live/*.sh"
+        ],
+        "parallel": false
       },
       "configurations": {
         "write": {
-          "command": "cargo fmt -p llmlint-live"
+          "commands": [
+            "cargo fmt -p llmlint-live",
+            "bash tools/shell/shell.sh format --write tests/live/*.sh"
+          ],
+          "parallel": false
         }
       }
     },
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo clippy -p llmlint-live --all-targets --locked -- -D warnings"
-      }
+        "commands": [
+          "cargo clippy -p llmlint-live --all-targets --locked -- -D warnings",
+          "bash tools/shell/shell.sh lint tests/live/*.sh"
+        ],
+        "parallel": false
+      },
+      "inputs": [
+        "default",
+        "^default",
+        "shellTools"
+      ]
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo nextest run -p llmlint-live --locked"
+        "command": "bash tools/coverage/shcov.sh run live -- cargo nextest run -p llmlint-live --locked"
       },
       "cache": true,
       "inputs": [
         "default",
-        "^default"
+        "^default",
+        "shellCoverage"
       ],
-      "//": "Offline: live_inputs sources the real live-lib.sh and shows every setting it writes into a scratch config, every binary override and the harness id refused by name before any paid call, and its strict mode its own. The paid journeys are the live target."
-    },
-    "lint-sh": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "shellcheck tests/live/*.sh"
-      }
+      "//": "Offline: live_inputs sources the real live-lib.sh and shows every setting it writes into a scratch config, every binary override and the harness id refused by name before any paid call, and its strict mode its own. The paid journeys are the live target.",
+      "outputs": [
+        "{workspaceRoot}/target/shcov/live.json"
+      ]
     },
     "live": {
       "executor": "nx:run-commands",

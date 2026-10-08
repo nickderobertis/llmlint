@@ -6,6 +6,9 @@
 # would create a second, conflicting toolchain mechanism.
 #
 # `bun` installs and runs Nx, the orchestrator every gate recipe delegates to
-# (scripts/bun.sh resolves this pin; CI's setup-bun reads it).
+# (scripts/bun.sh resolves this pin; CI's setup-bun reads it). `ruby` runs
+# bashcov, the shell coverage tool the root Gemfile.lock pins (CI's setup-ruby
+# reads this pin; locally setup checks Ruby is present, as it does Node).
 just 1.42.4
 bun 1.3.14
+ruby 3.3.6

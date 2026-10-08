@@ -844,7 +844,8 @@ fn setup_check_reports_a_missing_actionlint_as_not_ready() {
 /// A scratch repository carrying the real justfile and the real
 /// `scripts/nx-tier.sh` + `scripts/nx-base.sh`, with only `scripts/nx` (Nx
 /// itself, the orchestrator the recipes hand off to) stood in by a stub that
-/// records its argv. History: `base` -> `feature` (HEAD) on one side, and
+/// records its argv, and beside it the two platform switches it ran under
+/// (`LLMLINT_COVERAGE`, `LLMLINT_SHELL_TOOLS`). History: `base` -> `feature` (HEAD) on one side, and
 /// `origin/main` moved on to `upstream` on the other, so the merge base with
 /// `origin/main` (`base`) is not `origin/main` itself.
 #[cfg(unix)]
@@ -865,7 +866,8 @@ impl GateRepo {
         }
         p.write(
             "scripts/nx",
-            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$NX_CALLS\"\n",
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$NX_CALLS\"\n\
+             printf 'LLMLINT_COVERAGE=%s LLMLINT_SHELL_TOOLS=%s\\n' \"${LLMLINT_COVERAGE-}\" \"${LLMLINT_SHELL_TOOLS-}\" >> \"$NX_CALLS.env\"\n",
         );
         fs::set_permissions(
             p.path().join("scripts/nx"),
@@ -899,11 +901,16 @@ impl GateRepo {
     fn just(&self, args: &[&str], nx_base: Option<&str>) -> (std::process::Output, Vec<String>) {
         let calls = self.p.path().join("nx-calls");
         let _ = fs::remove_file(&calls);
+        let _ = fs::remove_file(self.p.path().join("nx-calls.env"));
         let mut cmd = std::process::Command::new("just");
+        // The switches are the recipes' to set, never inherited from whichever
+        // gate runs this journey (`check-portable` exports both).
         cmd.args(args)
             .current_dir(self.p.path())
             .env("NX_CALLS", &calls)
-            .env_remove("NX_BASE");
+            .env_remove("NX_BASE")
+            .env_remove("LLMLINT_COVERAGE")
+            .env_remove("LLMLINT_SHELL_TOOLS");
         clear_git_env(&mut cmd);
         if let Some(base) = nx_base {
             cmd.env("NX_BASE", base);
@@ -914,10 +921,20 @@ impl GateRepo {
         let recorded = fs::read_to_string(&calls).unwrap_or_default();
         (out, recorded.lines().map(str::to_string).collect())
     }
+
+    /// The `LLMLINT_COVERAGE`/`LLMLINT_SHELL_TOOLS` each `scripts/nx` call of
+    /// the last [`Self::just`] ran under, one line per call.
+    fn switches(&self) -> Vec<String> {
+        fs::read_to_string(self.p.path().join("nx-calls.env"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
 }
 
 #[cfg(unix)]
-const GATE_TARGETS: &str = "-t format lint lint-sh lint-workflows build test doc coverage";
+const GATE_TARGETS: &str = "-t format lint lint-workflows build test doc coverage";
 
 #[cfg(unix)]
 #[test]
@@ -1000,7 +1017,6 @@ fn every_gate_recipe_takes_the_same_tier() {
     for (recipe, targets) in [
         ("test", "-t test"),
         ("lint", "-t lint"),
-        ("lint-sh", "-t lint-sh"),
         ("lint-workflows", "-t lint-workflows"),
         ("fmt-check", "-t format"),
         ("format", "-t format --configuration=write"),
@@ -1020,6 +1036,30 @@ fn every_gate_recipe_takes_the_same_tier() {
         assert!(out.status.success(), "{recipe} --all: {out:?}");
         assert_eq!(calls, vec![format!("run-many --all {targets}")]);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn check_portable_leaves_coverage_and_the_shell_tools_to_the_linux_gate() {
+    // The cross jobs run `check-portable` on macOS/Windows: every test runs
+    // unmeasured and shfmt/shellcheck stand down there, while `check` (the Linux
+    // gate) runs Nx with neither switch set, so both are enforced.
+    let repo = GateRepo::new();
+    for tier in [&["check-portable"][..], &["check-portable", "--all"][..]] {
+        let (out, _) = repo.just(tier, None);
+        assert!(out.status.success(), "{tier:?}: {out:?}");
+        assert_eq!(
+            repo.switches(),
+            vec!["LLMLINT_COVERAGE=off LLMLINT_SHELL_TOOLS=off"],
+            "{tier:?}"
+        );
+    }
+    let (out, _) = repo.just(&["check"], None);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        repo.switches(),
+        vec!["LLMLINT_COVERAGE= LLMLINT_SHELL_TOOLS="]
+    );
 }
 
 // llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/unzip/sha256sum/bash; a test cannot own the host's OS/CPU, bun's release server, or a second bun release, so only `uname`, the release tree, and `bun`/`node`/`nx` themselves are stood in
@@ -1635,7 +1675,11 @@ fn setup_check_reports_a_missing_pinned_bun_as_not_ready() {
         "cargo-nextest",
         "cargo-llvm-cov",
         "actionlint",
+        "shfmt",
+        "shellcheck",
         "node",
+        "ruby",
+        "bundle",
     ] {
         write_exe(&tools.join(bin), "#!/bin/sh\nexit 0\n");
     }

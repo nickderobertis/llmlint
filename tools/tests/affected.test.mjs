@@ -90,3 +90,23 @@ test("an edit to a shared script or workflow selects exactly its consumers", () 
     for (const p of ["llmlint", "llmlint-mock-oneharness", "llmlint-e2e", "bench"]) expect(got).not.toContain(p);
   }
 });
+
+test("an edit to a sourced shell library selects the project of every script sourcing it, and the shell coverage gate", () => {
+  // setup-lib.sh is sourced only by repo-tooling's scripts and live-lib.sh only
+  // by live's, so each library's own project is every consumer's (gate.test.mjs
+  // holds that); the edit must also re-run the merged shell coverage verdict.
+  for (const [lib, project] of [["scripts/setup-lib.sh", "repo-tooling"], ["tests/live/live-lib.sh", "live"]]) {
+    const got = selected(lib);
+    expect(got, lib).toEqual(dependents(project));
+    expect(got, lib).toContain("shell-coverage");
+  }
+  // The toolchain wrapper has no consumers by edge (bench and live may depend on
+  // no tooling project), but every shell project's lint and test name it as an
+  // input (nx.json's shellTools/shellCoverage), and Nx counts that as touching
+  // them: an edit to it re-runs every project's shell format, lint and coverage.
+  const tools = selected("tools/shell/shell.sh");
+  for (const p of ["shell-tools", "repo-tooling", "git-hooks", "bench", "screenshots", "ci-workflows", "live", "real-oneharness", "coverage-driver", "shell-coverage"]) {
+    expect(tools, p).toContain(p);
+  }
+  expect(tools).not.toContain("llmlint");
+});

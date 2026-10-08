@@ -7,8 +7,10 @@ workflow lint the ci-workflows project runs, the llmlint-tier installer, and two
 files whose paths are published contracts and so stay here: `install.sh` (the
 README's `curl | sh` URL) and `release-probe.sh` (named by
 `release-targets.toml`). The offline journeys over them are `tests/tooling.rs`,
-this project's `test` target; `shellcheck` over every script here is its
-`lint-sh`.
+this project's `test` target (run under the shell coverage driver); shfmt and
+shellcheck over every script here run in its `format` and `lint`, beside cargo
+fmt and clippy. `setup-lib.sh` is sourced only by scripts in this project, so it
+needs no project or edge of its own.
 
 - **Gate plumbing.** Each gate recipe runs `nx affected` or `nx run-many --all`
   itself, as `nx-tier.sh` decides: no flag prints the explicit base `nx-base.sh`

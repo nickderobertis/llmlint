@@ -7,4 +7,6 @@ missing llmlint warns and skips. The visual guard then re-captures and classifie
 the screenshots when a guarded path changed. The hook's journeys are the
 screenshots project's (`screenshots/tests/visual_guard.rs`), since the guard
 drives that project's capture scripts; a change to the hook's logic gets one
-there. This project's `lint-sh` shellchecks the hook.
+there. This project's `format` (shfmt) and `lint` (shellcheck) check the hook,
+through `tools/shell/shell.sh`; it has no `test` of its own, and the hook's
+shell coverage comes from the screenshots project's journeys.

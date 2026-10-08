@@ -1,24 +1,40 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "coverage-driver",
-  "//": "The coverage driver, coverage.sh (the per-crate instrumented test runs and the merged report the coverage gate project runs), and its self-tests. Nothing depends on it but the coverage gate, so only an edit to the driver selects its slow self-tests.",
+  "//": "The two coverage drivers and their self-tests: coverage.sh (the per-crate instrumented test runs and the merged report the coverage gate project runs) and shcov.sh with shcov.rb (bashcov around each shell-measured project's tests, and the merged shell report the shell-coverage gate runs). Nothing depends on it but the two gates. The Rust gate needs only the driver itself, so a product edit never selects these self-tests through it; the shell gate merges this project's own record too (its tests run both drivers' scripts), so its dependsOn runs them — a few seconds over a scratch workspace.",
   "projectType": "library",
   "tags": [
-    "type:workspace"
+    "type:workspace",
+    "coverage:shell"
   ],
   "targets": {
-    "lint-sh": {
+    "format": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "shellcheck tools/coverage/coverage.sh"
+        "command": "bash tools/shell/shell.sh format tools/coverage/*.sh"
+      },
+      "configurations": {
+        "write": {
+          "command": "bash tools/shell/shell.sh format --write tools/coverage/*.sh"
+        }
       }
     },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh lint tools/coverage/*.sh"
+      },
+      "inputs": [
+        "default",
+        "shellTools"
+      ]
+    },
     "test": {
-      "//suppression": "llmlint: ignore-block[shell_test_tiers_stay_split] this project holds one script, coverage.sh, which exists only to drive cargo-llvm-cov and nextest; its offline and its host-tool tiers are the same thing, so no unrelated script edit can pay for this suite, and only an edit to the driver (or the cargo/cargo-llvm-cov/nextest versions, runtime inputs of this cached target) reruns it",
+      "//suppression": "llmlint: ignore-block[shell_test_tiers_stay_split] this project holds only the two coverage drivers, coverage.sh (cargo-llvm-cov and nextest) and shcov.sh/shcov.rb (bashcov), which exist only to drive those tools; the suite runs each real tool over a scratch workspace, offline, so its offline and its host-tool tiers are the same thing, no unrelated script edit can pay for it, and only an edit to a driver (or the cargo/cargo-llvm-cov/nextest versions and the shell coverage pins, inputs of this cached target) reruns it",
       "executor": "nx:run-commands",
       "cache": true,
       "options": {
-        "command": "bun test --timeout 600000 tools/coverage/tests"
+        "command": "bash tools/coverage/shcov.sh run coverage-driver -- bun test --timeout 600000 tools/coverage/tests"
       },
       "inputs": [
         "default",
@@ -30,16 +46,21 @@
         },
         {
           "runtime": "cargo nextest --version"
-        }
+        },
+        "shellCoverage"
       ],
-      "//": "The driver against a scratch Cargo workspace under the real cargo-llvm-cov: profiles combine across crates, the floor fails below 95%, and bad input is a usage error.",
+      "outputs": [
+        "{workspaceRoot}/target/shcov/coverage-driver.json"
+      ],
+      "//": "Both drivers against scratch inputs under the real tools: profiles combine across crates and the Rust floor fails below 95%; a shell record merges across projects, counts a scratch copy of a script for the script, and the shell floor fails below its bar; bad input is a usage error.",
       "//suppression-end": "llmlint: ignore-end[shell_test_tiers_stay_split]"
     }
   },
   "namedInputs": {
     "default": [
       "{projectRoot}/**/*",
-      "!{projectRoot}/gate/**/*"
+      "!{projectRoot}/gate/**/*",
+      "!{projectRoot}/shell/**/*"
     ]
   }
 }

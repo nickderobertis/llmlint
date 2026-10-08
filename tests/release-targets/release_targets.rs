@@ -969,6 +969,12 @@ mod probe {
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", home.path());
+        // Under the shell coverage run (tools/coverage/shcov.sh), the cleared
+        // environment would also drop what measures the probe; shcov hands it
+        // over as SHCOV_BASH_ENV for exactly this, and bash reads BASH_ENV.
+        if let Some(snippet) = std::env::var_os("SHCOV_BASH_ENV") {
+            command.env("BASH_ENV", snippet);
+        }
         for (key, value) in extra {
             command.env(key, value);
         }

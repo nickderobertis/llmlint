@@ -16,8 +16,10 @@ cached pass could replay over a newly forbidden edge.
   expensive one, and no expensive project on another.
 - **Tests.** `tests/*.test.mjs` (`bun test`, this project's `test`) drive the
   checker against real scratch Cargo workspaces, and check against the real graph
-  that every shell script is under some project's `lint-sh`, the workflows under
-  `lint-workflows`, that `just check` runs every gate target, and that an edit
+  that every shell script the tree scan finds (`tools/shell/shell.sh files`) is
+  under some project's shfmt `format` and shellcheck `lint`, the workflows under
+  `lint-workflows`, that the shell coverage gate merges exactly the
+  `coverage:shell` projects, that `just check` runs every gate target, and that an edit
   selects exactly its owning project and that project's dependents
   (`affected.test.mjs`, asking `nx show projects --affected --files=`).
 - **Nested Nx goes through `scripts/nx`.** The checker and these tests compute

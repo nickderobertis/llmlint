@@ -10,9 +10,11 @@
 #      cargo-llvm-cov — pinned to the justfile,
 #   4. ensures the pinned `actionlint` (the gate's workflow linter) via
 #      `just actionlint-tools` (prebuilt release, digest-verified),
-#   5. checks Node is present (Nx runs on it; setup does not install it),
+#   5. checks Node is present (Nx runs on it) and Ruby with Bundler (they run
+#      bashcov, the shell coverage tool); setup installs neither,
 #   6. fetches dependencies, adds toolchain components, and installs the pinned
-#      bun + the locked Nx via `just bootstrap`,
+#      bun + the locked Nx, the pinned shfmt + shellcheck and the locked bashcov
+#      via `just bootstrap`,
 #   7. records a setup stamp for the fast session check (scripts/setup-check.sh).
 #
 # It does NOT install oneharness (a separate *runtime* prerequisite) or
@@ -101,9 +103,16 @@ ensure_node() {
   exit 1
 }
 
+ensure_ruby() {
+  have ruby && have bundle && return
+  printf 'error: Ruby with Bundler is required to run bashcov (the shell coverage tool); install Ruby (the .tool-versions pin) from https://www.ruby-lang.org or your package manager, then re-run ./scripts/setup.sh\n' >&2
+  exit 1
+}
+
 main() {
   ensure_rust
   ensure_node
+  ensure_ruby
   ensure_just
   ensure_cargo_tool cargo-nextest cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"

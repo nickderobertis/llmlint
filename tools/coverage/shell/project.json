@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "shell-coverage",
+  "//": "The repo-level shell coverage gate: merges the bashcov record every coverage:shell project's test target writes (tools/coverage/shcov.sh run) and enforces the shell line floor once, over every shell script in the tree (tools/shell/shell.sh files). It depends on exactly what can move that number: the projects whose tests write records, and the driver. It is its own project, apart from the Rust coverage gate, so a script edit re-runs the shell journeys without re-running the instrumented Rust suites.",
+  "projectType": "library",
+  "tags": [
+    "type:workspace"
+  ],
+  "implicitDependencies": [
+    "tag:coverage:shell",
+    "coverage-driver"
+  ],
+  "targets": {
+    "coverage": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": [
+        {
+          "projects": [
+            "tag:coverage:shell"
+          ],
+          "target": "test"
+        }
+      ],
+      "options": {
+        "command": "bash tools/coverage/shcov.sh report bench ci-workflows coverage-driver live real-oneharness release-targets repo-tooling screenshots shell-tools"
+      },
+      "//": "The projects named are exactly the coverage:shell ones (a workspace journey holds the two equal), so a record is never missed or read stale: each was just written or restored by the test it dependsOn. Uncached, like the Rust gate: a replay could report on records that no longer exist."
+    }
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*"
+    ]
+  }
+}

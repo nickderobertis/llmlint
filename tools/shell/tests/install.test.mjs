@@ -1,0 +1,184 @@
+// tools/shell/install-shell-tools.sh, the way `just bootstrap` runs it, with real
+// curl/tar/install/sha256sum: only what a test cannot own is stood in — the host
+// (`uname`), the two release servers (a local release tree over file://, with the
+// digest pin file to match), and so the tools themselves (stand-ins that report
+// the pinned version, as the real ones do).
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+const REPO = resolve(import.meta.dir, "../../..");
+const pin = (tool) => readFileSync(join(REPO, "justfile"), "utf8").match(new RegExp(`^${tool}-version := "([^"]+)"`, "m"))[1];
+const SHFMT = pin("shfmt");
+const SHELLCHECK = pin("shellcheck");
+let dir;
+
+function write(path, text, mode) {
+  mkdirSync(join(dir, path, ".."), { recursive: true });
+  writeFileSync(join(dir, path), text);
+  if (mode) chmodSync(join(dir, path), mode);
+}
+
+const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+
+// A release tree for every asset the script can choose, and a pin file naming
+// each one's digest.
+function releases() {
+  const sums = [];
+  for (const [os, arch] of [["linux", "amd64"], ["linux", "arm64"], ["darwin", "amd64"], ["darwin", "arm64"]]) {
+    const asset = `shfmt_v${SHFMT}_${os}_${arch}`;
+    write(`rel/sh/v${SHFMT}/${asset}`, `#!/bin/sh\necho v${SHFMT}\necho ${os}/${arch} >&2\n`);
+    sums.push(`${sha(join(dir, `rel/sh/v${SHFMT}/${asset}`))}  ${asset}`);
+  }
+  for (const [os, arch] of [["linux", "x86_64"], ["linux", "aarch64"], ["darwin", "x86_64"], ["darwin", "aarch64"]]) {
+    const asset = `shellcheck-v${SHELLCHECK}.${os}.${arch}.tar.gz`;
+    write(`pkg/shellcheck-v${SHELLCHECK}/shellcheck`, `#!/bin/sh\necho "version: ${SHELLCHECK}"\necho ${os}/${arch} >&2\n`, 0o755);
+    mkdirSync(join(dir, `rel/sc/v${SHELLCHECK}`), { recursive: true });
+    const tar = spawnSync("tar", ["-czf", join(dir, `rel/sc/v${SHELLCHECK}/${asset}`), "-C", join(dir, "pkg"), `shellcheck-v${SHELLCHECK}`]);
+    if (tar.status !== 0) throw new Error(`tar: ${tar.stderr}`);
+    sums.push(`${sha(join(dir, `rel/sc/v${SHELLCHECK}/${asset}`))}  ${asset}`);
+  }
+  write("sums", `# stand-in pins\n${sums.join("\n")}\n`);
+}
+
+function install(env = {}, { os = "Linux", arch = "x86_64" } = {}) {
+  write("stubs/uname", `#!/bin/sh\ncase "$1" in -s) echo ${os} ;; *) echo ${arch} ;; esac\n`, 0o755);
+  const r = spawnSync("bash", [join(dir, "tools/shell/install-shell-tools.sh")], {
+    cwd: dir,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${join(dir, "stubs")}:${process.env.PATH}`,
+      HOME: join(dir, "home"),
+      LLMLINT_SHELL_TOOLS: "on",
+      SHFMT_BASE_URL: `file://${join(dir, "rel/sh")}`,
+      SHELLCHECK_BASE_URL: `file://${join(dir, "rel/sc")}`,
+      SHELL_TOOLS_INSTALL_DIR: join(dir, "bin"),
+      SHELL_TOOLS_SHA256_FILE: join(dir, "sums"),
+      ...env,
+    },
+  });
+  if (r.error) throw r.error;
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+}
+
+// Which stand-in build an installed tool is (each prints its os/arch).
+function build(tool) {
+  const r = spawnSync(join(dir, "bin", tool), ["--version"], { encoding: "utf8" });
+  return { version: r.stdout.trim(), build: r.stderr.trim() };
+}
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "llmlint-shell-tools-"));
+  mkdirSync(join(dir, "tools/shell"), { recursive: true });
+  copyFileSync(join(REPO, "tools/shell/install-shell-tools.sh"), join(dir, "tools/shell/install-shell-tools.sh"));
+  copyFileSync(join(REPO, "justfile"), join(dir, "justfile"));
+  releases();
+});
+
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+test("installs the pinned shfmt and shellcheck built for each supported host", () => {
+  for (const [os, arch, goBuild, scBuild] of [
+    ["Linux", "x86_64", "linux/amd64", "linux/x86_64"],
+    ["Linux", "aarch64", "linux/arm64", "linux/aarch64"],
+    ["Darwin", "arm64", "darwin/arm64", "darwin/aarch64"],
+    ["Darwin", "amd64", "darwin/amd64", "darwin/x86_64"],
+  ]) {
+    rmSync(join(dir, "bin"), { recursive: true, force: true });
+    const r = install({}, { os, arch });
+    expect(r.code, `${os}/${arch}: ${r.out}`).toBe(0);
+    expect(r.out).toContain(`installed shfmt ${SHFMT} (${goBuild})`);
+    expect(build("shfmt")).toEqual({ version: `v${SHFMT}`, build: goBuild });
+    expect(build("shellcheck")).toEqual({ version: `version: ${SHELLCHECK}`, build: scBuild });
+  }
+});
+
+test("a second run keeps the pinned tools in place without fetching anything", () => {
+  expect(install().code).toBe(0);
+  rmSync(join(dir, "rel"), { recursive: true, force: true });
+  const r = install();
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain(`shfmt ${SHFMT} already at`);
+  expect(r.out).toContain(`shellcheck ${SHELLCHECK} already at`);
+});
+
+test("a tool off its pin in the install dir is replaced by the pinned one", () => {
+  write("bin/shfmt", "#!/bin/sh\necho v0.0.1\n", 0o755);
+  const r = install();
+  expect(r.code, r.out).toBe(0);
+  expect(build("shfmt").version).toBe(`v${SHFMT}`);
+});
+
+test("a download that does not match its pinned digest is refused and nothing is installed", () => {
+  write(`rel/sh/v${SHFMT}/shfmt_v${SHFMT}_linux_amd64`, "#!/bin/sh\necho tampered\n");
+  const r = install();
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`sha256 mismatch for shfmt_v${SHFMT}_linux_amd64 — NOT installing`);
+  expect(existsSync(join(dir, "bin/shfmt"))).toBe(false);
+});
+
+test("an asset with no pinned digest, or a missing pin file, is refused", () => {
+  writeFileSync(join(dir, "sums"), readFileSync(join(dir, "sums"), "utf8").replace(/^.*shellcheck.*linux\.x86_64.*$/m, ""));
+  let r = install();
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`no pinned sha256 for shellcheck-v${SHELLCHECK}.linux.x86_64.tar.gz`);
+  r = install({ SHELL_TOOLS_SHA256_FILE: join(dir, "absent") });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("no readable digest pin file");
+});
+
+test("an archive without the expected layout is refused after its digest matches", () => {
+  const asset = `shellcheck-v${SHELLCHECK}.linux.x86_64.tar.gz`;
+  write("other/README", "not shellcheck\n");
+  spawnSync("tar", ["-czf", join(dir, `rel/sc/v${SHELLCHECK}/${asset}`), "-C", join(dir, "other"), "README"]);
+  writeFileSync(
+    join(dir, "sums"),
+    readFileSync(join(dir, "sums"), "utf8").replace(new RegExp(`^\\w+  ${asset.replace(/\./g, "\\.")}$`, "m"), `${sha(join(dir, `rel/sc/v${SHELLCHECK}/${asset}`))}  ${asset}`),
+  );
+  const r = install();
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`holds no shellcheck-v${SHELLCHECK}/shellcheck`);
+});
+
+test("an unsupported host is refused by name", () => {
+  let r = install({}, { os: "SunOS" });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("no pinned shfmt/shellcheck build for this OS: SunOS");
+  r = install({}, { arch: "riscv64" });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("no pinned shfmt/shellcheck build for this architecture: riscv64");
+});
+
+test("a malformed override or a missing pin is refused before anything is fetched", () => {
+  for (const [env, msg] of [
+    [{ SHFMT_BASE_URL: "http://example.com" }, "must be https://<host>[/path] or file:///<path>"],
+    [{ SHELLCHECK_BASE_URL: "" }, "got: <empty>"],
+    [{ SHELL_TOOLS_INSTALL_DIR: "" }, "SHELL_TOOLS_INSTALL_DIR is empty"],
+    [{ LLMLINT_SHELL_TOOLS: "maybe" }, "must be 'on' (the default) or 'off'"],
+  ]) {
+    const r = install(env);
+    expect(r.code, JSON.stringify(env)).not.toBe(0);
+    expect(r.out, JSON.stringify(env)).toContain(msg);
+  }
+  writeFileSync(join(dir, "justfile"), `shfmt-version := "${SHFMT}"\n`);
+  const r = install();
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('restore the line: shellcheck-version := "<version>"');
+});
+
+test("an unreachable release server is a clear failure, not a silent skip", () => {
+  const r = install({ SHFMT_BASE_URL: `file://${join(dir, "nowhere")}` });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("could not download");
+});
+
+test("LLMLINT_SHELL_TOOLS=off installs nothing, with a notice", () => {
+  const r = install({ LLMLINT_SHELL_TOOLS: "off" });
+  expect(r.code).toBe(0);
+  expect(r.out).toContain("LLMLINT_SHELL_TOOLS=off");
+  expect(existsSync(join(dir, "bin"))).toBe(false);
+});

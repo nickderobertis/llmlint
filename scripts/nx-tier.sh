@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Choose the gate tier for the justfile's gate recipes (check, test, lint,
-# lint-sh, lint-workflows, fmt-check, format, doc), so the tier is a flag on the
+# lint-workflows, fmt-check, format, doc), so the tier is a flag on the
 # same command rather than a second gate. Prints one line:
 #
 #   all        under --all: the FULL SWEEP — the recipe runs `nx run-many --all`

@@ -45,9 +45,10 @@ Composes the `create-repo` skill's `base.md` + `project-graph.md` +
 `shapes/cli.md` + `languages/rust.md` + `languages/bash.md` +
 `intersections/rust-cli.md` + `ci.md` + `releasing.md` + `llmlint.md`
 (`llmlint.yml` pins each one's rule fragment). Bash is a composed language
-because the scripts (`scripts/`, and those in the screenshots, live, bench and
-CI projects) and `.githooks/pre-push` carry real logic; three other languages
-are **supporting tooling** only:
+because the scripts (`scripts/`, and those in the screenshots, live, bench,
+real-oneharness, CI, coverage and shell-tools projects) and `.githooks/pre-push`
+carry real logic — its target shell, toolchain and coverage floor are under
+"Shell" below; four other languages are **supporting tooling** only:
 
 - **PowerShell** — `tests/win-color/win-console-color.ps1`, one script: it must drive a
   real Windows console buffer, which only PowerShell can read back.
@@ -57,6 +58,10 @@ are **supporting tooling** only:
   the one `bun.lock` (bun pinned in `.tool-versions`); `tools/` holds the one
   project-boundary checker and its `bun test` suite. Nothing JavaScript is built
   or shipped.
+- **Ruby** — `tools/coverage/shcov.rb`, the driver that runs bashcov (the shell
+  coverage tool, locked in the root `Gemfile.lock`, Ruby pinned in
+  `.tool-versions`) around the script journeys; neither built, shipped, nor
+  linted.
 
 [//]: # "llmlint: ignore-block[agents_md_durable_and_terse] this list is the composition record the create-repo baseline requires Stack and composition to carry: the projects in the graph, each with its boundary tag and the one-line reason it is a project, and the only place tags and ownership read together; each project.json holds a definition, not why the graph is cut this way"
 **Projects in the graph** (`nx.json` + a `project.json` per project; each Rust
@@ -89,17 +94,25 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   release-verdict script, and their drift gates; actionlint is its `lint-workflows`.
 - `git-hooks` (`type:tooling`, `.githooks/`) — the pre-push hook (its journeys are
   the screenshots project's).
+- `shell-tools` (`type:tooling`, `tools/shell/`) — the shell toolchain every
+  shell project's `format`/`lint` runs (`shell.sh`: shfmt and shellcheck behind
+  their pins, and the tree's one shell-script discovery) and its installer; no
+  edges, since bench and live may depend on no tooling project — its consumers
+  name its script as a cached input instead, which Nx counts as touching them.
 - `workspace` (`type:workspace`, `tools/`) — the boundary check and the
   supply-chain check; `coverage` (`type:workspace`, `tools/coverage/gate/`) — the
-  aggregate coverage gate; `coverage-driver` (`type:workspace`, `tools/coverage/`)
-  — its driver, `coverage.sh`, and the driver's slow self-tests, a project of
-  their own so a product edit (which selects the gate) never selects them.
+  aggregate Rust coverage gate; `shell-coverage` (`type:workspace`,
+  `tools/coverage/shell/`) — the aggregate shell coverage gate, its own project so
+  a script edit never re-runs the instrumented Rust suites; `coverage-driver`
+  (`type:workspace`, `tools/coverage/`) — both gates' drivers (`coverage.sh`,
+  `shcov.sh`/`shcov.rb`) and their self-tests, a project of their own so a product
+  edit (which selects the Rust gate) never selects them through it.
 [//]: # "llmlint: ignore-end[agents_md_durable_and_terse]"
 
 Every project declares the repo-uniform target names that apply to it: `format`
-(a check; `--configuration=write` writes), `lint` (clippy, or the boundary
-check), `lint-sh` (shellcheck), `lint-workflows` (actionlint), `build`, `test`,
-`doc`. A target that must never fan out into a gate tier gets a name of its own —
+(a check — cargo fmt and/or shfmt; `--configuration=write` writes), `lint`
+(clippy and/or shellcheck, or the boundary check), `lint-workflows` (actionlint),
+`build`, `test`, `doc`, and the two gates' `coverage`. A target that must never fan out into a gate tier gets a name of its own —
 `network` (release-targets, real-oneharness), `live`, `win-color`, `capture`,
 `bless`, `gif`, the `bench*` targets, `check-version-bump`, `supply-chain` — so
 `nx run-many -t test` can never reach it. Tags bound the edges
@@ -149,7 +162,9 @@ Deliberately excluded or deviating (so it isn't re-litigated):
   `assets/`.
 - **No heavy pre-commit framework, direnv, or `src`-layout shuffling** — the gate
   is `just check` + CI on the standard Cargo layout.
-- **Coverage bar: 95% lines** (`cargo llvm-cov --fail-under-lines 95`).
+- **Coverage bar: 95% lines** (`cargo llvm-cov --fail-under-lines 95`) for the
+  Rust crate; **50% lines for shell**, below `languages/bash.md`'s 95% default for
+  the reason recorded under "Shell", and enforced all the same.
 - **MSRV (`rust-version`) is advisory** — `just msrv` checks it locally; not a CI
   gate (no strong downstream promise for a binary-only tool yet).
 
@@ -188,21 +203,27 @@ Use the `just` recipes; do not hand-roll equivalents.
   `install`, which stands in for an end user's machine, uses a stock stable. Use
   `just setup` for a bare machine.
 - `just check` — the gate, delegated to Nx (`scripts/nx-tier.sh` picks the
-  tier): the targets `format` (check), `lint` (clippy `-D warnings`, the
-  boundary check), `lint-sh`, `lint-workflows`, `build`, `test` (unit, **e2e**,
-  the offline release-targets and script journeys, coverage-measured ones under
-  cargo-llvm-cov), `doc` and `coverage` (the 95% floor over their union). With no flag it runs the
+  tier): the targets `format` (cargo fmt, shfmt — a check), `lint` (clippy `-D
+  warnings`, shellcheck, the boundary check), `lint-workflows`, `build`, `test`
+  (unit, **e2e**, the offline release-targets and script journeys, the Rust
+  coverage-measured ones under cargo-llvm-cov and the script journeys under
+  bashcov), `doc` and `coverage` (the 95% Rust floor over their union, and the
+  shell floor over the merged shell records). With no flag it runs the
   **affected tier** — `nx affected` from an explicit base: `NX_BASE` when set
   (only a plain ref name or a commit SHA, else refused before any target runs),
   otherwise the merge base with `origin/main`. `just check --all` runs the **full
   sweep** (`nx run-many --all`). Must pass before any commit or PR. The
   one-target recipes (`just --list`) take the same flag; `just check-portable` is
-  the macOS/Windows part CI's `cross` jobs run — uninstrumented, so
-  `coverage-driver`'s cargo-llvm-cov tests stay on Linux.
-- `just lint-sh` — shellcheck over every project's scripts and the git hooks
-  (each project's `lint-sh` target). Fix a finding at its
-  site; a `# shellcheck disable=` is site-scoped and carries its reason. `just
-  setup` does not install shellcheck yet (CI's ubuntu runner ships it).
+  the macOS/Windows part CI's `cross` jobs run — unmeasured
+  (`LLMLINT_COVERAGE=off`) and without shfmt/shellcheck
+  (`LLMLINT_SHELL_TOOLS=off`), so `coverage-driver`'s tests and the shell checks
+  stay on Linux.
+- `just shell-tools` — install the justfile-pinned shfmt and shellcheck
+  (`tools/shell/install-shell-tools.sh`, digest-checked against
+  `tools/shell/shell-tools.sha256`); `just bootstrap` runs it too. They run in
+  each shell project's `format` and `lint`; fix a finding at its site — a
+  `# shellcheck disable=` is site-scoped and carries its reason — and `just
+  format` writes the shfmt style.
 - `just lint-workflows` — the pinned actionlint (`actionlint-version` in the
   justfile) over every workflow in `.github/workflows/` (the ci-workflows
   project's target); part of `check`. A finding is fixed, not suppressed. `just
@@ -258,9 +279,54 @@ Use the `just` recipes; do not hand-roll equivalents.
   `screenshots-bless`, `screenshots-gif`) — *informational, never a gate*:
   deterministic SVGs of the real CLI output, hash-gated by the `Visual docs`
   workflow (screencomp, `fail-on-drift`) per declared capture lane, which also
-  publishes a GitHub Pages gallery. The screenshots project's `lint-sh` and `test`
-  are in the gate tiers; its `capture` needs `freeze`, so it is left to that
+  publishes a GitHub Pages gallery. The screenshots project's `format`, `lint`
+  and `test` are in the gate tiers; its `capture` needs `freeze`, so it is left to that
   workflow and the pre-push guard. See `screenshots/AGENTS.md`.
+
+## Shell
+
+- **Target shell: bash**, on Linux and macOS: every script but one runs under
+  `#!/usr/bin/env bash` with `set -euo pipefail`. A few setup scripts deviate:
+  `setup.sh`, `setup-check.sh` and `session-setup.sh` use `set -eu`, and
+  `setup-llmlint.sh` uses `set -uo pipefail`, its omitted `-e` explained at its
+  head. The one exception is `scripts/install.sh`, the public `curl | sh`
+  installer, which stays POSIX `sh` (`set -eu`) so that any user's `sh` runs it.
+- **Toolchain, pinned once:** shfmt and shellcheck in the justfile
+  (`shfmt-version`, `shellcheck-version`; installed by `just bootstrap` /
+  `just shell-tools`), bashcov in the root `Gemfile.lock` (installed by
+  `just bootstrap` into `.dev/bundle`, the path `.bundle/config` names), and Ruby
+  in `.tool-versions` (a prerequisite `just setup` checks, as it checks Node).
+  There is no bats suite: the script journeys are the projects' existing Rust and
+  bun suites, which drive the real scripts. Every project owning shell runs
+  shfmt in `format` and shellcheck in `lint`, through `tools/shell/shell.sh`,
+  which refuses a tool off its pin. The style is recorded once, in
+  `.editorconfig` (two-space indent, indented `case` items, binary operators
+  leading the continued line).
+- **Coverage:** each `coverage:shell` project's `test` runs its suite under
+  `tools/coverage/shcov.sh run`. Every bash process the suite starts, however
+  deep, records its own xtrace through `BASH_ENV`, and a scratch copy counts for
+  the script it is byte-identical to. `shell-coverage:coverage` merges the
+  records over every script `tools/shell/shell.sh files` finds (30, none
+  excluded) and fails below the floor. A journey that clears its child's
+  environment hands `SHCOV_BASH_ENV` back as `BASH_ENV`, or the child goes
+  unmeasured.
+- **Floor: 50% lines**, approved by the manager. It rests on a measurement of
+  **51.81% (1057 of 2040 lines)**, taken on aarch64 Linux over the 9 measured
+  projects; the per-script table is in `tools/coverage/AGENTS.md`. The floor is
+  one point under the measurement, because a few branches depend on the host
+  (the architecture `case` arms, which tools are present) and CI runs x86_64.
+  95% is out of reach because of what the gate cannot run:
+  - `scripts/install.sh`: POSIX `sh`, which bashcov does not trace, and no
+    journey yet.
+  - `setup.sh`, `session-setup.sh` and `setup-llmlint.sh`: they provision over
+    the network.
+  - The paid live tier (`live-claude.sh` and most of `live-lib.sh`).
+  - The PyPI network tier (`network.sh`, most of `install-oneharness.sh`).
+  - The bench and screenshot harnesses past their input checks: they need
+    hyperfine, valgrind, samply or freeze, which are informational tools.
+
+  Raise the floor as journeys land; never lower it, or exclude a script, to make
+  the number pass.
 
 ## How llmlint drives oneharness
 
