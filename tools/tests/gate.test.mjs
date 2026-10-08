@@ -52,6 +52,14 @@ function shellFilesOf(target, step) {
   return files;
 }
 
+// The tree's shell scripts. A scan that fails part-way has printed the scripts
+// before the failure, so its exit status is checked rather than its list trusted.
+function shellScripts() {
+  const r = run("bash", ["tools/shell/shell.sh", "files"]);
+  expect(r.code, r.stderr).toBe(0);
+  return r.stdout.split("\n").filter(Boolean);
+}
+
 test("every shell script in the tree is under some project's shfmt format and shellcheck lint", () => {
   const formatted = new Set();
   const linted = new Set();
@@ -61,7 +69,7 @@ test("every shell script in the tree is under some project's shfmt format and sh
     for (const f of shellFilesOf(targets.lint, "lint")) linted.add(f);
   }
   // The tree scan, not a list: every .sh/.bash file and every sh-family shebang.
-  const scripts = run("bash", ["tools/shell/shell.sh", "files"]).stdout.split("\n").filter(Boolean);
+  const scripts = shellScripts();
   expect(scripts).toContain(".githooks/pre-push");
   expect(scripts).toContain("scripts/nx");
   expect(scripts.length).toBeGreaterThan(20);
@@ -75,7 +83,7 @@ test("a sourced shell library sits in the project of every script that sources i
   const roots = Object.entries(nodes).map(([name, node]) => [name, node.data.root === "." ? "" : `${node.data.root}/`]);
   const owner = (file) =>
     roots.filter(([, root]) => file.startsWith(root)).sort((a, b) => b[1].length - a[1].length)[0][0];
-  const scripts = run("bash", ["tools/shell/shell.sh", "files"]).stdout.split("\n").filter(Boolean);
+  const scripts = shellScripts();
   const edges = [];
   for (const f of scripts) {
     for (const m of readFileSync(join(REPO, f), "utf8").matchAll(/^\s*# shellcheck source=(\S+)/gm)) {

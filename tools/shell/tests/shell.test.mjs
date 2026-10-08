@@ -178,6 +178,44 @@ test("files fails on a read error rather than mistake it for end of file, and re
   expect(r.out).toContain("shell: reading hooks/run failed (reason above), so whether it is a shell script is unknown");
 });
 
+test("files reads every file as bytes, so a non-UTF-8 file cannot end the scan under BSD tools in a UTF-8 locale", () => {
+  // macOS's tr refuses bytes that are not UTF-8 when the locale is UTF-8 ("Illegal
+  // byte sequence"); a GIF that sorted before scripts/ ended the hosted macOS scan
+  // there. GNU tr reads bytes in any locale, so a stand-in plays BSD's tr here and
+  // hands every byte-locale or UTF-8 read to the real one.
+  const real = spawnSync("bash", ["-c", "type -P tr"], { encoding: "utf8" }).stdout.trim();
+  write(
+    "stubs/tr",
+    `#!/bin/sh
+case "\${LC_ALL:-\${LC_CTYPE:-\${LANG:-}}}" in
+  "" | C | POSIX) exec ${real} "$@" ;;
+esac
+in="$(mktemp)"
+cat >"$in"
+if ! iconv -f UTF-8 -t UTF-8 <"$in" >/dev/null 2>&1; then
+  rm -f "$in"
+  echo "tr: Illegal byte sequence" >&2
+  exit 1
+fi
+${real} "$@" <"$in"
+status=$?
+rm -f "$in"
+exit "$status"
+`,
+    0o755,
+  );
+  write(".gitignore", "/stubs/\n");
+  write("docs/demo.gif", Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0xff, 0xfe, 0x0a]));
+  write("hooks/pre-push", "#!/usr/bin/env bash\necho hook\n");
+  write("scripts/nx", "#!/usr/bin/env bash\n# shellcheck source=scripts/lib.sh\n. scripts/lib.sh\n");
+  write("scripts/lib.sh", "greet() { echo hi; }\n");
+  write("scripts/posix", "#!/bin/sh -e\necho posix\n");
+  const r = shell(["files"], { PATH: `${join(dir, "stubs")}:${process.env.PATH}`, LANG: "en_US.UTF-8", LC_ALL: "", LC_CTYPE: "" });
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).not.toContain("Illegal byte sequence");
+  expect(r.stdout.split("\n").filter(Boolean)).toEqual(["hooks/pre-push", "scripts/lib.sh", "scripts/nx", "scripts/posix", "tools/shell/shell.sh"]);
+});
+
 test("versions names each pin and the version found, which keys the lint cache", () => {
   const r = shell(["versions"]);
   expect(r.code).toBe(0);

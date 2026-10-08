@@ -100,6 +100,20 @@ readable() {
   done
 }
 
+# Whether a file's first line is a sh-family shebang: `#!`, the interpreter named
+# after a `/` or a space, then the end of the line or a space. A case glob rather
+# than [[ =~ ]], whose quoting rules bash 3.2 (macOS's /bin/bash) reads
+# differently from current bash.
+sh_shebang() {
+  local sh
+  for sh in sh bash dash ksh zsh; do
+    case "$1" in
+      '#!'*[/\ ]"$sh" | '#!'*[/\ ]"$sh"\ *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 enabled() {
   case "${LLMLINT_SHELL_TOOLS:-on}" in
     on) return 0 ;;
@@ -123,6 +137,10 @@ case "$STEP" in
       echo "shell: cannot enter $ROOT; run it from an intact checkout whose directories you can read and enter." >&2
       exit 1
     }
+    # Bytes, not characters: a first line may hold any bytes (a GIF, a font), and
+    # under a UTF-8 locale BSD tr refuses bytes that are not UTF-8 ("Illegal byte
+    # sequence"), which ended the macOS scan at the first such file.
+    export LC_ALL=C
     if ! git ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' f; do
       [ -f "$f" ] || continue
       case "$f" in
@@ -140,12 +158,12 @@ case "$STEP" in
             echo "shell: reading $f failed (reason above), so whether it is a shell script is unknown; check the file and the disk it is on." >&2
             exit 1
           fi
-          if [[ $first =~ ^#!.*[/\ ](ba|da|k|z)?sh(\ |$) ]]; then
+          if sh_shebang "$first"; then
             printf '%s\n' "$f"
           fi
           ;;
       esac
-    done | LC_ALL=C sort; then
+    done | sort; then
       echo "shell: discovering the tree's shell scripts failed (reason above); run it inside a git work tree with git on PATH, every file readable." >&2
       exit 1
     fi

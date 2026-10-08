@@ -10,7 +10,12 @@ The shell toolchain every project owning shell scripts runs:
   unignored files ending `.sh`/`.bash`, or starting with a sh-family shebang.
   The coverage gate measures exactly that set, and `tools/tests/gate.test.mjs`
   holds every file in it to some project's `format` and `lint`. A new script is
-  checked once its project's glob matches it.
+  checked once its project's glob matches it. Unlike format and lint, the
+  discovery runs on every leg (`workspace:test` reads it on macOS and Windows),
+  so it must behave identically under BSD tools and bash 3.2: it reads files
+  as bytes (`LC_ALL=C` — under a UTF-8 locale macOS's `tr` refuses a GIF's
+  bytes, which once ended the scan part-way) and matches shebangs with `case`,
+  not `[[ =~ ]]`. Its journeys run on Linux only, so BSD `tr` is stood in.
 - `install-shell-tools.sh` installs the pins from the prebuilt releases, checked
   against `shell-tools.sha256`; refresh that file whenever a pin moves.
   `just bootstrap` and `just shell-tools` run it.
