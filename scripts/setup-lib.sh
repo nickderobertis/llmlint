@@ -45,7 +45,10 @@ _load_tool_env() {
     [ -d "$dir" ] || continue
     case ":$PATH:" in
       *":$dir:"*) : ;;
-      *) PATH="$dir:$PATH"; export PATH ;;
+      *)
+        PATH="$dir:$PATH"
+        export PATH
+        ;;
     esac
   done
 }
@@ -131,5 +134,5 @@ _check_ready() {
 # Record the current fingerprint as the stamp of a successful setup.
 _write_stamp() {
   mkdir -p "$(dirname "$STAMP")"
-  _fingerprint > "$STAMP"
+  _fingerprint >"$STAMP"
 }

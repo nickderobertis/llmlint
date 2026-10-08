@@ -15,7 +15,10 @@
 # why); 2 on any other flag — a mistyped tier never quietly buys a weaker one.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.." || { echo "nx-tier: cannot enter the repository root; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || {
+  echo "nx-tier: cannot enter the repository root; run it from an intact checkout whose directories you can read and enter." >&2
+  exit 1
+}
 
 if [ "$#" -eq 0 ]; then
   bash scripts/nx-base.sh

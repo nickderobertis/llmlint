@@ -40,11 +40,11 @@ export LLMLINT_NO_HISTORY=1
 
 mode="${1:-run}"
 case "$mode" in
-    run | --dry-run) ;;
-    *)
-        echo "usage: bench.sh [--dry-run]" >&2
-        exit 2
-        ;;
+  run | --dry-run) ;;
+  *)
+    echo "usage: bench.sh [--dry-run]" >&2
+    exit 2
+    ;;
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,37 +55,37 @@ warmup="${BENCH_WARMUP:-10}"
 
 note() { printf '%s\n' "$*"; }
 fail() {
-    printf 'FAIL: %s\n' "$*" >&2
-    exit 1
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
 }
 
 # Validate the overrides before anything is built or run: the warmup count
 # reaches hyperfine's numeric flag, BENCH_KEEP decides whether the sandbox is
 # deleted, and BENCH_OUT is where the exports are written — so a bad value fails
 # here, naming its variable, rather than deep inside hyperfine or mkdir.
-[[ "$warmup" =~ ^(0|[1-9][0-9]{0,3})$ ]] ||
-    fail "BENCH_WARMUP must be a whole number of warmup runs from 0 to 9999 (got '$warmup'); unset it to use the default (10)."
+[[ "$warmup" =~ ^(0|[1-9][0-9]{0,3})$ ]] \
+  || fail "BENCH_WARMUP must be a whole number of warmup runs from 0 to 9999 (got '$warmup'); unset it to use the default (10)."
 case "${BENCH_KEEP:-0}" in
-    0 | 1) ;;
-    *) fail "BENCH_KEEP must be 1 (keep the sandbox) or 0 (got '${BENCH_KEEP}'); unset it to delete the sandbox." ;;
+  0 | 1) ;;
+  *) fail "BENCH_KEEP must be 1 (keep the sandbox) or 0 (got '${BENCH_KEEP}'); unset it to delete the sandbox." ;;
 esac
 case "$out" in
-    -*) fail "BENCH_OUT must be a directory path, not an option (got '$out'); unset it to use $repo_root/target/bench." ;;
+  -*) fail "BENCH_OUT must be a directory path, not an option (got '$out'); unset it to use $repo_root/target/bench." ;;
 esac
 if [ -e "$out" ] && [ ! -d "$out" ]; then
-    fail "BENCH_OUT must name a directory (got '$out', which exists and is not one); unset it to use $repo_root/target/bench."
+  fail "BENCH_OUT must name a directory (got '$out', which exists and is not one); unset it to use $repo_root/target/bench."
 fi
 
 if ! command -v hyperfine >/dev/null 2>&1; then
-    fail "hyperfine not found on PATH. Install it with 'just bench-tools' (or 'cargo binstall hyperfine')."
+  fail "hyperfine not found on PATH. Install it with 'just bench-tools' (or 'cargo binstall hyperfine')."
 fi
 
 # A `--dry-run` proves the harness and commands work without spending time on
 # statistics; the full run warms up and lets hyperfine sample adaptively.
 runs_opt=()
 if [[ "$mode" == "--dry-run" ]]; then
-    warmup=0
-    runs_opt=(--runs 1)
+  warmup=0
+  runs_opt=(--runs 1)
 fi
 
 note "» building release binary + mock-oneharness fixture"
@@ -120,7 +120,7 @@ rules:
     description: "true when domain logic stays free of I/O; false otherwise."
 YAML
 printf '// sample source for the benchmark sandbox\npub fn answer() -> u32 { 42 }\n' \
-    >"$proj/src/lib.rs"
+  >"$proj/src/lib.rs"
 
 # Two verdict fixtures: an all-pass map (unlisted rules default to holds=true in
 # the mock) and one that forces a single failure so the `lint:fail` row exercises
@@ -129,7 +129,7 @@ pass_verdicts="$sandbox/pass.json"
 fail_verdicts="$sandbox/fail.json"
 printf '{}\n' >"$pass_verdicts"
 printf '{"no_unwrap_in_library": {"holds": false, "violations": [{"file": "src/lib.rs", "line": 1, "message": "unwrap used"}]}}\n' \
-    >"$fail_verdicts"
+  >"$fail_verdicts"
 
 # Point every spawned process at the mock harness (covers `lint`'s flag/env
 # resolution and `doctor`, which reads only the env var) and keep config
@@ -145,18 +145,18 @@ note "» benchmarking $bin"
 # is what should be measured each time); harmless for the read-only commands.
 # `lint:fail` exits 1 by design, so it is wrapped with `|| true`.
 hyperfine \
-    --warmup "$warmup" ${runs_opt[@]+"${runs_opt[@]}"} \
-    --prepare "rm -f '$initdir/llmlint.yml'" \
-    --export-json "$out/results.json" \
-    --export-markdown "$out/results.md" \
-    -n "version" "'$bin' --version" \
-    -n "help" "'$bin' --help" \
-    -n "doctor" "'$bin' doctor" \
-    -n "config" "'$bin' config --cwd '$proj' > /dev/null" \
-    -n "init" "cd '$initdir' && '$bin' init > /dev/null" \
-    -n "lint:pass" "LLMLINT_MOCK_VERDICTS='$pass_verdicts' '$bin' lint --cwd '$proj' > /dev/null" \
-    -n "lint:fail" "LLMLINT_MOCK_VERDICTS='$fail_verdicts' '$bin' lint --cwd '$proj' > /dev/null || true" \
-    -n "lint:json" "LLMLINT_MOCK_VERDICTS='$pass_verdicts' '$bin' lint --format json --cwd '$proj' > /dev/null"
+  --warmup "$warmup" ${runs_opt[@]+"${runs_opt[@]}"} \
+  --prepare "rm -f '$initdir/llmlint.yml'" \
+  --export-json "$out/results.json" \
+  --export-markdown "$out/results.md" \
+  -n "version" "'$bin' --version" \
+  -n "help" "'$bin' --help" \
+  -n "doctor" "'$bin' doctor" \
+  -n "config" "'$bin' config --cwd '$proj' > /dev/null" \
+  -n "init" "cd '$initdir' && '$bin' init > /dev/null" \
+  -n "lint:pass" "LLMLINT_MOCK_VERDICTS='$pass_verdicts' '$bin' lint --cwd '$proj' > /dev/null" \
+  -n "lint:fail" "LLMLINT_MOCK_VERDICTS='$fail_verdicts' '$bin' lint --cwd '$proj' > /dev/null || true" \
+  -n "lint:json" "LLMLINT_MOCK_VERDICTS='$pass_verdicts' '$bin' lint --format json --cwd '$proj' > /dev/null"
 
 note ""
 note "✓ wrote $out/results.json"

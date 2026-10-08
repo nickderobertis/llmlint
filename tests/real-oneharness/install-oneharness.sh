@@ -9,8 +9,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
-  || { echo "install-oneharness: cannot resolve the repository root; run it by its path from a readable checkout (bash tests/real-oneharness/install-oneharness.sh)" >&2; exit 1; }
-cd "$ROOT" || { echo "install-oneharness: cannot enter $ROOT; make it readable and searchable (chmod u+rx), then re-run" >&2; exit 1; }
+  || {
+    echo "install-oneharness: cannot resolve the repository root; run it by its path from a readable checkout (bash tests/real-oneharness/install-oneharness.sh)" >&2
+    exit 1
+  }
+cd "$ROOT" || {
+  echo "install-oneharness: cannot enter $ROOT; make it readable and searchable (chmod u+rx), then re-run" >&2
+  exit 1
+}
 # The pin, read the way scripts/setup-lib.sh's `_justfile_pin` reads every
 # `<name>-version := "x.y.z"` pin (inlined so this project needs nothing from
 # scripts/). `|| true`: under pipefail a missing pin would otherwise exit here
@@ -33,7 +39,10 @@ venv="$ROOT/.dev/oneharness-cli-$version"
 # A venv lays its executables out in `bin/` on Unix and `Scripts/` on Windows.
 find_bin() {
   for b in "$venv/bin/oneharness" "$venv/Scripts/oneharness.exe"; do
-    [ -x "$b" ] && { printf '%s\n' "$b"; return 0; }
+    [ -x "$b" ] && {
+      printf '%s\n' "$b"
+      return 0
+    }
   done
   return 1
 }

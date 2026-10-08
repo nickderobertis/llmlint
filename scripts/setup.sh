@@ -29,14 +29,17 @@ cd "$ROOT"
 . scripts/setup-lib.sh
 _load_tool_env
 
-say()  { printf '» %s\n' "$*"; }
-ok()   { printf '✓ %s\n' "$*"; }
+say() { printf '» %s\n' "$*"; }
+ok() { printf '✓ %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 ensure_rust() {
   if ! have rustup; then
     say "installing rustup (minimal); rust-toolchain.toml drives the toolchain"
-    have curl || { printf 'error: curl is required to install rustup\n' >&2; exit 1; }
+    have curl || {
+      printf 'error: curl is required to install rustup\n' >&2
+      exit 1
+    }
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --no-modify-path
     # shellcheck disable=SC1091
@@ -55,7 +58,10 @@ ensure_just() {
   fi
   local ver
   ver="$({ grep -E '^just[[:space:]]' .tool-versions 2>/dev/null || true; } | awk '{print $2}')"
-  have curl || { printf 'error: curl is required to install just\n' >&2; exit 1; }
+  have curl || {
+    printf 'error: curl is required to install just\n' >&2
+    exit 1
+  }
   mkdir -p "$LOCAL_BIN"
   if [ -n "$ver" ]; then
     say "installing just $ver into $LOCAL_BIN (pinned by .tool-versions)"
@@ -99,7 +105,7 @@ main() {
   ensure_rust
   ensure_node
   ensure_just
-  ensure_cargo_tool cargo-nextest  cargo-nextest "$(_justfile_pin nextest)"
+  ensure_cargo_tool cargo-nextest cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"
   # llmlint: ignore[changed_behavior_has_e2e] setup provisions a real toolchain over the network, so no hermetic journey can run it; this line only delegates to `just actionlint-tools`, whose installer the install_actionlint_* journeys drive
   just actionlint-tools
