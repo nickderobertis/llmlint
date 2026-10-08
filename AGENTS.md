@@ -310,13 +310,11 @@ Use the `just` recipes; do not hand-roll equivalents.
   excluded) and fails below the floor. A journey that clears its child's
   environment hands `SHCOV_BASH_ENV` back as `BASH_ENV`, or the child goes
   unmeasured.
-- **Floor: 50% lines**, approved by the manager against the 51.81%
-  (1057/2040) measured when it was set: that figure rounded down, less one
-  point of headroom, because a few branches depend on the host (the
-  architecture `case` arms, which tools are present) and CI runs x86_64. Re-taken
-  on aarch64 Linux over the 9 measured projects once the change was finished,
-  it is **55.09% (1147 of 2082 lines)**; the per-script table is in
-  `tools/coverage/AGENTS.md`.
+- **Floor: 50% lines**, approved by the manager against a measurement of
+  **51.81% (1057 of 2040 lines)** on aarch64 Linux over the 9 measured projects:
+  that figure rounded down, less one point of headroom, because a few branches
+  depend on the host (the architecture `case` arms, which tools are present) and
+  CI runs x86_64. `tools/coverage/AGENTS.md` keeps the per-script measurement.
   95% is out of reach because of what the gate cannot run:
   - `scripts/install.sh`: POSIX `sh`, which bashcov does not trace, and no
     journey yet.

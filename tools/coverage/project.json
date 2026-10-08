@@ -38,6 +38,7 @@
       },
       "inputs": [
         "default",
+        "{workspaceRoot}/AGENTS.md",
         {
           "runtime": "cargo --version"
         },

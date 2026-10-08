@@ -224,6 +224,26 @@ test("LLMLINT_COVERAGE=off runs the command unmeasured and stands install and re
   }
 });
 
+test("install provisions the locked gems, and a failed bundle install is named with the fix", () => {
+  let r = shcov(["install"]);
+  expect(r.code, r.out).toBe(0);
+  // A Gemfile the lock does not match is refused (the config is frozen), offline.
+  writeFileSync(join(dir, "Gemfile"), `${readFileSync(join(dir, "Gemfile"), "utf8")}gem "llmlint-shcov-absent", "1.0.0"\n`);
+  r = shcov(["install"]);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("bundle install failed (above); fix it and re-run: just bootstrap");
+});
+
+test("the floor shcov.sh enforces is the one AGENTS.md records", () => {
+  // AGENTS.md states the approved shell floor twice (the deviations list and
+  // "Shell"); the driver's MIN_LINES is the enforced copy. They move together.
+  const agents = readFileSync(join(REPO, "AGENTS.md"), "utf8");
+  expect(Number(agents.match(/\*\*(\d+)% lines for shell\*\*/)[1])).toBe(FLOOR);
+  expect(Number(agents.match(/^- \*\*Floor: (\d+)% lines\*\*/m)[1])).toBe(FLOOR);
+  const nested = readFileSync(join(REPO, "tools/coverage/AGENTS.md"), "utf8");
+  expect(Number(nested.match(/The measurement behind the (\d+)% floor/)[1])).toBe(FLOOR);
+});
+
 test("without Ruby or Bundler each step that needs them is refused, naming the fix", () => {
   // A PATH of only what shcov.sh itself runs, plus (second case) a stand-in ruby.
   const bin = join(dir, "sandbox");

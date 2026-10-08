@@ -54,7 +54,7 @@ binary and the fixture they drive.
 - **The measurement behind the 50% floor.** The floor was approved against
   51.81% (1057/2040). Re-taken on the finished tree of the change that set it
   (aarch64 Linux, all 9 projects, `bash scripts/nx run shell-coverage:coverage`),
-  it is 55.09%, 1147/2082:
+  it is 55.40%, 1154/2083:
 
   | script | lines | % |
   |---|---|---|
@@ -85,9 +85,9 @@ binary and the fixture they drive.
   | `tests/real-oneharness/install-oneharness.sh` | 9/47 | 19.1 |
   | `tests/real-oneharness/network.sh` | 0/6 | 0.0 |
   | `tools/coverage/coverage.sh` | 51/77 | 66.2 |
-  | `tools/coverage/shcov.sh` | 48/57 | 84.2 |
+  | `tools/coverage/shcov.sh` | 52/57 | 91.2 |
   | `tools/shell/install-shell-tools.sh` | 87/92 | 94.6 |
-  | `tools/shell/shell.sh` | 96/104 | 92.3 |
+  | `tools/shell/shell.sh` | 99/105 | 94.3 |
 
   Re-take this table whenever the floor moves.
 [//]: # "llmlint: ignore-end[agents_md_durable_and_terse]"

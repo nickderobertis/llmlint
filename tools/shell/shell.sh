@@ -107,6 +107,9 @@ enabled() {
 readonly STEP="$1"
 shift
 PATH="$LOCAL_BIN:$PATH"
+# The checks are the repository's: options from the caller's environment would
+# change them (SHELLCHECK_OPTS="-e SC2086" silences a finding everywhere).
+unset SHELLCHECK_OPTS
 
 case "$STEP" in
   files)

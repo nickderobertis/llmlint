@@ -110,6 +110,25 @@ test("lint fails on a shellcheck finding with its code and passes a clean script
   expect(r.out).toContain("disable it at that site with its reason");
 });
 
+test("SHELLCHECK_OPTS from the environment cannot weaken the lint", () => {
+  write("scripts/finding.sh", '#!/usr/bin/env bash\nset -euo pipefail\nf=$1\nrm $f\n');
+  const r = shell(["lint", "scripts/finding.sh"], { SHELLCHECK_OPTS: "-e SC2086" });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("SC2086");
+});
+
+test("shellcheck failing to check at all is named as that, not as findings", () => {
+  // shellcheck's own error exits (2+: a file it could not process, bad options)
+  // are rare with the real binary, so a stand-in at the pinned version plays one.
+  write("scripts/clean.sh", FORMATTED);
+  const home = join(dir, "home");
+  write("home/.local/bin/shellcheck", `#!/bin/sh\ncase "$1" in --version) printf 'ShellCheck\\nversion: ${pin("shellcheck")}\\n' ;; *) echo "shellcheck: cannot open" >&2; exit 2 ;; esac\n`, 0o755);
+  const r = shell(["lint", "scripts/clean.sh"], { HOME: home });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("shellcheck could not check the files (exit 2, reason above)");
+  expect(r.out).not.toContain("fix each finding");
+});
+
 test("files lists every shell script by extension or shebang, and nothing ignored or of another language", () => {
   write("a.sh", "echo a\n");
   write("lib/b.bash", "echo b\n");
