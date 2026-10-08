@@ -324,3 +324,38 @@ test("a malformed invocation is a usage error, not a pass", () => {
   expect(r.code).toBe(2);
   expect(r.out).toContain("must be 'on' (the default) or 'off'");
 });
+
+test("shcov.rb run, called directly, refuses a bad project name or record path before the command runs", () => {
+  // shcov.sh validates its own arguments; the Ruby entry point holds the same line
+  // itself, so a caller that skips shcov.sh cannot key a record or write one
+  // outside the checkout. The command would leave a mark if it ran.
+  const mark = join(dir, "ran");
+  const rb = (project, out) => {
+    const r = spawnSync("bundle", ["exec", "ruby", join(dir, "tools/coverage/shcov.rb"), "run", project, out, "--", "touch", mark], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    if (r.error) throw r.error;
+    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+  for (const [project, out, message] of [
+    ["../x", "target/shcov/x.json", "is not a project name"],
+    ["Bad_Name", "target/shcov/x.json", "is not a project name"],
+    ["demo\n../x", "target/shcov/x.json", "is not a project name"],
+    ["demo", "/tmp/demo.json", "is not a record path"],
+    ["demo", "../demo.json", "is not a record path"],
+    ["demo", "target/./demo.json", "is not a record path"],
+    ["demo", "target/shcov/demo.txt", "is not a record path"],
+    ["demo", "target/shcov/demo\n.json", "is not a record path"],
+  ]) {
+    const r = rb(project, out);
+    expect(r.code, JSON.stringify([project, out])).toBe(2);
+    expect(r.out, JSON.stringify([project, out])).toContain(message);
+    expect(existsSync(mark), JSON.stringify([project, out])).toBe(false);
+  }
+  // The shape shcov.sh passes is accepted, and the record lands where it names.
+  const ok = rb("demo", "target/shcov/demo.json");
+  expect(ok.code, ok.out).toBe(0);
+  expect(existsSync(mark)).toBe(true);
+  expect(existsSync(join(dir, "target/shcov/demo.json"))).toBe(true);
+});

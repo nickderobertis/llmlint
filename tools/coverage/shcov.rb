@@ -83,8 +83,22 @@ class TraceParser < Bashcov::Xtrace
   end
 end
 
+# The project name keys the record and names the scratch directory, and the
+# output path is where the record is written, so both are held to what shcov.sh
+# passes rather than trusted: a name of lowercase letters, digits and -, and a
+# repository-relative .json path that cannot climb out of the checkout.
+PROJECT_NAME = /\A[a-z0-9][a-z0-9-]*\z/
+
+def record_path?(out)
+  parts = out.split("/")
+  out.end_with?(".json") && !out.start_with?("/") && !out.include?("\\") && !out.match?(/[[:cntrl:]]/) \
+    && parts.none? { |p| p.empty? || p == "." || p == ".." }
+end
+
 def run(project, out, command)
   die("run needs a project name, an output path and a command after --") if project.to_s.empty? || out.to_s.empty? || command.empty?
+  die("'#{project}' is not a project name (lowercase letters, digits, -)") unless project.match?(PROJECT_NAME)
+  die("'#{out}' is not a record path (a repository-relative .json path, with no . or .. segment)") unless record_path?(out)
   files = shell_files
   hashes = files.to_h { |f| [f, Digest::SHA256.file(ROOT.join(f)).hexdigest] }
   sha = %w[sha256sum shasum].map { |t| `command -v #{t} 2>/dev/null`.strip }.find { |p| !p.empty? }
@@ -164,8 +178,7 @@ def run(project, out, command)
   end
   FileUtils.rm_rf(run_dir)
 
-  out_path = Pathname.new(out)
-  out_path = ROOT.join(out_path) unless out_path.absolute?
+  out_path = ROOT.join(out)
   out_path.dirname.mkpath
   coverage = hits.sort.to_h { |rel, lines| [rel, { "lines" => lines }] }
   out_path.write(JSON.pretty_generate({ project => { "coverage" => coverage, "timestamp" => Time.now.to_i } }))
