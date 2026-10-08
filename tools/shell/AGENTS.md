@@ -16,7 +16,10 @@ The shell toolchain every project owning shell scripts runs:
   `just bootstrap` and `just shell-tools` run it.
 - `LLMLINT_SHELL_TOOLS=off` (`just check-portable`, the macOS/Windows `cross`
   jobs) stands format, lint and the install down with a notice; the Linux gate
-  enforces them.
+  enforces them. `check-portable` also leaves this project's own `test` to
+  Linux: its journeys need the real pinned shfmt and shellcheck, which the cross
+  jobs do not install, and assert the installer's Linux host behaviour (on macOS
+  a missing `TMPDIR` is no failure).
 - No project depends on this one by edge, because bench and live may depend on
   no tooling project. Each consumer names `shell.sh` as a cached input instead
   (nx.json's `shellTools`/`shellCoverage`), and Nx counts that as touching the

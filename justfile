@@ -104,16 +104,17 @@ check *flags:
 # cargo fmt, clippy and the boundary check, and every test unmeasured
 # (LLMLINT_COVERAGE=off). Coverage, shfmt, shellcheck (LLMLINT_SHELL_TOOLS=off)
 # and actionlint are platform-independent and run in `check` on Linux, and so do
-# coverage-driver's tests: they exist to drive the instrumented toolchain
-# (cargo-llvm-cov), which the cross jobs do not install. Same tier flag as `check`.
+# coverage-driver's tests, which drive the instrumented toolchain (cargo-llvm-cov),
+# and shell-tools' tests, which drive the pinned shfmt and shellcheck and the
+# Unix tool installer: the cross jobs install none of them. Same tier flag as `check`.
 [positional-arguments]
 check-portable *flags:
     @tier="$(bash scripts/nx-tier.sh "$@")"; \
     export LLMLINT_COVERAGE=off LLMLINT_SHELL_TOOLS=off; \
     if [ "$tier" = all ]; then \
-      bash scripts/nx run-many --all -t format lint test --exclude=coverage-driver; \
+      bash scripts/nx run-many --all -t format lint test --exclude=coverage-driver,shell-tools; \
     else \
-      bash scripts/nx affected --base="$tier" -t format lint test --exclude=coverage-driver; \
+      bash scripts/nx affected --base="$tier" -t format lint test --exclude=coverage-driver,shell-tools; \
     fi
     @echo "check-portable: ok"
 # llmlint: ignore-end[diagnostics_error_or_absent]

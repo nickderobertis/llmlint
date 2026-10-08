@@ -1023,7 +1023,7 @@ fn every_gate_recipe_takes_the_same_tier() {
         ("doc", "-t doc"),
         (
             "check-portable",
-            "-t format lint test --exclude=coverage-driver",
+            "-t format lint test --exclude=coverage-driver,shell-tools",
         ),
     ] {
         let (out, calls) = repo.just(&[recipe], None);

@@ -216,8 +216,8 @@ Use the `just` recipes; do not hand-roll equivalents.
   one-target recipes (`just --list`) take the same flag; `just check-portable` is
   the macOS/Windows part CI's `cross` jobs run — unmeasured
   (`LLMLINT_COVERAGE=off`) and without shfmt/shellcheck
-  (`LLMLINT_SHELL_TOOLS=off`), so `coverage-driver`'s tests and the shell checks
-  stay on Linux.
+  (`LLMLINT_SHELL_TOOLS=off`), so `coverage-driver`'s and `shell-tools`' tests
+  and the shell checks stay on Linux.
 - `just shell-tools` — install the justfile-pinned shfmt and shellcheck
   (`tools/shell/install-shell-tools.sh`, digest-checked against
   `tools/shell/shell-tools.sha256`); `just bootstrap` runs it too. They run in
