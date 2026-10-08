@@ -1,10 +1,10 @@
 [package]
 name = "llmlint"
 version = "0.4.6"
-edition = "2021"
-rust-version = "1.85"
+edition.workspace = true
+rust-version.workspace = true
 description = "LLM-as-judge linter: enforce code-quality checks deterministic linters can't express, by driving real coding harnesses through oneharness."
-license = "MIT"
+license.workspace = true
 repository = "https://github.com/nickderobertis/llmlint"
 homepage = "https://github.com/nickderobertis/llmlint"
 readme = "README.md"
@@ -13,9 +13,9 @@ categories = ["command-line-utilities", "development-tools"]
 # Package only what a crates.io consumer needs: the sources, manifest, readme,
 # license, and the `assets/` embedded via `include_str!`. This keeps the
 # published crate small and excludes the CLAUDE.md/AGENTS.md symlink (crates.io
-# rejects symlinks), CI config, scripts, and the e2e tests + mock-oneharness
-# fixture — a feature-gated, test-only bin that never builds in a default
-# `cargo install`/`cargo publish`.
+# rejects symlinks), CI config, scripts, and the test, fixture, and bench crates
+# — separate `publish = false` workspace members that never build in a
+# `cargo install`/`cargo publish` of this package.
 include = [
     "src/**/*.rs",
     "Cargo.toml",
@@ -23,6 +23,9 @@ include = [
     "LICENSE",
     "assets/*",
 ]
+# The suites live in their own workspace members (tests/*, benches/), never here.
+autotests = false
+autobenches = false
 
 [[bin]]
 name = "llmlint"
@@ -32,20 +35,59 @@ path = "src/main.rs"
 name = "llmlint"
 path = "src/lib.rs"
 
-# Test-only fixture: a fake `oneharness` the e2e tests drive via the
-# `--oneharness-bin` override, so the spawn/parse/vote path is proven
-# hermetically and cross-platform. Gated behind a feature so it never ships in
-# `cargo install`.
-[[bin]]
-name = "llmlint-mock-oneharness"
-path = "tests/support/mock_oneharness.rs"
-required-features = ["mock-oneharness"]
-
-[features]
-# Builds the mock-oneharness fixture. Enabled by `just test`/`just check` and CI.
-mock-oneharness = []
-
 [dependencies]
+clap.workspace = true
+anstyle.workspace = true
+anstream.workspace = true
+indicatif.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+minijinja.workspace = true
+ignore.workspace = true
+globset.workspace = true
+thiserror.workspace = true
+wait-timeout.workspace = true
+tempfile.workspace = true
+ureq.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Enable indicatif's `in_memory` feature in test builds only: it provides
+# `InMemoryTerm` (a `vt100`-backed terminal emulator) so the progress renderer is
+# asserted on the *rendered screen grid* — deterministically, cross-platform, with
+# no real TTY. Feature-unified into the normal `indicatif` dep for test/bench
+# builds; `cargo build`/`cargo install` never pulls it.
+indicatif = { workspace = true, features = ["in_memory"] }
+
+[workspace]
+# One Cargo.lock for every crate. The root stays a real package (the published
+# `llmlint` crate) rather than a virtual manifest: consumers fetch `assets/` from
+# `main` by path, `include_str!`/`CARGO_MANIFEST_DIR` read `assets/` beside this
+# file, and maturin (`pyproject.toml`) and `cargo install --path .`/`--git` name
+# the root. The members are the test, fixture, bench and tooling crates, all
+# `publish = false`; each has a `project.json` beside its `Cargo.toml` (the Nx
+# project graph — see AGENTS.md "Stack and composition").
+members = [
+    "tests/mock-oneharness",
+    "tests/e2e",
+    "tests/release-targets",
+    "tests/real-oneharness",
+    "tests/live",
+    "benches",
+    "scripts",
+    "screenshots",
+    ".github",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+llmlint = { path = "." }
 clap = { version = "4.6", features = ["derive"] }
 # ANSI styling for the human report (red FAIL / green PASS). Tiny and dependency-
 # free — already in the tree via clap — so it adds color without growing the
@@ -90,58 +132,17 @@ ureq = { version = "3", default-features = false, features = ["rustls", "rustls-
 # from the `Config` model, so the schema referenced by `llmlint init` can never
 # drift from the Rust types. Default features only (derive + std); emits 2020-12.
 schemars = "1"
-
-[dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
-# Enable indicatif's `in_memory` feature in test builds only: it provides
-# `InMemoryTerm` (a `vt100`-backed terminal emulator) so the progress renderer is
-# asserted on the *rendered screen grid* — deterministically, cross-platform, with
-# no real TTY. Feature-unified into the normal `indicatif` dep for test/bench
-# builds; `cargo build`/`cargo install` never pulls it.
-indicatif = { version = "0.17", features = ["in_memory"] }
-# Statistical micro-benchmarks of the pure engine (see `benches/`). Default
+# Statistical micro-benchmarks of the pure engine (the `llmlint-bench` member). Default
 # features (plotters HTML reports, rayon) are dropped to keep the dependency
 # tree — and the `cargo deny` surface — small; `cargo_bench_support` is the only
 # feature `cargo bench` needs, and it still emits the per-bench `estimates.json`
 # that `critcmp` diffs.
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 # Reads `release-targets.toml` (and the TOML manifests it names) in the
-# release-target drift gate, `tests/release_targets.rs`. Test-only.
+# release-target drift gate (the `llmlint-release-targets` member). Test-only.
 toml = "0.9"
-
-[[test]]
-name = "e2e"
-path = "tests/e2e/main.rs"
-
-# The real-oneharness tier (`just test-oneharness`): llmlint's forwarded
-# `--config` layers resolved by the released oneharness. Its tests are
-# `#[ignore]`-d (they need that binary); the pin drift test runs everywhere.
-[[test]]
-name = "real_oneharness"
-path = "tests/real_oneharness.rs"
-
-# The release declaration (`release-targets.toml`) held to the canonical schema
-# and to release.yml, plus the three answers of `scripts/release-probe.sh`.
-[[test]]
-name = "release_targets"
-path = "tests/release_targets.rs"
-
-# Statistical micro-benchmarks of the pure engine hot paths (config parse, plan,
-# template render, schema, vote, report). `harness = false` hands `main` to
-# Criterion instead of libtest, so `cargo nextest`/coverage never pick it up —
-# it is measured, not gated. `cargo clippy --all-targets` still type-checks it,
-# so it cannot rot.
-[[bench]]
-name = "engine"
-harness = false
-
-# Deterministic allocation tallies for the same hot paths: a plain `main` with a
-# counting global allocator, no Criterion. Exact counts compare across runs and
-# commits without statistics; informational like every bench target.
-[[bench]]
-name = "engine_allocs"
-harness = false
 
 # A CLI binary: optimize for a small, fast-starting artifact.
 [profile.release]
@@ -150,8 +151,8 @@ lto = "thin"
 codegen-units = 1
 
 # Profiling builds: the shipped release artifact exactly, but with symbols kept
-# so `samply` (see `scripts/profile.sh`) can attribute time to functions, and
-# `cachegrind`/`callgrind` (see `scripts/bench-instructions.sh`) can be annotated
+# so `samply` (see `benches/profile.sh`) can attribute time to functions, and
+# `cachegrind`/`callgrind` (see `benches/bench-instructions.sh`) can be annotated
 # afterwards. Never affects the published binary — `just profile` builds
 # `--profile profiling` into `target/profiling/` while `[profile.release]` stays
 # stripped.

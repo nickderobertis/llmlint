@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Run Nx on the pinned toolchain. Every gate recipe in the justfile delegates
+# through here rather than calling `nx` directly, so:
+#
+#   * the bun `.tool-versions` pins is first on PATH for Nx and for every target
+#     it runs (scripts/bun.sh resolves it; `just bootstrap` installs it);
+#   * a worktree that has never run `bun install` gets the locked install first,
+#     instead of "nx: command not found";
+#   * Nx runs without its background daemon, cloud, or interactive TUI — every
+#     invocation is one foreground process that finishes, the same locally and
+#     in CI — and with its cache in this checkout's .nx/cache;
+#   * Nx loads its project-graph plugins in-process with no load timeout. Nx 23
+#     otherwise starts each plugin in a worker that exits unless it is loaded
+#     within 10 seconds, and a graph computed from inside another Nx task (the
+#     workspace project's boundary check and its tests under tools/tests/) starts
+#     a second set of workers beside the outer run's: on a cold Windows runner
+#     those missed the window and `nx graph` exited non-zero with nothing on
+#     stderr. Nx already turns isolation off when it detects an agent sandbox,
+#     so this also keeps a local run and CI on the same plugin path.
+#
+# Usage: scripts/nx <nx arguments...>
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
+  || { echo "nx: cannot resolve the repository root from ${BASH_SOURCE[0]}; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
+readonly ROOT
+cd "$ROOT" || { echo "nx: cannot enter $ROOT; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
+
+bun_path="$(bash scripts/bun.sh path)"
+PATH="$(dirname "$bun_path"):$PATH"
+export PATH
+export NX_DAEMON=false NX_NO_CLOUD=true NX_TUI=false NX_SKIP_NX_CACHE_WARNING=true
+export NX_ISOLATE_PLUGINS=false NX_PLUGIN_NO_TIMEOUTS=true
+# The cache and its task database stay in this checkout (.nx/, gitignored). Nx
+# otherwise shares the main git worktree's across every worktree, writing
+# outside the checkout it runs in.
+export NX_CACHE_DIRECTORY="${NX_CACHE_DIRECTORY:-$ROOT/.nx/cache}"
+export NX_WORKSPACE_DATA_DIRECTORY="${NX_WORKSPACE_DATA_DIRECTORY:-$ROOT/.nx/workspace-data}"
+
+if [ ! -x node_modules/.bin/nx ] || [ bun.lock -nt node_modules/.bun-install-stamp ] \
+  || [ package.json -nt node_modules/.bun-install-stamp ]; then
+  if ! out="$(bun install --frozen-lockfile 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    echo "nx: 'bun install --frozen-lockfile' failed (above); fix it, or re-run 'just bootstrap'." >&2
+    exit 1
+  fi
+  if ! out="$(touch node_modules/.bun-install-stamp 2>&1)"; then
+    echo "nx: could not write node_modules/.bun-install-stamp ($out); make node_modules writable (or delete it) and re-run." >&2
+    exit 1
+  fi
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "nx: Nx runs on Node, which is not on PATH; install Node (LTS) and re-run." >&2
+  exit 1
+fi
+
+exec node_modules/.bin/nx "$@"

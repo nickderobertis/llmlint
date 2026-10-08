@@ -1117,8 +1117,10 @@ configuration, or harness error (could not complete the lint).
 ## Development
 
 ```console
-just bootstrap   # toolchain components + fetch (from a clean clone)
-just check       # full gate: fmt, clippy -D warnings, tests + 95% coverage, docs
+just bootstrap   # toolchain components + fetch + the pinned bun and Nx (from a clean clone)
+just check       # the gate, through Nx, over what the change can reach: fmt, clippy
+                 # -D warnings, shell + workflow lint, tests + 95% coverage, docs
+just check --all # the same gate as a full sweep of every project
 just test-e2e    # the e2e binary journeys in isolation
 just deps-check  # cargo deny + cargo machete
 just lint-live   # opt-in: ad-hoc lint against the REAL oneharness + a real harness
@@ -1130,7 +1132,7 @@ The live tier (`just live-claude`, and the ad-hoc `just lint-live`) drives the
 whole stack end to end against a real, authenticated harness — the only thing that
 makes real model calls, and out of the `check` gate. It runs on PRs in its own
 workflow across Linux/macOS/Windows, so a missing CLI, auth, or oneharness is a
-hard failure, not a skip. See `AGENTS.md` and `tests/AGENTS.md`.
+hard failure, not a skip.
 
 ## License
 

@@ -1,0 +1,20 @@
+# The visual guard's offline script journeys (tests/visual_guard.rs): the real
+# pre-push hook, the lane helper, the baseline blesser and CI's freeze installer,
+# with only third-party tools stood in, and the demo GIF helper's outcome table
+# held to the report's `Outcome`. Test-only; never published. The capture
+# scripts, fixture and font beside it are what the Visual docs workflow runs.
+[package]
+name = "llmlint-screenshots"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "visual_guard"
+path = "tests/visual_guard.rs"
+
+[dev-dependencies]
+llmlint.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

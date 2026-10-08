@@ -1,0 +1,23 @@
+# Drift gates over the committed workflows and the CI routing and release
+# verdict scripts beside them (tests/*.rs). Test-only; never published. A crate
+# here rather than under tests/ so the workflows, the scripts they run, and the
+# tests that hold them are one project (`ci-workflows`) in the Nx graph.
+[package]
+name = "llmlint-ci-workflows"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "workflows"
+path = "tests/workflows.rs"
+
+[[test]]
+name = "ci_gate"
+path = "tests/ci_gate.rs"
+
+[dev-dependencies]
+serde_yaml_ng.workspace = true
+tempfile.workspace = true
+toml.workspace = true

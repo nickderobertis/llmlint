@@ -10,8 +10,10 @@
 #      cargo-llvm-cov — pinned to the justfile,
 #   4. ensures the pinned `actionlint` (the gate's workflow linter) via
 #      `just actionlint-tools` (prebuilt release, digest-verified),
-#   5. fetches dependencies + adds toolchain components via `just bootstrap`,
-#   6. records a setup stamp for the fast session check (scripts/setup-check.sh).
+#   5. checks Node is present (Nx runs on it; setup does not install it),
+#   6. fetches dependencies, adds toolchain components, and installs the pinned
+#      bun + the locked Nx via `just bootstrap`,
+#   7. records a setup stamp for the fast session check (scripts/setup-check.sh).
 #
 # It does NOT install oneharness (a separate *runtime* prerequisite) or
 # cargo-deny/cargo-machete (only `just deps-check` needs those, and that needs a
@@ -52,7 +54,7 @@ ensure_just() {
     return
   fi
   local ver
-  ver="$(grep -E '^just[[:space:]]' .tool-versions 2>/dev/null | awk '{print $2}')"
+  ver="$({ grep -E '^just[[:space:]]' .tool-versions 2>/dev/null || true; } | awk '{print $2}')"
   have curl || { printf 'error: curl is required to install just\n' >&2; exit 1; }
   mkdir -p "$LOCAL_BIN"
   if [ -n "$ver" ]; then
@@ -87,8 +89,15 @@ ensure_cargo_tool() {
   ok "$bin installed"
 }
 
+ensure_node() {
+  have node && return
+  printf 'error: Node is required to run Nx (the gate orchestrator); install Node (LTS) from https://nodejs.org or your package manager, then re-run ./scripts/setup.sh\n' >&2
+  exit 1
+}
+
 main() {
   ensure_rust
+  ensure_node
   ensure_just
   ensure_cargo_tool cargo-nextest  cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"

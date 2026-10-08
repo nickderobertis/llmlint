@@ -6,7 +6,6 @@
 #
 # The version is `actionlint-version` in the justfile — the one pin, which
 # scripts/lint-workflows.sh also checks the installed binary against.
-# llmlint: ignore-file[new_code_lands_in_a_project] a single binary crate with no Nx project graph (AGENTS.md) has no project for a shell script to belong to
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,23 +20,23 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
-# Overridable so the e2e journeys can drive the real script against a stand-in
-# release tree and digest pin instead of the network; setup and CI use the
-# defaults. `-` rather than `:-`: an override that is SET but empty is a
+# Overridable so the journeys in tests/tooling.rs can drive the real script
+# against a stand-in release tree and digest pin instead of the network; setup
+# and CI use the defaults. `-` rather than `:-`: an override that is SET but empty is a
 # misconfigured caller, which the checks below reject.
 base_url="${ACTIONLINT_BASE_URL-https://github.com/rhysd/actionlint/releases/download}"
 install_dir="${ACTIONLINT_INSTALL_DIR-$LOCAL_BIN}"
 sums_file="${ACTIONLINT_SHA256_FILE-$ROOT/scripts/actionlint.sha256}"
 
-case "$base_url" in
-https://* | file://*) ;;
-*)
-  echo "install-actionlint: ACTIONLINT_BASE_URL must be an https:// or file:// URL" >&2
+# The whole shape, not just the scheme: a host (or, for file://, a path) must
+# follow it, and no whitespace may appear anywhere in the value.
+if ! [[ $base_url =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ || $base_url =~ ^file:///[^[:space:]]+$ ]]; then
+  echo "install-actionlint: ACTIONLINT_BASE_URL must be an https:// or file:// URL:" >&2
+  echo "                    https://<host>[/path] or file:///<path>, with no whitespace" >&2
   echo "                    got: ${base_url:-<empty>}" >&2
   echo "                    Unset it to use the default release base." >&2
   exit 1
-  ;;
-esac
+fi
 if [ -z "$install_dir" ]; then
   echo "install-actionlint: ACTIONLINT_INSTALL_DIR is empty; it must name a directory" >&2
   echo "                    to install into. Unset it to use $LOCAL_BIN." >&2

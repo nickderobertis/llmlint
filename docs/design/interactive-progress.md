@@ -153,7 +153,7 @@ function + a couple of real end-to-end checks). Jest does exactly this —
 `isInteractive` is its own tiny tested module and `DefaultReporter` is
 snapshot-tested with the flag forced both ways.
 
-llmlint's layers map onto the existing tiers (`tests/AGENTS.md`):
+llmlint's layers map onto the existing tiers:
 
 | Layer | Tier | In `just check`? | New deps |
 |---|---|---|---|
@@ -183,8 +183,7 @@ llmlint's layers map onto the existing tiers (`tests/AGENTS.md`):
    is *free* because `assert_cmd` already gives non-TTY pipes: a piped run must emit
    **zero cursor-control bytes** (`\x1b[`, bare `\r`) on stdout **and** stderr, and
    the stdout report must be byte-identical to today. A second journey sets an agent
-   env var (`CLAUDECODE=1`) and asserts the run stays plain. See the journeys added
-   to `tests/AGENTS.md`.
+   env var (`CLAUDECODE=1`) and asserts the run stays plain.
 
 4. **Real interactive path → PTY tier.** To exercise the `isTTY == true` branch end
    to end, spawn the real binary under a pseudo-terminal (`portable-pty` — WezTerm's
@@ -207,9 +206,9 @@ Windows console — the only genuinely new Windows surface the feature adds.
 
 ## Demo GIF
 
-The static screenshot tooling (`scripts/screenshots.sh`, deterministic SVGs) can't
+The static screenshot tooling (`screenshots/screenshots.sh`, deterministic SVGs) can't
 capture an *animation*. A separate, informational GIF (like the screenshots, never
-gated) is the README hero. `scripts/demo-gif.py` drives the **real release binary**
+gated) is the README hero. `screenshots/demo-gif.py` drives the **real release binary**
 against the mock-oneharness fixture (same as the screenshots) for its data — the
 rules, verdicts, and final report are genuine CLI output — then reconstructs the
 exact frames the view draws (the same glyphs, words, and status colors as

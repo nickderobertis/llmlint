@@ -41,20 +41,101 @@ follow-ups (see "After the main task").
 
 ## Stack and composition
 
-Composes the `create-repo` skill's `base.md` + `shapes/cli.md` +
-`languages/rust.md` + `languages/bash.md` + `intersections/rust-cli.md` + `ci.md`
-+ `releasing.md` + `llmlint.md` (`llmlint.yml` pins each one's rule fragment).
-Bash is a composed language because `scripts/*.sh` and `.githooks/pre-push`
-carry real logic; two other languages are **supporting tooling** only:
+Composes the `create-repo` skill's `base.md` + `project-graph.md` +
+`shapes/cli.md` + `languages/rust.md` + `languages/bash.md` +
+`intersections/rust-cli.md` + `ci.md` + `releasing.md` + `llmlint.md`
+(`llmlint.yml` pins each one's rule fragment). Bash is a composed language
+because the scripts (`scripts/`, and those in the screenshots, live, bench and
+CI projects) and `.githooks/pre-push` carry real logic; three other languages
+are **supporting tooling** only:
 
-- **PowerShell** — `scripts/win-console-color.ps1`, one script: it must drive a
+- **PowerShell** — `tests/win-color/win-console-color.ps1`, one script: it must drive a
   real Windows console buffer, which only PowerShell can read back.
-- **Python** — `scripts/demo-gif.py`, one on-demand helper that renders the README
+- **Python** — `screenshots/demo-gif.py`, one on-demand helper that renders the README
   GIF with Pillow; it is neither built, shipped, nor gated.
+- **JavaScript (bun)** — Nx runs on Node, installed by bun from `package.json` +
+  the one `bun.lock` (bun pinned in `.tool-versions`); `tools/` holds the one
+  project-boundary checker and its `bun test` suite. Nothing JavaScript is built
+  or shipped.
 
-Deliberately excluded (so it isn't re-litigated):
+[//]: # "llmlint: ignore-block[agents_md_durable_and_terse] this list is the composition record the create-repo baseline requires Stack and composition to carry: the projects in the graph, each with its boundary tag and the one-line reason it is a project, and the only place tags and ownership read together; each project.json holds a definition, not why the graph is cut this way"
+**Projects in the graph** (`nx.json` + a `project.json` per project; each Rust
+one beside its `Cargo.toml`, all members of one Cargo workspace with one
+`Cargo.lock`; the tag after each name is its boundary type):
 
-- **No monorepo** — single binary crate; no Nx/affected wiring.
+- `llmlint` (`type:app`, the root) — the published crate and its unit tests; it
+  also owns every repo-root file no other project claims.
+- `config-lint-plugin` (`type:contract`, `assets/`) — the versioned plugin and the
+  config schema consumers fetch from `main` by path, plus the templates the binary
+  embeds; it depends on nothing.
+- `llmlint-mock-oneharness` (`type:fixture`, `tests/mock-oneharness/`) — the
+  oneharness wire double behind `--oneharness-bin`.
+- `llmlint-e2e` (`type:e2e`, `tests/e2e/`) — the binary journeys; its `test`
+  depends on the builds of `llmlint` and the fixture.
+- `release-targets` (`type:external`, `tests/release-targets/`) — the release
+  declaration's offline checks (`test`) and network checks (`network`).
+- `real-oneharness` (`type:external`, `tests/real-oneharness/`) — the PyPI-installed
+  oneharness suite (`network`), plus its offline pin check (`test`).
+- `live` (`type:live`, `tests/live/`) — the paid live tier, plus its offline
+  input checks (`test`).
+- `win-color` (`type:e2e`, `tests/win-color/`) — the Windows console rendering check.
+- `screenshots` (`type:capture`, `screenshots/`) — the capture, and the pre-push
+  guard's and freeze installer's journeys.
+- `bench` (`type:bench`, `benches/`) — the informational performance suite, plus
+  its harness scripts' offline input checks (`test`).
+- `repo-tooling` (`type:tooling`, `scripts/`) — setup, the Nx and gate plumbing,
+  the actionlint installer and workflow lint, with their journeys.
+- `ci-workflows` (`type:tooling`, `.github/`) — the workflows, the CI routing and
+  release-verdict script, and their drift gates; actionlint is its `lint-workflows`.
+- `git-hooks` (`type:tooling`, `.githooks/`) — the pre-push hook (its journeys are
+  the screenshots project's).
+- `workspace` (`type:workspace`, `tools/`) — the boundary check and the
+  supply-chain check; `coverage` (`type:workspace`, `tools/coverage/gate/`) — the
+  aggregate coverage gate; `coverage-driver` (`type:workspace`, `tools/coverage/`)
+  — its driver, `coverage.sh`, and the driver's slow self-tests, a project of
+  their own so a product edit (which selects the gate) never selects them.
+[//]: # "llmlint: ignore-end[agents_md_durable_and_terse]"
+
+Every project declares the repo-uniform target names that apply to it: `format`
+(a check; `--configuration=write` writes), `lint` (clippy, or the boundary
+check), `lint-sh` (shellcheck), `lint-workflows` (actionlint), `build`, `test`,
+`doc`. A target that must never fan out into a gate tier gets a name of its own —
+`network` (release-targets, real-oneharness), `live`, `win-color`, `capture`,
+`bless`, `gif`, the `bench*` targets, `check-version-bump`, `supply-chain` — so
+`nx run-many -t test` can never reach it. Tags bound the edges
+(`tools/project-boundaries.json`, checked by the `workspace` project's `lint`):
+the crate, the contract, the fixture and the tooling may never depend on an
+expensive project (`e2e`, `external`, `live`, `capture`, `bench`), and no
+expensive project on another.
+
+Deliberately excluded or deviating (so it isn't re-litigated):
+
+- **The root crate stays a root package, not a virtual manifest** (`rust.md`
+  prefers one): consumers fetch `assets/config_lint.yml` and
+  `assets/llmlint.schema.json` from `main` by path, `include_str!` and
+  `CARGO_MANIFEST_DIR` read `assets/` beside the manifest, and maturin's
+  `pyproject.toml` and `cargo install --path .` / `--git` name the root. So the
+  root `Cargo.toml` is both the `llmlint` package and the `[workspace]`, and the
+  `llmlint` Nx project is rooted at `.` — Nx gives a file to the deepest project
+  root containing it, so every unclaimed repo-root file (the justfile, README,
+  `AGENTS.md`, `.claude/`, `docs/`, `shots/`, the root configs)
+  belongs to `llmlint` and an edit there selects every project downstream of it.
+  That is why the workflows (`.github/`), the git hooks (`.githooks/`), the
+  scripts (`scripts/`) and each suite's own scripts live in project directories
+  of their own.
+- **Where checks live**: actionlint is `ci-workflows`' `lint-workflows`, not
+  `repo-tooling`'s, because the workflow files are that project's (`repo-tooling`
+  keeps the script it runs); `ci-workflows` and `git-hooks` exist for the
+  ownership reason above, `workspace`/`coverage` for the repo-level gates; the
+  pre-push guard's journeys sit in `screenshots`, whose capture scripts the hook
+  drives.
+- **No remote Nx cache** — the repo runs on the Nx local cache only
+  (`.nx/cache`, gitignored), kept per checkout: `scripts/nx` pins it there,
+  since Nx 23 otherwise shares the main git worktree's cache across worktrees.
+  CI starts every run from a cold cache and persists
+  none, so a cached result can never stand in for a CI verdict; locally the cache
+  replays unchanged targets (inputs are declared per target, so an edit outside
+  them replays and an edit inside reruns).
 - **No `cargo-dist`** — `release.yml`'s native build matrix already ships
   checksummed cross-platform binaries; release-plz handles versioning.
 - **crates.io publish** — alongside GitHub Releases + `install.sh` +
@@ -78,8 +159,9 @@ Use the `just` recipes; do not hand-roll equivalents.
 
 - `just setup` — one command to provision a **bare machine** from a fresh clone:
   rustup + the pinned toolchain, `just` itself, the cargo dev tools
-  (`cargo-nextest`, `cargo-llvm-cov`), the pinned `actionlint`, then
-  `just bootstrap`. Idempotent and
+  (`cargo-nextest`, `cargo-llvm-cov`), the pinned `actionlint`, a check that Node
+  is present (Nx runs on it; setup does not install it), then `just bootstrap`.
+  Idempotent and
   stamped (`.dev/setup.stamp`). On a machine with no `just` yet, run the script
   directly: `./scripts/setup.sh`. The Claude Code **SessionStart hook**
   (`scripts/session-setup.sh`, wired in `.claude/settings.json`) runs the fast
@@ -97,54 +179,50 @@ Use the `just` recipes; do not hand-roll equivalents.
   when ready, exit 1 with the reason and the fix. Source of truth for "ready" is
   `scripts/setup-lib.sh` (`REQUIRED_BINS` + a fingerprint of the toolchain/tool
   pins); bump those pins and the stamp invalidates so `setup` re-runs.
-- `just bootstrap` — the cargo-level step `setup` finishes with (toolchain
-  components + `cargo fetch`); CI calls it directly after installing the
+- `just bootstrap` — the step `setup` finishes with (toolchain components +
+  `cargo fetch`, then the `.tool-versions` bun and the locked Nx install); CI
+  calls it directly after installing the
   toolchain + tools its own way — the jobs that run the gate or its tests (`gate`,
   `cross`) install the channel pinned in `rust-toolchain.toml`
   (`actions-rust-lang/setup-rust-toolchain`), never a floating `stable`; only
   `install`, which stands in for an end user's machine, uses a stock stable. Use
   `just setup` for a bare machine.
-- `just check` — full gate: `lint-sh`, fmt-check, `lint-workflows`, clippy
-  (`-D warnings`), tests, **e2e**, `cargo doc`. Must pass before any commit or PR.
-- `just lint-sh` — shellcheck over `scripts/*.sh` and `.githooks/pre-push`; first
-  in `check` (cheapest). Fix a finding at its site; a `# shellcheck disable=` is
-  site-scoped and carries its reason. `just setup` does not install shellcheck
-  yet (CI's ubuntu runner ships it); the recipe names the install when missing.
+- `just check` — the gate, delegated to Nx (`scripts/nx-tier.sh` picks the
+  tier): the targets `format` (check), `lint` (clippy `-D warnings`, the
+  boundary check), `lint-sh`, `lint-workflows`, `build`, `test` (unit, **e2e**,
+  the offline release-targets and script journeys, coverage-measured ones under
+  cargo-llvm-cov), `doc` and `coverage` (the 95% floor over their union). With no flag it runs the
+  **affected tier** — `nx affected` from an explicit base: `NX_BASE` when set
+  (only a plain ref name or a commit SHA, else refused before any target runs),
+  otherwise the merge base with `origin/main`. `just check --all` runs the **full
+  sweep** (`nx run-many --all`). Must pass before any commit or PR. The
+  one-target recipes (`just --list`) take the same flag; `just check-portable` is
+  the macOS/Windows part CI's `cross` jobs run — uninstrumented, so
+  `coverage-driver`'s cargo-llvm-cov tests stay on Linux.
+- `just lint-sh` — shellcheck over every project's scripts and the git hooks
+  (each project's `lint-sh` target). Fix a finding at its
+  site; a `# shellcheck disable=` is site-scoped and carries its reason. `just
+  setup` does not install shellcheck yet (CI's ubuntu runner ships it).
 - `just lint-workflows` — the pinned actionlint (`actionlint-version` in the
-  justfile) over every workflow in `.github/workflows/`; part of `check`, so CI's
-  gate job lints the whole workflow set on every change. A finding is fixed, not
-  suppressed. `just setup` / `just actionlint-tools` install the pin from the
-  prebuilt release, digest-checked against `scripts/actionlint.sha256` (refresh it
-  with the pin); a missing or off-pin actionlint fails naming that command.
-  Workflows spell out repeated lists rather than using YAML anchors/aliases, which
-  actionlint has rejected in trigger filters (issue #201).
-- `just test` / `just test-e2e` / `just lint` / `just format` — individual steps.
-- `just upgrade` — update dependencies, then re-run `just check`.
-- `just check-version-bump [base=origin/main]` — dogfood `check-version-bump` on
-  llmlint's own versioned plugin (`assets/config_lint.yml`), failing if it changed
-  vs the base without a `version:` bump. Out of `check` (it needs a base ref +
-  network to resolve it); CI runs it against the PR base.
-- `just deps-check` — `cargo deny` + `cargo machete` (separate; needs network).
-- `just test-release-targets` — `tests/release_targets.rs`, including its two
-  `#[ignore]`-d network tests: the probe against the live crates.io/PyPI APIs,
-  and the restated schema reconciled against onevcs's canonical implementation
-  (its drift gate — the schema is onevcs's, not ours); the `Release targets`
-  workflow (`.github/workflows/release-targets.yml`) runs this recipe on a
-  change to what it reads and weekly. The offline tests
-  (the release declaration held to `release.yml`, and the probe against a local
-  stand-in registry) already run in `test`. `release-targets.toml` is the
-  canonical release-target declaration (schema defined in onevcs's
-  `docs/contract.md`) other repositories wait on; its target ids and short names
-  (`crate:llmlint`/`crate`, `pypi:llmlint-cli`/`cli`) are named by consumers'
-  plans, so never rename them unilaterally.
-- `just test-oneharness` — the **real-oneharness tier** (`tests/real_oneharness.rs`,
-  its `#[ignore]`-d tests): installs the released `oneharness-cli` at the
-  justfile's `oneharness-cli-version` pin (`scripts/install-oneharness.sh`, a venv
-  under `.dev/`; needs PyPI), then feeds the `--config` layers llmlint forwards
-  (recorded by the mock) to the real `oneharness config --format json` and asserts
-  the highest layer's settings win. Free and model-free, but networked, so out of
-  `test`/`check`. The pin is the multi-file floor
-  (`oneharness::LAYERED_CONFIG_MIN_VERSION`); an always-run test holds them equal.
+  justfile) over every workflow in `.github/workflows/` (the ci-workflows
+  project's target); part of `check`. A finding is fixed, not suppressed. `just
+  setup` / `just actionlint-tools` install the pin from the prebuilt release,
+  digest-checked against `scripts/actionlint.sha256` (refresh it with the pin); a
+  missing or off-pin actionlint fails naming that command.
+- `just upgrade` — update dependencies, then re-run the gate as a full sweep
+  (`just check --all`).
+- `just check-version-bump [base=origin/main]` — the config-lint-plugin
+  project's version-bump dogfood; see `assets/AGENTS.md`.
+- `just deps-check` — `cargo deny` + `cargo machete` (the workspace project's
+  `supply-chain`; separate from the gate tiers, needs network).
+- `just test-release-targets` — the release-targets project's `network` target,
+  outside the gate tiers (the `Release targets` workflow runs it); its offline
+  half is the project's `test`. `release-targets.toml` is the canonical
+  release-target declaration other repositories wait on; see
+  `tests/release-targets/AGENTS.md`.
+- `just test-oneharness` — the real-oneharness project's `network` target
+  (installs the released oneharness from PyPI), outside the gate tiers; see
+  `tests/real-oneharness/AGENTS.md`.
 - **LLM-judge tier (dogfood)** — `just lint-llm-validate` (model-free: config
   structure, ignore directives, version bumps) and `just lint-llm-diff <base>`
   (the judge over the branch's changes) run the released llmlint
@@ -152,42 +230,23 @@ Use the `just` recipes; do not hand-roll equivalents.
   against `llmlint.yml` + `oneharness.toml`. CI's `llmlint` job runs validate, then
   the judge, and must provision and authenticate the harness `oneharness.toml`
   selects first (codex, keyed by `OPENAI_API_KEY`); a missing key fails the job,
-  never a green no-op. `.githooks/pre-push` runs `just lint-llm-validate` on every push
-  before the visual guard: a failure blocks, a missing llmlint warns and skips.
+  never a green no-op. The pre-push hook runs `just lint-llm-validate` too (see
+  `.githooks/AGENTS.md`).
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
-- `just live-claude` — the **live e2e tier**: builds a release binary, then drives
-  the real `llmlint` → real `oneharness` → the real claude-code harness through
-  `scripts/live-claude.sh`, asserting a clean file passes (exit 0), a planted
-  `TODO` is flagged (exit 1), and a **fallback** run (issue #146 — an absent
-  primary harness ahead of the canonical one via a `oneharness.toml`
-  `run_mode = "fallback"`) still passes, proving llmlint reads the real
-  `fallback.ran` winner and not the skipped `results[0]`. It runs on PRs in its own
-  workflow
-  (`.github/workflows/live.yml`) across **Linux, macOS, and Windows** — the point
-  is to prove the built binary + oneharness + a real harness work on each OS.
-  Harness *breadth* is oneharness's test surface (every harness is the same
-  `--harness <id>` to llmlint), so one canonical harness is enough. The harness
-  CLI + auth are configured in CI, so a missing CLI, auth, or oneharness — or any
-  failure to complete the run — is a **hard failure** (red build); the tier never
-  skips. Auth + the `CLAUDE_E2E_MODEL` override are documented in `tests/AGENTS.md`.
-  Makes real (paid) model calls — out of `check`.
-- `just win-color` — the **Windows color-rendering gate**: builds the release
-  binary + mock oneharness and runs `scripts/win-console-color.ps1`, which drives
-  llmlint against the mock-oneharness fixture with `--color always` into a real
-  Windows console screen buffer, then reads the buffer back and asserts the
-  `FAIL`/`PASS` labels carry the red/green console attributes (and no raw ESC
-  survives). The hermetic e2e + screenshots only prove ANSI is *emitted*
-  (platform-independent); this proves a Windows console *renders* it — the thing
-  anstream's `AutoStream` exists to guarantee (enable VT, else translate to Win32
-  console calls). Windows-only, no model/cost; CI runs it on `windows-latest`
-  (`.github/workflows/win-color.yml`) as a real gate, separate from the paid live
-  tier. See `tests/AGENTS.md`.
+- `just live-claude` — the paid **live e2e tier** (the live project): runs on PRs
+  in its own workflow (`.github/workflows/live.yml`) across Linux, macOS and
+  Windows, out of `check`; a missing CLI, auth or oneharness is a hard failure.
+  See `tests/live/AGENTS.md`.
+- `just win-color` — the **Windows color-rendering gate** (the win-color
+  project): Windows-only, so it runs in its own workflow
+  (`.github/workflows/win-color.yml`) on `windows-latest`, not in the Linux gate
+  tiers. See `tests/win-color/AGENTS.md`.
 - **Performance suite** (`just bench`, `bench-cli`, `bench-allocs`,
   `bench-instructions`, `bench-compare`, `profile`) — *informational, never a
   gate*. See `benches/AGENTS.md`. The Criterion + allocation benches measure the
-  pure engine (`benches/`); `scripts/bench.sh` (hyperfine) and
-  `scripts/bench-instructions.sh` (cachegrind) measure the real binary end to end
+  pure engine (`benches/`); `benches/bench.sh` (hyperfine) and
+  `benches/bench-instructions.sh` (cachegrind) measure the real binary end to end
   against the **mock-oneharness fixture**, so there's no model/network cost — just
   llmlint's own work plus one child spawn. The `Performance` workflow
   (`.github/workflows/bench.yml`) runs all of this on each PR and posts a sticky
@@ -196,38 +255,12 @@ Use the `just` recipes; do not hand-roll equivalents.
   critcmp, samply) are *not* installed by `just setup` — `just bench-tools`
   installs them on demand; CI installs them via `taiki-e/install-action`.
 - **Terminal screenshots** (`just screenshots`, `screenshots-tools`,
-  `screenshots-bless`) — *informational, never a gate*. See `screenshots/AGENTS.md`.
-  `scripts/screenshots.sh` drives the real binary against the **mock-oneharness
-  fixture** (`screenshots/fixture/`) — one scene per command (`lint`, with a
-  `view` toggle over `default`/`-v` `verbose`/`-v` `debug` (the stderr oneharness
-  debug view), plus `init`, `config`, `doctor`) — and renders the real output to
-  **deterministic SVGs** via `freeze` + a vendored, pinned font, all at one fixed
-  width (`--width`/`--wrap`) so on-page text size is uniform (the `default`/
-  `verbose` lint views are colorized via `--color always`; the rest are plain
-  text) — byte-identical on every machine (no container), so [screencomp](https://github.com/nickderobertis/screencomp)
-  can hash-gate them. The `Visual docs` workflow (`.github/workflows/visual-docs.yml`,
-  screencomp's reusable workflow) classifies against the committed baseline
-  (`shots/baseline/<arch>.json`), publishes a GitHub Pages gallery, and posts a
-  sticky before/after PR comment; `fail-on-drift` makes unexpected drift a red
-  build. **Two lanes** are declared in `[capture].arches` — `x86_64` and `arm64`
-  (CI runs the arm64 one on `ubuntu-24.04-arm`) — each with its own committed
-  baseline, because the local pre-push guard (`.githooks/pre-push`) classifies and
-  re-blesses the lane of the **host it runs on** and refuses a host arch no lane
-  declares; llmlint is developed on arm64 and released from CI's x86_64, so both
-  are real hosts. The SVGs are identical across arches, so the two baselines are
-  the same bytes (an e2e journey holds them equal) and one host's
-  `just screenshots-bless` — which rewrites **its own** lane only, named by
-  `scripts/host-arch.sh` — is checked by CI's job for the other lane. `freeze` is
-  *not* installed by `just setup` — `just screenshots-tools` installs the pinned
-  version; screencomp is installed separately (CI installs both, `freeze` via
-  `scripts/ci-install-freeze.sh`, which picks the prebuilt release matching the
-  runner's arch). Keep the two `freeze` version pins in sync (`freeze-version` in
-  the justfile, `freeze_version` in `scripts/ci-install-freeze.sh`; an e2e journey
-  gates them against each other). The README **hero** is a separate animated GIF of the
-  live-progress view (`docs/screenshots/demo.gif`, `just screenshots-gif`,
-  `scripts/demo-gif.py`) — same real-binary-against-the-fixture approach, rendered
-  to frames with the vendored font (Pillow, no `ttyd`/`ffmpeg`); it is *not*
-  hash-gated (a GIF isn't byte-reproducible), so it is regenerated on demand.
+  `screenshots-bless`, `screenshots-gif`) — *informational, never a gate*:
+  deterministic SVGs of the real CLI output, hash-gated by the `Visual docs`
+  workflow (screencomp, `fail-on-drift`) per declared capture lane, which also
+  publishes a GitHub Pages gallery. The screenshots project's `lint-sh` and `test`
+  are in the gate tiers; its `capture` needs `freeze`, so it is left to that
+  workflow and the pre-push guard. See `screenshots/AGENTS.md`.
 
 ## How llmlint drives oneharness
 
@@ -607,24 +640,43 @@ harness reads target files on-demand with its own tools.
   check the create-repo skill requires to be required too — else auto-merge lands
   a PR past a red judge run. Branch protection is applied outside this repo (the
   `gov-llmlint` governance step requires `llmlint`); `setup_github_governance.py
-  --verify` reconciles this list with the live settings. An e2e journey
+  --verify` reconciles this list with the live settings. A ci-workflows journey
   (`every_required_context_is_reported_on_every_pull_request`) holds the
   workflows to these names: renaming a job or adding a filter, `if:` or `needs`
   that could leave one unreported on a PR fails the gate. `notignored`
   (`notignored.yml`, the PR comment listing added suppressions) is deliberately
   not required: it skips fork PRs.
 - **PRs follow `.github/pull_request_template.md`** (What / Why; the squash body).
+- **Where each gate tier runs** (`ci.md` "Staged gates";
+  `.github/scripts/ci-gate.sh tier` decides it for every run of `ci.yml`): a pull
+  request and a push to `main` (merge-to-main) run the **affected tier** —
+  `NX_BASE=<base> just check`, from the PR's merge base with its base branch, or
+  from the previous tip of `main` — in `gate`, and `just check-portable` at the
+  same tier in `cross`. The **full sweep** (`just check --all` in `gate`, `just
+  check-portable --all` in `cross`) runs at **release-prep, on the release-plz release PR**, checked
+  out at its head. Why there: release-plz batches merged changes behind one
+  release PR that can accumulate several merges, so the commit that ships is not
+  one any merge job swept; sweeping at merge-to-main would sweep trees that never
+  ship and still miss the one that does. A manual `workflow_dispatch` of `ci.yml`
+  is also a full sweep — the recovery when a release finds no verdict. Each tree
+  is gated once per tier: `release.yml` re-runs no lint or test target. Its
+  `verdict` job (`ci-gate.sh verdict`) reads GitHub for the newest sweep run whose
+  tested commit has the released commit's **tree** and needs its `gate` and both
+  `cross` jobs green; a red, missing, or different-tree verdict stops the release,
+  and `upload`, `publish-crate` and `build-wheels` (hence `publish-pypi`) all
+  `need` it.
 - **Releases**: Conventional Commits drive release-plz (pre-1.0: `feat`→minor,
   `fix`/`perf`→patch, `!`/`BREAKING`→minor; `docs`/`test`/`chore`/`ci`→no release).
   release-plz opens a release PR, auto-merges it on green, tags `vX.Y.Z`, and cuts
   the GitHub Release, which fires `release.yml` to build+attach checksummed
-  binaries and, when opted in, `cargo publish` the crate. Needs the
+  binaries and, when opted in, `cargo publish` the crate — once its `verdict` job
+  finds a green full sweep of the released tree (above). Needs the
   `RELEASE_PLZ_TOKEN` PAT (a `GITHUB_TOKEN` tag won't retrigger `release.yml`);
   the workflow no-ops until the secret exists. Don't hand-bump the version or
   `CHANGELOG.md`.
 - **crates.io publish**: `release.yml`'s `publish-crate` job runs
   `cargo publish --locked` whenever the `CARGO_REGISTRY_TOKEN` secret is set (the
-  `guard` job gates it). It is gated on the release `test` job but independent of
+  `guard` job gates it). It is gated on the release `verdict` job but independent of
   the binary `upload` matrix, so a flaky per-platform upload never blocks the
   immutable crate publish and vice versa. A `verify-crate` job then polls the
   crates.io sparse index for the new version and `cargo install`s + smoke-tests
@@ -841,9 +893,8 @@ harness reads target files on-demand with its own tools.
   `configfs::load_config_lint` (no discovery, so it works with no project config),
   which first runs the deterministic comment (ignore-directive) check, then the
   judge pass via `lint::run_loaded` (the post-load half of `lint::run`, factored
-  out so both share the whole engine). Bump the plugin's `version` and the `@1`
-  pins (`init.llmlint.yml`, README, `CONFIG_LINT` in the e2e suite) together when
-  its checks change incompatibly.
+  out so both share the whole engine). Versioning the plugin: see
+  `assets/AGENTS.md`.
 
 ## Tests are context engineering
 
@@ -852,20 +903,14 @@ coverage are a rule, not a preference.
 
 - **The layer under test is llmlint.** The genuinely-external boundary is the
   `oneharness` subprocess — e2e drives the **real `llmlint` binary** against a
-  **mock-oneharness fixture** (feature `mock-oneharness`, `--oneharness-bin`
-  override), exactly as oneharness mocks the real agent CLIs. Never mock
+  **mock-oneharness fixture** (the `llmlint-mock-oneharness` crate behind the
+  `--oneharness-bin` override), exactly as oneharness mocks the real agent CLIs. Never mock
   llmlint's own logic (config/render/batch/vote/output).
 - **Done means complete, not minimal:** every user journey, happy path *and*
-  failure/recovery. The e2e journey list lives in `tests/AGENTS.md` and is the
+  failure/recovery. The e2e journey list lives in `tests/e2e/AGENTS.md` and is the
   source of truth for what's covered; a feature isn't done until its journey lands.
-- A live tier (`just live-claude`, plus the ad-hoc `just lint-live`) hits real
-  oneharness + a real harness; it is opt-in and out of the `just check` gate. It
-  runs on PRs in its own workflow (`.github/workflows/live.yml`) across Linux,
-  macOS, and Windows to prove the built binary + oneharness + a real harness work
-  on each OS. It expects the harness CLI + auth configured, so a missing
-  CLI/auth/oneharness is a **hard failure**, not a skip. The scripted journeys
-  live in `scripts/live-claude.sh` + `scripts/live-lib.sh` and are described in
-  `tests/AGENTS.md`.
+- A live tier (`just live-claude`, and the ad-hoc `just lint-live`) hits real
+  oneharness + a real harness, out of the gate tiers; see `tests/live/AGENTS.md`.
 
 ## Scripts and output are context
 

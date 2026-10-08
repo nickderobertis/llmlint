@@ -4,4 +4,8 @@
 # deliberately NOT managed here — rust-toolchain.toml + rustup are the single
 # source of truth (channel, components, targets, profile). Adding `rust` here
 # would create a second, conflicting toolchain mechanism.
+#
+# `bun` installs and runs Nx, the orchestrator every gate recipe delegates to
+# (scripts/bun.sh resolves this pin; CI's setup-bun reads it).
 just 1.42.4
+bun 1.3.14

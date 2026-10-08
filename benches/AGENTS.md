@@ -3,11 +3,15 @@
 The informational performance suite. These targets **measure, they do not
 gate**: timings are noisy on shared CI runners, so the `Performance` workflow
 reports numbers on a PR rather than blocking it. The hard gate is `just check`.
+The one exception measures nothing: the `test` target (`tests/harness_inputs.rs`)
+drives the CLI harness scripts offline (up to their own tool check, or against
+stand-in `cargo`/`samply`), so every documented `BENCH_*`/`PROFILE_*` override is
+shown refused by name before anything is built.
 
 - Bench the **pure engine surface** (`configfs::parse`, `plan::build`,
   `template::render`, `schema::build`, `vote::tally`, `report::Report`) so the
   numbers track what the binary actually runs. The `oneharness` subprocess — the
-  network/model boundary — is deliberately excluded here; `scripts/bench.sh`
+  network/model boundary — is deliberately excluded here; `benches/bench.sh`
   covers the end-to-end CLI cost including it.
 - Load fixtures from the **bundled assets** (`io::assets`: the `init` starter
   config, the `config-lint` plugin, the default template) once, outside every

@@ -1,0 +1,943 @@
+//! Journeys over `.github/scripts/ci-gate.sh`, the CI routing and the release's
+//! sweep verdict, driven the way the workflows run them: `tier` fed the event
+//! payload a GitHub runner hands it, in a scratch git repository, and `verdict`
+//! with GitHub's API answered by a stand-in `gh` on PATH (the one external seam;
+//! the real script, `jq` and `git` run). Unix-only, like the script.
+#![cfg(unix)]
+
+// llmlint: ignore-file[shell_test_tiers_stay_split] every journey here is offline and hermetic: it drives the script in a scratch git repository with GitHub's API answered by a stand-in gh, and the only host tools used (git, jq, bash) are the gate's own required tools or the base system's; nothing reaches a network, so a separate project would be selected by exactly the same edits
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use tempfile::TempDir;
+
+/// The repository root: this crate's manifest sits one level below it.
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the crate lives one level below the repository root")
+        .to_path_buf()
+}
+
+fn script() -> PathBuf {
+    repo_root().join(".github/scripts/ci-gate.sh")
+}
+
+/// A command with no inherited GitHub Actions or git repository-selection
+/// variables, so a case states its whole environment (and a run inside the
+/// repository's own pre-push hook or CI job cannot leak in).
+fn clean(mut cmd: Command) -> Command {
+    for (name, _) in std::env::vars_os() {
+        let key = name.to_string_lossy();
+        if key.starts_with("GITHUB_")
+            || key.starts_with("GIT_")
+            || [
+                "REPO",
+                "SHA",
+                "CI_WAIT_ATTEMPTS",
+                "CI_WAIT_DELAY",
+                "GH_TOKEN",
+            ]
+            .contains(&&*key)
+        {
+            cmd.env_remove(&name);
+        }
+    }
+    cmd
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = clean(Command::new("git"))
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// A scratch repository with `main` at one commit, `origin/main` pointing at it,
+/// and a feature commit checked out on top — the shape a pull-request checkout
+/// has (fetch-depth: 0).
+struct Repo {
+    dir: TempDir,
+    main: String,
+    head: String,
+}
+
+impl Repo {
+    fn new() -> Self {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.email", "t@t.t"]);
+        git(p, &["config", "user.name", "t"]);
+        fs::write(p.join("a"), "1").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "base"]);
+        let main = git(p, &["rev-parse", "HEAD"]);
+        git(p, &["update-ref", "refs/remotes/origin/main", &main]);
+        fs::write(p.join("a"), "2").unwrap();
+        git(p, &["commit", "-qam", "feature"]);
+        let head = git(p, &["rev-parse", "HEAD"]);
+        Repo { dir, main, head }
+    }
+
+    /// Run `ci-gate.sh tier` for `event` with `payload`, writing GITHUB_OUTPUT
+    /// to a file as a runner does; returns the output and what it recorded.
+    fn tier(&self, event: &str, payload: &str) -> (Output, String) {
+        let event_path = self.dir.path().join("event.json");
+        fs::write(&event_path, payload).unwrap();
+        let github_output = self.dir.path().join("github-output");
+        let _ = fs::remove_file(&github_output);
+        let out = clean(Command::new("bash"))
+            .arg(script())
+            .arg("tier")
+            .current_dir(self.dir.path())
+            .env("GITHUB_EVENT_NAME", event)
+            .env("GITHUB_EVENT_PATH", &event_path)
+            .env("GITHUB_OUTPUT", &github_output)
+            .output()
+            .unwrap();
+        (out, fs::read_to_string(&github_output).unwrap_or_default())
+    }
+}
+
+fn pull_request(head_ref: &str, head_repo: &str, head_sha: &str) -> String {
+    format!(
+        r#"{{"pull_request":{{"head":{{"ref":"{head_ref}","sha":"{head_sha}","repo":{{"full_name":"{head_repo}"}}}},
+            "base":{{"ref":"main","repo":{{"full_name":"owner/llmlint"}}}}}}}}"#
+    )
+}
+
+#[test]
+fn a_release_plz_pull_request_routes_to_the_full_sweep_on_its_head() {
+    let repo = Repo::new();
+    let (out, recorded) = repo.tier(
+        "pull_request",
+        &pull_request(
+            "release-plz-2026-10-07T12-00-00Z",
+            "owner/llmlint",
+            &repo.head,
+        ),
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(recorded, format!("tier=all\nbase=\nhead={}\n", repo.head));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("release PR"));
+}
+
+#[test]
+fn an_ordinary_pull_request_routes_to_the_affected_tier_from_the_merge_base() {
+    let repo = Repo::new();
+    let (out, recorded) = repo.tier(
+        "pull_request",
+        &pull_request("feature/graph", "owner/llmlint", &repo.head),
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        recorded,
+        format!("tier=affected\nbase={}\nhead=\n", repo.main)
+    );
+}
+
+#[test]
+fn a_fork_branch_named_like_a_release_pr_is_not_swept_as_one() {
+    // Only release-plz, pushing to this repository, opens release PRs; a fork
+    // choosing the same branch name gets the ordinary affected tier.
+    let repo = Repo::new();
+    let (out, recorded) = repo.tier(
+        "pull_request",
+        &pull_request("release-plz-fake", "someone/llmlint", &repo.head),
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert!(recorded.starts_with("tier=affected\n"), "{recorded}");
+}
+
+#[test]
+fn a_push_to_main_routes_to_the_affected_tier_from_the_previous_tip() {
+    let repo = Repo::new();
+    let (out, recorded) = repo.tier("push", &format!(r#"{{"before":"{}"}}"#, repo.main));
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        recorded,
+        format!("tier=affected\nbase={}\nhead=\n", repo.main)
+    );
+    // A first push to a branch has an all-zero `before`: fall back to HEAD~1.
+    let zero = "0".repeat(40);
+    let (out, recorded) = repo.tier("push", &format!(r#"{{"before":"{zero}"}}"#));
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        recorded,
+        format!("tier=affected\nbase={}\nhead=\n", repo.main)
+    );
+}
+
+#[test]
+fn a_manual_dispatch_routes_to_the_full_sweep() {
+    let repo = Repo::new();
+    let (out, recorded) = repo.tier("workflow_dispatch", "{}");
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(recorded, "tier=all\nbase=\nhead=\n");
+}
+
+#[test]
+fn an_unroutable_event_or_payload_is_refused_without_a_tier() {
+    let repo = Repo::new();
+    let (out, recorded) = repo.tier("schedule", "{}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr)
+        .contains("no tier is defined for the 'schedule' event"));
+    assert!(recorded.is_empty(), "{recorded}");
+
+    let (out, recorded) = repo.tier(
+        "pull_request",
+        &pull_request("feature", "owner/llmlint", &repo.head).replace("\"main\"", "\"a..b\""),
+    );
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no usable base ref ('a..b')"));
+    assert!(recorded.is_empty(), "{recorded}");
+
+    // A nested field of the wrong type reads as absent: a refusal naming the
+    // missing base ref (exit 1), never a bare jq error with jq's own exit code.
+    for payload in [
+        r#"{"pull_request":"invalid"}"#,
+        r#"{"pull_request":{"base":7}}"#,
+    ] {
+        let (out, recorded) = repo.tier("pull_request", payload);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{payload}: {out:?}");
+        assert!(err.contains("no usable base ref ('')"), "{payload}: {err}");
+        assert!(recorded.is_empty(), "{recorded}");
+    }
+}
+
+#[test]
+fn the_release_pr_prefix_is_the_one_release_plz_auto_merges() {
+    // release-plz.yml's auto-merge step selects the release PR by branch prefix;
+    // the router must sweep exactly those PRs, so the two prefixes are one fact.
+    let gate = fs::read_to_string(script()).unwrap();
+    let prefix = gate
+        .lines()
+        .find_map(|l| l.strip_prefix("readonly RELEASE_PR_PREFIX=\""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("ci-gate.sh declares RELEASE_PR_PREFIX");
+    let plz = fs::read_to_string(repo_root().join(".github/workflows/release-plz.yml")).unwrap();
+    assert!(
+        plz.contains(&format!("startswith(\"{prefix}\")")),
+        "release-plz.yml must select release PRs by the prefix ci-gate.sh sweeps: {prefix}"
+    );
+}
+
+const SHA: &str = "1111111111111111111111111111111111111111";
+const TREE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const OTHER_TREE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const REPO: &str = "owner/llmlint";
+
+/// A stand-in GitHub API: a `gh` on PATH answering `gh api <endpoint>` from
+/// fixture files — the released commit, the ci.yml runs per event, and each
+/// run's jobs (`jobs-<id>.json`, or `jobs-<id>.<n>.json` for the n-th poll).
+/// It records every endpoint it was asked for.
+struct Github {
+    dir: TempDir,
+}
+
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] GitHub owns these response shapes and no test can reach its API (the task prescribes answering it at the gh seam); the fixtures carry only fields GitHub's REST docs define for workflow runs and jobs, and the verdict refuses any answer that lacks them rather than trusting a drifted shape
+/// A ci.yml run as the runs endpoint lists it.
+fn run(id: u64, event: &str, branch: &str, head_repo: &str, tree: &str, status: &str) -> String {
+    format!(
+        r#"{{"id":{id},"event":"{event}","head_branch":"{branch}","head_sha":"{SHA}","status":"{status}",
+            "created_at":"2026-10-07T12:00:{id:02}Z","html_url":"https://github.com/{REPO}/actions/runs/{id}",
+            "head_repository":{{"full_name":"{head_repo}"}},"head_commit":{{"id":"{SHA}","tree_id":"{tree}"}}}}"#
+    )
+}
+
+/// The sweep jobs of one run, each `(name, status, conclusion)`.
+fn jobs(list: &[(&str, &str, &str)]) -> String {
+    let jobs: Vec<String> = list
+        .iter()
+        .map(|(name, status, conclusion)| {
+            let conclusion = if conclusion.is_empty() {
+                "null".to_string()
+            } else {
+                format!("\"{conclusion}\"")
+            };
+            format!(r#"{{"name":"{name}","status":"{status}","conclusion":{conclusion}}}"#)
+        })
+        .collect();
+    format!(r#"{{"jobs":[{}]}}"#, jobs.join(","))
+}
+
+const GREEN: &[(&str, &str, &str)] = &[
+    ("gate", "completed", "success"),
+    ("cross (macos-latest)", "completed", "success"),
+    ("cross (windows-latest)", "completed", "success"),
+    ("deny", "completed", "success"),
+];
+
+impl Github {
+    fn new(pr_runs: &[String], dispatch_runs: &[String]) -> Self {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        fs::write(
+            p.join("commit.json"),
+            format!(r#"{{"sha":"{SHA}","commit":{{"tree":{{"sha":"{TREE}"}}}}}}"#),
+        )
+        .unwrap();
+        for (file, runs) in [
+            ("runs-pr.json", pr_runs),
+            ("runs-dispatch.json", dispatch_runs),
+        ] {
+            fs::write(
+                p.join(file),
+                format!(
+                    r#"{{"total_count":{},"workflow_runs":[{}]}}"#,
+                    runs.len(),
+                    runs.join(",")
+                ),
+            )
+            .unwrap();
+        }
+        // llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
+        fs::create_dir_all(p.join("bin")).unwrap();
+        let gh = p.join("bin/gh");
+        fs::write(
+            &gh,
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+d="$GH_FIXTURES"
+printf '%s\n' "$*" >>"$d/calls"
+[ "$1" = api ] || { echo "stub gh: only 'api' is answered" >&2; exit 2; }
+[ -z "${GH_FAIL:-}" ] || { echo 'HTTP 403: Resource not accessible by integration' >&2; exit 1; }
+case "$2" in
+  */commits/*) cat "$d/commit.json" ;;
+  *runs\?event=pull_request*) cat "$d/runs-pr.json" ;;
+  *runs\?event=workflow_dispatch*) cat "$d/runs-dispatch.json" ;;
+  */actions/runs/*/jobs*)
+    id="$(sed 's@.*/actions/runs/\([0-9]*\)/jobs.*@\1@' <<<"$2")"
+    n=$(( $(cat "$d/polls-$id" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" >"$d/polls-$id"
+    if [ -f "$d/jobs-$id.$n.json" ]; then cat "$d/jobs-$id.$n.json"; else cat "$d/jobs-$id.json"; fi ;;
+  *) echo "stub gh: no answer for $2" >&2; exit 1 ;;
+esac
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+        Github { dir }
+    }
+
+    fn jobs(&self, file: &str, body: &str) -> &Self {
+        fs::write(self.dir.path().join(file), body).unwrap();
+        self
+    }
+
+    fn verdict(&self, env: &[(&str, &str)]) -> Output {
+        let path = format!(
+            "{}:{}",
+            self.dir.path().join("bin").display(),
+            std::env::var("PATH").unwrap()
+        );
+        clean(Command::new("bash"))
+            .arg(script())
+            .arg("verdict")
+            .env("PATH", path)
+            .env("GH_FIXTURES", self.dir.path())
+            .env("REPO", REPO)
+            .env("SHA", SHA)
+            .env("CI_WAIT_ATTEMPTS", "3")
+            .env("CI_WAIT_DELAY", "0")
+            .envs(env.iter().copied())
+            .output()
+            .unwrap()
+    }
+
+    fn calls(&self) -> String {
+        fs::read_to_string(self.dir.path().join("calls")).unwrap_or_default()
+    }
+}
+
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+#[test]
+fn a_green_release_pr_sweep_of_the_released_tree_lets_the_release_ship() {
+    let gh = Github::new(
+        &[run(
+            7,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "completed",
+        )],
+        &[],
+    );
+    gh.jobs("jobs-7.json", &jobs(GREEN));
+    let out = gh.verdict(&[]);
+    assert!(out.status.success(), "{out:?}");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("CI run 7") && said.contains(TREE), "{said}");
+    let calls = gh.calls();
+    assert!(
+        calls.contains(&format!("repos/{REPO}/commits/{SHA}")),
+        "{calls}"
+    );
+    assert!(
+        calls.contains(&format!("repos/{REPO}/actions/runs/7/jobs")),
+        "{calls}"
+    );
+}
+
+#[test]
+fn a_red_sweep_stops_the_release_naming_the_failed_job() {
+    let gh = Github::new(
+        &[run(
+            8,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "completed",
+        )],
+        &[],
+    );
+    gh.jobs(
+        "jobs-8.json",
+        &jobs(&[
+            ("gate", "completed", "failure"),
+            ("cross (macos-latest)", "completed", "success"),
+            ("cross (windows-latest)", "completed", "success"),
+        ]),
+    );
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("CI run 8 job gate (failure)"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn no_sweep_at_all_stops_the_release() {
+    // An ordinary pull request's (affected-tier) run of the same tree is not a
+    // sweep verdict, and neither is a fork's release-plz-named branch.
+    let gh = Github::new(
+        &[
+            run(3, "pull_request", "feature/x", REPO, TREE, "completed"),
+            run(
+                4,
+                "pull_request",
+                "release-plz-fake",
+                "someone/llmlint",
+                TREE,
+                "completed",
+            ),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-3.json", &jobs(GREEN))
+        .jobs("jobs-4.json", &jobs(GREEN));
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!(
+            "no full-sweep CI run tested the released tree {TREE}"
+        )),
+        "{err}"
+    );
+    assert!(err.contains("workflow_dispatch"), "{err}");
+    assert!(!gh.calls().contains("/jobs"), "{}", gh.calls());
+}
+
+#[test]
+fn a_green_sweep_of_a_different_tree_stops_the_release() {
+    let gh = Github::new(
+        &[run(
+            9,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            OTHER_TREE,
+            "completed",
+        )],
+        &[],
+    );
+    gh.jobs("jobs-9.json", &jobs(GREEN));
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(err.contains(&format!("released tree {TREE}")), "{err}");
+    assert!(
+        err.contains(&format!("run 9 swept tree {OTHER_TREE}")),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_manual_sweep_of_the_released_tree_is_a_verdict() {
+    // The recovery path the refusals name: dispatch CI on the released commit.
+    let gh = Github::new(
+        &[run(
+            9,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            OTHER_TREE,
+            "completed",
+        )],
+        &[run(
+            12,
+            "workflow_dispatch",
+            "main",
+            REPO,
+            TREE,
+            "completed",
+        )],
+    );
+    gh.jobs("jobs-12.json", &jobs(GREEN));
+    let out = gh.verdict(&[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("CI run 12"));
+}
+
+#[test]
+fn the_newest_sweep_of_the_tree_decides_and_a_running_one_is_waited_for() {
+    // An older green sweep does not outvote a newer one; the newer one is still
+    // running on the first poll and green on the second.
+    let gh = Github::new(
+        &[
+            run(
+                5,
+                "pull_request",
+                "release-plz-old",
+                REPO,
+                TREE,
+                "completed",
+            ),
+            run(
+                6,
+                "pull_request",
+                "release-plz-new",
+                REPO,
+                TREE,
+                "in_progress",
+            ),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-5.json", &jobs(GREEN))
+        .jobs(
+            "jobs-6.1.json",
+            &jobs(&[
+                ("gate", "in_progress", ""),
+                ("cross (macos-latest)", "completed", "success"),
+                ("cross (windows-latest)", "completed", "success"),
+            ]),
+        )
+        .jobs("jobs-6.json", &jobs(GREEN));
+    let out = gh.verdict(&[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("CI run 6"));
+    assert!(
+        stderr(&out).contains("gate (in_progress); waiting (up to 3 polls"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!gh.calls().contains("runs/5/jobs"), "{}", gh.calls());
+}
+
+/// A sweep run created at `created_at` (an ISO-8601 UTC time), on the tree.
+fn run_at(id: u64, created_at: &str) -> String {
+    run(
+        id,
+        "pull_request",
+        "release-plz-2026",
+        REPO,
+        TREE,
+        "completed",
+    )
+    .replace(
+        &format!("\"created_at\":\"2026-10-07T12:00:{id:02}Z\""),
+        &format!("\"created_at\":\"{created_at}\""),
+    )
+}
+
+#[test]
+fn the_newest_sweep_is_chosen_by_creation_time_then_id_whatever_order_github_lists() {
+    // GitHub's listing order is not trusted, and ids need not follow creation
+    // time: the latest created_at decides, and id breaks an exact tie.
+    let red = jobs(&[
+        ("gate", "completed", "failure"),
+        ("cross (macos-latest)", "completed", "success"),
+        ("cross (windows-latest)", "completed", "success"),
+    ]);
+
+    // The newest run by time (id 10) has the lower id and is listed first.
+    let gh = Github::new(
+        &[
+            run_at(10, "2026-10-07T13:00:00Z"),
+            run_at(30, "2026-10-07T12:00:00Z"),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-10.json", &jobs(GREEN))
+        .jobs("jobs-30.json", &red);
+    let out = gh.verdict(&[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("CI run 10"));
+    assert!(!gh.calls().contains("runs/30/jobs"), "{}", gh.calls());
+
+    // Reversed: the newest by time is red, so the older green one never ships it.
+    let gh = Github::new(
+        &[
+            run_at(10, "2026-10-07T12:00:00Z"),
+            run_at(30, "2026-10-07T13:00:00Z"),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-10.json", &jobs(GREEN))
+        .jobs("jobs-30.json", &red);
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("CI run 30 job gate"),
+        "{}",
+        stderr(&out)
+    );
+
+    // Created in the same second: the higher id is the newer run.
+    let gh = Github::new(
+        &[
+            run_at(41, "2026-10-07T13:00:00Z"),
+            run_at(40, "2026-10-07T13:00:00Z"),
+        ],
+        &[],
+    );
+    gh.jobs("jobs-41.json", &red)
+        .jobs("jobs-40.json", &jobs(GREEN));
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("CI run 41 job gate"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn a_finished_sweep_missing_a_job_or_one_that_never_finishes_stops_the_release() {
+    let gh = Github::new(
+        &[run(
+            10,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "completed",
+        )],
+        &[],
+    );
+    gh.jobs(
+        "jobs-10.json",
+        &jobs(&[
+            ("gate", "completed", "success"),
+            ("cross (macos-latest)", "completed", "success"),
+        ]),
+    );
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("finished without a verdict from job cross (windows-latest)"),
+        "{}",
+        stderr(&out)
+    );
+
+    let gh = Github::new(
+        &[run(
+            11,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "in_progress",
+        )],
+        &[],
+    );
+    gh.jobs("jobs-11.json", &jobs(&[("gate", "queued", "")]));
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("did not finish within 3 polls"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn an_unreadable_api_or_bad_inputs_stop_the_release() {
+    let gh = Github::new(&[], &[]);
+    let out = gh.verdict(&[("GH_FAIL", "1")]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(stderr(&out).contains("HTTP 403"), "{}", stderr(&out));
+
+    let out = gh.verdict(&[("SHA", "abc123")]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(stderr(&out).contains("not a full 40-character commit sha"));
+    for (var, value) in [
+        ("CI_WAIT_ATTEMPTS", "08"),
+        ("CI_WAIT_DELAY", "09"),
+        ("CI_WAIT_ATTEMPTS", "0"),
+    ] {
+        let out = gh.verdict(&[(var, value)]);
+        assert_eq!(out.status.code(), Some(2), "{var}={value}: {out:?}");
+        assert!(
+            stderr(&out).contains(var),
+            "{var}={value}: {}",
+            stderr(&out)
+        );
+    }
+
+    // A numeric run id that is not a positive integer never reaches the jobs
+    // endpoint (a non-numeric one is refused earlier, with the run ordering).
+    let bad_id = Github::new(
+        &[run(
+            7,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "completed",
+        )
+        .replace("\"id\":7", "\"id\":-7")],
+        &[],
+    );
+    let out = bad_id.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("not a positive integer"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!bad_id.calls().contains("/jobs"), "{}", bad_id.calls());
+
+    // An answer that is not the commit object GitHub documents stops the release
+    // naming the endpoint, never jq's bare parse error alone.
+    fs::write(
+        gh.dir.path().join("commit.json"),
+        "<html>rate limited</html>",
+    )
+    .unwrap();
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!("GitHub returned no tree for {SHA}")),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!("repos/{REPO}/commits/{SHA}")),
+        "{err}"
+    );
+    assert!(gh.calls().is_empty() || !gh.calls().contains("abc123"));
+}
+
+#[test]
+fn a_runs_or_jobs_answer_without_its_collection_stops_the_release() {
+    // A runs answer that is not GitHub's workflow-runs list stops the release
+    // before any run is trusted, and names what to do next.
+    let gh = Github::new(&[], &[]);
+    fs::write(
+        gh.dir.path().join("runs-pr.json"),
+        r#"{"message":"Not Found"}"#,
+    )
+    .unwrap();
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains("ci.yml runs was unreadable") && err.contains("no workflow_runs"),
+        "{err}"
+    );
+    assert!(err.contains("inspect the API response"), "{err}");
+    assert!(!gh.calls().contains("/jobs"), "{}", gh.calls());
+
+    // A jobs answer without its jobs list is refused, never read as pending.
+    let gh = Github::new(
+        &[run(
+            7,
+            "pull_request",
+            "release-plz-2026",
+            REPO,
+            TREE,
+            "completed",
+        )],
+        &[],
+    );
+    gh.jobs("jobs-7.json", "<html>rate limited</html>");
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains("the jobs of CI run 7 were unreadable"),
+        "{err}"
+    );
+    assert!(err.contains("inspect the API response"), "{err}");
+    gh.jobs("jobs-7.json", r#"{"total_count":0}"#);
+    let out = gh.verdict(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(stderr(&out).contains("no jobs"), "{}", stderr(&out));
+}
+
+#[test]
+fn a_sweep_run_without_a_usable_creation_time_or_id_stops_the_release() {
+    // The newest sweep of the tree decides, so a candidate whose created_at is
+    // missing or not an ISO-8601 UTC timestamp (or whose id is not a number)
+    // could reorder which sweep wins: it is refused before any run is trusted.
+    let good = run(
+        8,
+        "pull_request",
+        "release-plz-2026",
+        REPO,
+        TREE,
+        "completed",
+    );
+    for (broken, says) in [
+        (
+            good.replace(
+                "\"created_at\":\"2026-10-07T12:00:08Z\"",
+                "\"created_at\":\"yesterday\"",
+            ),
+            "has no usable created_at (yesterday)",
+        ),
+        (
+            good.replace("\"created_at\":\"2026-10-07T12:00:08Z\",", ""),
+            "has no usable created_at (missing)",
+        ),
+        (
+            good.replace("\"id\":8,", "\"id\":\"8\","),
+            "a run has no numeric id (8)",
+        ),
+    ] {
+        assert_ne!(broken, good, "the fixture edit applied");
+        let gh = Github::new(
+            &[
+                run(
+                    7,
+                    "pull_request",
+                    "release-plz-2026",
+                    REPO,
+                    TREE,
+                    "completed",
+                ),
+                broken,
+            ],
+            &[],
+        );
+        let out = gh.verdict(&[]);
+        assert_eq!(out.status.code(), Some(1), "{says}: {out:?}");
+        let err = stderr(&out);
+        assert!(
+            err.contains("ci.yml runs was unreadable") && err.contains(says),
+            "{says}: {err}"
+        );
+        assert!(!gh.calls().contains("/jobs"), "{says}: {}", gh.calls());
+    }
+}
+
+/// The jobs of ci.yml as status-check contexts (a matrix job reports one per
+/// `os`), read from the workflow itself.
+fn ci_contexts(job: &str) -> Vec<String> {
+    let ci: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).unwrap(),
+    )
+    .unwrap();
+    let body = &ci["jobs"][job];
+    assert!(!body.is_null(), "ci.yml has no `{job}` job");
+    match body["strategy"]["matrix"]["os"].as_sequence() {
+        Some(oses) => oses
+            .iter()
+            .map(|os| format!("{job} ({})", os.as_str().unwrap()))
+            .collect(),
+        None => vec![job.to_string()],
+    }
+}
+
+#[test]
+fn the_sweep_jobs_the_verdict_reads_are_ci_yml_s_gate_and_cross() {
+    // The verdict trusts exactly these jobs; renaming one in ci.yml (or adding
+    // a cross OS) without the script would read a verdict that never reports.
+    let gate = fs::read_to_string(script()).unwrap();
+    let line = gate
+        .lines()
+        .find_map(|l| l.strip_prefix("readonly SWEEP_JOBS='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("ci-gate.sh declares SWEEP_JOBS");
+    let declared: Vec<String> = serde_yaml_ng::from_str(line).unwrap();
+    let mut expected = ci_contexts("gate");
+    expected.extend(ci_contexts("cross"));
+    assert_eq!(declared, expected);
+}
+
+#[test]
+fn every_release_build_and_publish_waits_for_the_sweep_verdict_and_nothing_regates() {
+    let release: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap(),
+    )
+    .unwrap();
+    let jobs = release["jobs"].as_mapping().unwrap();
+    let needs = |job: &str| -> Vec<String> {
+        match &release["jobs"][job]["needs"] {
+            serde_yaml_ng::Value::String(n) => vec![n.clone()],
+            serde_yaml_ng::Value::Sequence(ns) => {
+                ns.iter().map(|n| n.as_str().unwrap().to_string()).collect()
+            }
+            _ => vec![],
+        }
+    };
+    let runs = |job: &str| -> String {
+        release["jobs"][job]["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["run"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        runs("verdict").contains("bash .github/scripts/ci-gate.sh verdict"),
+        "the verdict job must run the verdict script"
+    );
+    for job in ["upload", "publish-crate", "build-wheels"] {
+        assert!(
+            needs(job).iter().any(|n| n == "verdict"),
+            "release.yml `{job}` must need `verdict`"
+        );
+    }
+    assert!(needs("publish-pypi").iter().any(|n| n == "build-wheels"));
+    // A build is not a gate: no job re-runs a lint or test target over the
+    // tree the sweep already proved.
+    for (name, _) in jobs {
+        let name = name.as_str().unwrap();
+        let script = runs(name);
+        for regate in [
+            "just check",
+            "just lint",
+            "just test",
+            "nextest",
+            "cargo test",
+            "cargo clippy",
+        ] {
+            assert!(
+                !script.contains(regate),
+                "release.yml `{name}` re-gates with `{regate}`"
+            );
+        }
+    }
+}

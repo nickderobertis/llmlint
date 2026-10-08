@@ -1,0 +1,25 @@
+# The end-to-end journeys: drive the real, freshly built `llmlint` binary as a
+# subprocess against the `llmlint-mock-oneharness` fixture (`--oneharness-bin`).
+# Test-only; never published. Neither binary is a Cargo dependency (a test crate
+# cannot depend on another package's binary): the Nx `test` target `dependsOn`
+# `llmlint:build` and `llmlint-mock-oneharness:build`, and `assert_cmd` finds both
+# in the shared target directory. The library dev-dependency is for the constants
+# and helpers the journeys hold the binary to (`git_command`, the version floors).
+[package]
+name = "llmlint-e2e"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "e2e"
+path = "main.rs"
+
+[dev-dependencies]
+assert_cmd.workspace = true
+llmlint.workspace = true
+predicates.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+tempfile.workspace = true

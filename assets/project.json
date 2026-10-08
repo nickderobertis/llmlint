@@ -1,0 +1,19 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "config-lint-plugin",
+  "//": "The published contract directory: config_lint.yml (the versioned llmlint plugin consumers pin `@1` and fetch from main by path), llmlint.schema.json (the config schema consumers reference from main), and the default and init templates the binary embeds. A contract: it depends on no project, and the llmlint crate depends on it. The schema is generated from the crate's types and held to them by its committed_asset_matches_generated_schema unit test.",
+  "projectType": "library",
+  "tags": [
+    "type:contract"
+  ],
+  "targets": {
+    "check-version-bump": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "cargo run --locked --quiet -p llmlint --bin llmlint -- check-version-bump assets/config_lint.yml --diff-base \"${CHECK_VERSION_BUMP_BASE:?set CHECK_VERSION_BUMP_BASE to the diff base, or run just check-version-bump <base>}\""
+      },
+      "//": "Fails if config_lint.yml changed vs $CHECK_VERSION_BUMP_BASE (an environment value the shell quotes, so a base is never re-read as shell text; llmlint and git validate it as a revision) without a `version:` bump, so no consumer's `@1` pin silently gets new behavior. It runs the llmlint binary as a tool, the way a lint target runs shellcheck, so it adds no graph edge. Out of the gate tiers (it needs a base ref): `just check-version-bump <base>` runs it, which CI does on pull requests against the PR base."
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "real-oneharness",
+  "//": "The real-oneharness tier: llmlint's forwarded --config layers resolved by the released oneharness. External (PyPI), so its suite is the network target, never a gate tier.",
+  "projectType": "application",
+  "tags": [
+    "type:external"
+  ],
+  "implicitDependencies": [
+    "llmlint",
+    "llmlint-mock-oneharness"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-real-oneharness -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-real-oneharness"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-real-oneharness --all-targets --locked -- -D warnings"
+      }
+    },
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck tests/real-oneharness/*.sh"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo nextest run -p llmlint-real-oneharness --locked"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/justfile"
+      ],
+      "//": "Offline: the_tier_pins_the_multi_file_floor, which holds the justfile's oneharness-cli-version pin to LAYERED_CONFIG_MIN_VERSION, and the installer's refusal of a malformed pin. The suite itself is the network target."
+    },
+    "network": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": [
+        "llmlint:build",
+        "llmlint-mock-oneharness:build"
+      ],
+      "options": {
+        "command": "bash tests/real-oneharness/network.sh"
+      },
+      "//": "The suite, outside the gate tiers: installs oneharness-cli from PyPI at the pin and runs the #[ignore]-d tests against it. `just test-oneharness` runs it."
+    }
+  }
+}

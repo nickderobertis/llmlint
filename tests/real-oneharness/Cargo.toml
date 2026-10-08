@@ -1,0 +1,21 @@
+# The real-oneharness tier: llmlint's forwarded `--config` layers resolved by the
+# released oneharness (`install-oneharness.sh` installs it from PyPI). Its
+# `#[ignore]`-d tests need that binary and are this project's `network` target;
+# the pin drift test runs everywhere, as its `test` target. Test-only; never
+# published.
+[package]
+name = "llmlint-real-oneharness"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "real_oneharness"
+path = "real_oneharness.rs"
+
+[dev-dependencies]
+assert_cmd.workspace = true
+llmlint.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

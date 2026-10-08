@@ -1,0 +1,70 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "ci-workflows",
+  "//": "The GitHub Actions workflows and the CI-only script beside them (scripts/ci-gate.sh: tier routing and the release's sweep verdict), with their drift gates. Its own project so a workflow edit selects only what reads workflows, not the root crate's dependents. It depends on repo-tooling for the workflow lint script and on llmlint for the repo-root files its tests read (AGENTS.md, screencomp.toml).",
+  "projectType": "library",
+  "tags": [
+    "type:tooling"
+  ],
+  "implicitDependencies": [
+    "repo-tooling",
+    "llmlint"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-ci-workflows -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-ci-workflows"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-ci-workflows --all-targets --locked -- -D warnings"
+      }
+    },
+    "lint-workflows": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash scripts/lint-workflows.sh"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "{workspaceRoot}/scripts/lint-workflows.sh",
+        "{workspaceRoot}/justfile",
+        {
+          "runtime": "actionlint --version"
+        }
+      ],
+      "//": "actionlint (the justfile's actionlint-version pin) over every workflow; `just lint-workflows` runs it."
+    },
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck .github/scripts/*.sh"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo nextest run -p llmlint-ci-workflows --locked"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "{workspaceRoot}/AGENTS.md",
+        "{workspaceRoot}/screencomp.toml",
+        {
+          "runtime": "jq --version"
+        }
+      ],
+      "//": "The workflow drift gates and the CI routing and release-verdict journeys (.github/scripts/ci-gate.sh driven with synthetic events and a stand-in gh). Cached: its inputs are every file they read or run."
+    }
+  }
+}

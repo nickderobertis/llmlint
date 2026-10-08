@@ -1,0 +1,21 @@
+# The mock-oneharness fixture: a deterministic stand-in for `oneharness run` that
+# the e2e journeys (and the screenshots, benchmarks and Windows color check) put
+# behind llmlint's `--oneharness-bin` override. A real subprocess double for the
+# one genuinely external boundary, never a mock of llmlint's own logic. Test-only;
+# never published. It links the `llmlint` library only to report the oneharness
+# floor (`MIN_VERSION`) as its default version, so the two cannot drift.
+[package]
+name = "llmlint-mock-oneharness"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "llmlint-mock-oneharness"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+llmlint.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,49 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "workspace",
+  "//": "Repo-level checks over the whole graph: the project-boundary check (tools/check-project-boundaries.mjs against tools/project-boundaries.json) with its tests, and the supply-chain check. It depends on every other project so any change re-runs the cheap boundary check. Its lint and test are uncached: they read the graph's edges, and Nx does not count a change to another project's implicitDependencies as a change to a task's inputs, so a cached pass could replay over a newly forbidden edge. The coverage gate is the nested coverage project.",
+  "projectType": "library",
+  "tags": [
+    "type:workspace"
+  ],
+  "implicitDependencies": [
+    "*",
+    "!workspace"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/**/project.json",
+      "{workspaceRoot}/**/Cargo.toml",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bun tools/check-project-boundaries.mjs"
+      },
+      "cache": false
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bun test tools/tests"
+      }
+    },
+    "supply-chain": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": [
+          "cargo deny check",
+          "cargo machete"
+        ],
+        "parallel": false
+      },
+      "//": "Workspace-wide by nature and network-bound (cargo deny's advisory DB), so outside the gate tiers: `just deps-check` and CI's deny job run it."
+    }
+  }
+}

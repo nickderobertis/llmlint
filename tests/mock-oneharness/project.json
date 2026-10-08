@@ -1,0 +1,42 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "llmlint-mock-oneharness",
+  "//": "The mock-oneharness fixture: the oneharness wire double behind llmlint's --oneharness-bin seam. Its Cargo dependency on the llmlint crate (for MIN_VERSION) is the implicit dependency below; every Cargo path edge is mirrored as an Nx edge (tools/check-project-boundaries.mjs checks it). No tests of its own: the e2e journeys are what exercise it.",
+  "projectType": "application",
+  "tags": [
+    "type:fixture"
+  ],
+  "implicitDependencies": [
+    "llmlint"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-mock-oneharness -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-mock-oneharness"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-mock-oneharness --all-targets --locked -- -D warnings"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p llmlint-mock-oneharness --locked"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/debug/llmlint-mock-oneharness",
+        "{workspaceRoot}/target/debug/llmlint-mock-oneharness.exe"
+      ],
+      "//": "Produces target/debug/llmlint-mock-oneharness, the fixture the e2e journeys put behind --oneharness-bin when they run uninstrumented; under coverage they drive the copy tools/coverage/coverage.sh builds."
+    }
+  }
+}

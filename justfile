@@ -4,11 +4,18 @@
 # its cargo-level step (also called directly by CI). `just check` is the full
 # quality gate and fails on any issue (no warnings-only mode). Recipes are quiet
 # on success and specific on failure.
+#
+# The gate recipes (check, test, lint, lint-sh, lint-workflows, fmt-check,
+# format, doc) DELEGATE to Nx (scripts/nx runs it on the pinned bun): each project
+# declares what its targets do (cargo fmt, clippy, nextest under cargo-llvm-cov,
+# shellcheck, actionlint), and the root only chooses which projects run them.
+# scripts/nx-tier.sh picks the tier: with no flag the AFFECTED tier — `nx
+# affected` from the explicit base scripts/nx-base.sh prints (NX_BASE, validated,
+# else the merge base with origin/main); `--all` the FULL SWEEP (`nx run-many
+# --all`). See AGENTS.md "Commits, releases, and merging" for which CI run uses
+# which tier.
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-
-# Feature that builds the mock-oneharness fixture the e2e tests drive.
-FEATURES := "mock-oneharness"
 
 # Pinned cargo dev tools that the gate drives but the toolchain doesn't ship.
 # `scripts/setup.sh` installs these (reading the pins here); CI installs the
@@ -33,7 +40,7 @@ samply-version := "0.13.1"
 # Renderer for the terminal screenshots (`just screenshots`). NOT part of the
 # gate or `just setup`: screenshots are informational, like the benches. CI's
 # Visual-docs workflow installs the same pinned version from the prebuilt release
-# matching its runner's arch (`scripts/ci-install-freeze.sh`, whose pin an e2e
+# matching its runner's arch (`screenshots/ci-install-freeze.sh`, whose pin a
 # journey holds equal to this one); `just screenshots-tools` installs it locally
 # on demand. screencomp (the classify/gallery/PR-comment tool) is installed
 # separately — see https://github.com/nickderobertis/screencomp.
@@ -54,74 +61,153 @@ setup-check:
     @bash scripts/setup-check.sh
 
 # CI calls this directly after installing the toolchain + tools its own way.
-# Fetch deps + add toolchain components (the cargo step `setup` finishes with).
+# Fetch deps, add toolchain components, install the pinned bun + the locked Nx.
 bootstrap:
     rustup show active-toolchain
     rustup component add rustfmt clippy llvm-tools
     cargo fetch --locked
+    bash scripts/bun.sh ensure
+    bash scripts/nx --version >/dev/null
 
-# Full quality gate: shell lint, format check, workflow lint, clippy, tests
-# (unit + integration + e2e) with coverage enforced, and docs. Fails on any issue.
-check: lint-sh fmt-check lint-workflows lint test doc
+# llmlint: ignore-block[diagnostics_error_or_absent] compiler warnings already fail these gates: their `lint` target is `cargo clippy --all-targets -- -D warnings` over every crate, which compiles and denies the same diagnostics the build and test targets would emit; forcing RUSTFLAGS here would also rebuild every artifact the cache and the cross jobs share
+# Full quality gate: format check, clippy and the project-boundary check,
+# shellcheck, actionlint, build, every project's tests (unit, e2e, the offline
+# release-targets and script journeys) with the coverage-measured ones under
+# cargo-llvm-cov, docs, and the 95% line floor over the union. The affected tier
+# by default; `just check --all` is the full sweep. Fails on any issue.
+[positional-arguments]
+check *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format lint lint-sh lint-workflows build test doc coverage; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format lint lint-sh lint-workflows build test doc coverage; \
+    fi
     @echo "check: ok"
 
-# Part of `check`, first as its cheapest step: fix a finding, or disable it at its site with a reason.
-lint-sh:
-    @command -v shellcheck >/dev/null || { echo "shellcheck not installed: 'apt-get install shellcheck' / 'brew install shellcheck' / https://github.com/koalaman/shellcheck#installing" >&2; exit 1; }
-    shellcheck scripts/*.sh .githooks/pre-push
+# The portable part of the gate, which CI's macOS/Windows `cross` jobs run:
+# format, clippy and the boundary check, and every test uninstrumented
+# (LLMLINT_COVERAGE=off). Coverage, shellcheck and actionlint are platform-
+# independent and run in `check` on Linux, and so do coverage-driver's tests:
+# they exist to drive the instrumented toolchain (cargo-llvm-cov), which the
+# cross jobs do not install. Same tier flag as `check`.
+[positional-arguments]
+check-portable *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    export LLMLINT_COVERAGE=off; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format lint test --exclude=coverage-driver; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format lint test --exclude=coverage-driver; \
+    fi
+    @echo "check-portable: ok"
+# llmlint: ignore-end[diagnostics_error_or_absent]
 
-# Part of `check`: fix a workflow finding at its site rather than suppress it.
-lint-workflows:
-    @bash scripts/lint-workflows.sh
+# The test targets (each coverage-measured one writes its profiles; no floor).
+[positional-arguments]
+test *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t test; \
+    else \
+      bash scripts/nx affected --base="$tier" -t test; \
+    fi
+
+# Lint: clippy per crate (-D warnings) and the project-boundary check. Shell and
+# workflow lint are `lint-sh` and `lint-workflows` (separate so the macOS/Windows
+# cross jobs can run this one without shellcheck or actionlint); `check` runs all.
+[positional-arguments]
+lint *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t lint; \
+    else \
+      bash scripts/nx affected --base="$tier" -t lint; \
+    fi
+
+# Format the affected crates in place (`--all` for every crate).
+[positional-arguments]
+format *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format --configuration=write; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format --configuration=write; \
+    fi
+
+# Verify formatting without modifying files (the gate's `format` target).
+[positional-arguments]
+fmt-check *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t format; \
+    else \
+      bash scripts/nx affected --base="$tier" -t format; \
+    fi
+
+# Build the docs with warnings denied (kept in the gate so doc links don't rot).
+[positional-arguments]
+doc *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t doc; \
+    else \
+      bash scripts/nx affected --base="$tier" -t doc; \
+    fi
+
+# Every coverage-measured project's tests under cargo-llvm-cov, then the 95% line
+# floor over their union (lower it only with a documented reason in AGENTS.md).
+coverage:
+    @bash scripts/nx run coverage:coverage
+
+# shellcheck over each project's scripts (and .githooks/pre-push); part of
+# `check`. Fix a finding, or disable it at its site with a reason.
+[positional-arguments]
+lint-sh *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t lint-sh; \
+    else \
+      bash scripts/nx affected --base="$tier" -t lint-sh; \
+    fi
+
+# actionlint over every workflow (the ci-workflows project); part of `check`.
+# Fix a workflow finding at its site rather than suppress it.
+[positional-arguments]
+lint-workflows *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t lint-workflows; \
+    else \
+      bash scripts/nx affected --base="$tier" -t lint-workflows; \
+    fi
 
 # Install the pinned actionlint into ~/.local/bin; a no-op when it is already there.
 actionlint-tools:
     @bash scripts/install-actionlint.sh
 
-# Verify formatting without modifying files.
-fmt-check:
-    cargo fmt --all -- --check
-
-# Format the codebase in place.
-format:
-    cargo fmt --all
-
-# Lint with clippy; any warning is an error.
-lint:
-    cargo clippy --all-targets --features {{FEATURES}} -- -D warnings
-
-# Full test suite (unit + integration + the e2e binary journeys) with line
-# coverage enforced. 95% is the gate; lower it only with a documented reason in
-# AGENTS.md.
-test:
-    cargo llvm-cov nextest --features {{FEATURES}} --locked --fail-under-lines 95
-
-# The end-to-end binary journeys in isolation (also run by `test`/`check`).
+# The end-to-end binary journeys alone (also in `check`); builds the binary and
+# the fixture first.
 test-e2e:
-    cargo nextest run --features {{FEATURES}} --test e2e --locked
+    @bash scripts/nx run llmlint-e2e:test
 
-# The release declaration (`release-targets.toml`) and `scripts/release-probe.sh`,
-# including the `#[ignore]`-d network tier (the schema reconciled against onevcs's
-# canonical one, the probe against live crates.io/PyPI). The offline tests also
-# run in `test`/`check`; the network ones run only here, which the
-# `.github/workflows/release-targets.yml` workflow runs.
+# The release declaration's network tier: the `#[ignore]`-d tests reconciling
+# the restated release-target schema against onevcs's canonical one and probing
+# live crates.io/PyPI (the offline tests are the release-targets project's
+# `test`, in the gate tiers). The `.github/workflows/release-targets.yml`
+# workflow runs this.
 test-release-targets:
-    cargo nextest run --features {{FEATURES}} --test release_targets --locked --run-ignored all
+    @bash scripts/nx run release-targets:network
 
-# The real-oneharness tier: `tests/real_oneharness.rs`'s `#[ignore]`-d tests,
-# which feed the `--config` list llmlint forwards to the released oneharness's own
+# The real-oneharness tier: `tests/real-oneharness/`'s `#[ignore]`-d tests, which
+# feed the `--config` list llmlint forwards to the released oneharness's own
 # `oneharness config --format json` and assert which file's settings win. Free and
-# model-free, but installs `oneharness-cli` from PyPI (network), so it is out of
-# `test`/`check`. The pin is the multi-file floor (a test holds them equal).
+# model-free, but installs `oneharness-cli` from PyPI (network), so it is outside
+# the gate tiers. The pin is the multi-file floor (a test holds them equal).
 oneharness-cli-version := "0.18.0"
 
 test-oneharness:
-    bin="$(bash scripts/install-oneharness.sh)"; \
-    LLMLINT_REAL_ONEHARNESS="$bin" cargo nextest run --features {{FEATURES}} --test real_oneharness --locked --run-ignored all
-
-# Build the docs with warnings denied (kept in the gate so doc links don't rot).
-doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features {{FEATURES}}
+    @bash scripts/nx run real-oneharness:network
 
 # Dogfood the version-bump check on llmlint's own versioned plugin
 # (`assets/config_lint.yml`, which no standard config glob matches, so it is named
@@ -130,24 +216,24 @@ doc:
 # resolve it, so CI runs it against the PR base. The base is a positional arg —
 # override it with `just check-version-bump <ref>`.
 check-version-bump base="origin/main":
-    cargo run --locked --quiet --bin llmlint -- check-version-bump assets/config_lint.yml --diff-base {{base}}
+    @CHECK_VERSION_BUMP_BASE={{quote(base)}} bash scripts/nx run config-lint-plugin:check-version-bump
 
-# Advisory + license audit and unused-dependency check. Separate from `check`:
-# `cargo deny` needs a network-fetched advisory DB.
+# Advisory + license audit and unused-dependency check (the workspace project's
+# `supply-chain` target). Separate from `check`: `cargo deny` needs a
+# network-fetched advisory DB.
 deps-check:
     @command -v cargo-deny >/dev/null || { echo "cargo-deny not installed: cargo install cargo-deny --locked" >&2; exit 1; }
     @command -v cargo-machete >/dev/null || { echo "cargo-machete not installed: cargo install cargo-machete --locked" >&2; exit 1; }
-    cargo deny check
-    cargo machete
+    @bash scripts/nx run workspace:supply-chain
 
-# Upgrade dependencies, then re-run the full gate.
+# Upgrade dependencies, then re-run the gate as a full sweep (an upgrade can reach anything).
 upgrade:
     cargo update
-    @just check
+    @just check --all
 
 # Build under the declared MSRV (advisory; needs the 1.85 toolchain installed).
 msrv:
-    cargo +1.85 check --locked --all-targets --features {{FEATURES}}
+    cargo +1.85 check --locked --workspace --all-targets
 
 # Opt-in LIVE run against the real oneharness + a real, authenticated harness.
 # Makes real (paid) model calls, so it is deliberately out of `check` and CI.
@@ -157,21 +243,18 @@ lint-live *ARGS:
 
 # --- LIVE e2e: built llmlint -> real oneharness -> a real harness -------------
 # The live analogue of the hermetic e2e suite: `just check` drives a mock
-# oneharness, this drives the whole stack end to end (`scripts/live-claude.sh`).
+# oneharness, this drives the whole stack end to end (`tests/live/live-claude.sh`).
 # It proves the built binary + oneharness + a real harness work together; the CI
 # workflow (`.github/workflows/live.yml`) runs it on Linux, macOS, and Windows.
 # Harness breadth is oneharness's test surface, so one canonical harness
 # (claude-code) is enough here. Expects the harness configured, so a missing
 # CLI/auth/oneharness is a HARD FAILURE, not a skip. Real (paid) model calls — out
-# of the `check` gate. Model via `CLAUDE_E2E_MODEL` (see `tests/AGENTS.md`).
+# of the `check` gate. Model via `CLAUDE_E2E_MODEL` (see `tests/live/AGENTS.md`).
 
-# Build the optimized binary the live script drives (release, like a real user).
-_live-build:
-    cargo build --release --locked --bin llmlint
-
-# The full stack end to end. Fails if the harness CLI + auth aren't set up.
-live-claude: _live-build
-    bash scripts/live-claude.sh
+# The full stack end to end (builds the release binary first, like a real user).
+# Fails if the harness CLI + auth aren't set up.
+live-claude:
+    @bash scripts/nx run live:live
 
 # Windows-only: prove the colorized report actually RENDERS on a real Windows
 # console (cell attributes are red/green), not just that ANSI bytes are emitted.
@@ -181,8 +264,7 @@ live-claude: _live-build
 # + screenshots only assert ANSI is *emitted* (platform-independent); this asserts
 # a Windows console *interprets* it. A rendering regression is a HARD FAILURE.
 win-color:
-    cargo build --release --locked --features mock-oneharness --bin llmlint --bin llmlint-mock-oneharness
-    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win-console-color.ps1
+    @bash scripts/nx run win-color:win-color
 
 # Verbose, install-free diagnostics (kept out of the gate).
 doctor:
@@ -205,13 +287,16 @@ bench-tools:
     @command -v cargo-binstall >/dev/null || { echo "cargo-binstall not found: see https://github.com/cargo-bins/cargo-binstall, or 'cargo install' each tool" >&2; exit 1; }
     cargo binstall --no-confirm --disable-telemetry hyperfine@{{hyperfine-version}} critcmp@{{critcmp-version}} samply@{{samply-version}}
 
-# Engine micro-benchmarks (Criterion); saves the `current` baseline for bench-compare.
-bench:
-    cargo bench --locked --bench engine -- --save-baseline current
+# Engine micro-benchmarks (Criterion), saved as BASELINE (default `current`, what
+# bench-compare reads); extra arguments go to Criterion (e.g. --measurement-time 3).
+[positional-arguments]
+bench baseline="current" *criterion_args:
+    @for a in "$@"; do printf '%s' "$a" | grep -Eq '^[A-Za-z0-9_./=:-]+$' || { printf "bench: argument '%s' is not a plain baseline name or Criterion option; use letters, digits and _./=:- only (e.g. just bench current --measurement-time 3)\n" "$a" >&2; exit 2; }; done
+    @bash scripts/nx run bench:bench -- --save-baseline "$@"
 
 # Save current engine benchmarks as the `base` baseline (run on the comparison point).
 bench-base:
-    cargo bench --locked --bench engine -- --save-baseline base
+    @just bench base
 
 # Diff the latest `bench` run against `base` (run `bench-base` first; needs critcmp).
 bench-compare:
@@ -219,26 +304,29 @@ bench-compare:
 
 # End-to-end CLI latency for every command (hyperfine); writes target/bench/results.*.
 bench-cli:
-    @bash scripts/bench.sh
+    @bash scripts/nx run bench:bench-cli
 
 # Fast smoke check of the CLI benchmark harness (one run, no warmup, no stable numbers).
 bench-cli-smoke:
-    @bash scripts/bench.sh --dry-run
+    @bash scripts/nx run bench:bench-cli-smoke
 
-# Deterministic engine allocation counts (counting allocator; exact, comparable across commits).
+# Deterministic engine allocation counts (counting allocator; exact, comparable across
+# commits); also written to target/bench/allocs.md for the Performance report.
 bench-allocs:
-    cargo bench --locked --quiet --bench engine_allocs
+    @bash scripts/nx run bench:bench-allocs
 
 # Deterministic end-to-end CLI instruction counts (cachegrind; Linux-only, needs valgrind).
 bench-instructions:
-    @bash scripts/bench-instructions.sh
+    @bash scripts/nx run bench:bench-instructions
 
 # Run the portable benchmark layers (Criterion + hyperfine + allocation counts).
 bench-all: bench bench-cli bench-allocs
 
-# Record a sampling/callgrind profile to find bottlenecks; see scripts/profile.sh for modes.
+# Record a sampling/callgrind profile to find bottlenecks; see benches/profile.sh for modes.
+[positional-arguments]
 profile *ARGS:
-    @bash scripts/profile.sh {{ARGS}}
+    @for a in "$@"; do printf '%s' "$a" | grep -Eq '^[A-Za-z0-9_./=:-]+$' || { printf "profile: argument '%s' is not a plain mode, llmlint argument or bench filter; use letters, digits and _./=:- only (e.g. just profile cli lint)\n" "$a" >&2; exit 2; }; done
+    @bash scripts/nx run bench:profile -- "$@"
 
 # --- Terminal screenshots (informational; never part of `check` or CI's gate) -
 # Deterministic SVGs of the real CLI output, rendered by `freeze` from a vendored
@@ -256,7 +344,7 @@ screenshots-tools:
 # Capture the screenshots: drive the real binary against the mock fixture, render
 # each scene to shots/current/<arch>/ + docs/screenshots/. Needs `freeze` on PATH.
 screenshots:
-    @bash scripts/screenshots.sh
+    @bash scripts/nx run screenshots:capture
 
 # Regenerate the animated demo GIF (docs/screenshots/demo.gif — the README hero
 # showing the live-progress view). Like the screenshots it drives the REAL release
@@ -267,21 +355,20 @@ screenshots:
 screenshots-gif:
     @command -v python3 >/dev/null || { echo "python3 not found: needed to render the demo GIF" >&2; exit 1; }
     @python3 -c "import PIL" 2>/dev/null || { echo "Pillow not installed: pip install Pillow" >&2; exit 1; }
-    cargo build --release --locked --features mock-oneharness --bin llmlint --bin llmlint-mock-oneharness
-    python3 scripts/demo-gif.py
+    @bash scripts/nx run screenshots:gif
 
 # Refresh the committed baseline manifest from a fresh capture (after an intended
 # output change). Commit shots/baseline/*.json + docs/screenshots/ alongside.
 #
 # There is one lane per arch in [capture].arches (screencomp.toml), and this
 # refreshes THIS host's lane only — an arm64 host rewrites shots/baseline/arm64.json,
-# an x86_64 host shots/baseline/x86_64.json, each via scripts/host-arch.sh so the
+# an x86_64 host shots/baseline/x86_64.json, each via screenshots/host-arch.sh so the
 # name matches what the pre-push guard classifies. The shots are byte-identical
 # across arches, so the other lane needs no local rewrite; CI's job for it is what
 # checks the two agree.
-screenshots-bless: screenshots
-    @bash scripts/bless-baseline.sh
-    @echo "baseline refreshed for the $(bash scripts/host-arch.sh) lane; commit shots/baseline/ + docs/screenshots/"
+screenshots-bless:
+    @bash scripts/nx run screenshots:bless
+    @echo "baseline refreshed for the $(bash screenshots/host-arch.sh) lane; commit shots/baseline/ + docs/screenshots/"
 
 # Install/refresh the optional llmlint toolchain. Idempotent.
 setup-llmlint:
@@ -296,7 +383,7 @@ lint-llm *paths:
 # suppressions. llmlint *defines* the ignore-directive syntax, so check-ignores
 # can't tell an example from the real thing and flags them all. Keep this list
 # current as those examples move between files.
-ignore-scan-exclude := "README.md:AGENTS.md:tests/AGENTS.md:assets/default_template.md:scripts/setup-llmlint.sh:src/domain/ignore.rs:src/io/files.rs:src/commands/check_ignores.rs:src/errors.rs:src/domain/plan.rs:tests/e2e/main.rs"
+ignore-scan-exclude := "README.md:AGENTS.md:tests/e2e/AGENTS.md:assets/default_template.md:scripts/setup-llmlint.sh:src/domain/ignore.rs:src/io/files.rs:src/commands/check_ignores.rs:src/errors.rs:src/domain/plan.rs:tests/e2e/main.rs"
 
 # Deterministic llmlint config/ignore/version-bump validation. The exclude above is
 # applied via the LLMLINT_FILES_EXCLUDE env layer (issue #152: CLI > env > config;

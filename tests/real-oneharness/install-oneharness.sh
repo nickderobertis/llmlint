@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Install the pinned released oneharness (`oneharness-cli` on PyPI, the prebuilt
+# binary wheel) into a private venv under .dev/ and print the binary's path on
+# stdout — nothing else. `just test-oneharness` runs its real-oneharness tier
+# against that binary. The version is `oneharness-cli-version` in the justfile —
+# the one pin, which `real_oneharness.rs` beside this script holds to llmlint's multi-file
+# floor. Idempotent: an existing install at the pin is reused. Needs network
+# (PyPI) the first time.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
+  || { echo "install-oneharness: cannot resolve the repository root; run it by its path from a readable checkout (bash tests/real-oneharness/install-oneharness.sh)" >&2; exit 1; }
+cd "$ROOT" || { echo "install-oneharness: cannot enter $ROOT; make it readable and searchable (chmod u+rx), then re-run" >&2; exit 1; }
+# The pin, read the way scripts/setup-lib.sh's `_justfile_pin` reads every
+# `<name>-version := "x.y.z"` pin (inlined so this project needs nothing from
+# scripts/). `|| true`: under pipefail a missing pin would otherwise exit here
+# silently.
+version="$(grep -E '^oneharness-cli-version :=' justfile 2>/dev/null | head -n1 | cut -d'"' -f2 || true)"
+if [ -z "$version" ]; then
+  echo "install-oneharness: no oneharness-cli-version pin in $ROOT/justfile" >&2
+  echo "                    Restore the line: oneharness-cli-version := \"<version>\"" >&2
+  exit 1
+fi
+# The pin names a directory this script deletes and rebuilds, so it must be a
+# plain release version: digits and dots, never a path.
+if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+  echo "install-oneharness: oneharness-cli-version in $ROOT/justfile is '$version', not a release version" >&2
+  echo "                    Set it to one like: oneharness-cli-version := \"0.14.0\"" >&2
+  exit 1
+fi
+
+venv="$ROOT/.dev/oneharness-cli-$version"
+# A venv lays its executables out in `bin/` on Unix and `Scripts/` on Windows.
+find_bin() {
+  for b in "$venv/bin/oneharness" "$venv/Scripts/oneharness.exe"; do
+    [ -x "$b" ] && { printf '%s\n' "$b"; return 0; }
+  done
+  return 1
+}
+
+if ! bin="$(find_bin)" || ! "$bin" --version 2>/dev/null | grep -qF "oneharness $version"; then
+  py="$(command -v python3 || command -v python || true)"
+  if [ -z "$py" ]; then
+    echo "install-oneharness: python3 is required to install oneharness-cli==$version" >&2
+    echo "                    Install Python 3 (with its venv module), then re-run just test-oneharness." >&2
+    exit 1
+  fi
+  if ! rm -rf "$venv"; then
+    echo "install-oneharness: could not remove the stale venv $venv (error above); delete it by hand, then re-run just test-oneharness." >&2
+    exit 1
+  fi
+  if ! "$py" -m venv "$venv" >&2; then
+    echo "install-oneharness: $py -m venv could not create $venv" >&2
+    echo "                    Install Python's venv module (e.g. python3-venv), then re-run just test-oneharness." >&2
+    exit 1
+  fi
+  pip_py="$venv/bin/python"
+  [ -x "$pip_py" ] || pip_py="$venv/Scripts/python.exe"
+  if ! "$pip_py" -m pip install --quiet --disable-pip-version-check "oneharness-cli==$version" >&2; then
+    echo "install-oneharness: pip could not install oneharness-cli==$version from PyPI" >&2
+    echo "                    Check network access to pypi.org, then re-run just test-oneharness." >&2
+    exit 1
+  fi
+  if ! bin="$(find_bin)"; then
+    echo "install-oneharness: oneharness-cli==$version installed no oneharness binary in $venv" >&2
+    echo "                    Check that PyPI has a wheel for this platform, then delete $venv and re-run just test-oneharness." >&2
+    exit 1
+  fi
+fi
+printf '%s\n' "$bin"

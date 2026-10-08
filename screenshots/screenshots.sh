@@ -1,0 +1,343 @@
+#!/usr/bin/env bash
+# Capture the terminal screenshots that screencomp gates, galleries, and posts to
+# PRs (see screencomp.toml + .github/workflows/visual-docs.yml).
+#
+# It drives the REAL release `llmlint` binary against the mock-oneharness fixture
+# (screenshots/fixture/) — exactly as the e2e suite does — so the captured output
+# is genuine CLI output; only the judge verdicts are scripted (no model, no
+# network, no cost). Each scene's output is rendered to a deterministic SVG by
+# `freeze` using the VENDORED, pinned font
+# (screenshots/fonts/JetBrainsMono-Regular.ttf), so the bytes — and therefore the
+# screencomp digests — are identical on every machine and CI runner without a
+# pinned container. That byte-determinism is the whole contract: change a
+# command's output (or its formatting) and that scene's SVG (and hash) changes;
+# otherwise it does not.
+#
+# Scenes — one per command, so the gallery documents the whole CLI surface:
+#   lint        the report, with a `view` toggle the gallery flips between three
+#               levels of detail: `default` (failing rule + locations + summary,
+#               plus a not-relevant rule in the summary), `verbose` (`-v`,
+#               itemizing PASS/SKIP/N-A too), and `debug` (the `-v` oneharness
+#               debug view from stderr: the exact command + result/judge).
+#   multi-judge the per-judge breakdown a `judges: N` rule prints, from its own
+#               nested fixture (screenshots/fixture/multijudge/) so the headline
+#               lint scene stays single-judge.
+#   init        writing a starter config.
+#   config      the effective merged config + its sources, as JSON.
+#   doctor      the oneharness preflight check.
+# The `default`/`verbose` lint views are colorized (real ANSI through
+# `--color always`); `debug`, `init`, `config`, and `doctor` are plain text —
+# freeze renders both the same way (`--language ansi`).
+#
+# Output (screencomp's capture contract):
+#   $SHOTS_OUT/captures.json   index: {schema, shots:[{name,toggles,hash,image}]}
+#   $SHOTS_OUT/<scene>.svg     one SVG per scene (lint has one per `view` toggle)
+# $SHOTS_OUT defaults to shots/current/<arch> (the reusable workflow exports it
+# per lane). The SVGs are also copied to docs/screenshots/ (committed) for the
+# README + gallery.
+#
+# Requires `freeze` on PATH (install the pinned version with `just screenshots-tools`).
+# llmlint: ignore-file[robust_shell] each scene command's exit status is deliberately not required (the lint scene's verdict is a failure, exit 1, by design); render_scene validates the captured output instead, so a failed run cannot render
+set -euo pipefail
+
+# Byte-determinism starts with the environment: the scenes render the REAL
+# binary's output, and llmlint reads `LLMLINT_*` settings ahead of most other
+# layers — so a shell that exports one prints it into a scene (`config` renders
+# the effective config verbatim, `LLMLINT_ONEHARNESS_BIN` and all) and the shot
+# drifts against a baseline CI captured with a clean environment. Clear every
+# steering variable (and `ONEHARNESS_*`, which llmlint forwards to the harness)
+# before setting the ones this capture itself needs.
+while IFS= read -r _var; do
+  case "$_var" in
+  LLMLINT_* | ONEHARNESS_*) unset "$_var" ;;
+  esac
+done < <(compgen -e)
+unset _var
+
+# Deterministic, side-effect-free capture: results logging is on by default and
+# would (a) write a record to the real user data dir on every fixture run and
+# (b) print a run id — nondeterministic — to stderr, which the `debug` scene
+# captures. Turn it off so the shots stay byte-reproducible and hash-gateable.
+export LLMLINT_NO_HISTORY=1
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
+  || { echo "screenshots: cannot resolve the repository root; run it by its path from a readable checkout." >&2; exit 1; }
+cd "$repo_root" || { echo "screenshots: cannot enter $repo_root; make it readable and searchable, then re-run." >&2; exit 1; }
+
+# This host's capture lane (shots/current/<arch>), named the same way the pre-push
+# guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT per lane.
+arch="$(bash "$repo_root/screenshots/host-arch.sh")" \
+  || { echo "screenshots: could not name this host's lane (host-arch.sh's error above); fix what it names, then re-run just screenshots." >&2; exit 1; }
+SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
+# The capture starts by deleting $SHOTS_OUT, so it must lie inside this
+# repository's shots/ tree, where every capture lane lives (shots/current/<arch>
+# locally and in CI): relative to the repository root or under it absolutely, and
+# with no `.`/`..` step or empty segment that could walk back out of it.
+shots_rel="$SHOTS_OUT"
+case "$SHOTS_OUT" in
+/*) shots_rel="${SHOTS_OUT#"$repo_root"/}" ;;
+esac
+case "/$shots_rel/" in
+*/../* | */./* | *//*) shots_rel="" ;;
+/shots/?*/) ;;
+*) shots_rel="" ;;
+esac
+# Lexical containment is not enough on its own: a symlinked step (shots/current/
+# link -> /elsewhere) would carry the deletion out of the tree. So the nearest
+# existing ancestor is resolved physically and must still lie inside shots/ — and
+# strictly below it when that ancestor is SHOTS_OUT itself.
+if [ -n "$shots_rel" ]; then
+  shots_root="$(cd -P shots 2>/dev/null && pwd -P)" || shots_root=""
+  probe="$shots_rel"
+  while [ ! -d "$probe" ] && [ "$probe" != shots ]; do
+    probe="$(dirname "$probe")" || { shots_rel=""; break; }
+  done
+  resolved="$(cd -P "$probe" 2>/dev/null && pwd -P)" || resolved=""
+  case "$resolved/" in
+  "$shots_root"/?*/) ;;
+  "$shots_root"/) [ "$probe" != "$shots_rel" ] || shots_rel="" ;;
+  *) shots_rel="" ;;
+  esac
+  [ -n "$shots_root" ] || shots_rel=""
+fi
+if [ -z "$shots_rel" ]; then
+  echo "screenshots: SHOTS_OUT must name a directory inside this repository's shots/" >&2
+  echo "             tree (e.g. shots/current/$arch), since the capture deletes it first;" >&2
+  echo "             got '$SHOTS_OUT'. Unset it to use shots/current/$arch." >&2
+  exit 1
+fi
+SHOTS_OUT="$shots_rel"
+if [ -e "$SHOTS_OUT" ] && [ ! -d "$SHOTS_OUT" ]; then
+  echo "screenshots: SHOTS_OUT must name a directory to capture into;" >&2
+  echo "             $SHOTS_OUT is not one. Unset it or point it elsewhere." >&2
+  exit 1
+fi
+# The capture starts by deleting $SHOTS_OUT, so an existing directory must be
+# one a capture owns — empty, or holding a previous capture's captures.json —
+# never an arbitrary tree an override happened to name.
+if [ -d "$SHOTS_OUT" ] && [ -n "$(ls -A "$SHOTS_OUT")" ] && [ ! -f "$SHOTS_OUT/captures.json" ]; then
+  echo "screenshots: SHOTS_OUT=$SHOTS_OUT holds files but no captures.json, so it is" >&2
+  echo "             not a capture directory and will not be deleted. Point SHOTS_OUT" >&2
+  echo "             at an empty or previous-capture directory, or unset it." >&2
+  exit 1
+fi
+font="$repo_root/screenshots/fonts/JetBrainsMono-Regular.ttf"
+fixture="$repo_root/screenshots/fixture"
+docs_dir="$repo_root/docs/screenshots"
+
+if ! command -v freeze >/dev/null 2>&1; then
+  echo "screenshots: 'freeze' not on PATH. Install the pinned version with:" >&2
+  echo "             just screenshots-tools" >&2
+  exit 1
+fi
+
+# Build the binaries the capture drives: the real CLI and the mock oneharness it
+# talks to (the `llmlint-mock-oneharness` crate). Release, like a user would run.
+llmlint_bin="$repo_root/target/release/llmlint"
+mock_bin="$repo_root/target/release/llmlint-mock-oneharness"
+if [ -z "${SCREENSHOTS_NO_BUILD:-}" ] || [ ! -x "$llmlint_bin" ] || [ ! -x "$mock_bin" ]; then
+  cargo build --release --locked -p llmlint -p llmlint-mock-oneharness \
+    --bin llmlint --bin llmlint-mock-oneharness >&2
+fi
+
+# Portable SHA-256 (Linux coreutils vs macOS/BSD).
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# Deterministic freeze flags. The vendored font (embedded into the SVG as base64)
+# is what makes the output reproducible across machines; everything else is fixed
+# window styling. Auto width/height follow the content, so they only move when the
+# captured text does.
+freeze_flags=(
+  # Force terminal/ANSI mode. freeze's content-based auto-detection is flaky —
+  # it intermittently misreads the colored report as a source file ("Language
+  # Unknown") and then ignores --font.file and hangs fetching a default font over
+  # the network. `--language ansi` is unconditional, offline, and byte-identical
+  # to the auto-detected render — for the colorized `lint` scene it preserves the
+  # ANSI color, and for the plain-text scenes it renders the text verbatim.
+  --language ansi
+  --font.file "$font"
+  --font.family "JetBrains Mono"
+  --font.size 14
+  --window
+  --background "#0d1117"
+  --padding "20,30"
+  --margin 0
+  --border.radius 8
+  # Fixed window width + line wrap so EVERY scene renders at the SAME pixel width.
+  # The gallery and README display each SVG at one fixed width, so a per-scene
+  # auto-width made the on-page text size wildly inconsistent — a narrow `init`
+  # scaled up huge, a wide `config` shrank. A constant width keeps the rendered
+  # text size uniform across cards; `--wrap` folds the few genuinely over-wide
+  # lines (the `-v` debug view's command + result JSON) at the same column budget
+  # so nothing overflows the box. 92 columns clears the widest real scene
+  # (`config`, 88 cols) with margin; 835px = 30+30 padding + 92*~8.42px/char.
+  --width 835
+  --wrap 92
+)
+
+rm -rf "$SHOTS_OUT"
+mkdir -p "$SHOTS_OUT" "$docs_dir"
+tmp_state="$(mktemp -d)"
+trap 'rm -rf "$tmp_state"' EXIT
+
+# captures.json identity is `name + JSON.stringify(toggles)`; entries collect one
+# "name|toggles|hash|image" record per rendered scene, sorted at the end.
+entries=()
+
+# Render one captured text file to a scene SVG, hash it, and record it. A scene
+# marked `require_ansi=1` must carry ANSI escapes (freeze needs them for the
+# colored render; their absence means llmlint failed to produce the report, which
+# `--language ansi` would otherwise paper over as a blank window). Plain scenes
+# only have to be non-empty.
+render_scene() {
+  local name="$1" toggles="$2" image="$3" src="$4" require_ansi="$5"
+  if [ "$require_ansi" = 1 ] && ! grep -q $'\033' "$src"; then
+    {
+      echo "screenshots: scene '$name' produced no ANSI — cannot render the colored report."
+      echo "---- captured stdout ($(wc -c <"$src") bytes) ----"
+      cat -v "$src"
+      echo "Re-run the scene by hand from screenshots/fixture/ with the same flags to see llmlint's stderr."
+    } >&2
+    exit 1
+  fi
+  if [ ! -s "$src" ]; then
+    echo "screenshots: scene '$name' produced no output — cannot render. Re-run that command from screenshots/fixture/ to see why it printed nothing." >&2
+    exit 1
+  fi
+  # `< /dev/null`: freeze reads stdin whenever it is not a character device (its
+  # IsPipe check), so under CI's piped stdin it would ignore the file argument and
+  # render empty input ("No input"). Pointing stdin at /dev/null (a char device)
+  # forces it down the read-the-file path on every runner.
+  freeze "$src" "${freeze_flags[@]}" -o "$SHOTS_OUT/$image" </dev/null >&2
+  local hash
+  hash="$(sha256 "$SHOTS_OUT/$image")"
+  entries+=("$name|$toggles|$hash|$image")
+  # The committed copies: same bytes, just outside the gitignored shots/ tree.
+  cp "$SHOTS_OUT/$image" "$docs_dir/$image"
+}
+
+# --- lint: the report (default + `-v` verbose) and the `-v` debug view --------
+# `--color always` forces ANSI through the pipe; `--max-parallel 1` keeps the
+# multi-judge order stable so the per-judge lines render identically every run.
+# `-c` pins the fixture config so upward config discovery never picks up a parent
+# llmlint.yml from wherever the repo is checked out (CI).
+mock_run=(
+  "$llmlint_bin" -c "$fixture/llmlint.yml" --oneharness-bin "$mock_bin"
+  --color always --max-parallel 1
+)
+for view in default verbose; do
+  verbosity=()
+  [ "$view" = "verbose" ] && verbosity=(-v)
+  out="$tmp_state/lint-$view.ansi"
+  ( cd "$fixture" \
+      && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
+         LLMLINT_MOCK_STATE="$tmp_state/state-$view" \
+         "${mock_run[@]}" ${verbosity[@]+"${verbosity[@]}"} ) >"$out" 2>/dev/null || true
+  render_scene "lint" "{\"view\":\"$view\"}" "lint-$view.svg" "$out" 1
+done
+
+# `-v` also prints the oneharness debug view — the exact `oneharness run …`
+# command and the raw result per judge — to STDERR (the report on stdout stays
+# clean). That deeper view is the only thing the verbose level adds, so capture
+# it as its own `view=debug` scene. It is plain text (no ANSI) and carries three
+# values that vary by machine/run: the mock binary path, the generated `--schema`
+# and `--system-file` tempfiles, and `--cwd`. Normalize them all to fixed
+# placeholders so the bytes (and hash) are identical on every machine — exactly
+# as `config`'s path is.
+out="$tmp_state/lint-debug.ansi"
+( cd "$fixture" \
+    && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
+       LLMLINT_MOCK_STATE="$tmp_state/state-debug" \
+       "${mock_run[@]}" -v ) >/dev/null 2>"$out" || true
+# A temp file, not `sed -i`: BSD/macOS sed takes `-i` with a required suffix.
+sed \
+  -e "s|$mock_bin|oneharness|g" \
+  -e "s|$fixture|.|g" \
+  -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
+  -e 's#/[^ ]*/llmlint-system-[A-Za-z0-9]*\.txt#/tmp/llmlint-system.txt#g' \
+  "$out" >"$out.sed" || { echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+mv "$out.sed" "$out" || { echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
+
+# --- multi-judge: the per-judge breakdown, its own fixture + scene ------------
+# The headline `lint` report is single-judge; a `judges: N` rule prints each
+# judge's held/violated + rationale under the header. That is a distinct shape,
+# so it gets its own scene driven by a separate, nested fixture (pinned with `-c`
+# so it never merges with the main scene). Colorized like the default report.
+mj_fixture="$fixture/multijudge"
+out="$tmp_state/multi-judge.ansi"
+( cd "$mj_fixture" \
+    && LLMLINT_MOCK_VERDICTS="$mj_fixture/verdicts.json" \
+       LLMLINT_MOCK_STATE="$tmp_state/state-multijudge" \
+       "$llmlint_bin" -c "$mj_fixture/llmlint.yml" --oneharness-bin "$mock_bin" \
+         --color always --max-parallel 1 ) >"$out" 2>/dev/null || true
+render_scene "multi-judge" "{}" "multi-judge.svg" "$out" 1
+
+# --- init: write a starter config (in a clean dir so the message is stable) ---
+init_dir="$tmp_state/init"
+mkdir -p "$init_dir"
+out="$tmp_state/init.txt"
+( cd "$init_dir" && "$llmlint_bin" init ) >"$out" 2>/dev/null || true
+render_scene "init" "{}" "init.svg" "$out" 0
+
+# --- config: the effective merged config + its sources, as JSON ---------------
+# `--cwd`/`-c` pin the fixture; the lone source is then the fixture's absolute
+# llmlint.yml path, which varies per checkout — strip the fixture prefix so the
+# captured text (and its hash) is the same on every machine, leaving the natural
+# `llmlint.yml`.
+out="$tmp_state/config.txt"
+( cd "$fixture" && "$llmlint_bin" config -c "$fixture/llmlint.yml" --cwd "$fixture" ) \
+  >"$out" 2>/dev/null || true
+sed "s|$fixture/||g" "$out" >"$out.sed" || { echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+mv "$out.sed" "$out" || { echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+render_scene "config" "{}" "config.svg" "$out" 0
+
+# --- doctor: the oneharness preflight check -----------------------------------
+# Put the mock on PATH as `oneharness` (no --oneharness-bin / env override) so the
+# resolved binary is the bare `oneharness` a user with it installed would see,
+# rather than an absolute, per-machine path.
+doctor_bin="$tmp_state/bin"
+mkdir -p "$doctor_bin"
+cp "$mock_bin" "$doctor_bin/oneharness"
+out="$tmp_state/doctor.txt"
+# The scene is a passing doctor (rendered with exit 0), so a failing one is a
+# broken capture, not a scene: stop with doctor's own stderr rather than render it.
+# llmlint: ignore-block[changed_behavior_has_e2e] the capture needs the pinned freeze, outside the gate; the Visual docs workflow runs it on every PR and classifies its output against the committed shots
+if ! ( cd "$tmp_state" && PATH="$doctor_bin:$PATH" \
+    LLMLINT_ONEHARNESS_BIN='' "$llmlint_bin" doctor ) >"$out" 2>"$out.err"; then
+  echo "screenshots: 'llmlint doctor' failed against the mock fixture:" >&2
+  cat "$out.err" >&2
+  echo "screenshots: fix that doctor failure (it ran against the mock oneharness), then re-run: just screenshots" >&2
+  exit 1
+fi
+# llmlint: ignore-end[changed_behavior_has_e2e]
+render_scene "doctor" "{}" "doctor.svg" "$out" 0
+
+# Write captures.json, shots sorted by identity, schema 1, trailing newline — the
+# exact shape screencomp's classify/manifest/gallery read. All fields are safe
+# ASCII (names, toggle values, hex digests, file names), so plain printf is sound.
+{
+  printf '{\n  "schema": 1,\n  "shots": [\n'
+  # llmlint: ignore-block[changed_behavior_has_e2e] same capture as the doctor block above; this read loop only replaces an unquoted array split and leaves the sorted manifest byte-identical
+  sorted_text="$(printf '%s\n' "${entries[@]}" | sort)"   # a failing sort stops here
+  sorted=()
+  while IFS= read -r entry; do sorted+=("$entry"); done <<<"$sorted_text"
+  # llmlint: ignore-end[changed_behavior_has_e2e]
+  last=$((${#sorted[@]} - 1))
+  for i in "${!sorted[@]}"; do
+    IFS='|' read -r name toggles hash image <<<"${sorted[$i]}"
+    comma=","
+    [ "$i" -eq "$last" ] && comma=""
+    printf '    {\n      "name": "%s",\n      "toggles": %s,\n      "hash": "%s",\n      "image": "%s"\n    }%s\n' \
+      "$name" "$toggles" "$hash" "$image" "$comma"
+  done
+  printf '  ]\n}\n'
+} >"$SHOTS_OUT/captures.json"
+
+echo "screenshots: wrote ${#entries[@]} shots to $SHOTS_OUT and docs/screenshots/" >&2

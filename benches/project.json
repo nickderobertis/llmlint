@@ -1,0 +1,93 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "bench",
+  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format, lint (which compiles the benches), lint-sh (which shellchecks the harness scripts) and test (the harness scripts' offline input checks, which measure nothing). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
+  "projectType": "application",
+  "tags": [
+    "type:bench"
+  ],
+  "implicitDependencies": [
+    "llmlint"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-bench -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-bench"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-bench --all-targets --locked -- -D warnings"
+      }
+    },
+    "lint-sh": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "shellcheck benches/*.sh"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo nextest run -p llmlint-bench --locked"
+      },
+      "cache": true,
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "//": "Offline: harness_inputs drives bench.sh and bench-instructions.sh up to their own hyperfine/valgrind check and profile.sh against stand-in cargo/samply, so a bad BENCH_* or PROFILE_* override is shown refused by name; nothing is built, timed or profiled."
+    },
+    "bench": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "cargo bench --locked -p llmlint-bench --bench engine --"
+      },
+      "//": "The forwarded arguments are Criterion's: `just bench <baseline> [options]` passes `--save-baseline <baseline>` and the options."
+    },
+    "bench-allocs": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "mkdir -p target/bench && cargo bench --locked --quiet -p llmlint-bench --bench engine_allocs > target/bench/allocs.md && cat target/bench/allocs.md"
+      },
+      "//": "Also written to target/bench/allocs.md, which the Performance workflow's report embeds (Nx's own run banners stay out of it). Redirected, then printed, rather than piped through tee, so a failed bench fails the target."
+    },
+    "bench-cli": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/bench.sh"
+      }
+    },
+    "bench-cli-smoke": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/bench.sh --dry-run"
+      }
+    },
+    "bench-instructions": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/bench-instructions.sh"
+      }
+    },
+    "profile": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash benches/profile.sh"
+      }
+    }
+  }
+}

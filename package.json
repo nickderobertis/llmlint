@@ -1,0 +1,7 @@
+{
+  "name": "llmlint-workspace",
+  "private": true,
+  "devDependencies": {
+    "nx": "23.1.1"
+  }
+}

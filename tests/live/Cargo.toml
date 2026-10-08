@@ -1,0 +1,18 @@
+# The live tier's offline input checks (live_inputs.rs): the settings and harness
+# id live-lib.sh writes into each scratch config, the binary overrides it runs,
+# and its own strict mode, each refused by name before any paid call. The paid
+# journeys themselves are this project's `live` target (live-claude.sh).
+# Test-only; never published.
+[package]
+name = "llmlint-live"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "live_inputs"
+path = "live_inputs.rs"
+
+[dev-dependencies]
+tempfile.workspace = true

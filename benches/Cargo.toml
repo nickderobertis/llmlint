@@ -1,0 +1,41 @@
+# The informational performance suite (never a gate): Criterion engine
+# micro-benchmarks and deterministic allocation counts over the `llmlint`
+# library, plus the end-to-end CLI harnesses beside them (bench.sh,
+# bench-instructions.sh, profile.sh). Test-only; never published. See AGENTS.md
+# beside this file.
+[package]
+name = "llmlint-bench"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autobenches = false
+
+# Statistical micro-benchmarks of the pure engine hot paths (config parse, plan,
+# template render, schema, vote, report). `harness = false` hands `main` to
+# Criterion instead of libtest, so `cargo nextest`/coverage never pick it up —
+# it is measured, not gated. `cargo clippy --all-targets` (this project's `lint`
+# target) still type-checks it, so it cannot rot.
+[[bench]]
+name = "engine"
+path = "engine.rs"
+harness = false
+
+# Deterministic allocation tallies for the same hot paths: a plain `main` with a
+# counting global allocator, no Criterion. Exact counts compare across runs and
+# commits without statistics; informational like every bench target.
+[[bench]]
+name = "engine_allocs"
+path = "engine_allocs.rs"
+harness = false
+
+# The CLI harness scripts' input checks (bench.sh, bench-instructions.sh), driven
+# offline up to their own tool check: this project's `test` target.
+[[test]]
+name = "harness_inputs"
+path = "tests/harness_inputs.rs"
+
+[dev-dependencies]
+criterion.workspace = true
+llmlint.workspace = true
+tempfile.workspace = true

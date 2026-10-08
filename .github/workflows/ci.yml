@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A manual full sweep of the dispatched commit: the recovery when a release
+  # finds no sweep verdict for its tree (.github/scripts/ci-gate.sh verdict).
+  workflow_dispatch:
 
 # Least privilege: most jobs only need to read the repo.
 permissions:
@@ -14,17 +17,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The full gate, including e2e and the coverage threshold. Linux-only because
-  # coverage is measured here (the `#[cfg(unix)]` subprocess tests run on Linux);
-  # macOS/Windows prove the artifact via the `cross` job below.
+  # The gate, at the tier this run owes (.github/scripts/ci-gate.sh tier; AGENTS.md
+  # "Commits, releases, and merging" records the placement): the AFFECTED tier on
+  # a pull request (from its merge base with the base branch) and on a push to
+  # main (from the previous tip), the FULL SWEEP on the release-plz release PR —
+  # checked out at its head, the tree the release's verdict compares — and on a
+  # manual dispatch. Both are the same `just check` recipe, the sweep with
+  # `--all`. Linux-only because coverage is measured here (the `#[cfg(unix)]`
+  # subprocess tests run on Linux); macOS/Windows prove the artifact via `cross`.
   gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history so the version-bump check below can diff the PR against
-          # its base (a shallow clone can't resolve the merge-base).
+          # Full history: the affected tier keys off an explicit merge base, and
+          # the version-bump check below diffs the PR against its base.
           fetch-depth: 0
+      - name: Choose the gate tier
+        id: tier
+        run: bash .github/scripts/ci-gate.sh tier
+      - name: Check out the release PR's head
+        if: steps.tier.outputs.head != ''
+        env:
+          HEAD_SHA: ${{ steps.tier.outputs.head }}
+        run: git checkout --detach "$HEAD_SHA"
       # Installs the pinned channel + components from rust-toolchain.toml, so CI
       # gates on the toolchain contributors build with. `cache: false` keeps the
       # one rust-cache step below; the action's default `RUSTFLAGS=-D warnings`
@@ -36,24 +52,40 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just,nextest,cargo-llvm-cov
+      # The bun .tool-versions pins; it installs and runs Nx from bun.lock.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
       - name: Bootstrap
         run: just bootstrap
       - name: Install actionlint
         run: just actionlint-tools
-      - name: Full gate (fmt, workflow lint, clippy, tests + coverage, docs)
-        run: just check
+      # The Nx cache is local to this runner and starts cold, so every target
+      # here runs from a clean build: a cached result never stands in for CI.
+      - name: Gate (fmt, clippy + boundaries, shell + workflow lint, build, tests + coverage, docs)
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          BASE: ${{ steps.tier.outputs.base }}
+        run: |
+          if [ "$TIER" = all ]; then
+            just check --all
+          else
+            NX_BASE="$BASE" just check
+          fi
       # Dogfood `check-version-bump` on llmlint's own versioned plugin
       # (`assets/config_lint.yml`, which no standard config glob matches, so the
       # recipe names it explicitly): fail the PR if it changed vs the base without a
       # `version:` bump. Uses the PR base commit as the diff base (reachable in the
-      # full history fetched above); only meaningful on a PR. Reuses the artifacts
-      # `just check` already built, so it adds no compile.
+      # full history fetched above); only meaningful on a PR.
       - name: Versioned configs bumped vs the PR base
         if: github.event_name == 'pull_request'
-        run: just check-version-bump ${{ github.event.pull_request.base.sha }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: just check-version-bump "$BASE_SHA"
 
-  # Prove the artifact builds and its tests pass on macOS and Windows (without
-  # the coverage threshold, which is enforced on Linux).
+  # Prove the artifact builds and its tests pass on macOS and Windows, at the same
+  # tier as `gate` (without the coverage floor, which is enforced on Linux, and
+  # without shellcheck/actionlint, which are platform-independent and run there).
   cross:
     strategy:
       fail-fast: false
@@ -65,6 +97,16 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Choose the gate tier
+        id: tier
+        run: bash .github/scripts/ci-gate.sh tier
+      - name: Check out the release PR's head
+        if: steps.tier.outputs.head != ''
+        env:
+          HEAD_SHA: ${{ steps.tier.outputs.head }}
+        run: git checkout --detach "$HEAD_SHA"
       # The pinned toolchain from rust-toolchain.toml, as in `gate` (same inputs).
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -73,12 +115,21 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just,nextest
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
       - name: Bootstrap
         run: just bootstrap
-      - name: Format + lint
-        run: just fmt-check && just lint
-      - name: Tests (unit + integration + e2e)
-        run: cargo nextest run --features mock-oneharness --locked
+      - name: Portable gate (format, clippy + boundaries, tests uninstrumented)
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          BASE: ${{ steps.tier.outputs.base }}
+        run: |
+          if [ "$TIER" = all ]; then
+            just check-portable --all
+          else
+            NX_BASE="$BASE" just check-portable
+          fi
 
   # Advisory + license audit and unused-dependency check (own job: needs a
   # network advisory DB).

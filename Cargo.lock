@@ -568,23 +568,101 @@ version = "0.4.6"
 dependencies = [
  "anstream",
  "anstyle",
- "assert_cmd",
  "clap",
- "criterion",
  "globset",
  "ignore",
  "indicatif",
  "minijinja",
- "predicates",
  "schemars",
  "serde",
  "serde_json",
  "serde_yaml_ng",
  "tempfile",
  "thiserror",
- "toml",
  "ureq",
  "wait-timeout",
+]
+
+[[package]]
+name = "llmlint-bench"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "llmlint",
+ "tempfile",
+]
+
+[[package]]
+name = "llmlint-ci-workflows"
+version = "0.0.0"
+dependencies = [
+ "serde_yaml_ng",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "llmlint-e2e"
+version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "llmlint",
+ "predicates",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+]
+
+[[package]]
+name = "llmlint-live"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
+name = "llmlint-mock-oneharness"
+version = "0.0.0"
+dependencies = [
+ "llmlint",
+ "serde_json",
+]
+
+[[package]]
+name = "llmlint-real-oneharness"
+version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "llmlint",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "llmlint-release-targets"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_yaml_ng",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "llmlint-repo-tooling"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "llmlint-screenshots"
+version = "0.0.0"
+dependencies = [
+ "llmlint",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
