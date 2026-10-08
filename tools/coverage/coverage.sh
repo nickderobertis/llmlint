@@ -73,7 +73,8 @@ require() {
 # against the members `cargo metadata` lists.
 validate_crate() {
   local crate="$1" metadata members
-  if ! printf '%s' "$crate" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then
+  # The whole argument, not any one line of it (grep would match per line).
+  if ! [[ $crate =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
     echo "coverage: '$crate' is not a valid crate name; pass a workspace package name (lowercase letters, digits, -)." >&2
     exit 2
   fi

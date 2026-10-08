@@ -134,6 +134,10 @@ test("a crate that is not a member, an unknown step, or a bad switch is a usage 
   const notMember = coverage(["test", "llmlint-nope"]);
   expect(notMember.code).toBe(2);
   expect(notMember.out).toContain("'llmlint-nope' is not a member of this Cargo workspace");
+  // A member's name on one line of the argument does not make the argument one.
+  const multiline = coverage(["test", "llmlint\n../x"]);
+  expect(multiline.code).toBe(2);
+  expect(multiline.out).toContain("is not a valid crate name");
   expect(coverage(["tset"]).code).toBe(2);
   const bad = coverage(["report"], { LLMLINT_COVERAGE: "maybe" });
   expect(bad.code).toBe(2);

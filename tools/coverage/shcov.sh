@@ -39,8 +39,9 @@ usage() {
   exit 2
 }
 
+# The whole argument, not any one line of it: a name becomes a record path.
 valid_project() {
-  printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+  [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]] \
     || usage "'$1' is not a project name (lowercase letters, digits, -)"
 }
 

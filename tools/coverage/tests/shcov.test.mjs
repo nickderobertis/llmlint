@@ -315,7 +315,7 @@ test("without Ruby or Bundler each step that needs them is refused, naming the f
 });
 
 test("a malformed invocation is a usage error, not a pass", () => {
-  for (const args of [[], ["typo"], ["run", "demo"], ["run", "demo", "bash", "x"], ["run", "Bad_Name", "--", "true"], ["report"], ["report", "../x"], ["install", "x"]]) {
+  for (const args of [[], ["typo"], ["run", "demo"], ["run", "demo", "bash", "x"], ["run", "Bad_Name", "--", "true"], ["report"], ["report", "../x"], ["run", "demo\n../x", "--", "true"], ["report", "demo\n../x"], ["install", "x"]]) {
     const r = shcov(args);
     expect(r.code, JSON.stringify(args)).toBe(2);
     expect(r.out, JSON.stringify(args)).toContain("usage: tools/coverage/shcov.sh");
