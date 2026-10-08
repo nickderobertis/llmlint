@@ -2,16 +2,17 @@
 # llmlint local setup — make a fresh machine ready to run the quality gate.
 #
 # Idempotent and safe to re-run. It:
-#   1. ensures rustup + the pinned toolchain — rust-toolchain.toml stays the
+#   1. checks Node is present (Nx runs on it) and Ruby with Bundler (they run
+#      bashcov, the shell coverage tool) before it installs anything; setup
+#      installs neither,
+#   2. ensures rustup + the pinned toolchain — rust-toolchain.toml stays the
 #      source of truth; rustup just realises it,
-#   2. ensures `just` (the task runner), pinned to .tool-versions, via the
+#   3. ensures `just` (the task runner), pinned to .tool-versions, via the
 #      official prebuilt installer (no slow `cargo install just` compile),
-#   3. ensures the cargo subcommands the gate drives — cargo-nextest and
+#   4. ensures the cargo subcommands the gate drives — cargo-nextest and
 #      cargo-llvm-cov — pinned to the justfile,
-#   4. ensures the pinned `actionlint` (the gate's workflow linter) via
+#   5. ensures the pinned `actionlint` (the gate's workflow linter) via
 #      `just actionlint-tools` (prebuilt release, digest-verified),
-#   5. checks Node is present (Nx runs on it) and Ruby with Bundler (they run
-#      bashcov, the shell coverage tool); setup installs neither,
 #   6. fetches dependencies, adds toolchain components, and installs the pinned
 #      bun + the locked Nx, the pinned shfmt + shellcheck and the locked bashcov
 #      via `just bootstrap`,
@@ -110,9 +111,9 @@ ensure_ruby() {
 }
 
 main() {
-  ensure_rust
   ensure_node
   ensure_ruby
+  ensure_rust
   ensure_just
   ensure_cargo_tool cargo-nextest cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"

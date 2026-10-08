@@ -129,14 +129,17 @@ case "$STEP" in
         *.sh | *.bash) printf '%s\n' "$f" ;;
         *)
           # An unreadable file could be a script, so it fails the discovery
-          # rather than drop out of what format, lint and coverage see. (A
-          # `read` that hits end of file without a newline is not a failure.)
+          # rather than drop out of what format, lint and coverage see. `head`
+          # tells a read error from end of file, which `read` does not; NULs
+          # are dropped so a binary file reads quietly.
           if [ ! -r "$f" ]; then
             echo "shell: cannot read $f to see whether it is a shell script; restore its read permission (chmod u+r $f)." >&2
             exit 1
           fi
-          first=""
-          IFS= read -r first <"$f" || true
+          if ! first="$(head -n 1 -- "$f" | tr -d '\000')"; then
+            echo "shell: reading $f failed (reason above), so whether it is a shell script is unknown; check the file and the disk it is on." >&2
+            exit 1
+          fi
           if [[ $first =~ ^#!.*[/\ ](ba|da|k|z)?sh(\ |$) ]]; then
             printf '%s\n' "$f"
           fi

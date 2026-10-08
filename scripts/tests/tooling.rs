@@ -1845,7 +1845,8 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
     // Bundler, which run bashcov) before it installs anything. The real script
     // runs here against stand-ins for every tool it would otherwise provision or
     // call (rustup, cargo, just, ...), each recording that it ran, so the journey
-    // shows the refusal comes first and, once both are present, setup goes on to
+    // shows the refusal comes first — not one of them, rustup included, has run —
+    // and, once both are present, setup goes on to provision the toolchain,
     // `just actionlint-tools` and `just bootstrap` and writes its stamp.
     let p = Project::new();
     let root = repo_root();
@@ -1919,13 +1920,14 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
             stderr.contains("Ruby with Bundler is required to run bashcov"),
             "{missing}: {stderr}"
         );
-        assert!(!ran.contains("just "), "{missing}: setup went on: {ran}");
+        assert!(ran.is_empty(), "{missing}: setup provisioned before refusing: {ran}");
         assert!(!p.path().join(".dev/setup.stamp").exists(), "{missing}");
         fs::rename(p.path().join(missing), bin.join(missing)).unwrap();
     }
 
     let (out, ran) = setup();
     assert!(out.status.success(), "{out:?}");
+    assert!(ran.contains("rustup "), "{ran}");
     assert!(ran.contains("just actionlint-tools"), "{ran}");
     assert!(ran.contains("just bootstrap"), "{ran}");
     assert!(p.path().join(".dev/setup.stamp").exists());

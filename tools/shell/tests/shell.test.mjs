@@ -160,6 +160,24 @@ test("files refuses an unreadable candidate rather than leave it out of what is 
   expect(r.out).toContain("chmod u+r hooks/locked");
 });
 
+test("files fails on a read error rather than mistake it for end of file, and reads a binary file quietly", () => {
+  // A binary candidate with NULs and no newline is read, not warned about, and is no script.
+  writeFileSync(join(dir, "blob.bin"), Buffer.from([0x23, 0x21, 0x00, 0x2f, 0x62, 0x69, 0x6e, 0x00, 0xff]));
+  write("hooks/run", "#!/usr/bin/env bash\necho run\n");
+  let r = shell(["files"]);
+  expect(r.code, r.out).toBe(0);
+  expect(r.stdout.split("\n").filter(Boolean)).toEqual(["hooks/run", "tools/shell/shell.sh"]);
+  expect(r.out).not.toContain("warning");
+  // A disk error cannot be induced on a scratch file, so a stand-in head plays one
+  // for this file and passes every other read to the real head.
+  const real = spawnSync("bash", ["-c", "type -P head"], { encoding: "utf8" }).stdout.trim();
+  write("stubs/head", `#!/bin/sh\nfor a; do [ "$a" = hooks/run ] && { echo "head: error reading 'hooks/run': Input/output error" >&2; exit 1; }; done\nexec ${real} "$@"\n`, 0o755);
+  r = shell(["files"], { PATH: `${join(dir, "stubs")}:${process.env.PATH}` });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("Input/output error");
+  expect(r.out).toContain("shell: reading hooks/run failed (reason above), so whether it is a shell script is unknown");
+});
+
 test("versions names each pin and the version found, which keys the lint cache", () => {
   const r = shell(["versions"]);
   expect(r.code).toBe(0);
