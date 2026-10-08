@@ -261,6 +261,18 @@ test("without HOME the default install dir is refused by name, while an explicit
   expect(build("shfmt").version).toBe(`v${SHFMT}`);
 });
 
+test("with no install dir override the tools land in ~/.local/bin", () => {
+  const r = install({ SHELL_TOOLS_INSTALL_DIR: undefined });
+  expect(r.code, r.out).toBe(0);
+  const home = join(dir, "home/.local/bin");
+  expect(r.out).toContain(`in ${home}`);
+  for (const [tool, version] of [["shfmt", `v${SHFMT}`], ["shellcheck", `version: ${SHELLCHECK}`]]) {
+    const v = spawnSync(join(home, tool), ["--version"], { encoding: "utf8" });
+    expect(v.stdout.trim(), tool).toBe(version);
+  }
+  expect(existsSync(join(dir, "bin")), "nothing in the override dir").toBe(false);
+});
+
 test("a host whose uname fails is refused with the fix, not misdetected", () => {
   write("stubs/uname", "#!/bin/sh\nexit 3\n", 0o755);
   const r = spawnSync("bash", [join(dir, "tools/shell/install-shell-tools.sh")], {
