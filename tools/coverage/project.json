@@ -3,10 +3,12 @@
   "name": "coverage-driver",
   "//": "The two coverage drivers and their self-tests: coverage.sh (the per-crate instrumented test runs and the merged report the coverage gate project runs) and shcov.sh with shcov.rb (bashcov around each shell-measured project's tests, and the merged shell report the shell-coverage gate runs). Nothing depends on it but the two gates. The Rust gate needs only the driver itself, so a product edit never selects these self-tests through it; the shell gate merges this project's own record too (its tests run both drivers' scripts), so its dependsOn runs them — a few seconds over a scratch workspace.",
   "projectType": "library",
+  "//suppression-tags": "llmlint: ignore-block[expensive_tests_stay_behind_their_own_edge] coverage-driver's whole test suite is cheap, not an expensive tier: its Rust-driver half (coverage.test.mjs) builds two dependency-free scratch crates offline into a fresh CARGO_TARGET_DIR on every run, so it is always cold, and measured 2.25s that way; the shell gate must merge this project's record because those same tests are what execute coverage.sh",
   "tags": [
     "type:workspace",
     "coverage:shell"
   ],
+  "//suppression-tags-end": "llmlint: ignore-end[expensive_tests_stay_behind_their_own_edge]",
   "targets": {
     "format": {
       "executor": "nx:run-commands",

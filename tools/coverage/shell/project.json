@@ -14,6 +14,7 @@
     "coverage": {
       "executor": "nx:run-commands",
       "cache": false,
+      "//suppression": "llmlint: ignore-block[expensive_tests_stay_behind_their_own_edge] coverage-driver's whole test suite is cheap, not an expensive tier: its Rust-driver half (coverage.test.mjs) builds two dependency-free scratch crates offline into a fresh CARGO_TARGET_DIR on every run, so it is always cold, and measured 2.25s that way; the shell gate must merge this project's record because those same tests are what execute coverage.sh",
       "dependsOn": [
         {
           "projects": [
@@ -22,6 +23,7 @@
           "target": "test"
         }
       ],
+      "//suppression-end": "llmlint: ignore-end[expensive_tests_stay_behind_their_own_edge]",
       "options": {
         "command": "bash tools/coverage/shcov.sh report bench ci-workflows coverage-driver live real-oneharness release-targets repo-tooling screenshots shell-tools"
       },

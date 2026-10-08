@@ -1920,7 +1920,10 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
             stderr.contains("Ruby with Bundler is required to run bashcov"),
             "{missing}: {stderr}"
         );
-        assert!(ran.is_empty(), "{missing}: setup provisioned before refusing: {ran}");
+        assert!(
+            ran.is_empty(),
+            "{missing}: setup provisioned before refusing: {ran}"
+        );
         assert!(!p.path().join(".dev/setup.stamp").exists(), "{missing}");
         fs::rename(p.path().join(missing), bin.join(missing)).unwrap();
     }
