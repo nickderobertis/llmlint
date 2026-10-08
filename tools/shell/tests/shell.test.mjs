@@ -3,6 +3,7 @@
 // .editorconfig style, against the real pinned shfmt and shellcheck that
 // `just bootstrap` installs into ~/.local/bin. Only a tool's version (for the
 // off-pin journey) is ever stood in.
+// llmlint: ignore-file[shell_test_tiers_stay_split] the host tools this suite runs are the pinned shfmt and shellcheck every gate run already requires, executed offline over scratch files in milliseconds; it exercises only this project's shell.sh, so a separate host-tool project would be selected by exactly the same edits and save no run
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

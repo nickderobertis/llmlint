@@ -4,6 +4,7 @@
 // process tree and through a scratch copy of a script, and `report` merges the
 // records and fails below the floor. Nothing is stubbed; the "test commands" are
 // small bash runners that drive the scratch scripts the way the journeys do.
+// llmlint: ignore-file[shell_test_tiers_stay_split] this project holds only the coverage drivers, which exist to drive bashcov and cargo-llvm-cov; the suite runs the locked bashcov offline over a scratch repository, so its offline and host-tool tiers are the same thing, and only an edit to a driver (or the shell coverage pins) selects it
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
