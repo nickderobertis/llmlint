@@ -7,8 +7,9 @@
 #
 # The gate recipes (check, test, lint, lint-workflows, fmt-check,
 # format, doc) DELEGATE to Nx (scripts/nx runs it on the pinned bun): each project
-# declares what its targets do (cargo fmt, clippy, nextest under cargo-llvm-cov,
-# shellcheck, actionlint), and the root only chooses which projects run them.
+# declares what its targets do (cargo fmt, shfmt, clippy, shellcheck, nextest
+# under cargo-llvm-cov or bashcov, actionlint), and the root only chooses which
+# projects run them.
 # scripts/nx-tier.sh picks the tier: with no flag the AFFECTED tier — `nx
 # affected` from the explicit base scripts/nx-base.sh prints (NX_BASE, validated,
 # else the merge base with origin/main); `--all` the FULL SWEEP (`nx run-many
