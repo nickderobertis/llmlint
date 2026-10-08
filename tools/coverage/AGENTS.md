@@ -51,9 +51,10 @@ binary and the fixture they drive.
 - `LLMLINT_COVERAGE=off` runs the command unmeasured and skips `install` and
   `report`, as it does for `coverage.sh`.
 [//]: # "llmlint: ignore-block[agents_md_durable_and_terse] the manager who approved the 50% shell floor required this measurement and its per-script table to be recorded in AGENTS.md beside the floor, as create-repo's bash reference requires the reason for a lowered shell bar to be: it is the evidence the lowered floor rests on, not a report the driver regenerates, and it moves only with the floor"
-- **The measurement the 50% floor rests on**, re-taken on the finished tree of
-  the change that set it (aarch64 Linux, all 9 projects, `bash scripts/nx run
-  shell-coverage:coverage`): 51.85%, 1064/2052.
+- **The measurement behind the 50% floor.** The floor was approved against
+  51.81% (1057/2040). Re-taken on the finished tree of the change that set it
+  (aarch64 Linux, all 9 projects, `bash scripts/nx run shell-coverage:coverage`),
+  it is 52.06%, 1073/2061:
 
   | script | lines | % |
   |---|---|---|
@@ -86,7 +87,7 @@ binary and the fixture they drive.
   | `tools/coverage/coverage.sh` | 51/77 | 66.2 |
   | `tools/coverage/shcov.sh` | 45/57 | 78.9 |
   | `tools/shell/install-shell-tools.sh` | 79/91 | 86.8 |
-  | `tools/shell/shell.sh` | 73/78 | 93.6 |
+  | `tools/shell/shell.sh` | 82/87 | 94.3 |
 
   Re-take this table whenever the floor moves.
 [//]: # "llmlint: ignore-end[agents_md_durable_and_terse]"

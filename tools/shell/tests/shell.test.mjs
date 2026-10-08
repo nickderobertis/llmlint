@@ -15,7 +15,7 @@ let dir;
 function write(path, text, mode) {
   mkdirSync(join(dir, path, ".."), { recursive: true });
   writeFileSync(join(dir, path), text);
-  if (mode) chmodSync(join(dir, path), mode);
+  if (mode !== undefined) chmodSync(join(dir, path), mode);
 }
 
 function git(...args) {
@@ -107,7 +107,15 @@ test("files outside a git work tree is a clear failure, not an empty list", () =
   rmSync(join(dir, ".git"), { recursive: true, force: true });
   const r = shell(["files"], { GIT_CEILING_DIRECTORIES: dir });
   expect(r.code).toBe(1);
-  expect(r.out).toContain("listing the tree's files with git failed");
+  expect(r.out).toContain("discovering the tree's shell scripts failed");
+});
+
+test("files refuses an unreadable candidate rather than leave it out of what is checked", () => {
+  write("hooks/locked", "#!/usr/bin/env bash\necho hidden\n", 0o000);
+  const r = shell(["files"]);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("cannot read hooks/locked to see whether it is a shell script");
+  expect(r.out).toContain("chmod u+r hooks/locked");
 });
 
 test("versions names each pin and the version found, which keys the lint cache", () => {
@@ -153,6 +161,18 @@ test("a missing tool or a missing pin is refused with the line that fixes it", (
   const r = shell(["lint", "scripts/good.sh"]);
   expect(r.code).toBe(1);
   expect(r.out).toContain('restore the line: shellcheck-version := "<version>"');
+});
+
+test("an operand shaped like an option is refused, so it cannot reach the tool as a flag", () => {
+  write("scripts/bad.sh", UNFORMATTED);
+  for (const args of [["format", "--version"], ["format", "scripts/bad.sh", "-ln=posix"], ["format", "--write", "-i0"], ["lint", "--version"], ["lint", "-e", "SC2086", "scripts/bad.sh"]]) {
+    const r = shell(args);
+    expect(r.code, JSON.stringify(args)).toBe(2);
+    expect(r.out, JSON.stringify(args)).toContain("is not a file to check (it starts with '-')");
+  }
+  // The same name as a path is checked, and fails on its findings.
+  write("-x.sh", UNFORMATTED);
+  expect(shell(["format", "./-x.sh"]).code).toBe(1);
 });
 
 test("a malformed invocation is a usage error, not a pass", () => {

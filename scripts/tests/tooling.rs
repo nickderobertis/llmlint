@@ -1649,6 +1649,115 @@ fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkou
     );
 }
 
+/// The first `name` on the test's own PATH, if any.
+#[cfg(unix)]
+fn on_path(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_check_requires_the_shell_toolchain_and_follows_the_gemfile_lock() {
+    // `just check` now runs shfmt, shellcheck and (through Ruby + Bundler)
+    // bashcov, so a machine missing any of them is not ready, each named; and the
+    // locked bashcov is part of what a setup stamp vouches for, so a Gemfile.lock
+    // change asks for setup again. PATH is only the base tools the readiness
+    // check runs plus stand-ins for the gate tools, so "missing" means missing
+    // even on a runner that ships shellcheck or Ruby in /usr/bin.
+    let p = Project::new();
+    let root = repo_root();
+    for file in [
+        "scripts/setup-check.sh",
+        "scripts/setup-lib.sh",
+        "scripts/bun.sh",
+        ".tool-versions",
+        "justfile",
+        "rust-toolchain.toml",
+        "Gemfile.lock",
+    ] {
+        p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+    }
+    let bin = p.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for base in [
+        "bash",
+        "dirname",
+        "cat",
+        "grep",
+        "head",
+        "cut",
+        "awk",
+        "mkdir",
+        "sha256sum",
+        "shasum",
+    ] {
+        if let Some(real) = on_path(base) {
+            std::os::unix::fs::symlink(real, bin.join(base)).unwrap();
+        }
+    }
+    let gate_tools = [
+        "rustc",
+        "cargo",
+        "just",
+        "cargo-nextest",
+        "cargo-llvm-cov",
+        "actionlint",
+        "shfmt",
+        "shellcheck",
+        "node",
+        "ruby",
+        "bundle",
+    ];
+    for tool in gate_tools {
+        write_exe(&bin.join(tool), "#!/bin/sh\nexit 0\n");
+    }
+    write_exe(
+        &bin.join("bun"),
+        &format!("#!/bin/sh\necho {}\n", pinned_bun_version()),
+    );
+    let run = |script: &[&str]| {
+        std::process::Command::new(bin.join("bash"))
+            .args(script)
+            .current_dir(p.path())
+            .env_clear()
+            .env("PATH", &bin)
+            .env("HOME", p.path().join("home"))
+            .output()
+            .unwrap()
+    };
+    let out = run(&["-c", ". scripts/setup-lib.sh; _write_stamp"]);
+    assert!(out.status.success(), "{out:?}");
+    let out = run(&["scripts/setup-check.sh"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+
+    for tool in ["shfmt", "shellcheck", "ruby", "bundle"] {
+        fs::rename(bin.join(tool), p.path().join(tool)).unwrap();
+        let out = run(&["scripts/setup-check.sh"]);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{tool}: {stdout}");
+        assert!(
+            stdout.contains(&format!("missing tools: {tool}")),
+            "{tool}: {stdout}"
+        );
+        assert!(stdout.contains("just setup"), "{tool}: {stdout}");
+        fs::rename(p.path().join(tool), bin.join(tool)).unwrap();
+    }
+
+    let lock = p.path().join("Gemfile.lock");
+    let mut locked = fs::read_to_string(&lock).unwrap();
+    locked.push('\n');
+    fs::write(&lock, locked).unwrap();
+    let out = run(&["scripts/setup-check.sh"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains("toolchain or tool versions changed since last setup"),
+        "{stdout}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn setup_check_reports_a_missing_pinned_bun_as_not_ready() {

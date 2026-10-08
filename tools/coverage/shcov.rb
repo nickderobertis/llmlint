@@ -211,7 +211,9 @@ def report(floor_s, resultsets)
   end
 
   rows = files.map do |rel|
-    lines = merged.fetch(rel, []).dup
+    # A hit past the script's last line is not a line of it (a damaged or stale
+    # record); bashcov's lexer would keep it, so it is dropped here.
+    lines = merged.fetch(rel, []).first(File.foreach(ROOT.join(rel)).count)
     Bashcov::Lexer.new(ROOT.join(rel).to_s, lines).complete_coverage
     relevant = lines.count { |n| !n.nil? }
     covered = lines.count { |n| n.to_i.positive? }

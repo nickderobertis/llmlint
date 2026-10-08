@@ -151,6 +151,14 @@ test("the report passes merged records at or above the floor and fails below it,
   expect(merged["scripts/untested.sh"].lines.filter((n) => n === 0).length).toBe(200);
 });
 
+test("hits past a script's last line are not counted, so a damaged record cannot inflate the number", () => {
+  // branchy.sh has 7 lines: a record claiming hits on lines 8-500 credits none.
+  write("target/shcov/padded.json", JSON.stringify({ padded: { coverage: { "scripts/branchy.sh": { lines: Array(500).fill(1).fill(0, 0, 7) } } } }));
+  const r = shcov(["report", "padded"]);
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toMatch(/0\.00% of shell lines covered \(0\/\d+,/);
+});
+
 test("a record that is missing or not a record fails the report rather than passing over it", () => {
   let r = shcov(["report", "never-ran"]);
   expect(r.code).toBe(1);

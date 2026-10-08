@@ -72,6 +72,17 @@ require() {
   fi
 }
 
+# The files format and lint check are operands, never options: a `-`-prefixed
+# one would reach the tool as a flag (`--version` would "pass" unchecked).
+operands() {
+  local f
+  for f in "$@"; do
+    case "$f" in
+      -*) usage "'$f' is not a file to check (it starts with '-'); pass it as ./$f" ;;
+    esac
+  done
+}
+
 # Whether format and lint run (on) or are left to the Linux gate (off).
 enabled() {
   case "${LLMLINT_SHELL_TOOLS:-on}" in
@@ -98,15 +109,22 @@ case "$STEP" in
       case "$f" in
         *.sh | *.bash) printf '%s\n' "$f" ;;
         *)
+          # An unreadable file could be a script, so it fails the discovery
+          # rather than drop out of what format, lint and coverage see. (A
+          # `read` that hits end of file without a newline is not a failure.)
+          if [ ! -r "$f" ]; then
+            echo "shell: cannot read $f to see whether it is a shell script; restore its read permission (chmod u+r $f)." >&2
+            exit 1
+          fi
           first=""
-          IFS= read -r first <"$f" 2>/dev/null || true
+          IFS= read -r first <"$f" || true
           if [[ $first =~ ^#!.*[/\ ](ba|da|k|z)?sh(\ |$) ]]; then
             printf '%s\n' "$f"
           fi
           ;;
       esac
     done | LC_ALL=C sort; then
-      echo "shell: listing the tree's files with git failed (above); run it inside a git work tree with git on PATH." >&2
+      echo "shell: discovering the tree's shell scripts failed (reason above); run it inside a git work tree with git on PATH, every file readable." >&2
       exit 1
     fi
     ;;
@@ -126,14 +144,15 @@ case "$STEP" in
       shift
     fi
     [ "$#" -ge 1 ] || usage "'format' needs at least one file"
+    operands "$@"
     if ! enabled; then
       echo "shell: LLMLINT_SHELL_TOOLS=off — shfmt skipped; the Linux gate enforces it." >&2
       exit 0
     fi
     require shfmt
     if "$write"; then
-      shfmt -w "$@"
-    elif ! shfmt -d "$@" >&2; then
+      shfmt -w -- "$@"
+    elif ! shfmt -d -- "$@" >&2; then
       echo "shell: the files above are not formatted to the .editorconfig style; write it with: just format" >&2
       exit 1
     fi
@@ -141,12 +160,13 @@ case "$STEP" in
 
   lint)
     [ "$#" -ge 1 ] || usage "'lint' needs at least one file"
+    operands "$@"
     if ! enabled; then
       echo "shell: LLMLINT_SHELL_TOOLS=off — shellcheck skipped; the Linux gate enforces it." >&2
       exit 0
     fi
     require shellcheck
-    if ! shellcheck "$@" >&2; then
+    if ! shellcheck -- "$@" >&2; then
       echo "shell: fix each finding above at its file:line, or disable it at that site with its reason (# shellcheck disable=SCxxxx  # why)." >&2
       exit 1
     fi
