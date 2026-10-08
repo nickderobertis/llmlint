@@ -65,8 +65,8 @@ emit() {
 # with their message instead of a bare jq error.
 field() {
   local out
-  out="$(jq -r --args '(try getpath($ARGS.positional) catch null) | if type == "string" then . else "" end' "$@" <<<"$payload" 2>&1)" ||
-    refuse "could not read $* from the event payload: $out" "point GITHUB_EVENT_PATH at the event JSON the runner provides"
+  out="$(jq -r --args '(try getpath($ARGS.positional) catch null) | if type == "string" then . else "" end' "$@" <<<"$payload" 2>&1)" \
+    || refuse "could not read $* from the event payload: $out" "point GITHUB_EVENT_PATH at the event JSON the runner provides"
   printf '%s' "$out"
 }
 
@@ -76,8 +76,8 @@ route() {
   local event="${GITHUB_EVENT_NAME:-}" payload_path="${GITHUB_EVENT_PATH:-}" payload
   [ -n "$event" ] || usage "GITHUB_EVENT_NAME is empty; run this inside a GitHub Actions job (or set it and GITHUB_EVENT_PATH)"
   if [ -n "$payload_path" ]; then
-    payload="$(jq -c 'if type == "object" then . else error("not a JSON object") end' "$payload_path" 2>&1)" ||
-      refuse "the event payload at GITHUB_EVENT_PATH ($payload_path) is unreadable: $payload" "point GITHUB_EVENT_PATH at the event JSON the runner provides"
+    payload="$(jq -c 'if type == "object" then . else error("not a JSON object") end' "$payload_path" 2>&1)" \
+      || refuse "the event payload at GITHUB_EVENT_PATH ($payload_path) is unreadable: $payload" "point GITHUB_EVENT_PATH at the event JSON the runner provides"
   else
     payload='{}'
   fi
@@ -98,8 +98,8 @@ route() {
       if [[ ! "$base_ref" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "$base_ref" == *..* ]] || [[ "$base_ref" == -* ]]; then
         refuse "pull_request payload has no usable base ref ('$base_ref')" "target a branch named with letters, digits and . _ / - only; nothing was run"
       fi
-      base="$(git merge-base "origin/$base_ref" HEAD 2>&1)" ||
-        refuse "no merge base with origin/$base_ref: $base" "check out with fetch-depth: 0 so the base branch and its history are present"
+      base="$(git merge-base "origin/$base_ref" HEAD 2>&1)" \
+        || refuse "no merge base with origin/$base_ref: $base" "check out with fetch-depth: 0 so the base branch and its history are present"
       emit "tier=affected"$'\n'"base=$base"$'\nhead=\n' "affected — pull request: merge base with origin/$base_ref ($base)"
       ;;
     push)
@@ -108,8 +108,8 @@ route() {
       if is_sha "$before" && git rev-parse --verify --quiet "$before^{commit}" >/dev/null; then
         emit "tier=affected"$'\n'"base=$before"$'\nhead=\n' "affected — push: since the previous tip ($before)"
       else
-        before="$(git rev-parse HEAD~1 2>&1)" ||
-          refuse "push without a usable event.before, and no HEAD~1: $before" "check out with fetch-depth: 0"
+        before="$(git rev-parse HEAD~1 2>&1)" \
+          || refuse "push without a usable event.before, and no HEAD~1: $before" "check out with fetch-depth: 0"
         emit "tier=affected"$'\n'"base=$before"$'\nhead=\n' "affected — push: since HEAD~1 (event.before unavailable)"
       fi
       ;;
@@ -178,8 +178,8 @@ verdict() {
         "run the CI workflow by hand on $sha (workflow_dispatch sweeps it), then re-run this release"
     fi
     run_id="$(jq -r '.id' <<<"$run")"
-    [[ "$run_id" =~ ^[1-9][0-9]{0,19}$ ]] ||
-      refuse "GitHub's answer names a CI run whose id is not a positive integer ('$run_id')" "inspect the API response, then re-run the release"
+    [[ "$run_id" =~ ^[1-9][0-9]{0,19}$ ]] \
+      || refuse "GitHub's answer names a CI run whose id is not a positive integer ('$run_id')" "inspect the API response, then re-run the release"
     run_url="$(jq -r '.html_url // ""' <<<"$run")"
     run_status="$(jq -r '.status // ""' <<<"$run")"
     jobs="$(gh_api "repos/$repo/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
@@ -192,8 +192,8 @@ verdict() {
             else "red \($name) (\(.conclusion))" end ]
       | (map(select(startswith("red "))) | first)
         // (map(select(startswith("pending "))) | first)
-        // "green"' <<<"$jobs" 2>&1)" ||
-      refuse "the jobs of CI run $run_id were unreadable: $state" "inspect the API response, then re-run the release"
+        // "green"' <<<"$jobs" 2>&1)" \
+      || refuse "the jobs of CI run $run_id were unreadable: $state" "inspect the API response, then re-run the release"
     case "$state" in
       green)
         printf 'ci-gate: CI run %s (%s) swept tree %s and its gate and cross jobs concluded success; releasing %s.\n' \

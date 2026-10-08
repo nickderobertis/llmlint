@@ -3,8 +3,8 @@
 The GitHub Actions workflows, the CI-only script beside them
 (`scripts/ci-gate.sh`), and the tests that hold them (`tests/workflows.rs`, the
 drift gates; `tests/ci_gate.rs`, the routing and release-verdict journeys). Its
-`lint-workflows` target is actionlint over every workflow, its `lint-sh`
-shellchecks `scripts/`.
+`lint-workflows` target is actionlint over every workflow; its `format` and
+`lint` run shfmt and shellcheck over `scripts/` beside cargo fmt and clippy.
 
 - **One routing script.** `scripts/ci-gate.sh tier` decides the tier a CI run
   owes and `scripts/ci-gate.sh verdict` decides whether a release may ship; both

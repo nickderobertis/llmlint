@@ -67,14 +67,17 @@ ensure_toolchain() {
 # it into every later Bash call). PATH so the freshly installed binaries resolve.
 # No-op outside a session.
 persist_session_env() {
-  [ -n "${CLAUDE_ENV_FILE:-}" ] || { log "no CLAUDE_ENV_FILE (not a session); skipping env"; return 0; }
+  [ -n "${CLAUDE_ENV_FILE:-}" ] || {
+    log "no CLAUDE_ENV_FILE (not a session); skipping env"
+    return 0
+  }
   {
-    case ":${PATH}:" in *":${BIN_DIR}:"*) ;; *) printf 'export PATH=%q\n' "${BIN_DIR}:${PATH}";; esac
+    case ":${PATH}:" in *":${BIN_DIR}:"*) ;; *) printf 'export PATH=%q\n' "${BIN_DIR}:${PATH}" ;; esac
     # No ONEHARNESS_* override: oneharness.toml's fallback mode selects the harness
     # (codex primary, claude-code secondary), so a Claude Code session — where codex
     # is absent — falls through to claude-code on its own. Set ONEHARNESS_HARNESSES
     # here only if a specific environment's fallback order can't pick correctly.
-  } >> "$CLAUDE_ENV_FILE"
+  } >>"$CLAUDE_ENV_FILE"
   log "exported PATH"
 }
 

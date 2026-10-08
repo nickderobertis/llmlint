@@ -4,7 +4,8 @@
   "//": "The release declaration (release-targets.toml) and its probe (scripts/release-probe.sh, whose path the declaration names, so it stays in scripts/). Edges: llmlint owns release-targets.toml and the manifests it reads, ci-workflows owns release.yml, repo-tooling owns the probe.",
   "projectType": "application",
   "tags": [
-    "type:external"
+    "type:external",
+    "coverage:shell"
   ],
   "implicitDependencies": [
     "llmlint",
@@ -32,7 +33,7 @@
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo nextest run -p llmlint-release-targets --locked"
+        "command": "bash tools/coverage/shcov.sh run release-targets -- cargo nextest run -p llmlint-release-targets --locked"
       },
       "cache": true,
       "inputs": [
@@ -42,9 +43,13 @@
         "{workspaceRoot}/pyproject.toml",
         "{workspaceRoot}/release-plz.toml",
         "{workspaceRoot}/.github/workflows/*.yml",
-        "{workspaceRoot}/scripts/release-probe.sh"
+        "{workspaceRoot}/scripts/release-probe.sh",
+        "shellCoverage"
       ],
-      "//": "The offline half: the declaration held to the canonical schema (restated here), to release.yml and the manifests, and the probe against a local stand-in registry. Cached: its inputs are every file it reads, every workspace member's Cargo.toml among them. Its edges cannot reach the e2e, capture and bench members (the tag boundaries), so a manifest edit made only there is caught by the release-PR full sweep, before anything ships, rather than by the affected tier."
+      "//": "The offline half: the declaration held to the canonical schema (restated here), to release.yml and the manifests, and the probe against a local stand-in registry. Cached: its inputs are every file it reads, every workspace member's Cargo.toml among them. Its edges cannot reach the e2e, capture and bench members (the tag boundaries), so a manifest edit made only there is caught by the release-PR full sweep, before anything ships, rather than by the affected tier.",
+      "outputs": [
+        "{workspaceRoot}/target/shcov/release-targets.json"
+      ]
     },
     "network": {
       "executor": "nx:run-commands",

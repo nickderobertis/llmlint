@@ -4,7 +4,8 @@
   "//": "The real-oneharness tier: llmlint's forwarded --config layers resolved by the released oneharness. External (PyPI), so its suite is the network target, never a gate tier.",
   "projectType": "application",
   "tags": [
-    "type:external"
+    "type:external",
+    "coverage:shell"
   ],
   "implicitDependencies": [
     "llmlint",
@@ -14,38 +15,53 @@
     "format": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo fmt -p llmlint-real-oneharness -- --check"
+        "commands": [
+          "cargo fmt -p llmlint-real-oneharness -- --check",
+          "bash tools/shell/shell.sh format tests/real-oneharness/*.sh"
+        ],
+        "parallel": false
       },
       "configurations": {
         "write": {
-          "command": "cargo fmt -p llmlint-real-oneharness"
+          "commands": [
+            "cargo fmt -p llmlint-real-oneharness",
+            "bash tools/shell/shell.sh format --write tests/real-oneharness/*.sh"
+          ],
+          "parallel": false
         }
       }
     },
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo clippy -p llmlint-real-oneharness --all-targets --locked -- -D warnings"
-      }
-    },
-    "lint-sh": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "shellcheck tests/real-oneharness/*.sh"
-      }
+        "commands": [
+          "cargo clippy -p llmlint-real-oneharness --all-targets --locked -- -D warnings",
+          "bash tools/shell/shell.sh lint tests/real-oneharness/*.sh"
+        ],
+        "parallel": false
+      },
+      "inputs": [
+        "default",
+        "^default",
+        "shellTools"
+      ]
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo nextest run -p llmlint-real-oneharness --locked"
+        "command": "bash tools/coverage/shcov.sh run real-oneharness -- cargo nextest run -p llmlint-real-oneharness --locked"
       },
       "cache": true,
       "inputs": [
         "default",
         "^default",
-        "{workspaceRoot}/justfile"
+        "{workspaceRoot}/justfile",
+        "shellCoverage"
       ],
-      "//": "Offline: the_tier_pins_the_multi_file_floor, which holds the justfile's oneharness-cli-version pin to LAYERED_CONFIG_MIN_VERSION, and the installer's refusal of a malformed pin. The suite itself is the network target."
+      "//": "Offline: the_tier_pins_the_multi_file_floor, which holds the justfile's oneharness-cli-version pin to LAYERED_CONFIG_MIN_VERSION, and the installer's refusal of a malformed pin. The suite itself is the network target.",
+      "outputs": [
+        "{workspaceRoot}/target/shcov/real-oneharness.json"
+      ]
     },
     "network": {
       "executor": "nx:run-commands",

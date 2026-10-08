@@ -56,13 +56,19 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .tool-versions
+      # The ruby .tool-versions pins (setup-ruby reads it when given no version);
+      # it runs bashcov, the shell coverage tool, which bootstrap installs from
+      # Gemfile.lock.
+      - uses: ruby/setup-ruby@v1
+      # Bootstrap also installs the justfile-pinned shfmt and shellcheck (digest-
+      # checked prebuilt releases) that every shell project's format and lint run.
       - name: Bootstrap
         run: just bootstrap
       - name: Install actionlint
         run: just actionlint-tools
       # The Nx cache is local to this runner and starts cold, so every target
       # here runs from a clean build: a cached result never stands in for CI.
-      - name: Gate (fmt, clippy + boundaries, shell + workflow lint, build, tests + coverage, docs)
+      - name: Gate (fmt + shfmt, clippy + shellcheck + boundaries, workflow lint, build, tests + Rust and shell coverage, docs)
         env:
           TIER: ${{ steps.tier.outputs.tier }}
           BASE: ${{ steps.tier.outputs.base }}
@@ -84,14 +90,19 @@ jobs:
         run: just check-version-bump "$BASE_SHA"
 
   # Prove the artifact builds and its tests pass on macOS and Windows, at the same
-  # tier as `gate` (without the coverage floor, which is enforced on Linux, and
-  # without shellcheck/actionlint, which are platform-independent and run there).
+  # tier as `gate` (without the coverage floors, which are enforced on Linux, and
+  # without shfmt/shellcheck/actionlint, which are platform-independent and run
+  # there). The two switches are check-portable's; set for the job, they also make
+  # bootstrap skip installing the Linux-only shell tools and bashcov.
   cross:
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      LLMLINT_COVERAGE: "off"
+      LLMLINT_SHELL_TOOLS: "off"
     defaults:
       run:
         shell: bash

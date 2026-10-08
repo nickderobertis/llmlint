@@ -17,17 +17,20 @@ freeze_version="0.2.2"
 # freeze's Linux release assets are named for the arch the way screencomp names
 # its lanes (x86_64 / arm64); map explicitly anyway, since that is a coincidence
 # of two vocabularies rather than one shared name.
-host="$(uname -m)" || { echo "ci-install-freeze: 'uname -m' failed (above); cannot pick the freeze asset for this runner. Check that the uname first on PATH (command -v uname) is the system one, then re-run." >&2; exit 1; }
-case "$host" in
-x86_64 | amd64) asset_arch="x86_64" ;;
-arm64 | aarch64) asset_arch="arm64" ;;
-*)
-  echo "ci-install-freeze: no pinned freeze build for this architecture: $host" >&2
-  echo "                   freeze v$freeze_version ships Linux x86_64 and arm64 only." >&2
-  echo "                   Run the capture on one of those, or install freeze from" >&2
-  echo "                   source first: just screenshots-tools" >&2
+host="$(uname -m)" || {
+  echo "ci-install-freeze: 'uname -m' failed (above); cannot pick the freeze asset for this runner. Check that the uname first on PATH (command -v uname) is the system one, then re-run." >&2
   exit 1
-  ;;
+}
+case "$host" in
+  x86_64 | amd64) asset_arch="x86_64" ;;
+  arm64 | aarch64) asset_arch="arm64" ;;
+  *)
+    echo "ci-install-freeze: no pinned freeze build for this architecture: $host" >&2
+    echo "                   freeze v$freeze_version ships Linux x86_64 and arm64 only." >&2
+    echo "                   Run the capture on one of those, or install freeze from" >&2
+    echo "                   source first: just screenshots-tools" >&2
+    exit 1
+    ;;
 esac
 
 # Overridable so the journeys in tests/visual_guard.rs can drive the real script
@@ -52,13 +55,13 @@ if ! [[ $base_url =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ || $bas
   exit 1
 fi
 case "$install_dir" in
-/*) ;;
-*)
-  echo "ci-install-freeze: FREEZE_INSTALL_DIR must be an absolute directory path" >&2
-  echo "                   to install into; got: ${install_dir:-<empty>}" >&2
-  echo "                   Unset it to use /usr/local/bin." >&2
-  exit 1
-  ;;
+  /*) ;;
+  *)
+    echo "ci-install-freeze: FREEZE_INSTALL_DIR must be an absolute directory path" >&2
+    echo "                   to install into; got: ${install_dir:-<empty>}" >&2
+    echo "                   Unset it to use /usr/local/bin." >&2
+    exit 1
+    ;;
 esac
 if [ ! -r "$sums_file" ]; then
   echo "ci-install-freeze: no readable digest pin file at $sums_file" >&2
@@ -68,7 +71,10 @@ if [ ! -r "$sums_file" ]; then
 fi
 
 stem="freeze_${freeze_version}_Linux_${asset_arch}"
-tmp="$(mktemp -d)" || { echo "ci-install-freeze: could not create a temporary directory (check TMPDIR)" >&2; exit 1; }
+tmp="$(mktemp -d)" || {
+  echo "ci-install-freeze: could not create a temporary directory (check TMPDIR)" >&2
+  exit 1
+}
 trap 'rm -rf "$tmp" || echo "ci-install-freeze: could not remove $tmp; delete it by hand" >&2' EXIT
 
 # Portable SHA-256 (Linux coreutils vs macOS/BSD), as in screenshots/screenshots.sh.

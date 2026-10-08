@@ -5,10 +5,11 @@
 # quality gate and fails on any issue (no warnings-only mode). Recipes are quiet
 # on success and specific on failure.
 #
-# The gate recipes (check, test, lint, lint-sh, lint-workflows, fmt-check,
+# The gate recipes (check, test, lint, lint-workflows, fmt-check,
 # format, doc) DELEGATE to Nx (scripts/nx runs it on the pinned bun): each project
-# declares what its targets do (cargo fmt, clippy, nextest under cargo-llvm-cov,
-# shellcheck, actionlint), and the root only chooses which projects run them.
+# declares what its targets do (cargo fmt, shfmt, clippy, shellcheck, nextest
+# under cargo-llvm-cov or bashcov, actionlint), and the root only chooses which
+# projects run them.
 # scripts/nx-tier.sh picks the tier: with no flag the AFFECTED tier — `nx
 # affected` from the explicit base scripts/nx-base.sh prints (NX_BASE, validated,
 # else the merge base with origin/main); `--all` the FULL SWEEP (`nx run-many
@@ -28,6 +29,15 @@ llvmcov-version := "0.8.7"
 # verified against the digests in `scripts/actionlint.sha256` (refresh those when
 # this moves); `just setup`, `just actionlint-tools`, and CI's gate job all use it.
 actionlint-version := "1.7.12"
+
+# The shell toolchain every shell project's `format` and `lint` targets run
+# through tools/shell/shell.sh, which refuses any other version.
+# `tools/shell/install-shell-tools.sh` installs these pins from the prebuilt
+# releases, verified against tools/shell/shell-tools.sha256 (refresh it when they
+# move); `just bootstrap` (hence `just setup` and CI) and `just shell-tools` run it.
+# The shell coverage tool, bashcov, is pinned in the root Gemfile.lock.
+shfmt-version := "3.14.1"
+shellcheck-version := "0.11.0"
 
 # Tools for the informational performance suite (`bench*`, `profile`). NOT part
 # of the gate or `just setup`: benchmarks measure, they don't block. CI's
@@ -61,44 +71,50 @@ setup-check:
     @bash scripts/setup-check.sh
 
 # CI calls this directly after installing the toolchain + tools its own way.
-# Fetch deps, add toolchain components, install the pinned bun + the locked Nx.
+# Fetch deps, add toolchain components, install the pinned bun + the locked Nx,
+# the pinned shfmt + shellcheck, and the locked bashcov (Ruby is a prerequisite).
 bootstrap:
     rustup show active-toolchain
     rustup component add rustfmt clippy llvm-tools
     cargo fetch --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
+    bash tools/shell/install-shell-tools.sh
+    bash tools/coverage/shcov.sh install
 
 # llmlint: ignore-block[diagnostics_error_or_absent] compiler warnings already fail these gates: their `lint` target is `cargo clippy --all-targets -- -D warnings` over every crate, which compiles and denies the same diagnostics the build and test targets would emit; forcing RUSTFLAGS here would also rebuild every artifact the cache and the cross jobs share
-# Full quality gate: format check, clippy and the project-boundary check,
-# shellcheck, actionlint, build, every project's tests (unit, e2e, the offline
-# release-targets and script journeys) with the coverage-measured ones under
-# cargo-llvm-cov, docs, and the 95% line floor over the union. The affected tier
-# by default; `just check --all` is the full sweep. Fails on any issue.
+# Full quality gate: format check (cargo fmt, shfmt), clippy, shellcheck and the
+# project-boundary check, actionlint, build, every project's tests (unit, e2e,
+# the offline release-targets and script journeys) with the Rust coverage-measured
+# ones under cargo-llvm-cov and the script journeys under bashcov, docs, and the
+# coverage targets: the 95% Rust line floor over the union, and the shell line
+# floor over the merged shell records. The affected tier by default; `just check
+# --all` is the full sweep. Fails on any issue.
 [positional-arguments]
 check *flags:
     @tier="$(bash scripts/nx-tier.sh "$@")"; \
     if [ "$tier" = all ]; then \
-      bash scripts/nx run-many --all -t format lint lint-sh lint-workflows build test doc coverage; \
+      bash scripts/nx run-many --all -t format lint lint-workflows build test doc coverage; \
     else \
-      bash scripts/nx affected --base="$tier" -t format lint lint-sh lint-workflows build test doc coverage; \
+      bash scripts/nx affected --base="$tier" -t format lint lint-workflows build test doc coverage; \
     fi
     @echo "check: ok"
 
 # The portable part of the gate, which CI's macOS/Windows `cross` jobs run:
-# format, clippy and the boundary check, and every test uninstrumented
-# (LLMLINT_COVERAGE=off). Coverage, shellcheck and actionlint are platform-
-# independent and run in `check` on Linux, and so do coverage-driver's tests:
-# they exist to drive the instrumented toolchain (cargo-llvm-cov), which the
-# cross jobs do not install. Same tier flag as `check`.
+# cargo fmt, clippy and the boundary check, and every test unmeasured
+# (LLMLINT_COVERAGE=off). Coverage, shfmt, shellcheck (LLMLINT_SHELL_TOOLS=off)
+# and actionlint are platform-independent and run in `check` on Linux, and so do
+# coverage-driver's tests, which drive the instrumented toolchain (cargo-llvm-cov),
+# and shell-tools' tests, which drive the pinned shfmt and shellcheck and the
+# Unix tool installer: the cross jobs install none of them. Same tier flag as `check`.
 [positional-arguments]
 check-portable *flags:
     @tier="$(bash scripts/nx-tier.sh "$@")"; \
-    export LLMLINT_COVERAGE=off; \
+    export LLMLINT_COVERAGE=off LLMLINT_SHELL_TOOLS=off; \
     if [ "$tier" = all ]; then \
-      bash scripts/nx run-many --all -t format lint test --exclude=coverage-driver; \
+      bash scripts/nx run-many --all -t format lint test --exclude=coverage-driver,shell-tools; \
     else \
-      bash scripts/nx affected --base="$tier" -t format lint test --exclude=coverage-driver; \
+      bash scripts/nx affected --base="$tier" -t format lint test --exclude=coverage-driver,shell-tools; \
     fi
     @echo "check-portable: ok"
 # llmlint: ignore-end[diagnostics_error_or_absent]
@@ -113,9 +129,10 @@ test *flags:
       bash scripts/nx affected --base="$tier" -t test; \
     fi
 
-# Lint: clippy per crate (-D warnings) and the project-boundary check. Shell and
-# workflow lint are `lint-sh` and `lint-workflows` (separate so the macOS/Windows
-# cross jobs can run this one without shellcheck or actionlint); `check` runs all.
+# Lint: clippy per crate (-D warnings), shellcheck over each shell project's
+# scripts, and the project-boundary check. Workflow lint is `lint-workflows`
+# (separate so the macOS/Windows cross jobs can run this one without actionlint);
+# `check` runs both.
 [positional-arguments]
 lint *flags:
     @tier="$(bash scripts/nx-tier.sh "$@")"; \
@@ -125,7 +142,8 @@ lint *flags:
       bash scripts/nx affected --base="$tier" -t lint; \
     fi
 
-# Format the affected crates in place (`--all` for every crate).
+# Format the affected projects in place — cargo fmt and shfmt (`--all` for every
+# project).
 [positional-arguments]
 format *flags:
     @tier="$(bash scripts/nx-tier.sh "$@")"; \
@@ -156,20 +174,15 @@ doc *flags:
     fi
 
 # Every coverage-measured project's tests under cargo-llvm-cov, then the 95% line
-# floor over their union (lower it only with a documented reason in AGENTS.md).
+# floor over their union; and every shell-measured project's tests under bashcov,
+# then the shell line floor over their merged records (lower either only with a
+# documented reason in AGENTS.md).
 coverage:
-    @bash scripts/nx run coverage:coverage
+    @bash scripts/nx run-many -t coverage --projects=coverage,shell-coverage
 
-# shellcheck over each project's scripts (and .githooks/pre-push); part of
-# `check`. Fix a finding, or disable it at its site with a reason.
-[positional-arguments]
-lint-sh *flags:
-    @tier="$(bash scripts/nx-tier.sh "$@")"; \
-    if [ "$tier" = all ]; then \
-      bash scripts/nx run-many --all -t lint-sh; \
-    else \
-      bash scripts/nx affected --base="$tier" -t lint-sh; \
-    fi
+# Install the pinned shfmt and shellcheck into ~/.local/bin; a no-op when they are there.
+shell-tools:
+    @bash tools/shell/install-shell-tools.sh
 
 # actionlint over every workflow (the ci-workflows project); part of `check`.
 # Fix a workflow finding at its site rather than suppress it.

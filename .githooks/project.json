@@ -7,11 +7,26 @@
     "type:tooling"
   ],
   "targets": {
-    "lint-sh": {
+    "format": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "shellcheck .githooks/pre-push"
+        "command": "bash tools/shell/shell.sh format .githooks/pre-push"
+      },
+      "configurations": {
+        "write": {
+          "command": "bash tools/shell/shell.sh format --write .githooks/pre-push"
+        }
       }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh lint .githooks/pre-push"
+      },
+      "inputs": [
+        "default",
+        "shellTools"
+      ]
     }
   }
 }

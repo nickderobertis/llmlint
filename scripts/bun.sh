@@ -23,7 +23,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
-  || { echo "bun.sh: cannot resolve the repository root from ${BASH_SOURCE[0]}; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
+  || {
+    echo "bun.sh: cannot resolve the repository root from ${BASH_SOURCE[0]}; run it from an intact checkout whose directories you can read and enter." >&2
+    exit 1
+  }
 readonly ROOT
 readonly MODE="${1:-}"
 
@@ -159,7 +162,8 @@ case "$MODE" in
     if ! pinned_bun >/dev/null; then
       case "${OS:-}${OSTYPE:-}" in
         *Windows_NT* | *msys* | *cygwin* | *win32*)
-          fail "install bun $VERSION first on PATH (powershell -c \"irm bun.sh/install.ps1 | iex\" with BUN_VERSION), then re-run 'just bootstrap'." ;;
+          fail "install bun $VERSION first on PATH (powershell -c \"irm bun.sh/install.ps1 | iex\" with BUN_VERSION), then re-run 'just bootstrap'."
+          ;;
       esac
       install_pinned
       pinned_bun >/dev/null || fail "installed bun does not report $VERSION; remove $CACHE_DIR and re-run 'just bootstrap'."

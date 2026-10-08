@@ -20,3 +20,18 @@ trim_trailing_whitespace = false
 [justfile]
 indent_style = space
 indent_size = 4
+
+# Shell: the one record of the shfmt style (shfmt reads these keys because the
+# format targets give it no style flags). Two-space indent, `case` items indented
+# under their `case`, and `&&`/`||`/`|` starting the continued line. The second
+# section names the shell scripts that carry no `.sh` extension; a glob with a
+# `/` is anchored at this directory, so the two cannot share one section.
+[*.sh]
+indent_size = 2
+switch_case_indent = true
+binary_next_line = true
+
+[{.githooks/pre-push,scripts/nx}]
+indent_size = 2
+switch_case_indent = true
+binary_next_line = true

@@ -1,10 +1,11 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "bench",
-  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format, lint (which compiles the benches), lint-sh (which shellchecks the harness scripts) and test (the harness scripts' offline input checks, which measure nothing). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
+  "//": "The informational performance suite: never a gate, so the gate tiers reach only its format (cargo fmt, and shfmt over the harness scripts), lint (which compiles the benches, and shellchecks the harness scripts) and test (the harness scripts' offline input checks, which measure nothing). The bench* targets are what `just bench*` and the Performance workflow run. bench-cli and bench-instructions build the mock fixture themselves as a tool, so a fixture change does not select this project.",
   "projectType": "application",
   "tags": [
-    "type:bench"
+    "type:bench",
+    "coverage:shell"
   ],
   "implicitDependencies": [
     "llmlint"
@@ -13,37 +14,52 @@
     "format": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo fmt -p llmlint-bench -- --check"
+        "commands": [
+          "cargo fmt -p llmlint-bench -- --check",
+          "bash tools/shell/shell.sh format benches/*.sh"
+        ],
+        "parallel": false
       },
       "configurations": {
         "write": {
-          "command": "cargo fmt -p llmlint-bench"
+          "commands": [
+            "cargo fmt -p llmlint-bench",
+            "bash tools/shell/shell.sh format --write benches/*.sh"
+          ],
+          "parallel": false
         }
       }
     },
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo clippy -p llmlint-bench --all-targets --locked -- -D warnings"
-      }
-    },
-    "lint-sh": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "shellcheck benches/*.sh"
-      }
+        "commands": [
+          "cargo clippy -p llmlint-bench --all-targets --locked -- -D warnings",
+          "bash tools/shell/shell.sh lint benches/*.sh"
+        ],
+        "parallel": false
+      },
+      "inputs": [
+        "default",
+        "^default",
+        "shellTools"
+      ]
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "cargo nextest run -p llmlint-bench --locked"
+        "command": "bash tools/coverage/shcov.sh run bench -- cargo nextest run -p llmlint-bench --locked"
       },
       "cache": true,
       "inputs": [
         "default",
-        "^default"
+        "^default",
+        "shellCoverage"
       ],
-      "//": "Offline: harness_inputs drives bench.sh and bench-instructions.sh up to their own hyperfine/valgrind check and profile.sh against stand-in cargo/samply, so a bad BENCH_* or PROFILE_* override is shown refused by name; nothing is built, timed or profiled."
+      "//": "Offline: harness_inputs drives bench.sh and bench-instructions.sh up to their own hyperfine/valgrind check and profile.sh against stand-in cargo/samply, so a bad BENCH_* or PROFILE_* override is shown refused by name; nothing is built, timed or profiled.",
+      "outputs": [
+        "{workspaceRoot}/target/shcov/bench.json"
+      ]
     },
     "bench": {
       "executor": "nx:run-commands",

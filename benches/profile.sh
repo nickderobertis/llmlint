@@ -53,15 +53,15 @@ top="${PROFILE_TOP:-30}"
 read -r -a samply_args <<<"${SAMPLY_ARGS:-}"
 
 fail() {
-    printf 'FAIL: %s\n' "$*" >&2
-    exit 1
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
 }
 
 # Each count reaches bash arithmetic or a tool's numeric flag, so only a plain
 # positive decimal is accepted (never an expression, zero, or a negative).
 for _setting in "PROFILE_SECONDS=$seconds" "PROFILE_REPEAT=$repeat" "PROFILE_TOP=$top"; do
-    [[ "${_setting#*=}" =~ ^[1-9][0-9]{0,5}$ ]] ||
-        fail "${_setting%%=*} must be a whole number from 1 to 999999 (got '${_setting#*=}'); unset it to use the default."
+  [[ "${_setting#*=}" =~ ^[1-9][0-9]{0,5}$ ]] \
+    || fail "${_setting%%=*} must be a whole number from 1 to 999999 (got '${_setting#*=}'); unset it to use the default."
 done
 unset _setting
 
@@ -69,21 +69,21 @@ unset _setting
 # the cli/callgrind modes run `llmlint` inside. Exports `bin`, `proj`, and the
 # harness env; registers a cleanup trap.
 setup_cli_sandbox() {
-    bin="$repo_root/target/profiling/llmlint"
-    local mock="$repo_root/target/profiling/llmlint-mock-oneharness"
-    echo "» building binary + mock-oneharness fixture (profiling profile)"
-    (cd "$repo_root" && cargo build --profile profiling --locked --quiet -p llmlint -p llmlint-mock-oneharness)
-    [ -x "$bin" ] || fail "profiling binary not found at $bin"
-    [ -x "$mock" ] || fail "profiling mock-oneharness fixture not found at $mock"
+  bin="$repo_root/target/profiling/llmlint"
+  local mock="$repo_root/target/profiling/llmlint-mock-oneharness"
+  echo "» building binary + mock-oneharness fixture (profiling profile)"
+  (cd "$repo_root" && cargo build --profile profiling --locked --quiet -p llmlint -p llmlint-mock-oneharness)
+  [ -x "$bin" ] || fail "profiling binary not found at $bin"
+  [ -x "$mock" ] || fail "profiling mock-oneharness fixture not found at $mock"
 
-    sandbox="$(mktemp -d)"
-    # shellcheck disable=SC2317,SC2329  # invoked via the EXIT trap.
-    cleanup() { rm -rf "$sandbox"; }
-    trap cleanup EXIT
+  sandbox="$(mktemp -d)"
+  # shellcheck disable=SC2317,SC2329  # invoked via the EXIT trap.
+  cleanup() { rm -rf "$sandbox"; }
+  trap cleanup EXIT
 
-    proj="$sandbox/project"
-    mkdir -p "$proj/src"
-    cat >"$proj/llmlint.yml" <<'YAML'
+  proj="$sandbox/project"
+  mkdir -p "$proj/src"
+  cat >"$proj/llmlint.yml" <<'YAML'
 version: 1
 files:
   include: ["src/**"]
@@ -96,11 +96,11 @@ rules:
   - name: no_unwrap_in_library
     description: "true when no library code calls unwrap/expect; false otherwise."
 YAML
-    printf '// sample source\npub fn answer() -> u32 { 42 }\n' >"$proj/src/lib.rs"
-    printf '{}\n' >"$sandbox/verdicts.json"
-    export LLMLINT_ONEHARNESS_BIN="$mock"
-    export LLMLINT_MOCK_VERDICTS="$sandbox/verdicts.json"
-    export HOME="$sandbox"
+  printf '// sample source\npub fn answer() -> u32 { 42 }\n' >"$proj/src/lib.rs"
+  printf '{}\n' >"$sandbox/verdicts.json"
+  export LLMLINT_ONEHARNESS_BIN="$mock"
+  export LLMLINT_MOCK_VERDICTS="$sandbox/verdicts.json"
+  export HOME="$sandbox"
 }
 
 mode="${1:-engine}"
@@ -108,58 +108,58 @@ mode="${1:-engine}"
 # Deterministic per-function attribution of a single CLI invocation. No samply
 # (and no perf-event access) needed, so it works in containers and CI.
 if [[ "$mode" == "callgrind" ]]; then
-    shift
-    [[ $# -ge 1 ]] || fail "usage: profile.sh callgrind <llmlint args…> (e.g. callgrind lint)"
-    command -v valgrind >/dev/null 2>&1 ||
-        fail "valgrind not found on PATH (Linux-only; install it with your package manager)."
-    command -v callgrind_annotate >/dev/null 2>&1 ||
-        fail "callgrind_annotate not found on PATH (ships with valgrind)."
-    setup_cli_sandbox
-    outdir="$repo_root/target/profile"
-    mkdir -p "$outdir"
-    cg_out="$outdir/callgrind.out"
-    echo "» running '$bin $* --cwd $proj' under callgrind"
-    # Non-zero exits are tolerated: a fail verdict exits 1 by design and the
-    # profile of that path is exactly what was asked for.
-    valgrind --tool=callgrind --callgrind-out-file="$cg_out" -- \
-        "$bin" "$@" --cwd "$proj" >/dev/null || true
-    echo
-    echo "» top $top functions by instruction count (full data: $cg_out)"
-    callgrind_annotate --threshold=99 "$cg_out" | head -n "$((top + 12))"
-    exit 0
+  shift
+  [[ $# -ge 1 ]] || fail "usage: profile.sh callgrind <llmlint args…> (e.g. callgrind lint)"
+  command -v valgrind >/dev/null 2>&1 \
+    || fail "valgrind not found on PATH (Linux-only; install it with your package manager)."
+  command -v callgrind_annotate >/dev/null 2>&1 \
+    || fail "callgrind_annotate not found on PATH (ships with valgrind)."
+  setup_cli_sandbox
+  outdir="$repo_root/target/profile"
+  mkdir -p "$outdir"
+  cg_out="$outdir/callgrind.out"
+  echo "» running '$bin $* --cwd $proj' under callgrind"
+  # Non-zero exits are tolerated: a fail verdict exits 1 by design and the
+  # profile of that path is exactly what was asked for.
+  valgrind --tool=callgrind --callgrind-out-file="$cg_out" -- \
+    "$bin" "$@" --cwd "$proj" >/dev/null || true
+  echo
+  echo "» top $top functions by instruction count (full data: $cg_out)"
+  callgrind_annotate --threshold=99 "$cg_out" | head -n "$((top + 12))"
+  exit 0
 fi
 
-command -v samply >/dev/null 2>&1 ||
-    fail "samply not found on PATH. Install it with 'just bench-tools' (or 'cargo install --locked samply')."
+command -v samply >/dev/null 2>&1 \
+  || fail "samply not found on PATH. Install it with 'just bench-tools' (or 'cargo install --locked samply')."
 
 if [[ "$mode" == "engine" ]]; then
-    shift || true
-    filter="${1:-}"
-    echo "» building bench (profiling profile)"
-    # Build the bench with symbols, then read its executable path from cargo's
-    # JSON output (no jq dependency).
-    artifact="$(cargo build --profile profiling -p llmlint-bench --bench engine --locked --message-format=json -q |
-        grep -F '"name":"engine"' | grep -F '"executable":' | tail -1)"
-    bench_exe="$(printf '%s' "$artifact" | grep -o '"executable":"[^"]*"' | cut -d'"' -f4)"
-    { [ -n "$bench_exe" ] && [ -x "$bench_exe" ]; } || fail "could not locate the profiling bench executable; check that 'cargo bench --profile profiling -p llmlint-bench --bench engine --no-run' builds"
-    echo "» profiling engine for ${seconds}s (${filter:-all benchmarks})"
-    # `--profile-time` makes Criterion run the bench in a plain loop with no
-    # statistical analysis — exactly what an external sampler wants.
-    samply record ${samply_args[@]+"${samply_args[@]}"} -- \
-        "$bench_exe" --bench --profile-time "$seconds" ${filter:+"$filter"}
-    exit 0
+  shift || true
+  filter="${1:-}"
+  echo "» building bench (profiling profile)"
+  # Build the bench with symbols, then read its executable path from cargo's
+  # JSON output (no jq dependency).
+  artifact="$(cargo build --profile profiling -p llmlint-bench --bench engine --locked --message-format=json -q \
+    | grep -F '"name":"engine"' | grep -F '"executable":' | tail -1)"
+  bench_exe="$(printf '%s' "$artifact" | grep -o '"executable":"[^"]*"' | cut -d'"' -f4)"
+  { [ -n "$bench_exe" ] && [ -x "$bench_exe" ]; } || fail "could not locate the profiling bench executable; check that 'cargo bench --profile profiling -p llmlint-bench --bench engine --no-run' builds"
+  echo "» profiling engine for ${seconds}s (${filter:-all benchmarks})"
+  # `--profile-time` makes Criterion run the bench in a plain loop with no
+  # statistical analysis — exactly what an external sampler wants.
+  samply record ${samply_args[@]+"${samply_args[@]}"} -- \
+    "$bench_exe" --bench --profile-time "$seconds" ${filter:+"$filter"}
+  exit 0
 fi
 
 if [[ "$mode" == "cli" ]]; then
-    shift
-    [[ $# -ge 1 ]] || fail "usage: profile.sh cli <llmlint args…> (e.g. cli lint)"
-    setup_cli_sandbox
-    echo "» profiling '$bin $* --cwd $proj' over $repeat invocations"
-    # shellcheck disable=SC2016  # the loop is expanded by the inner bash, from its own "$@".
-    samply record ${samply_args[@]+"${samply_args[@]}"} -- \
-        bash -c 'n="$1"; shift; proj="$1"; shift; for ((i = 0; i < n; i++)); do "$@" --cwd "$proj" >/dev/null 2>&1 || true; done' \
-        _ "$repeat" "$proj" "$bin" "$@"
-    exit 0
+  shift
+  [[ $# -ge 1 ]] || fail "usage: profile.sh cli <llmlint args…> (e.g. cli lint)"
+  setup_cli_sandbox
+  echo "» profiling '$bin $* --cwd $proj' over $repeat invocations"
+  # shellcheck disable=SC2016  # the loop is expanded by the inner bash, from its own "$@".
+  samply record ${samply_args[@]+"${samply_args[@]}"} -- \
+    bash -c 'n="$1"; shift; proj="$1"; shift; for ((i = 0; i < n; i++)); do "$@" --cwd "$proj" >/dev/null 2>&1 || true; done' \
+    _ "$repeat" "$proj" "$bin" "$@"
+  exit 0
 fi
 
 fail "unknown mode '$mode' (expected: engine | cli | callgrind)"

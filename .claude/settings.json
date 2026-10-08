@@ -28,7 +28,7 @@
       "Bash(just coverage)",
       "Bash(just doc)",
       "Bash(just lint-workflows)",
-      "Bash(just lint-sh)",
+      "Bash(just shell-tools)",
       "Bash(just actionlint-tools)",
       "Bash(just test)",
       "Bash(just test --all)",

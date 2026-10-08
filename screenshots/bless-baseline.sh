@@ -10,7 +10,10 @@
 set -euo pipefail
 
 # The baseline paths below are relative to the repository root.
-cd "$(dirname "${BASH_SOURCE[0]}")/.." || { echo "bless-baseline: cannot enter the repository root; run it by its path from a readable checkout." >&2; exit 1; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || {
+  echo "bless-baseline: cannot enter the repository root; run it by its path from a readable checkout." >&2
+  exit 1
+}
 
 if ! command -v screencomp >/dev/null 2>&1; then
   echo "bless-baseline: screencomp is not installed, so the baseline cannot be" >&2

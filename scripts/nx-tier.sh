@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Choose the gate tier for the justfile's gate recipes (check, test, lint,
-# lint-sh, lint-workflows, fmt-check, format, doc), so the tier is a flag on the
+# lint-workflows, fmt-check, format, doc), so the tier is a flag on the
 # same command rather than a second gate. Prints one line:
 #
 #   all        under --all: the FULL SWEEP — the recipe runs `nx run-many --all`
@@ -15,7 +15,10 @@
 # why); 2 on any other flag — a mistyped tier never quietly buys a weaker one.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.." || { echo "nx-tier: cannot enter the repository root; run it from an intact checkout whose directories you can read and enter." >&2; exit 1; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || {
+  echo "nx-tier: cannot enter the repository root; run it from an intact checkout whose directories you can read and enter." >&2
+  exit 1
+}
 
 if [ "$#" -eq 0 ]; then
   bash scripts/nx-base.sh

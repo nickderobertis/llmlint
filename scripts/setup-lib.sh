@@ -6,17 +6,14 @@
 # Strict mode is the library's own, not inherited from whichever script sources it.
 set -euo pipefail
 #
-# llmlint deliberately does NOT use asdf/direnv (see AGENTS.md). The dev
-# environment is: rustup + the pinned rust-toolchain.toml, `just`, and the two
-# cargo subcommands the gate drives (`cargo nextest`, `cargo llvm-cov`), plus the
-# pinned `actionlint` the gate's `lint-workflows` step runs, and Node + the bun
-# `.tool-versions` pins, which install and run Nx (the gate's orchestrator).
+# llmlint deliberately does NOT use asdf/direnv (see AGENTS.md, which lists the
+# dev environment under "Command surface" and "Shell").
 
 # Binaries that must resolve for the dev environment to be considered ready —
 # everything `just check` shells out to. cargo-deny/cargo-machete are NOT here —
 # they back `just deps-check`, which is separate from the gate and needs a
 # network DB.
-REQUIRED_BINS="rustc cargo just cargo-nextest cargo-llvm-cov actionlint node"
+REQUIRED_BINS="rustc cargo just cargo-nextest cargo-llvm-cov actionlint shfmt shellcheck node ruby bundle"
 
 # Soft requirements: their absence is an advisory, never a "not ready" verdict.
 # oneharness is a *runtime* prerequisite (the harness llmlint shells out to), not
@@ -45,7 +42,10 @@ _load_tool_env() {
     [ -d "$dir" ] || continue
     case ":$PATH:" in
       *":$dir:"*) : ;;
-      *) PATH="$dir:$PATH"; export PATH ;;
+      *)
+        PATH="$dir:$PATH"
+        export PATH
+        ;;
     esac
   done
 }
@@ -72,13 +72,15 @@ _sha256_stdin() {
 }
 
 # Fingerprint of the inputs setup depends on: the pinned Rust toolchain, the asdf
-# tool versions (`just`), and the dev-tool version pins in the justfile. A change
-# to any of these invalidates the stamp so setup re-runs (e.g. after `just
-# upgrade` or a toolchain bump).
+# tool versions (`just`, `bun`, `ruby`), the dev-tool version pins in the
+# justfile, and the locked bashcov (Gemfile.lock). A change to any of these
+# invalidates the stamp so setup re-runs (e.g. after `just upgrade` or a
+# toolchain bump).
 _fingerprint() {
   {
     [ -f rust-toolchain.toml ] && cat rust-toolchain.toml
     [ -f .tool-versions ] && cat .tool-versions
+    [ -f Gemfile.lock ] && cat Gemfile.lock
     { [ -f justfile ] && grep -E '^[a-z][a-z-]*-version :=' justfile; } || true
   } 2>/dev/null | _sha256_stdin
 }
@@ -131,5 +133,5 @@ _check_ready() {
 # Record the current fingerprint as the stamp of a successful setup.
 _write_stamp() {
   mkdir -p "$(dirname "$STAMP")"
-  _fingerprint > "$STAMP"
+  _fingerprint >"$STAMP"
 }

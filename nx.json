@@ -13,6 +13,19 @@
       "{workspaceRoot}/nx.json",
       "{workspaceRoot}/package.json",
       "{workspaceRoot}/bun.lock"
+    ],
+    "shellTools": [
+      "{workspaceRoot}/tools/shell/shell.sh",
+      { "runtime": "bash tools/shell/shell.sh versions" }
+    ],
+    "shellCoverage": [
+      "{workspaceRoot}/Gemfile",
+      "{workspaceRoot}/Gemfile.lock",
+      "{workspaceRoot}/.bundle/config",
+      "{workspaceRoot}/tools/coverage/shcov.sh",
+      "{workspaceRoot}/tools/coverage/shcov.rb",
+      "{workspaceRoot}/tools/shell/shell.sh",
+      { "env": "LLMLINT_COVERAGE" }
     ]
   },
   "targetDefaults": {
@@ -22,10 +35,6 @@
     "lint": {
       "cache": true,
       "inputs": ["default", "^default"]
-    },
-    "lint-sh": {
-      "cache": true,
-      "inputs": ["default", { "runtime": "shellcheck --version" }]
     },
     "build": {
       "cache": true,

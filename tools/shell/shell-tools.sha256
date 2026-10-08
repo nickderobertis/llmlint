@@ -1,0 +1,16 @@
+# SHA-256 digests of the shfmt and shellcheck release assets
+# tools/shell/install-shell-tools.sh installs, copied verbatim from each release's
+# published asset digests. Pinned HERE so the trust root is this repository rather
+# than the download's origin; refresh these lines whenever `shfmt-version` or
+# `shellcheck-version` in the justfile moves.
+#
+#   https://github.com/mvdan/sh/releases/tag/v3.14.1 (also its sha256sums.txt)
+#   https://github.com/koalaman/shellcheck/releases/tag/v0.11.0
+d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6  shfmt_v3.14.1_darwin_amd64
+b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5  shfmt_v3.14.1_darwin_arm64
+76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf  shfmt_v3.14.1_linux_amd64
+5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489  shfmt_v3.14.1_linux_arm64
+c2c15e08df0e8fbc374c335b230a7ee958c313fa5714817a59aa59f1aa594f51  shellcheck-v0.11.0.darwin.x86_64.tar.gz
+339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f  shellcheck-v0.11.0.darwin.aarch64.tar.gz
+b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6  shellcheck-v0.11.0.linux.x86_64.tar.gz
+68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc  shellcheck-v0.11.0.linux.aarch64.tar.gz

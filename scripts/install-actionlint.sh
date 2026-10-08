@@ -63,27 +63,27 @@ fi
 
 os="$(uname -s)"
 case "$os" in
-Linux) asset_os="linux" ;;
-Darwin) asset_os="darwin" ;;
-*)
-  echo "install-actionlint: no pinned actionlint build for this OS: $os" >&2
-  echo "                    Install actionlint $version yourself (see" >&2
-  echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
-  echo "                    and put it on PATH." >&2
-  exit 1
-  ;;
+  Linux) asset_os="linux" ;;
+  Darwin) asset_os="darwin" ;;
+  *)
+    echo "install-actionlint: no pinned actionlint build for this OS: $os" >&2
+    echo "                    Install actionlint $version yourself (see" >&2
+    echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
+    echo "                    and put it on PATH." >&2
+    exit 1
+    ;;
 esac
 host="$(uname -m)"
 case "$host" in
-x86_64 | amd64) asset_arch="amd64" ;;
-arm64 | aarch64) asset_arch="arm64" ;;
-*)
-  echo "install-actionlint: no pinned actionlint build for this architecture: $host" >&2
-  echo "                    Install actionlint $version yourself (see" >&2
-  echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
-  echo "                    and put it on PATH." >&2
-  exit 1
-  ;;
+  x86_64 | amd64) asset_arch="amd64" ;;
+  arm64 | aarch64) asset_arch="arm64" ;;
+  *)
+    echo "install-actionlint: no pinned actionlint build for this architecture: $host" >&2
+    echo "                    Install actionlint $version yourself (see" >&2
+    echo "                    https://github.com/rhysd/actionlint/blob/main/docs/install.md)" >&2
+    echo "                    and put it on PATH." >&2
+    exit 1
+    ;;
 esac
 
 asset="actionlint_${version}_${asset_os}_${asset_arch}.tar.gz"

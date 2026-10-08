@@ -844,7 +844,8 @@ fn setup_check_reports_a_missing_actionlint_as_not_ready() {
 /// A scratch repository carrying the real justfile and the real
 /// `scripts/nx-tier.sh` + `scripts/nx-base.sh`, with only `scripts/nx` (Nx
 /// itself, the orchestrator the recipes hand off to) stood in by a stub that
-/// records its argv. History: `base` -> `feature` (HEAD) on one side, and
+/// records its argv, and beside it the two platform switches it ran under
+/// (`LLMLINT_COVERAGE`, `LLMLINT_SHELL_TOOLS`). History: `base` -> `feature` (HEAD) on one side, and
 /// `origin/main` moved on to `upstream` on the other, so the merge base with
 /// `origin/main` (`base`) is not `origin/main` itself.
 #[cfg(unix)]
@@ -865,7 +866,8 @@ impl GateRepo {
         }
         p.write(
             "scripts/nx",
-            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$NX_CALLS\"\n",
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$NX_CALLS\"\n\
+             printf 'LLMLINT_COVERAGE=%s LLMLINT_SHELL_TOOLS=%s\\n' \"${LLMLINT_COVERAGE-}\" \"${LLMLINT_SHELL_TOOLS-}\" >> \"$NX_CALLS.env\"\n",
         );
         fs::set_permissions(
             p.path().join("scripts/nx"),
@@ -899,11 +901,16 @@ impl GateRepo {
     fn just(&self, args: &[&str], nx_base: Option<&str>) -> (std::process::Output, Vec<String>) {
         let calls = self.p.path().join("nx-calls");
         let _ = fs::remove_file(&calls);
+        let _ = fs::remove_file(self.p.path().join("nx-calls.env"));
         let mut cmd = std::process::Command::new("just");
+        // The switches are the recipes' to set, never inherited from whichever
+        // gate runs this journey (`check-portable` exports both).
         cmd.args(args)
             .current_dir(self.p.path())
             .env("NX_CALLS", &calls)
-            .env_remove("NX_BASE");
+            .env_remove("NX_BASE")
+            .env_remove("LLMLINT_COVERAGE")
+            .env_remove("LLMLINT_SHELL_TOOLS");
         clear_git_env(&mut cmd);
         if let Some(base) = nx_base {
             cmd.env("NX_BASE", base);
@@ -914,10 +921,20 @@ impl GateRepo {
         let recorded = fs::read_to_string(&calls).unwrap_or_default();
         (out, recorded.lines().map(str::to_string).collect())
     }
+
+    /// The `LLMLINT_COVERAGE`/`LLMLINT_SHELL_TOOLS` each `scripts/nx` call of
+    /// the last [`Self::just`] ran under, one line per call.
+    fn switches(&self) -> Vec<String> {
+        fs::read_to_string(self.p.path().join("nx-calls.env"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
 }
 
 #[cfg(unix)]
-const GATE_TARGETS: &str = "-t format lint lint-sh lint-workflows build test doc coverage";
+const GATE_TARGETS: &str = "-t format lint lint-workflows build test doc coverage";
 
 #[cfg(unix)]
 #[test]
@@ -1000,14 +1017,13 @@ fn every_gate_recipe_takes_the_same_tier() {
     for (recipe, targets) in [
         ("test", "-t test"),
         ("lint", "-t lint"),
-        ("lint-sh", "-t lint-sh"),
         ("lint-workflows", "-t lint-workflows"),
         ("fmt-check", "-t format"),
         ("format", "-t format --configuration=write"),
         ("doc", "-t doc"),
         (
             "check-portable",
-            "-t format lint test --exclude=coverage-driver",
+            "-t format lint test --exclude=coverage-driver,shell-tools",
         ),
     ] {
         let (out, calls) = repo.just(&[recipe], None);
@@ -1020,6 +1036,30 @@ fn every_gate_recipe_takes_the_same_tier() {
         assert!(out.status.success(), "{recipe} --all: {out:?}");
         assert_eq!(calls, vec![format!("run-many --all {targets}")]);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn check_portable_leaves_coverage_and_the_shell_tools_to_the_linux_gate() {
+    // The cross jobs run `check-portable` on macOS/Windows: every test runs
+    // unmeasured and shfmt/shellcheck stand down there, while `check` (the Linux
+    // gate) runs Nx with neither switch set, so both are enforced.
+    let repo = GateRepo::new();
+    for tier in [&["check-portable"][..], &["check-portable", "--all"][..]] {
+        let (out, _) = repo.just(tier, None);
+        assert!(out.status.success(), "{tier:?}: {out:?}");
+        assert_eq!(
+            repo.switches(),
+            vec!["LLMLINT_COVERAGE=off LLMLINT_SHELL_TOOLS=off"],
+            "{tier:?}"
+        );
+    }
+    let (out, _) = repo.just(&["check"], None);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        repo.switches(),
+        vec!["LLMLINT_COVERAGE= LLMLINT_SHELL_TOOLS="]
+    );
 }
 
 // llmlint: ignore-block[e2e_not_mocked] the real scripts run with real curl/unzip/sha256sum/bash; a test cannot own the host's OS/CPU, bun's release server, or a second bun release, so only `uname`, the release tree, and `bun`/`node`/`nx` themselves are stood in
@@ -1635,7 +1675,11 @@ fn setup_check_reports_a_missing_pinned_bun_as_not_ready() {
         "cargo-nextest",
         "cargo-llvm-cov",
         "actionlint",
+        "shfmt",
+        "shellcheck",
         "node",
+        "ruby",
+        "bundle",
     ] {
         write_exe(&tools.join(bin), "#!/bin/sh\nexit 0\n");
     }
@@ -1667,5 +1711,228 @@ fn setup_check_reports_a_missing_pinned_bun_as_not_ready() {
     ));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("no setup stamp"), "{stdout}");
+}
+// llmlint: ignore-end[e2e_not_mocked]
+
+// llmlint: ignore-block[e2e_not_mocked] the real setup.sh and setup-check.sh (with the real setup-lib.sh) run under bash; a test cannot own which gate tools a host has installed, nor let setup provision real rustup, cargo, just, Node or Ruby over the network, so only those binaries are stand-ins (each recording that it ran) on a PATH of the base tools
+/// Under the shell coverage run (`tools/coverage/shcov.sh`), keep measuring the
+/// script a journey starts with a cleared environment: shcov hands over the
+/// snippet that records each bash process as `SHCOV_BASH_ENV`, and bash reads
+/// `BASH_ENV`. Outside that run there is nothing to keep.
+#[cfg(unix)]
+fn keep_shell_coverage(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    if let Some(snippet) = std::env::var_os("SHCOV_BASH_ENV") {
+        cmd.env("BASH_ENV", snippet);
+    }
+    cmd
+}
+
+/// The first `name` on the test's own PATH, if any.
+#[cfg(unix)]
+fn on_path(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_check_requires_the_shell_toolchain_and_follows_the_gemfile_lock() {
+    // `just check` now runs shfmt, shellcheck and (through Ruby + Bundler)
+    // bashcov, so a machine missing any of them is not ready, each named; and the
+    // locked bashcov is part of what a setup stamp vouches for, so a Gemfile.lock
+    // change asks for setup again. PATH is only the base tools the readiness
+    // check runs plus stand-ins for the gate tools, so "missing" means missing
+    // even on a runner that ships shellcheck or Ruby in /usr/bin.
+    let p = Project::new();
+    let root = repo_root();
+    for file in [
+        "scripts/setup-check.sh",
+        "scripts/setup-lib.sh",
+        "scripts/bun.sh",
+        ".tool-versions",
+        "justfile",
+        "rust-toolchain.toml",
+        "Gemfile.lock",
+    ] {
+        p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+    }
+    let bin = p.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for base in [
+        "bash",
+        "dirname",
+        "cat",
+        "grep",
+        "head",
+        "cut",
+        "awk",
+        "mkdir",
+        "sha256sum",
+        "shasum",
+    ] {
+        if let Some(real) = on_path(base) {
+            std::os::unix::fs::symlink(real, bin.join(base)).unwrap();
+        }
+    }
+    let gate_tools = [
+        "rustc",
+        "cargo",
+        "just",
+        "cargo-nextest",
+        "cargo-llvm-cov",
+        "actionlint",
+        "shfmt",
+        "shellcheck",
+        "node",
+        "ruby",
+        "bundle",
+    ];
+    for tool in gate_tools {
+        write_exe(&bin.join(tool), "#!/bin/sh\nexit 0\n");
+    }
+    write_exe(
+        &bin.join("bun"),
+        &format!("#!/bin/sh\necho {}\n", pinned_bun_version()),
+    );
+    let run = |script: &[&str]| {
+        keep_shell_coverage(
+            std::process::Command::new(bin.join("bash"))
+                .args(script)
+                .current_dir(p.path())
+                .env_clear(),
+        )
+        .env("PATH", &bin)
+        .env("HOME", p.path().join("home"))
+        .output()
+        .unwrap()
+    };
+    let out = run(&["-c", ". scripts/setup-lib.sh; _write_stamp"]);
+    assert!(out.status.success(), "{out:?}");
+    let out = run(&["scripts/setup-check.sh"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+
+    for tool in ["shfmt", "shellcheck", "ruby", "bundle"] {
+        fs::rename(bin.join(tool), p.path().join(tool)).unwrap();
+        let out = run(&["scripts/setup-check.sh"]);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{tool}: {stdout}");
+        assert!(
+            stdout.contains(&format!("missing tools: {tool}")),
+            "{tool}: {stdout}"
+        );
+        assert!(stdout.contains("just setup"), "{tool}: {stdout}");
+        fs::rename(p.path().join(tool), bin.join(tool)).unwrap();
+    }
+
+    let lock = p.path().join("Gemfile.lock");
+    let mut locked = fs::read_to_string(&lock).unwrap();
+    locked.push('\n');
+    fs::write(&lock, locked).unwrap();
+    let out = run(&["scripts/setup-check.sh"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains("toolchain or tool versions changed since last setup"),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() {
+    // `scripts/setup.sh` checks its prerequisites (Node, and now Ruby with
+    // Bundler, which run bashcov) before it installs anything. The real script
+    // runs here against stand-ins for every tool it would otherwise provision or
+    // call (rustup, cargo, just, ...), each recording that it ran, so the journey
+    // shows the refusal comes first — not one of them, rustup included, has run —
+    // and, once both are present, setup goes on to provision the toolchain,
+    // `just actionlint-tools` and `just bootstrap` and writes its stamp.
+    let p = Project::new();
+    let root = repo_root();
+    for file in [
+        "scripts/setup.sh",
+        "scripts/setup-lib.sh",
+        ".tool-versions",
+        "justfile",
+        "rust-toolchain.toml",
+        "Gemfile.lock",
+    ] {
+        p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+    }
+    let bin = p.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for base in [
+        "bash",
+        "dirname",
+        "cat",
+        "grep",
+        "head",
+        "cut",
+        "awk",
+        "mkdir",
+        "rm",
+        "sha256sum",
+        "shasum",
+    ] {
+        if let Some(real) = on_path(base) {
+            std::os::unix::fs::symlink(real, bin.join(base)).unwrap();
+        }
+    }
+    let calls = p.path().join("calls");
+    for tool in [
+        "rustup",
+        "rustc",
+        "cargo",
+        "just",
+        "cargo-nextest",
+        "cargo-llvm-cov",
+        "node",
+        "ruby",
+        "bundle",
+    ] {
+        write_exe(
+            &bin.join(tool),
+            &format!("#!/bin/sh\necho \"{tool} $*\" >> \"{}\"\n", calls.display()),
+        );
+    }
+    let setup = || {
+        let _ = fs::remove_file(&calls);
+        let out = keep_shell_coverage(
+            std::process::Command::new(bin.join("bash"))
+                .arg("scripts/setup.sh")
+                .current_dir(p.path())
+                .env_clear(),
+        )
+        .env("PATH", &bin)
+        .env("HOME", p.path().join("home"))
+        .output()
+        .unwrap();
+        (out, fs::read_to_string(&calls).unwrap_or_default())
+    };
+
+    for missing in ["ruby", "bundle"] {
+        fs::rename(bin.join(missing), p.path().join(missing)).unwrap();
+        let (out, ran) = setup();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{missing}: {out:?}");
+        assert!(
+            stderr.contains("Ruby with Bundler is required to run bashcov"),
+            "{missing}: {stderr}"
+        );
+        assert!(
+            ran.is_empty(),
+            "{missing}: setup provisioned before refusing: {ran}"
+        );
+        assert!(!p.path().join(".dev/setup.stamp").exists(), "{missing}");
+        fs::rename(p.path().join(missing), bin.join(missing)).unwrap();
+    }
+
+    let (out, ran) = setup();
+    assert!(out.status.success(), "{out:?}");
+    assert!(ran.contains("rustup "), "{ran}");
+    assert!(ran.contains("just actionlint-tools"), "{ran}");
+    assert!(ran.contains("just bootstrap"), "{ran}");
+    assert!(p.path().join(".dev/setup.stamp").exists());
 }
 // llmlint: ignore-end[e2e_not_mocked]

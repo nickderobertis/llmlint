@@ -73,11 +73,14 @@ PROVENANCE_IDENTITY_RE="^https://github.com/${REPO}/\\.github/workflows/release\
 PROVENANCE_TYPE="https://slsa.dev/provenance/v1"
 
 say() { printf '%s\n' "$*" >&2; }
-err() { printf 'error: %s\n' "$*" >&2; exit 1; }
+err() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
 have() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
-    cat >&2 <<EOF
+  cat >&2 <<EOF
 Install the prebuilt llmlint binary.
 
 Usage: install.sh [--version <tag>] [--to <dir>] [--base-url <url>]
@@ -99,87 +102,96 @@ EOF
 # release workflow builds (.github/workflows/release.yml). Unsupported pairs
 # abort with guidance.
 detect_target() {
-    os="$(uname -s)"
-    arch="$(uname -m)"
+  os="$(uname -s)"
+  arch="$(uname -m)"
 
-    case "$os" in
-        Linux) os_part="unknown-linux-gnu"; ext="tar.gz" ;;
-        Darwin) os_part="apple-darwin"; ext="tar.gz" ;;
-        MINGW* | MSYS* | CYGWIN* | Windows_NT)
-            os_part="pc-windows-msvc"; ext="zip"; BIN_FILE="${BIN}.exe" ;;
-        *) err "unsupported operating system: $os" ;;
-    esac
+  case "$os" in
+    Linux)
+      os_part="unknown-linux-gnu"
+      ext="tar.gz"
+      ;;
+    Darwin)
+      os_part="apple-darwin"
+      ext="tar.gz"
+      ;;
+    MINGW* | MSYS* | CYGWIN* | Windows_NT)
+      os_part="pc-windows-msvc"
+      ext="zip"
+      BIN_FILE="${BIN}.exe"
+      ;;
+    *) err "unsupported operating system: $os" ;;
+  esac
 
-    case "$arch" in
-        x86_64 | amd64) arch_part="x86_64" ;;
-        arm64 | aarch64) arch_part="aarch64" ;;
-        *) err "unsupported architecture: $arch" ;;
-    esac
+  case "$arch" in
+    x86_64 | amd64) arch_part="x86_64" ;;
+    arm64 | aarch64) arch_part="aarch64" ;;
+    *) err "unsupported architecture: $arch" ;;
+  esac
 
-    # The release matrix publishes Windows for x86_64 only.
-    if [ "$ext" = "zip" ] && [ "$arch_part" != "x86_64" ]; then
-        err "no prebuilt Windows binary for $arch; install with 'cargo install $BIN --locked'"
-    fi
+  # The release matrix publishes Windows for x86_64 only.
+  if [ "$ext" = "zip" ] && [ "$arch_part" != "x86_64" ]; then
+    err "no prebuilt Windows binary for $arch; install with 'cargo install $BIN --locked'"
+  fi
 
-    TARGET="${arch_part}-${os_part}"
-    EXT="$ext"
+  TARGET="${arch_part}-${os_part}"
+  EXT="$ext"
 }
 
 # Fetch a URL to stdout. Used only for the GitHub API call, so it carries the
 # optional token; release-asset downloads stay tokenless to avoid sending an
 # Authorization header to the redirected (signed) asset URL.
 api_get() {
-    _url="$1"
-    if [ "$DL" = "curl" ]; then
-        if [ -n "${GITHUB_TOKEN:-}" ]; then
-            curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$_url"
-        else
-            curl -fsSL "$_url"
-        fi
+  _url="$1"
+  if [ "$DL" = "curl" ]; then
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$_url"
     else
-        if [ -n "${GITHUB_TOKEN:-}" ]; then
-            wget --header="Authorization: Bearer $GITHUB_TOKEN" -qO- "$_url"
-        else
-            wget -qO- "$_url"
-        fi
+      curl -fsSL "$_url"
     fi
+  else
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      wget --header="Authorization: Bearer $GITHUB_TOKEN" -qO- "$_url"
+    else
+      wget -qO- "$_url"
+    fi
+  fi
 }
 
 # Download a release asset (follows redirects) to a file.
 download() {
-    _url="$1"
-    _out="$2"
-    if [ "$DL" = "curl" ]; then
-        curl -fsSL -o "$_out" "$_url"
-    else
-        wget -qO "$_out" "$_url"
-    fi
+  _url="$1"
+  _out="$2"
+  if [ "$DL" = "curl" ]; then
+    curl -fsSL -o "$_out" "$_url"
+  else
+    wget -qO "$_out" "$_url"
+  fi
 }
 
 # Resolve the latest release tag by reading "tag_name" from the GitHub API.
 latest_tag() {
-    _body="$(api_get "https://api.github.com/repos/$REPO/releases/latest")" \
-        || err "could not query the latest release (set GITHUB_TOKEN if rate-limited)"
-    _tag="$(printf '%s\n' "$_body" \
-        | grep -m1 '"tag_name"' \
-        | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
-    [ -n "$_tag" ] || err "could not parse the latest release tag from the GitHub API"
-    printf '%s\n' "$_tag"
+  _body="$(api_get "https://api.github.com/repos/$REPO/releases/latest")" \
+    || err "could not query the latest release (set GITHUB_TOKEN if rate-limited)"
+  _tag="$(printf '%s\n' "$_body" \
+    | grep -m1 '"tag_name"' \
+    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+  [ -n "$_tag" ] || err "could not parse the latest release tag from the GitHub API"
+  printf '%s\n' "$_tag"
 }
 
 # Print the SHA-256 of a file using whichever tool is available. Aborts when
 # none is found rather than skip verification.
 sha256_of() {
-    _f="$1"
-    if have sha256sum; then
-        sha256sum "$_f" | awk '{print $1}'
-    elif have shasum; then
-        shasum -a 256 "$_f" | awk '{print $1}'
-    elif have openssl; then
-        openssl dgst -sha256 "$_f" | awk '{print $NF}'
-    else
-        err "no SHA-256 tool (need sha256sum, shasum, or openssl); refusing to install unverified"
-    fi
+  _f="$1"
+  if have sha256sum; then
+    sha256sum "$_f" | awk '{print $1}'
+  elif have shasum; then
+    shasum -a 256 "$_f" | awk '{print $1}'
+  elif have openssl; then
+    openssl dgst -sha256 "$_f" | awk '{print $NF}'
+  else
+    err "no SHA-256 tool (need sha256sum, shasum, or openssl); refusing to install unverified"
+  fi
 }
 
 # Try to verify the archive from its Sigstore build-provenance bundle, using
@@ -194,59 +206,59 @@ sha256_of() {
 # (no verifier installed, no bundle published, or a tooling/soft failure). A
 # real tamper still fails closed — the checksum root then rejects the archive.
 verify_sigstore() {
-    _archive="$1"       # local path to the downloaded archive
-    _bundle_url="$2"    # bundle URL (served with the archive)
-    _bundle="${_archive}.sigstore.json"
+  _archive="$1"    # local path to the downloaded archive
+  _bundle_url="$2" # bundle URL (served with the archive)
+  _bundle="${_archive}.sigstore.json"
 
-    have cosign || have sigstore || have gh || return 1
+  have cosign || have sigstore || have gh || return 1
 
-    download "$_bundle_url" "$_bundle" 2>/dev/null || {
-        say "no attestation bundle at ${_bundle_url}; using the checksum root."
-        return 1
-    }
-
-    if have cosign; then
-        say "verifying build provenance with cosign (Sigstore, offline)..."
-        if cosign verify-blob-attestation \
-            --new-bundle-format \
-            --bundle "$_bundle" \
-            --type "$PROVENANCE_TYPE" \
-            --certificate-oidc-issuer "$OIDC_ISSUER" \
-            --certificate-identity-regexp "$PROVENANCE_IDENTITY_RE" \
-            "$_archive" >/dev/null 2>&1; then
-            say "verified: attested by ${REPO}'s release workflow (cosign)."
-            return 0
-        fi
-        say "cosign could not verify the attestation; trying the next root."
-    fi
-
-    # sigstore-python pins the repository (any workflow in $REPO may sign) —
-    # slightly looser than cosign's workflow-pinned regexp, but still nothing a
-    # mirror or third party can forge.
-    if have sigstore; then
-        say "verifying build provenance with sigstore-python (offline)..."
-        if sigstore verify github \
-            --bundle "$_bundle" \
-            --offline \
-            --repository "$REPO" \
-            "$_archive" >/dev/null 2>&1; then
-            say "verified: attested by ${REPO}'s release workflow (sigstore)."
-            return 0
-        fi
-        say "sigstore could not verify the attestation; trying the next root."
-    fi
-
-    if have gh; then
-        say "verifying build provenance with gh (Sigstore, offline)..."
-        if gh attestation verify "$_archive" --bundle "$_bundle" --repo "$REPO" \
-            >/dev/null 2>&1; then
-            say "verified: attested by ${REPO}'s release workflow (gh)."
-            return 0
-        fi
-        say "gh could not verify the attestation; trying the next root."
-    fi
-
+  download "$_bundle_url" "$_bundle" 2>/dev/null || {
+    say "no attestation bundle at ${_bundle_url}; using the checksum root."
     return 1
+  }
+
+  if have cosign; then
+    say "verifying build provenance with cosign (Sigstore, offline)..."
+    if cosign verify-blob-attestation \
+      --new-bundle-format \
+      --bundle "$_bundle" \
+      --type "$PROVENANCE_TYPE" \
+      --certificate-oidc-issuer "$OIDC_ISSUER" \
+      --certificate-identity-regexp "$PROVENANCE_IDENTITY_RE" \
+      "$_archive" >/dev/null 2>&1; then
+      say "verified: attested by ${REPO}'s release workflow (cosign)."
+      return 0
+    fi
+    say "cosign could not verify the attestation; trying the next root."
+  fi
+
+  # sigstore-python pins the repository (any workflow in $REPO may sign) —
+  # slightly looser than cosign's workflow-pinned regexp, but still nothing a
+  # mirror or third party can forge.
+  if have sigstore; then
+    say "verifying build provenance with sigstore-python (offline)..."
+    if sigstore verify github \
+      --bundle "$_bundle" \
+      --offline \
+      --repository "$REPO" \
+      "$_archive" >/dev/null 2>&1; then
+      say "verified: attested by ${REPO}'s release workflow (sigstore)."
+      return 0
+    fi
+    say "sigstore could not verify the attestation; trying the next root."
+  fi
+
+  if have gh; then
+    say "verifying build provenance with gh (Sigstore, offline)..."
+    if gh attestation verify "$_archive" --bundle "$_bundle" --repo "$REPO" \
+      >/dev/null 2>&1; then
+      say "verified: attested by ${REPO}'s release workflow (gh)."
+      return 0
+    fi
+    say "gh could not verify the attestation; trying the next root."
+  fi
+
+  return 1
 }
 
 # Verify the downloaded archive against a trust root that is INDEPENDENT of the
@@ -259,153 +271,175 @@ verify_sigstore() {
 # we refuse it rather than fetch it. Aborts if nothing independent vouches for
 # the archive, so a tampered mirror can never yield an installed binary.
 verify_archive() {
-    _archive="$1"       # local path to the downloaded archive
-    _bundle_url="$2"    # Sigstore bundle URL (served with the archive)
-    _sum_url="$3"       # checksum URL on the independent trust root
-    _sum_trusted="$4"   # "yes" iff _sum_url is independent of the mirror
+  _archive="$1"     # local path to the downloaded archive
+  _bundle_url="$2"  # Sigstore bundle URL (served with the archive)
+  _sum_url="$3"     # checksum URL on the independent trust root
+  _sum_trusted="$4" # "yes" iff _sum_url is independent of the mirror
 
-    if verify_sigstore "$_archive" "$_bundle_url"; then
-        return 0
-    fi
+  if verify_sigstore "$_archive" "$_bundle_url"; then
+    return 0
+  fi
 
-    if [ "$_sum_trusted" != "yes" ]; then
-        err "cannot verify $(basename "$_archive") independently of the mirror:\
+  if [ "$_sum_trusted" != "yes" ]; then
+    err "cannot verify $(basename "$_archive") independently of the mirror:\
  no Sigstore verifier vouched for it, and the only checksum shares the mirror's\
  origin so it is not an independent trust root. Install a verifier (cosign, or\
  'pip install sigstore'), or set LLMLINT_CHECKSUM_BASE_URL to a root the mirror\
  does not control."
-    fi
+  fi
 
-    say "verifying SHA-256 checksum from ${_sum_url}..."
-    download "$_sum_url" "${_archive}.sha256" \
-        || err "checksum download failed from the trust root: ${_sum_url}"
-    _expected="$(awk '{print $1}' "${_archive}.sha256")"
-    [ -n "$_expected" ] || err "empty checksum file at ${_sum_url}"
-    _actual="$(sha256_of "$_archive")"
-    [ "$_expected" = "$_actual" ] || err \
-        "checksum mismatch for $(basename "$_archive") (expected ${_expected}, got ${_actual})"
-    say "checksum OK."
+  say "verifying SHA-256 checksum from ${_sum_url}..."
+  download "$_sum_url" "${_archive}.sha256" \
+    || err "checksum download failed from the trust root: ${_sum_url}"
+  _expected="$(awk '{print $1}' "${_archive}.sha256")"
+  [ -n "$_expected" ] || err "empty checksum file at ${_sum_url}"
+  _actual="$(sha256_of "$_archive")"
+  [ "$_expected" = "$_actual" ] || err \
+    "checksum mismatch for $(basename "$_archive") (expected ${_expected}, got ${_actual})"
+  say "checksum OK."
 }
 
 extract() {
-    _archive="$1"
-    _dest="$2"
-    case "$_archive" in
-        *.tar.gz) tar -xzf "$_archive" -C "$_dest" ;;
-        *.zip)
-            have unzip || err "need 'unzip' to extract $_archive"
-            unzip -q "$_archive" -d "$_dest" ;;
-        *) err "unknown archive type: $_archive" ;;
-    esac
+  _archive="$1"
+  _dest="$2"
+  case "$_archive" in
+    *.tar.gz) tar -xzf "$_archive" -C "$_dest" ;;
+    *.zip)
+      have unzip || err "need 'unzip' to extract $_archive"
+      unzip -q "$_archive" -d "$_dest"
+      ;;
+    *) err "unknown archive type: $_archive" ;;
+  esac
 }
 
 main() {
-    version="${LLMLINT_VERSION:-}"
-    bindir="${LLMLINT_INSTALL_DIR:-}"
-    release_base="${LLMLINT_RELEASE_BASE_URL:-}"
-    checksum_base="${LLMLINT_CHECKSUM_BASE_URL:-}"
+  version="${LLMLINT_VERSION:-}"
+  bindir="${LLMLINT_INSTALL_DIR:-}"
+  release_base="${LLMLINT_RELEASE_BASE_URL:-}"
+  checksum_base="${LLMLINT_CHECKSUM_BASE_URL:-}"
 
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --version) version="${2:?--version needs a value}"; shift 2 ;;
-            --version=*) version="${1#*=}"; shift ;;
-            --to | --bin-dir) bindir="${2:?--to needs a value}"; shift 2 ;;
-            --to=* | --bin-dir=*) bindir="${1#*=}"; shift ;;
-            --base-url) release_base="${2:?--base-url needs a value}"; shift 2 ;;
-            --base-url=*) release_base="${1#*=}"; shift ;;
-            -h | --help) usage; exit 0 ;;
-            *) err "unknown option: $1 (try --help)" ;;
-        esac
-    done
-
-    [ -n "$bindir" ] || bindir="${HOME}/.local/bin"
-
-    # Archive comes from the mirror when set, else canonical GitHub. Checksums
-    # default to canonical GitHub so the integrity root is independent of the
-    # mirror; strip any trailing slash so URL joins stay clean.
-    archive_base="${release_base:-$CANONICAL_BASE_URL}"
-    archive_base="${archive_base%/}"
-    checksum_base="${checksum_base:-$CANONICAL_BASE_URL}"
-    checksum_base="${checksum_base%/}"
-
-    if have curl; then
-        DL="curl"
-    elif have wget; then
-        DL="wget"
-    else
-        err "need curl or wget to download"
-    fi
-
-    detect_target
-
-    if [ -z "$version" ]; then
-        say "resolving latest release..."
-        version="$(latest_tag)"
-    fi
-
-    archive="${BIN}-${version}-${TARGET}.${EXT}"
-    # The release action names the checksum asset by replacing the archive
-    # extension with `.sha256` (not appending), e.g. llmlint-v0.1.0-<t>.sha256.
-    sumfile="${BIN}-${version}-${TARGET}.sha256"
-    # The release workflow publishes the Sigstore bundle beside the archive.
-    bundlefile="${BIN}-${version}-${TARGET}.sigstore.json"
-    archive_url="${archive_base}/${version}/${archive}"
-    bundle_url="${archive_base}/${version}/${bundlefile}"
-    sum_url="${checksum_base}/${version}/${sumfile}"
-
-    # The checksum root is an independent trust root only when the archive did
-    # not come from a mirror, or the checksum lives somewhere other than that
-    # mirror. When it isn't, the Sigstore bundle (whose signed digest a mirror
-    # can't forge) is the only trustworthy root; verify_archive refuses a
-    # mirror-origin checksum rather than trust the mirror to vouch for itself.
-    if [ -z "$release_base" ] || [ "$checksum_base" != "$archive_base" ]; then
-        sum_trusted="yes"
-    else
-        sum_trusted="no"
-    fi
-    [ -z "$release_base" ] || say "archive source: ${archive_base} (mirror)"
-
-    tmp="$(mktemp -d 2>/dev/null || mktemp -d -t llmlint)" \
-        || err "could not create a temporary directory"
-    trap 'rm -rf "$tmp"' EXIT INT TERM
-
-    say "downloading ${archive} (${version})..."
-    download "${archive_url}" "${tmp}/${archive}" \
-        || err "download failed: ${archive_url}"
-
-    verify_archive "${tmp}/${archive}" "${bundle_url}" "${sum_url}" "${sum_trusted}"
-
-    mkdir -p "${tmp}/unpack"
-    extract "${tmp}/${archive}" "${tmp}/unpack"
-
-    src="${tmp}/unpack/${BIN_FILE}"
-    if [ ! -f "$src" ]; then
-        # taiki-e/upload-rust-binary-action keeps the binary at the archive
-        # root, but fall back to a search so a leading-dir layout still works.
-        src="$(find "${tmp}/unpack" -type f -name "$BIN_FILE" -print 2>/dev/null | head -n1)"
-        { [ -n "$src" ] && [ -f "$src" ]; } || err "binary '$BIN_FILE' not found in ${archive}; pick another release with --version <tag>"
-    fi
-
-    mkdir -p "$bindir" || err "could not create install directory: $bindir"
-    dest="${bindir}/${BIN_FILE}"
-    if have install; then
-        install -m 0755 "$src" "$dest" || err "could not install to $dest"
-    else
-        { cp "$src" "$dest" && chmod 0755 "$dest"; } || err "could not install to $dest; choose a writable directory with --to <dir>"
-    fi
-
-    say "installed ${BIN} ${version} to ${dest}"
-
-    case ":${PATH}:" in
-        *":${bindir}:"*) ;;
-        *)
-            say ""
-            say "NOTE: ${bindir} is not on your PATH. Add it to your shell profile:"
-            say "  export PATH=\"${bindir}:\$PATH\""
-            ;;
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version)
+        version="${2:?--version needs a value}"
+        shift 2
+        ;;
+      --version=*)
+        version="${1#*=}"
+        shift
+        ;;
+      --to | --bin-dir)
+        bindir="${2:?--to needs a value}"
+        shift 2
+        ;;
+      --to=* | --bin-dir=*)
+        bindir="${1#*=}"
+        shift
+        ;;
+      --base-url)
+        release_base="${2:?--base-url needs a value}"
+        shift 2
+        ;;
+      --base-url=*)
+        release_base="${1#*=}"
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *) err "unknown option: $1 (try --help)" ;;
     esac
+  done
 
-    say "run '${BIN} doctor' to confirm oneharness is reachable."
+  [ -n "$bindir" ] || bindir="${HOME}/.local/bin"
+
+  # Archive comes from the mirror when set, else canonical GitHub. Checksums
+  # default to canonical GitHub so the integrity root is independent of the
+  # mirror; strip any trailing slash so URL joins stay clean.
+  archive_base="${release_base:-$CANONICAL_BASE_URL}"
+  archive_base="${archive_base%/}"
+  checksum_base="${checksum_base:-$CANONICAL_BASE_URL}"
+  checksum_base="${checksum_base%/}"
+
+  if have curl; then
+    DL="curl"
+  elif have wget; then
+    DL="wget"
+  else
+    err "need curl or wget to download"
+  fi
+
+  detect_target
+
+  if [ -z "$version" ]; then
+    say "resolving latest release..."
+    version="$(latest_tag)"
+  fi
+
+  archive="${BIN}-${version}-${TARGET}.${EXT}"
+  # The release action names the checksum asset by replacing the archive
+  # extension with `.sha256` (not appending), e.g. llmlint-v0.1.0-<t>.sha256.
+  sumfile="${BIN}-${version}-${TARGET}.sha256"
+  # The release workflow publishes the Sigstore bundle beside the archive.
+  bundlefile="${BIN}-${version}-${TARGET}.sigstore.json"
+  archive_url="${archive_base}/${version}/${archive}"
+  bundle_url="${archive_base}/${version}/${bundlefile}"
+  sum_url="${checksum_base}/${version}/${sumfile}"
+
+  # The checksum root is an independent trust root only when the archive did
+  # not come from a mirror, or the checksum lives somewhere other than that
+  # mirror. When it isn't, the Sigstore bundle (whose signed digest a mirror
+  # can't forge) is the only trustworthy root; verify_archive refuses a
+  # mirror-origin checksum rather than trust the mirror to vouch for itself.
+  if [ -z "$release_base" ] || [ "$checksum_base" != "$archive_base" ]; then
+    sum_trusted="yes"
+  else
+    sum_trusted="no"
+  fi
+  [ -z "$release_base" ] || say "archive source: ${archive_base} (mirror)"
+
+  tmp="$(mktemp -d 2>/dev/null || mktemp -d -t llmlint)" \
+    || err "could not create a temporary directory"
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+
+  say "downloading ${archive} (${version})..."
+  download "${archive_url}" "${tmp}/${archive}" \
+    || err "download failed: ${archive_url}"
+
+  verify_archive "${tmp}/${archive}" "${bundle_url}" "${sum_url}" "${sum_trusted}"
+
+  mkdir -p "${tmp}/unpack"
+  extract "${tmp}/${archive}" "${tmp}/unpack"
+
+  src="${tmp}/unpack/${BIN_FILE}"
+  if [ ! -f "$src" ]; then
+    # taiki-e/upload-rust-binary-action keeps the binary at the archive
+    # root, but fall back to a search so a leading-dir layout still works.
+    src="$(find "${tmp}/unpack" -type f -name "$BIN_FILE" -print 2>/dev/null | head -n1)"
+    { [ -n "$src" ] && [ -f "$src" ]; } || err "binary '$BIN_FILE' not found in ${archive}; pick another release with --version <tag>"
+  fi
+
+  mkdir -p "$bindir" || err "could not create install directory: $bindir"
+  dest="${bindir}/${BIN_FILE}"
+  if have install; then
+    install -m 0755 "$src" "$dest" || err "could not install to $dest"
+  else
+    { cp "$src" "$dest" && chmod 0755 "$dest"; } || err "could not install to $dest; choose a writable directory with --to <dir>"
+  fi
+
+  say "installed ${BIN} ${version} to ${dest}"
+
+  case ":${PATH}:" in
+    *":${bindir}:"*) ;;
+    *)
+      say ""
+      say "NOTE: ${bindir} is not on your PATH. Add it to your shell profile:"
+      say "  export PATH=\"${bindir}:\$PATH\""
+      ;;
+  esac
+
+  say "run '${BIN} doctor' to confirm oneharness is reachable."
 }
 
 main "$@"

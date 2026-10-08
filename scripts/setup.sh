@@ -2,17 +2,20 @@
 # llmlint local setup — make a fresh machine ready to run the quality gate.
 #
 # Idempotent and safe to re-run. It:
-#   1. ensures rustup + the pinned toolchain — rust-toolchain.toml stays the
+#   1. checks Node is present (Nx runs on it) and Ruby with Bundler (they run
+#      bashcov, the shell coverage tool) before it installs anything; setup
+#      installs neither,
+#   2. ensures rustup + the pinned toolchain — rust-toolchain.toml stays the
 #      source of truth; rustup just realises it,
-#   2. ensures `just` (the task runner), pinned to .tool-versions, via the
+#   3. ensures `just` (the task runner), pinned to .tool-versions, via the
 #      official prebuilt installer (no slow `cargo install just` compile),
-#   3. ensures the cargo subcommands the gate drives — cargo-nextest and
+#   4. ensures the cargo subcommands the gate drives — cargo-nextest and
 #      cargo-llvm-cov — pinned to the justfile,
-#   4. ensures the pinned `actionlint` (the gate's workflow linter) via
+#   5. ensures the pinned `actionlint` (the gate's workflow linter) via
 #      `just actionlint-tools` (prebuilt release, digest-verified),
-#   5. checks Node is present (Nx runs on it; setup does not install it),
 #   6. fetches dependencies, adds toolchain components, and installs the pinned
-#      bun + the locked Nx via `just bootstrap`,
+#      bun + the locked Nx, the pinned shfmt + shellcheck and the locked bashcov
+#      via `just bootstrap`,
 #   7. records a setup stamp for the fast session check (scripts/setup-check.sh).
 #
 # It does NOT install oneharness (a separate *runtime* prerequisite) or
@@ -29,14 +32,17 @@ cd "$ROOT"
 . scripts/setup-lib.sh
 _load_tool_env
 
-say()  { printf '» %s\n' "$*"; }
-ok()   { printf '✓ %s\n' "$*"; }
+say() { printf '» %s\n' "$*"; }
+ok() { printf '✓ %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 ensure_rust() {
   if ! have rustup; then
     say "installing rustup (minimal); rust-toolchain.toml drives the toolchain"
-    have curl || { printf 'error: curl is required to install rustup\n' >&2; exit 1; }
+    have curl || {
+      printf 'error: curl is required to install rustup\n' >&2
+      exit 1
+    }
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --no-modify-path
     # shellcheck disable=SC1091
@@ -55,7 +61,10 @@ ensure_just() {
   fi
   local ver
   ver="$({ grep -E '^just[[:space:]]' .tool-versions 2>/dev/null || true; } | awk '{print $2}')"
-  have curl || { printf 'error: curl is required to install just\n' >&2; exit 1; }
+  have curl || {
+    printf 'error: curl is required to install just\n' >&2
+    exit 1
+  }
   mkdir -p "$LOCAL_BIN"
   if [ -n "$ver" ]; then
     say "installing just $ver into $LOCAL_BIN (pinned by .tool-versions)"
@@ -95,13 +104,19 @@ ensure_node() {
   exit 1
 }
 
+ensure_ruby() {
+  have ruby && have bundle && return
+  printf 'error: Ruby with Bundler is required to run bashcov (the shell coverage tool); install Ruby (the .tool-versions pin) from https://www.ruby-lang.org or your package manager, then re-run ./scripts/setup.sh\n' >&2
+  exit 1
+}
+
 main() {
-  ensure_rust
   ensure_node
+  ensure_ruby
+  ensure_rust
   ensure_just
-  ensure_cargo_tool cargo-nextest  cargo-nextest "$(_justfile_pin nextest)"
+  ensure_cargo_tool cargo-nextest cargo-nextest "$(_justfile_pin nextest)"
   ensure_cargo_tool cargo-llvm-cov cargo-llvm-cov "$(_justfile_pin llvmcov)"
-  # llmlint: ignore[changed_behavior_has_e2e] setup provisions a real toolchain over the network, so no hermetic journey can run it; this line only delegates to `just actionlint-tools`, whose installer the install_actionlint_* journeys drive
   just actionlint-tools
   say "fetching dependencies + toolchain components (just bootstrap)"
   just bootstrap

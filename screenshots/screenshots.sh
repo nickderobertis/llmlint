@@ -49,7 +49,7 @@ set -euo pipefail
 # before setting the ones this capture itself needs.
 while IFS= read -r _var; do
   case "$_var" in
-  LLMLINT_* | ONEHARNESS_*) unset "$_var" ;;
+    LLMLINT_* | ONEHARNESS_*) unset "$_var" ;;
   esac
 done < <(compgen -e)
 unset _var
@@ -61,13 +61,22 @@ unset _var
 export LLMLINT_NO_HISTORY=1
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
-  || { echo "screenshots: cannot resolve the repository root; run it by its path from a readable checkout." >&2; exit 1; }
-cd "$repo_root" || { echo "screenshots: cannot enter $repo_root; make it readable and searchable, then re-run." >&2; exit 1; }
+  || {
+    echo "screenshots: cannot resolve the repository root; run it by its path from a readable checkout." >&2
+    exit 1
+  }
+cd "$repo_root" || {
+  echo "screenshots: cannot enter $repo_root; make it readable and searchable, then re-run." >&2
+  exit 1
+}
 
 # This host's capture lane (shots/current/<arch>), named the same way the pre-push
 # guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT per lane.
 arch="$(bash "$repo_root/screenshots/host-arch.sh")" \
-  || { echo "screenshots: could not name this host's lane (host-arch.sh's error above); fix what it names, then re-run just screenshots." >&2; exit 1; }
+  || {
+    echo "screenshots: could not name this host's lane (host-arch.sh's error above); fix what it names, then re-run just screenshots." >&2
+    exit 1
+  }
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
 # The capture starts by deleting $SHOTS_OUT, so it must lie inside this
 # repository's shots/ tree, where every capture lane lives (shots/current/<arch>
@@ -75,12 +84,12 @@ SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
 # with no `.`/`..` step or empty segment that could walk back out of it.
 shots_rel="$SHOTS_OUT"
 case "$SHOTS_OUT" in
-/*) shots_rel="${SHOTS_OUT#"$repo_root"/}" ;;
+  /*) shots_rel="${SHOTS_OUT#"$repo_root"/}" ;;
 esac
 case "/$shots_rel/" in
-*/../* | */./* | *//*) shots_rel="" ;;
-/shots/?*/) ;;
-*) shots_rel="" ;;
+  */../* | */./* | *//*) shots_rel="" ;;
+  /shots/?*/) ;;
+  *) shots_rel="" ;;
 esac
 # Lexical containment is not enough on its own: a symlinked step (shots/current/
 # link -> /elsewhere) would carry the deletion out of the tree. So the nearest
@@ -90,13 +99,16 @@ if [ -n "$shots_rel" ]; then
   shots_root="$(cd -P shots 2>/dev/null && pwd -P)" || shots_root=""
   probe="$shots_rel"
   while [ ! -d "$probe" ] && [ "$probe" != shots ]; do
-    probe="$(dirname "$probe")" || { shots_rel=""; break; }
+    probe="$(dirname "$probe")" || {
+      shots_rel=""
+      break
+    }
   done
   resolved="$(cd -P "$probe" 2>/dev/null && pwd -P)" || resolved=""
   case "$resolved/" in
-  "$shots_root"/?*/) ;;
-  "$shots_root"/) [ "$probe" != "$shots_rel" ] || shots_rel="" ;;
-  *) shots_rel="" ;;
+    "$shots_root"/?*/) ;;
+    "$shots_root"/) [ "$probe" != "$shots_rel" ] || shots_rel="" ;;
+    *) shots_rel="" ;;
   esac
   [ -n "$shots_root" ] || shots_rel=""
 fi
@@ -235,10 +247,10 @@ for view in default verbose; do
   verbosity=()
   [ "$view" = "verbose" ] && verbosity=(-v)
   out="$tmp_state/lint-$view.ansi"
-  ( cd "$fixture" \
-      && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
-         LLMLINT_MOCK_STATE="$tmp_state/state-$view" \
-         "${mock_run[@]}" ${verbosity[@]+"${verbosity[@]}"} ) >"$out" 2>/dev/null || true
+  (cd "$fixture" \
+    && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
+      LLMLINT_MOCK_STATE="$tmp_state/state-$view" \
+      "${mock_run[@]}" ${verbosity[@]+"${verbosity[@]}"}) >"$out" 2>/dev/null || true
   render_scene "lint" "{\"view\":\"$view\"}" "lint-$view.svg" "$out" 1
 done
 
@@ -251,18 +263,24 @@ done
 # placeholders so the bytes (and hash) are identical on every machine — exactly
 # as `config`'s path is.
 out="$tmp_state/lint-debug.ansi"
-( cd "$fixture" \
-    && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
-       LLMLINT_MOCK_STATE="$tmp_state/state-debug" \
-       "${mock_run[@]}" -v ) >/dev/null 2>"$out" || true
+(cd "$fixture" \
+  && LLMLINT_MOCK_VERDICTS="$fixture/verdicts.json" \
+    LLMLINT_MOCK_STATE="$tmp_state/state-debug" \
+    "${mock_run[@]}" -v) >/dev/null 2>"$out" || true
 # A temp file, not `sed -i`: BSD/macOS sed takes `-i` with a required suffix.
 sed \
   -e "s|$mock_bin|oneharness|g" \
   -e "s|$fixture|.|g" \
   -e 's#/[^ ]*/llmlint-schema-[A-Za-z0-9]*\.json#/tmp/llmlint-schema.json#g' \
   -e 's#/[^ ]*/llmlint-system-[A-Za-z0-9]*\.txt#/tmp/llmlint-system.txt#g' \
-  "$out" >"$out.sed" || { echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
-mv "$out.sed" "$out" || { echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+  "$out" >"$out.sed" || {
+  echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2
+  exit 1
+}
+mv "$out.sed" "$out" || {
+  echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2
+  exit 1
+}
 render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
 
 # --- multi-judge: the per-judge breakdown, its own fixture + scene ------------
@@ -272,18 +290,18 @@ render_scene "lint" '{"view":"debug"}' "lint-debug.svg" "$out" 0
 # so it never merges with the main scene). Colorized like the default report.
 mj_fixture="$fixture/multijudge"
 out="$tmp_state/multi-judge.ansi"
-( cd "$mj_fixture" \
-    && LLMLINT_MOCK_VERDICTS="$mj_fixture/verdicts.json" \
-       LLMLINT_MOCK_STATE="$tmp_state/state-multijudge" \
-       "$llmlint_bin" -c "$mj_fixture/llmlint.yml" --oneharness-bin "$mock_bin" \
-         --color always --max-parallel 1 ) >"$out" 2>/dev/null || true
+(cd "$mj_fixture" \
+  && LLMLINT_MOCK_VERDICTS="$mj_fixture/verdicts.json" \
+    LLMLINT_MOCK_STATE="$tmp_state/state-multijudge" \
+    "$llmlint_bin" -c "$mj_fixture/llmlint.yml" --oneharness-bin "$mock_bin" \
+    --color always --max-parallel 1) >"$out" 2>/dev/null || true
 render_scene "multi-judge" "{}" "multi-judge.svg" "$out" 1
 
 # --- init: write a starter config (in a clean dir so the message is stable) ---
 init_dir="$tmp_state/init"
 mkdir -p "$init_dir"
 out="$tmp_state/init.txt"
-( cd "$init_dir" && "$llmlint_bin" init ) >"$out" 2>/dev/null || true
+(cd "$init_dir" && "$llmlint_bin" init) >"$out" 2>/dev/null || true
 render_scene "init" "{}" "init.svg" "$out" 0
 
 # --- config: the effective merged config + its sources, as JSON ---------------
@@ -292,10 +310,16 @@ render_scene "init" "{}" "init.svg" "$out" 0
 # captured text (and its hash) is the same on every machine, leaving the natural
 # `llmlint.yml`.
 out="$tmp_state/config.txt"
-( cd "$fixture" && "$llmlint_bin" config -c "$fixture/llmlint.yml" --cwd "$fixture" ) \
+(cd "$fixture" && "$llmlint_bin" config -c "$fixture/llmlint.yml" --cwd "$fixture") \
   >"$out" 2>/dev/null || true
-sed "s|$fixture/||g" "$out" >"$out.sed" || { echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
-mv "$out.sed" "$out" || { echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2; exit 1; }
+sed "s|$fixture/||g" "$out" >"$out.sed" || {
+  echo "screenshots: could not normalize $out (sed's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2
+  exit 1
+}
+mv "$out.sed" "$out" || {
+  echo "screenshots: could not replace $out (mv's error above); check TMPDIR is writable with free space, then re-run just screenshots" >&2
+  exit 1
+}
 render_scene "config" "{}" "config.svg" "$out" 0
 
 # --- doctor: the oneharness preflight check -----------------------------------
@@ -309,8 +333,8 @@ out="$tmp_state/doctor.txt"
 # The scene is a passing doctor (rendered with exit 0), so a failing one is a
 # broken capture, not a scene: stop with doctor's own stderr rather than render it.
 # llmlint: ignore-block[changed_behavior_has_e2e] the capture needs the pinned freeze, outside the gate; the Visual docs workflow runs it on every PR and classifies its output against the committed shots
-if ! ( cd "$tmp_state" && PATH="$doctor_bin:$PATH" \
-    LLMLINT_ONEHARNESS_BIN='' "$llmlint_bin" doctor ) >"$out" 2>"$out.err"; then
+if ! (cd "$tmp_state" && PATH="$doctor_bin:$PATH" \
+  LLMLINT_ONEHARNESS_BIN='' "$llmlint_bin" doctor) >"$out" 2>"$out.err"; then
   echo "screenshots: 'llmlint doctor' failed against the mock fixture:" >&2
   cat "$out.err" >&2
   echo "screenshots: fix that doctor failure (it ran against the mock oneharness), then re-run: just screenshots" >&2
@@ -325,7 +349,7 @@ render_scene "doctor" "{}" "doctor.svg" "$out" 0
 {
   printf '{\n  "schema": 1,\n  "shots": [\n'
   # llmlint: ignore-block[changed_behavior_has_e2e] same capture as the doctor block above; this read loop only replaces an unquoted array split and leaves the sorted manifest byte-identical
-  sorted_text="$(printf '%s\n' "${entries[@]}" | sort)"   # a failing sort stops here
+  sorted_text="$(printf '%s\n' "${entries[@]}" | sort)" # a failing sort stops here
   sorted=()
   while IFS= read -r entry; do sorted+=("$entry"); done <<<"$sorted_text"
   # llmlint: ignore-end[changed_behavior_has_e2e]

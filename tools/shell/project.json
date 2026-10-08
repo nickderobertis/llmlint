@@ -1,0 +1,53 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "shell-tools",
+  "//": "The shell toolchain every shell project runs: shell.sh (shfmt and shellcheck behind the justfile pins, as each such project's format and lint targets call them, and the one discovery of the tree's shell scripts) and install-shell-tools.sh (the pinned releases, digest-checked against shell-tools.sha256, which `just bootstrap` and `just shell-tools` run), with their journeys. It depends on nothing: the projects that call it carry its script as a cached input (shellTools, shellCoverage) rather than an edge, as they do tools/coverage/coverage.sh, because several of them (bench, live) may depend on no tooling project.",
+  "projectType": "library",
+  "tags": [
+    "type:tooling",
+    "coverage:shell"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh format tools/shell/*.sh"
+      },
+      "configurations": {
+        "write": {
+          "command": "bash tools/shell/shell.sh format --write tools/shell/*.sh"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh lint tools/shell/*.sh"
+      },
+      "inputs": [
+        "default",
+        "shellTools"
+      ]
+    },
+    "test": {
+      "//suppression": "llmlint: ignore-block[shell_test_tiers_stay_split] the host tools shell.test.mjs runs are the pinned shfmt and shellcheck binaries every gate run already requires, executed offline over scratch files in milliseconds; nothing here reaches a network or installs a real release (the installer journeys use a file:// stand-in tree), and both suites exercise only this project's two scripts, so a separate project would be selected by exactly the same edits and save no run",
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "bash tools/coverage/shcov.sh run shell-tools -- bun test tools/shell/tests"
+      },
+      "inputs": [
+        "default",
+        "{workspaceRoot}/justfile",
+        "{workspaceRoot}/.editorconfig",
+        "shellTools",
+        "shellCoverage"
+      ],
+      "outputs": [
+        "{workspaceRoot}/target/shcov/shell-tools.json"
+      ],
+      "//": "Offline: shell.sh over scratch scripts with the real pinned shfmt and shellcheck (a finding fails, a clean file passes, a tool off its pin is refused), and the installer against a stand-in release tree over file:// (the build for each host, digest refusal, idempotence).",
+      "//suppression-end": "llmlint: ignore-end[shell_test_tiers_stay_split]"
+    }
+  }
+}
