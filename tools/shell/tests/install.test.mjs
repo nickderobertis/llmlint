@@ -146,6 +146,40 @@ test("an archive without the expected layout is refused after its digest matches
   expect(r.out).toContain(`holds no shellcheck-v${SHELLCHECK}/shellcheck`);
 });
 
+test("an archive that matches its digest but will not unpack is refused, nothing installed", () => {
+  const asset = `shellcheck-v${SHELLCHECK}.linux.x86_64.tar.gz`;
+  write(`rel/sc/v${SHELLCHECK}/${asset}`, "not a gzip archive\n");
+  writeFileSync(
+    join(dir, "sums"),
+    readFileSync(join(dir, "sums"), "utf8").replace(new RegExp(`^\\w+  ${asset.replace(/\./g, "\\.")}$`, "m"), `${sha(join(dir, `rel/sc/v${SHELLCHECK}/${asset}`))}  ${asset}`),
+  );
+  const r = install();
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`${asset} matched its pinned digest but did not unpack`);
+  expect(existsSync(join(dir, "bin/shellcheck"))).toBe(false);
+});
+
+test("a hash tool that fails refuses the download rather than trust it", () => {
+  write("stubs/sha256sum", "#!/bin/sh\nexit 1\n", 0o755);
+  const r = install();
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`sha256sum could not hash the downloaded shfmt_v${SHFMT}_linux_amd64 — NOT installing`);
+  expect(existsSync(join(dir, "bin/shfmt"))).toBe(false);
+});
+
+test("an install dir that cannot be written, or no scratch space, is a failure naming the fix", () => {
+  mkdirSync(join(dir, "locked"));
+  chmodSync(join(dir, "locked"), 0o555);
+  let r = install({ SHELL_TOOLS_INSTALL_DIR: join(dir, "locked/bin") });
+  chmodSync(join(dir, "locked"), 0o755);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`could not install shfmt into ${join(dir, "locked/bin")}`);
+  expect(r.out).toContain("point SHELL_TOOLS_INSTALL_DIR at a writable directory");
+  r = install({ TMPDIR: join(dir, "no-such-tmp") });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("could not create a temporary directory");
+});
+
 test("an unsupported host is refused by name", () => {
   let r = install({}, { os: "SunOS" });
   expect(r.code).toBe(1);

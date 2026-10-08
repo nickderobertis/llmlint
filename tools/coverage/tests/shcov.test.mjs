@@ -104,6 +104,34 @@ test("a child started with a cleared environment is measured when the journey ha
   expect(record("demo")["scripts/branchy.sh"].lines[3]).toBeGreaterThan(0);
 });
 
+test("the BASH_ENV a run replaces still runs first, through a nested run, but not in a cleared environment", () => {
+  // The parent BASH_ENV marks each bash it ran in. A nested run (the
+  // coverage-driver's own suite runs shcov under shcov) must keep it too, and
+  // end — a snippet that re-read its parent from the environment would source
+  // itself forever.
+  const mark = join(dir, "parent-ran");
+  write("parent-env.sh", `printf '%s\\n' "$0" >>${JSON.stringify(mark)}\n`);
+  write(
+    "run-tests.sh",
+    [
+      "#!/usr/bin/env bash",
+      "bash scripts/branchy.sh a",
+      'bash tools/coverage/shcov.sh run inner -- bash scripts/branchy.sh b',
+      'env -i PATH=/usr/bin:/bin BASH_ENV="$SHCOV_BASH_ENV" bash scripts/branchy.sh c',
+      "",
+    ].join("\n"),
+    0o755,
+  );
+  const r = shcov(["run", "outer", "--", "bash", "run-tests.sh"], { BASH_ENV: join(dir, "parent-env.sh") });
+  expect(r.code, r.out).toBe(0);
+  const ran = readFileSync(mark, "utf8").split("\n").filter(Boolean);
+  expect(ran).toContain("run-tests.sh");
+  expect(ran.filter((s) => s === "scripts/branchy.sh").length, "a and the nested b ran it; the cleared c did not").toBe(2);
+  expect(record("outer")["scripts/branchy.sh"].lines[3]).toBeGreaterThan(0);
+  expect(record("inner")["scripts/branchy.sh"].lines[4]).toBeGreaterThan(0);
+  expect(record("outer")["scripts/branchy.sh"].lines[5], "the cleared child is still measured").toBeGreaterThan(0);
+});
+
 test("the command's own exit status is the run's, and its record is still written", () => {
   write("run-tests.sh", "#!/usr/bin/env bash\nbash scripts/branchy.sh a\nexit 7\n", 0o755);
   const r = shcov(["run", "demo", "--", "bash", "run-tests.sh"]);

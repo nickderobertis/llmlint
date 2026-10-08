@@ -315,7 +315,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   point of headroom, because a few branches depend on the host (the
   architecture `case` arms, which tools are present) and CI runs x86_64. Re-taken
   on aarch64 Linux over the 9 measured projects once the change was finished,
-  it is **52.06% (1073 of 2061 lines)**; the per-script table is in
+  it is **52.26% (1077 of 2061 lines)**; the per-script table is in
   `tools/coverage/AGENTS.md`.
   95% is out of reach because of what the gate cannot run:
   - `scripts/install.sh`: POSIX `sh`, which bashcov does not trace, and no

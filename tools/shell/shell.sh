@@ -52,7 +52,6 @@ have_version() {
   esac
 }
 
-# Refuse a tool that is missing or off its pin, naming the fix.
 require() {
   local tool="$1" want have
   want="$(pin "$tool")"
@@ -83,7 +82,6 @@ operands() {
   done
 }
 
-# Whether format and lint run (on) or are left to the Linux gate (off).
 enabled() {
   case "${LLMLINT_SHELL_TOOLS:-on}" in
     on) return 0 ;;

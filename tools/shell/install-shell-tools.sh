@@ -103,8 +103,6 @@ if ! tmp="$(mktemp -d)"; then
 fi
 trap 'rm -rf "$tmp" || echo "install-shell-tools: could not remove the scratch directory $tmp; delete it by hand." >&2' EXIT
 
-# Download one asset and check it against its pinned digest before anything
-# unpacks or installs it.
 fetch() {
   local url="$1" asset="$2" expected actual
   if ! curl -fsSL -o "$tmp/$asset" "$url"; then
