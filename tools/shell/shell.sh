@@ -100,20 +100,6 @@ readable() {
   done
 }
 
-# Whether a file's first line is a sh-family shebang: `#!`, the interpreter named
-# after a `/` or a space, then the end of the line or a space. A case glob rather
-# than [[ =~ ]], whose quoting rules bash 3.2 (macOS's /bin/bash) reads
-# differently from current bash.
-sh_shebang() {
-  local sh
-  for sh in sh bash dash ksh zsh; do
-    case "$1" in
-      '#!'*[/\ ]"$sh" | '#!'*[/\ ]"$sh"\ *) return 0 ;;
-    esac
-  done
-  return 1
-}
-
 enabled() {
   case "${LLMLINT_SHELL_TOOLS:-on}" in
     on) return 0 ;;
@@ -138,33 +124,43 @@ case "$STEP" in
       exit 1
     }
     # Bytes, not characters: a first line may hold any bytes (a GIF, a font), and
-    # under a UTF-8 locale BSD tr refuses bytes that are not UTF-8 ("Illegal byte
-    # sequence"), which ended the macOS scan at the first such file.
+    # under a UTF-8 locale BSD tools refuse bytes that are not UTF-8 ("Illegal
+    # byte sequence"), which once ended the macOS scan at the first such file.
     export LC_ALL=C
+    # The loop runs only builtins and one awk reads every candidate's first line,
+    # in batches: a process per file costs tens of milliseconds where forking is
+    # slow (Git Bash on Windows), which once took the scan past 16 seconds.
+    # Each path goes to awk as ./path, so none reads as an option or an awk
+    # `name=value` assignment.
+    # shellcheck disable=SC2016 # the `$` in the single-quoted program are awk's, not the shell's
     if ! git ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' f; do
       [ -f "$f" ] || continue
-      case "$f" in
-        *.sh | *.bash) printf '%s\n' "$f" ;;
-        *)
-          # An unreadable file could be a script, so it fails the discovery
-          # rather than drop out of what format, lint and coverage see. `head`
-          # tells a read error from end of file, which `read` does not; NULs
-          # are dropped so a binary file reads quietly.
-          if [ ! -r "$f" ]; then
-            echo "shell: cannot read $f to see whether it is a shell script; restore its read permission (chmod u+r $f)." >&2
-            exit 1
-          fi
-          if ! first="$(head -n 1 -- "$f" | tr -d '\000')"; then
-            echo "shell: reading $f failed (reason above), so whether it is a shell script is unknown; check the file and the disk it is on." >&2
-            exit 1
-          fi
-          if sh_shebang "$first"; then
-            printf '%s\n' "$f"
-          fi
-          ;;
-      esac
-    done | sort; then
-      echo "shell: discovering the tree's shell scripts failed (reason above); run it inside a git work tree with git on PATH, every file readable." >&2
+      # An unreadable file could be a script, so it fails the discovery rather
+      # than drop out of what format, lint and coverage see.
+      if [ ! -r "$f" ]; then
+        echo "shell: cannot read $f to see whether it is a shell script; restore its read permission (chmod u+r $f)." >&2
+        exit 1
+      fi
+      printf './%s\0' "$f"
+    done | xargs -0 awk '
+      # Named .sh or .bash: a script whatever its first line, even when empty.
+      BEGIN {
+        for (i = 1; i < ARGC; i++) {
+          if (ARGV[i] ~ /\.(sh|bash)$/) print substr(ARGV[i], 3)
+        }
+      }
+      # Otherwise its first line is a sh-family shebang: `#!`, the interpreter
+      # named after a `/` or a space, then a space or the end of the line (the
+      # space appended stands for the end). awk fails on a read error, which
+      # ends the discovery rather than pass for end of file.
+      FNR == 1 {
+        if (FILENAME !~ /\.(sh|bash)$/ && substr($0, 1, 2) == "#!" && ($0 " ") ~ "[/ ](ba|da|k|z)?sh ") {
+          print substr(FILENAME, 3)
+        }
+        nextfile
+      }
+    ' | sort; then
+      echo "shell: discovering the tree's shell scripts failed (reason above); run it inside a git work tree with git, xargs and awk on PATH, every file readable." >&2
       exit 1
     fi
     ;;

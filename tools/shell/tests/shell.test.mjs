@@ -168,21 +168,41 @@ test("files fails on a read error rather than mistake it for end of file, and re
   expect(r.code, r.out).toBe(0);
   expect(r.stdout.split("\n").filter(Boolean)).toEqual(["hooks/run", "tools/shell/shell.sh"]);
   expect(r.out).not.toContain("warning");
-  // A disk error cannot be induced on a scratch file, so a stand-in head plays one
-  // for this file and passes every other read to the real head.
-  const real = spawnSync("bash", ["-c", "type -P head"], { encoding: "utf8" }).stdout.trim();
-  write("stubs/head", `#!/bin/sh\nfor a; do [ "$a" = hooks/run ] && { echo "head: error reading 'hooks/run': Input/output error" >&2; exit 1; }; done\nexec ${real} "$@"\n`, 0o755);
+  // A disk error cannot be induced on a scratch file, so a stand-in awk plays one
+  // for this file and hands every other batch to the real awk.
+  const real = spawnSync("bash", ["-c", "type -P awk"], { encoding: "utf8" }).stdout.trim();
+  write("stubs/awk", `#!/bin/sh\nfor a; do [ "$a" = ./hooks/run ] && { echo "awk: read error (Input/output error)" >&2; exit 2; }; done\nexec ${real} "$@"\n`, 0o755);
+  write(".gitignore", "/stubs/\n");
   r = shell(["files"], { PATH: `${join(dir, "stubs")}:${process.env.PATH}` });
   expect(r.code).toBe(1);
   expect(r.out).toContain("Input/output error");
-  expect(r.out).toContain("shell: reading hooks/run failed (reason above), so whether it is a shell script is unknown");
+  expect(r.out).toContain("shell: discovering the tree's shell scripts failed (reason above)");
+});
+
+test("files reads first lines in batches, not a process per file, so it stays fast where forking is slow", () => {
+  // Git Bash on Windows forks in tens of milliseconds: a head and a tr per file
+  // took the hosted Windows scan past 16 seconds. Every tool the scan could spawn
+  // per file is stood in to log its run and hand it to the real one.
+  for (const tool of ["awk", "head", "tr", "sed", "grep", "cat", "cut", "file", "od", "dd"]) {
+    const real = spawnSync("bash", ["-c", `type -P ${tool} || true`], { encoding: "utf8" }).stdout.trim();
+    if (real) write(`stubs/${tool}`, `#!/bin/sh\necho ${tool} >>"${join(dir, "spawns.log")}"\nexec ${real} "$@"\n`, 0o755);
+  }
+  write(".gitignore", "/stubs/\n/spawns.log\n");
+  for (let i = 0; i < 300; i++) write(`data/file${i}`, `plain text ${i}\n`);
+  write("bin/tool", "#!/bin/bash\necho tool\n");
+  const r = shell(["files"], { PATH: `${join(dir, "stubs")}:${process.env.PATH}` });
+  expect(r.code, r.out).toBe(0);
+  expect(r.stdout.split("\n").filter(Boolean)).toEqual(["bin/tool", "tools/shell/shell.sh"]);
+  const spawns = readFileSync(join(dir, "spawns.log"), "utf8").split("\n").filter(Boolean);
+  expect(spawns.length).toBeLessThan(10);
 });
 
 test("files reads every file as bytes, so a non-UTF-8 file cannot end the scan under BSD tools in a UTF-8 locale", () => {
   // macOS's tr refuses bytes that are not UTF-8 when the locale is UTF-8 ("Illegal
   // byte sequence"); a GIF that sorted before scripts/ ended the hosted macOS scan
   // there. GNU tr reads bytes in any locale, so a stand-in plays BSD's tr here and
-  // hands every byte-locale or UTF-8 read to the real one.
+  // hands every byte-locale or UTF-8 read to the real one: whatever the scan runs,
+  // no such refusal may end it.
   const real = spawnSync("bash", ["-c", "type -P tr"], { encoding: "utf8" }).stdout.trim();
   write(
     "stubs/tr",
