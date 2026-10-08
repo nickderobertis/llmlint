@@ -111,6 +111,24 @@ test("the command's own exit status is the run's, and its record is still writte
   expect(record("demo")["scripts/branchy.sh"].lines[3]).toBeGreaterThan(0);
 });
 
+test("a trace that turns unreadable keeps the lines read before it, and says so", () => {
+  // bashcov's parser needs LINENO in every trace line; a script that unsets it
+  // garbles the rest of its own trace, never another process's or the lines
+  // already read.
+  write(
+    "scripts/unsets.sh",
+    ["#!/usr/bin/env bash", "echo before", "unset LINENO", "echo after", ""].join("\n"),
+    0o755,
+  );
+  write("run-tests.sh", "#!/usr/bin/env bash\nbash scripts/unsets.sh\nbash scripts/branchy.sh a\n", 0o755);
+  const r = shcov(["run", "demo", "--", "bash", "run-tests.sh"]);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain("keeping the lines read before it");
+  const rec = record("demo");
+  expect(rec["scripts/unsets.sh"].lines[1], "line 2, before the unset").toBeGreaterThan(0);
+  expect(rec["scripts/branchy.sh"].lines[3], "another process's trace is unaffected").toBeGreaterThan(0);
+});
+
 test("the report passes merged records at or above the floor and fails below it, listing the least-covered script", () => {
   // Two projects each cover one branch; only merged do they cover the script.
   write("run-a.sh", "#!/usr/bin/env bash\nbash scripts/branchy.sh a\n", 0o755);
@@ -141,6 +159,19 @@ test("a record that is missing or not a record fails the report rather than pass
   r = shcov(["report", "broken"]);
   expect(r.code).toBe(1);
   expect(r.out).toContain("is not a resultset");
+  // Valid JSON of the wrong shape is refused too, rather than merged.
+  for (const bad of [
+    {},
+    { p: { coverage: { "scripts/branchy.sh": { lines: [null, -1] } } } },
+    { p: { coverage: { "scripts/branchy.sh": { lines: "1,2" } } } },
+    { p: { coverage: [] } },
+    [],
+  ]) {
+    write("target/shcov/shape.json", JSON.stringify(bad));
+    r = shcov(["report", "shape"]);
+    expect(r.code, JSON.stringify(bad)).toBe(1);
+    expect(r.out, JSON.stringify(bad)).toContain("is not a resultset of the shape shcov.rb run writes");
+  }
 });
 
 test("LLMLINT_COVERAGE=off runs the command unmeasured and stands install and report down", () => {

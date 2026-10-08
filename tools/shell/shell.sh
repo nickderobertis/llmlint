@@ -89,8 +89,11 @@ PATH="$LOCAL_BIN:$PATH"
 case "$STEP" in
   files)
     [ "$#" -eq 0 ] || usage "'files' takes no arguments"
-    cd "$ROOT"
-    git ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' f; do
+    cd "$ROOT" || {
+      echo "shell: cannot enter $ROOT; run it from an intact checkout whose directories you can read and enter." >&2
+      exit 1
+    }
+    if ! git ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' f; do
       [ -f "$f" ] || continue
       case "$f" in
         *.sh | *.bash) printf '%s\n' "$f" ;;
@@ -102,7 +105,10 @@ case "$STEP" in
           fi
           ;;
       esac
-    done | LC_ALL=C sort
+    done | LC_ALL=C sort; then
+      echo "shell: listing the tree's files with git failed (above); run it inside a git work tree with git on PATH." >&2
+      exit 1
+    fi
     ;;
 
   versions)

@@ -91,7 +91,10 @@ test("installs the pinned shfmt and shellcheck built for each supported host", (
     rmSync(join(dir, "bin"), { recursive: true, force: true });
     const r = install({}, { os, arch });
     expect(r.code, `${os}/${arch}: ${r.out}`).toBe(0);
-    expect(r.out).toContain(`installed shfmt ${SHFMT} (${goBuild})`);
+    // One summary line, naming what each tool needed.
+    expect(r.out.trim().split("\n")).toEqual([
+      `install-shell-tools: shfmt ${SHFMT} (installed for ${goBuild}), shellcheck ${SHELLCHECK} (installed for ${scBuild}) in ${join(dir, "bin")}`,
+    ]);
     expect(build("shfmt")).toEqual({ version: `v${SHFMT}`, build: goBuild });
     expect(build("shellcheck")).toEqual({ version: `version: ${SHELLCHECK}`, build: scBuild });
   }
@@ -102,8 +105,7 @@ test("a second run keeps the pinned tools in place without fetching anything", (
   rmSync(join(dir, "rel"), { recursive: true, force: true });
   const r = install();
   expect(r.code, r.out).toBe(0);
-  expect(r.out).toContain(`shfmt ${SHFMT} already at`);
-  expect(r.out).toContain(`shellcheck ${SHELLCHECK} already at`);
+  expect(r.out).toContain(`shfmt ${SHFMT} (already there), shellcheck ${SHELLCHECK} (already there)`);
 });
 
 test("a tool off its pin in the install dir is replaced by the pinned one", () => {
@@ -158,16 +160,64 @@ test("a malformed override or a missing pin is refused before anything is fetche
     [{ SHFMT_BASE_URL: "http://example.com" }, "must be https://<host>[/path] or file:///<path>"],
     [{ SHELLCHECK_BASE_URL: "" }, "got: <empty>"],
     [{ SHELL_TOOLS_INSTALL_DIR: "" }, "SHELL_TOOLS_INSTALL_DIR is empty"],
+    [{ SHELL_TOOLS_INSTALL_DIR: "-m777" }, "must not start with '-'"],
     [{ LLMLINT_SHELL_TOOLS: "maybe" }, "must be 'on' (the default) or 'off'"],
   ]) {
     const r = install(env);
     expect(r.code, JSON.stringify(env)).not.toBe(0);
     expect(r.out, JSON.stringify(env)).toContain(msg);
   }
+  expect(existsSync(join(dir, "bin")), "nothing installed by a refused run").toBe(false);
   writeFileSync(join(dir, "justfile"), `shfmt-version := "${SHFMT}"\n`);
-  const r = install();
+  let r = install();
   expect(r.code).toBe(1);
   expect(r.out).toContain('restore the line: shellcheck-version := "<version>"');
+  // A pin lands in a URL and an archive path, so only a release number passes.
+  writeFileSync(join(dir, "justfile"), `shfmt-version := "../../x"\nshellcheck-version := "${SHELLCHECK}"\n`);
+  r = install();
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("the shfmt-version pin");
+  expect(r.out).toContain("is not a release version (got: ../../x)");
+});
+
+test("a host whose uname fails is refused with the fix, not misdetected", () => {
+  write("stubs/uname", "#!/bin/sh\nexit 3\n", 0o755);
+  const r = spawnSync("bash", [join(dir, "tools/shell/install-shell-tools.sh")], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${join(dir, "stubs")}:${process.env.PATH}`, LLMLINT_SHELL_TOOLS: "on", SHELL_TOOLS_INSTALL_DIR: join(dir, "bin"), SHELL_TOOLS_SHA256_FILE: join(dir, "sums") },
+  });
+  expect(r.status).toBe(1);
+  expect(`${r.stdout}${r.stderr}`).toContain("uname failed, so the host's OS and architecture are unknown");
+});
+
+test("the committed digest file pins exactly the assets the installer can choose for the current pins", () => {
+  // The drift gate for tools/shell/shell-tools.sha256: the matrix is read from the
+  // installer's own case arms and asset names, and the versions from the
+  // justfile, so a moved pin or a new platform cannot leave the file stale.
+  const script = readFileSync(join(REPO, "tools/shell/install-shell-tools.sh"), "utf8");
+  const oses = [...script.matchAll(/^\s+\w+\) os=(\w+) ;;$/gm)].map((m) => m[1]);
+  const arches = [...script.matchAll(/^\s+[^)]+\) go_arch=(\w+) sc_arch=(\w+) ;;$/gm)].map((m) => ({ go_arch: m[1], sc_arch: m[2] }));
+  const templates = [...script.matchAll(/^\s+asset="([^"]+)"$/gm)].map((m) => m[1]);
+  expect(oses).toEqual(["linux", "darwin"]);
+  expect(arches.length).toBe(2);
+  expect(templates.length).toBe(2);
+  const vars = { shfmt_version: SHFMT, shellcheck_version: SHELLCHECK };
+  const expected = new Set();
+  for (const os of oses) {
+    for (const arch of arches) {
+      for (const t of templates) {
+        expected.add(t.replace(/\$\{(\w+)\}/g, (_, v) => ({ ...vars, os, ...arch })[v]));
+      }
+    }
+  }
+  const pinned = readFileSync(join(REPO, "tools/shell/shell-tools.sha256"), "utf8")
+    .split("\n")
+    .filter((l) => l && !l.startsWith("#"));
+  for (const line of pinned) expect(line, "a digest line is <64 hex>  <asset>").toMatch(/^[0-9a-f]{64} {2}\S+$/);
+  const names = pinned.map((l) => l.split(/\s+/)[1]);
+  expect(names.length, "each asset pinned once").toBe(new Set(names).size);
+  expect(new Set(names)).toEqual(expected);
 });
 
 test("an unreachable release server is a clear failure, not a silent skip", () => {

@@ -99,8 +99,9 @@ def run(project, out, command)
   # a journey that clears the environment gets this snippet alone.
   parent = ENV["BASH_ENV"].to_s
   chain = parent.empty? ? "" : %(if [ -n "${SHCOV_PARENT_BASH_ENV:-}" ]; then . #{parent.shellescape}; fi)
-  # Builtins only, before `set -x`, so none of this is traced and a journey
-  # whose PATH holds nothing but stand-ins still records its copies.
+  # Before `set -x`, so none of this is traced; its one external command is the
+  # SHA-256 tool, by the absolute path resolved here, so a journey whose PATH holds
+  # nothing but stand-ins still records its copies.
   run_dir.join("bash_env.sh").write(<<~BASH)
     #{chain}
     if [ -d #{run_dir.to_s.shellescape} ]; then
@@ -171,6 +172,18 @@ def run(project, out, command)
   exit(status.exitstatus || 1)
 end
 
+# A record as `run` writes it: one or more runs, each mapping paths to line
+# arrays of hit counts (a non-negative integer, or null for no data). Anything
+# else is refused rather than merged, so a damaged record cannot move the number.
+def record?(data)
+  data.is_a?(Hash) && !data.empty? && data.each_value.all? do |run|
+    run.is_a?(Hash) && run["coverage"].is_a?(Hash) && run["coverage"].all? do |rel, cov|
+      rel.is_a?(String) && cov.is_a?(Hash) && cov["lines"].is_a?(Array) \
+        && cov["lines"].all? { |n| n.nil? || (n.is_a?(Integer) && !n.negative?) }
+    end
+  end
+end
+
 def report(floor_s, resultsets)
   die("report needs the floor (a whole percentage) and at least one resultset") if resultsets.empty?
   die("the floor must be a whole percentage from 0 to 100 (got '#{floor_s}')") unless floor_s.match?(/\A(100|[1-9]?[0-9])\z/)
@@ -186,9 +199,13 @@ def report(floor_s, resultsets)
     rescue JSON::ParserError => e
       die("#{rs} is not a resultset (#{e.message}); re-run that project's test target.", 1)
     end
+    unless record?(data)
+      die("#{rs} is not a resultset of the shape shcov.rb run writes " \
+          "({ name => { coverage => { path => { lines => [count or null...] } } } }); re-run that project's test target.", 1)
+    end
     data.each_value do |run|
-      (run["coverage"] || {}).each do |rel, cov|
-        (cov["lines"] || []).each_with_index { |n, i| merged[rel][i] = merged[rel][i].to_i + n if n }
+      run["coverage"].each do |rel, cov|
+        cov["lines"].each_with_index { |n, i| merged[rel][i] = merged[rel][i].to_i + n if n }
       end
     end
   end

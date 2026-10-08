@@ -55,31 +55,38 @@ for url in "$shfmt_base" "$shellcheck_base"; do
   fi
 done
 [ -n "$install_dir" ] || fail "SHELL_TOOLS_INSTALL_DIR is empty; it must name a directory to install into (unset it to use ~/.local/bin)."
+# `install` would read a leading `-` as an option, not a directory.
+case "$install_dir" in
+  -*) fail "SHELL_TOOLS_INSTALL_DIR must not start with '-' (got: $install_dir); give the directory as ./$install_dir or an absolute path." ;;
+esac
 [ -f "$sums_file" ] && [ -r "$sums_file" ] \
   || fail "no readable digest pin file at $sums_file;" "restore tools/shell/shell-tools.sha256, or point SHELL_TOOLS_SHA256_FILE at a copy of it."
 
+# A pin becomes part of a download URL and an archive path, so it must be a
+# plain release version.
 pin() {
   local v
   v="$({ grep -E "^$1-version :=" "$ROOT/justfile" 2>/dev/null || true; } | head -n1 | cut -d'"' -f2)"
   [ -n "$v" ] || fail "no $1-version pin in $ROOT/justfile;" "restore the line: $1-version := \"<version>\""
+  [[ $v =~ ^[0-9]+(\.[0-9]+)*$ ]] \
+    || fail "the $1-version pin in $ROOT/justfile is not a release version (got: $v);" "set it to the release's dotted number, e.g. $1-version := \"1.2.3\""
   printf '%s\n' "$v"
 }
-shfmt_version="$(pin shfmt)"
-shellcheck_version="$(pin shellcheck)"
+shfmt_version="$(pin shfmt)" || exit 1
+shellcheck_version="$(pin shellcheck)" || exit 1
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    fail "no SHA-256 tool (sha256sum or shasum) on PATH, so the downloads cannot be verified — NOT installing." \
-      "Install coreutils (sha256sum) and re-run."
-  fi
-}
+if command -v sha256sum >/dev/null 2>&1; then
+  sha_tool=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  sha_tool=(shasum -a 256)
+else
+  fail "no SHA-256 tool (sha256sum or shasum) on PATH, so the downloads cannot be verified — NOT installing." \
+    "Install coreutils (sha256sum) and re-run."
+fi
 
-host_os="$(uname -s)"
-host_arch="$(uname -m)"
+if ! host_os="$(uname -s)" || ! host_arch="$(uname -m)"; then
+  fail "uname failed, so the host's OS and architecture are unknown;" "check that uname is on PATH and runs, then re-run."
+fi
 case "$host_os" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
@@ -94,7 +101,7 @@ esac
 if ! tmp="$(mktemp -d)"; then
   fail "could not create a temporary directory; check that ${TMPDIR:-/tmp} exists, is writable, and has free space."
 fi
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp" || echo "install-shell-tools: could not remove the scratch directory $tmp; delete it by hand." >&2' EXIT
 
 # Download one asset and check it against its pinned digest before anything
 # unpacks or installs it.
@@ -103,9 +110,13 @@ fetch() {
   if ! curl -fsSL -o "$tmp/$asset" "$url"; then
     fail "could not download $url;" "check the network (or the base URL override) and re-run."
   fi
-  expected="$(awk -v want="$asset" '$2 == want { print $1 }' "$sums_file")"
+  if ! expected="$(awk -v want="$asset" '$2 == want { print $1 }' "$sums_file")"; then
+    fail "could not read $sums_file;" "check that it is readable, then re-run."
+  fi
   [ -n "$expected" ] || fail "no pinned sha256 for $asset in $sums_file;" "add its line from the release's published digests."
-  actual="$(sha256 "$tmp/$asset")"
+  if ! actual="$("${sha_tool[@]}" "$tmp/$asset" | awk '{print $1}')" || [ -z "$actual" ]; then
+    fail "${sha_tool[*]} could not hash the downloaded $asset — NOT installing;" "check ${TMPDIR:-/tmp} is readable and re-run."
+  fi
   if [ "$actual" != "$expected" ]; then
     fail "sha256 mismatch for $asset — NOT installing" "expected $expected (pinned in $sums_file)" "got      $actual" \
       "If the pin is stale, refresh it from the release; otherwise treat the download as untrusted and do not retry blindly."
@@ -129,16 +140,16 @@ current() {
 }
 
 if [ "$(current shfmt)" = "$shfmt_version" ]; then
-  echo "install-shell-tools: shfmt $shfmt_version already at $install_dir/shfmt"
+  shfmt_note="already there"
 else
   asset="shfmt_v${shfmt_version}_${os}_${go_arch}"
   fetch "$shfmt_base/v${shfmt_version}/$asset" "$asset"
   place "$tmp/$asset" shfmt
-  echo "install-shell-tools: installed shfmt $shfmt_version ($os/$go_arch) to $install_dir"
+  shfmt_note="installed for $os/$go_arch"
 fi
 
 if [ "$(current shellcheck)" = "$shellcheck_version" ]; then
-  echo "install-shell-tools: shellcheck $shellcheck_version already at $install_dir/shellcheck"
+  shellcheck_note="already there"
 else
   asset="shellcheck-v${shellcheck_version}.${os}.${sc_arch}.tar.gz"
   fetch "$shellcheck_base/v${shellcheck_version}/$asset" "$asset"
@@ -149,5 +160,7 @@ else
     || fail "$asset matched its pinned digest but holds no shellcheck-v${shellcheck_version}/shellcheck —" \
       "upstream changed the archive layout; update the extraction above."
   place "$tmp/shellcheck-v${shellcheck_version}/shellcheck" shellcheck
-  echo "install-shell-tools: installed shellcheck $shellcheck_version ($os/$sc_arch) to $install_dir"
+  shellcheck_note="installed for $os/$sc_arch"
 fi
+
+echo "install-shell-tools: shfmt $shfmt_version ($shfmt_note), shellcheck $shellcheck_version ($shellcheck_note) in $install_dir"

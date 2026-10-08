@@ -35,7 +35,6 @@ beforeAll(() => {
 const targetsOf = (project) => nodes[project]?.data?.targets ?? {};
 const commandOf = (target) => target?.options?.command ?? "";
 
-// The commands a target runs: its `command`, or each of its `commands`.
 const commandsOf = (target) =>
   [target?.options?.command, ...(target?.options?.commands ?? [])].filter((c) => typeof c === "string");
 

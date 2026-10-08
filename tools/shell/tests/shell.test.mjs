@@ -103,6 +103,13 @@ test("files lists every shell script by extension or shebang, and nothing ignore
   expect(r.stdout.split("\n").filter(Boolean)).toEqual(["a.sh", "bin/posix", "hooks/pre-push", "lib/b.bash", "tools/shell/shell.sh"]);
 });
 
+test("files outside a git work tree is a clear failure, not an empty list", () => {
+  rmSync(join(dir, ".git"), { recursive: true, force: true });
+  const r = shell(["files"], { GIT_CEILING_DIRECTORIES: dir });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("listing the tree's files with git failed");
+});
+
 test("versions names each pin and the version found, which keys the lint cache", () => {
   const r = shell(["versions"]);
   expect(r.code).toBe(0);

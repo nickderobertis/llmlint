@@ -311,10 +311,11 @@ Use the `just` recipes; do not hand-roll equivalents.
   environment hands `SHCOV_BASH_ENV` back as `BASH_ENV`, or the child goes
   unmeasured.
 - **Floor: 50% lines**, approved by the manager. It rests on a measurement of
-  **51.81% (1057 of 2040 lines)**, taken on aarch64 Linux over the 9 measured
+  **51.85% (1064 of 2052 lines)**, taken on aarch64 Linux over the 9 measured
   projects; the per-script table is in `tools/coverage/AGENTS.md`. The floor is
-  one point under the measurement, because a few branches depend on the host
-  (the architecture `case` arms, which tools are present) and CI runs x86_64.
+  the measurement rounded down, less one point of headroom, because a few
+  branches depend on the host (the architecture `case` arms, which tools are
+  present) and CI runs x86_64.
   95% is out of reach because of what the gate cannot run:
   - `scripts/install.sh`: POSIX `sh`, which bashcov does not trace, and no
     journey yet.

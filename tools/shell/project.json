@@ -30,6 +30,7 @@
       ]
     },
     "test": {
+      "//suppression": "llmlint: ignore-block[shell_test_tiers_stay_split] the host tools shell.test.mjs runs are the pinned shfmt and shellcheck binaries every gate run already requires, executed offline over scratch files in milliseconds; nothing here reaches a network or installs a real release (the installer journeys use a file:// stand-in tree), and both suites exercise only this project's two scripts, so a separate project would be selected by exactly the same edits and save no run",
       "executor": "nx:run-commands",
       "cache": true,
       "options": {
@@ -45,7 +46,8 @@
       "outputs": [
         "{workspaceRoot}/target/shcov/shell-tools.json"
       ],
-      "//": "Offline: shell.sh over scratch scripts with the real pinned shfmt and shellcheck (a finding fails, a clean file passes, a tool off its pin is refused), and the installer against a stand-in release tree over file:// (the build for each host, digest refusal, idempotence)."
+      "//": "Offline: shell.sh over scratch scripts with the real pinned shfmt and shellcheck (a finding fails, a clean file passes, a tool off its pin is refused), and the installer against a stand-in release tree over file:// (the build for each host, digest refusal, idempotence).",
+      "//suppression-end": "llmlint: ignore-end[shell_test_tiers_stay_split]"
     }
   }
 }

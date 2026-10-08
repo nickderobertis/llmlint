@@ -105,7 +105,10 @@ case "$STEP" in
       records+=("target/shcov/$project.json")
     done
     require_ruby
-    cd "$ROOT"
+    cd "$ROOT" || {
+      echo "shcov: cannot enter $ROOT; run it from an intact checkout whose directories you can read and enter." >&2
+      exit 1
+    }
     exec bundle exec ruby "$ROOT/tools/coverage/shcov.rb" report "$MIN_LINES" "${records[@]}"
     ;;
 
