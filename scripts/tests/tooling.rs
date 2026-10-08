@@ -1649,6 +1649,72 @@ fn the_nx_wrapper_installs_the_locked_nx_once_and_keeps_its_cache_in_the_checkou
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn setup_check_reports_a_missing_pinned_bun_as_not_ready() {
+    // bun installs and runs Nx, so a machine without the pinned one is not
+    // ready, even with every other gate tool on PATH; with it, readiness moves
+    // on to the setup stamp.
+    let p = Project::new();
+    let root = repo_root();
+    for file in [
+        "scripts/setup-check.sh",
+        "scripts/setup-lib.sh",
+        "scripts/bun.sh",
+        ".tool-versions",
+        "justfile",
+        "rust-toolchain.toml",
+    ] {
+        p.write(file, &fs::read_to_string(root.join(file)).unwrap());
+    }
+    let tools = p.path().join("tools");
+    for bin in [
+        "rustc",
+        "cargo",
+        "just",
+        "cargo-nextest",
+        "cargo-llvm-cov",
+        "actionlint",
+        "shfmt",
+        "shellcheck",
+        "node",
+        "ruby",
+        "bundle",
+    ] {
+        write_exe(&tools.join(bin), "#!/bin/sh\nexit 0\n");
+    }
+    let check = |path: String| {
+        std::process::Command::new("bash")
+            .arg(p.path().join("scripts/setup-check.sh"))
+            .env("PATH", path)
+            .env("HOME", p.path().join("home"))
+            .env("XDG_CACHE_HOME", p.path().join("cache"))
+            .output()
+            .unwrap()
+    };
+    let out = check(format!("{}:/usr/bin:/bin", tools.display()));
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("missing tools: bun (the .tool-versions pin)"),
+        "{stdout}"
+    );
+
+    write_exe(
+        &p.path().join("pinned/bun"),
+        &format!("#!/bin/sh\necho {}\n", pinned_bun_version()),
+    );
+    let out = check(format!(
+        "{}:{}:/usr/bin:/bin",
+        tools.display(),
+        p.path().join("pinned").display()
+    ));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("no setup stamp"), "{stdout}");
+}
+// llmlint: ignore-end[e2e_not_mocked]
+
+// llmlint: ignore-block[e2e_not_mocked] the real setup.sh and setup-check.sh (with the real setup-lib.sh) run under bash; a test cannot own which gate tools a host has installed, nor let setup provision real rustup, cargo, just, Node or Ruby over the network, so only those binaries are stand-ins (each recording that it ran) on a PATH of the base tools
 /// Under the shell coverage run (`tools/coverage/shcov.sh`), keep measuring the
 /// script a journey starts with a cleared environment: shcov hands over the
 /// snippet that records each bash process as `SHCOV_BASH_ENV`, and bash reads
@@ -1863,69 +1929,5 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
     assert!(ran.contains("just actionlint-tools"), "{ran}");
     assert!(ran.contains("just bootstrap"), "{ran}");
     assert!(p.path().join(".dev/setup.stamp").exists());
-}
-
-#[cfg(unix)]
-#[test]
-fn setup_check_reports_a_missing_pinned_bun_as_not_ready() {
-    // bun installs and runs Nx, so a machine without the pinned one is not
-    // ready, even with every other gate tool on PATH; with it, readiness moves
-    // on to the setup stamp.
-    let p = Project::new();
-    let root = repo_root();
-    for file in [
-        "scripts/setup-check.sh",
-        "scripts/setup-lib.sh",
-        "scripts/bun.sh",
-        ".tool-versions",
-        "justfile",
-        "rust-toolchain.toml",
-    ] {
-        p.write(file, &fs::read_to_string(root.join(file)).unwrap());
-    }
-    let tools = p.path().join("tools");
-    for bin in [
-        "rustc",
-        "cargo",
-        "just",
-        "cargo-nextest",
-        "cargo-llvm-cov",
-        "actionlint",
-        "shfmt",
-        "shellcheck",
-        "node",
-        "ruby",
-        "bundle",
-    ] {
-        write_exe(&tools.join(bin), "#!/bin/sh\nexit 0\n");
-    }
-    let check = |path: String| {
-        std::process::Command::new("bash")
-            .arg(p.path().join("scripts/setup-check.sh"))
-            .env("PATH", path)
-            .env("HOME", p.path().join("home"))
-            .env("XDG_CACHE_HOME", p.path().join("cache"))
-            .output()
-            .unwrap()
-    };
-    let out = check(format!("{}:/usr/bin:/bin", tools.display()));
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("missing tools: bun (the .tool-versions pin)"),
-        "{stdout}"
-    );
-
-    write_exe(
-        &p.path().join("pinned/bun"),
-        &format!("#!/bin/sh\necho {}\n", pinned_bun_version()),
-    );
-    let out = check(format!(
-        "{}:{}:/usr/bin:/bin",
-        tools.display(),
-        p.path().join("pinned").display()
-    ));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("no setup stamp"), "{stdout}");
 }
 // llmlint: ignore-end[e2e_not_mocked]
