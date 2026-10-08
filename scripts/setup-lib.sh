@@ -6,13 +6,8 @@
 # Strict mode is the library's own, not inherited from whichever script sources it.
 set -euo pipefail
 #
-# llmlint deliberately does NOT use asdf/direnv (see AGENTS.md). The dev
-# environment is: rustup + the pinned rust-toolchain.toml, `just`, and the two
-# cargo subcommands the gate drives (`cargo nextest`, `cargo llvm-cov`), plus the
-# pinned `actionlint` the gate's `lint-workflows` step runs, the pinned shfmt
-# and shellcheck that every shell project's `format`/`lint` runs, Ruby + Bundler
-# (which run the locked bashcov, the shell coverage tool), and Node + the bun
-# `.tool-versions` pins, which install and run Nx (the gate's orchestrator).
+# llmlint deliberately does NOT use asdf/direnv (see AGENTS.md, which lists the
+# dev environment under "Command surface" and "Shell").
 
 # Binaries that must resolve for the dev environment to be considered ready —
 # everything `just check` shells out to. cargo-deny/cargo-machete are NOT here —

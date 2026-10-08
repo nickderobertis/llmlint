@@ -6,7 +6,7 @@
 // small bash runners that drive the scratch scripts the way the journeys do.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -137,6 +137,55 @@ test("the command's own exit status is the run's, and its record is still writte
   const r = shcov(["run", "demo", "--", "bash", "run-tests.sh"]);
   expect(r.code).toBe(7);
   expect(record("demo")["scripts/branchy.sh"].lines[3]).toBeGreaterThan(0);
+});
+
+test("without sha256sum a run hashes with shasum, still counting a copy, and with neither it refuses before the command runs", () => {
+  // This host's PATH with both SHA-256 tools left out; shasum is then played by a
+  // stand-in that hashes with the real sha256sum by absolute path.
+  const bin = join(dir, "sandbox");
+  mkdirSync(bin);
+  for (const d of (process.env.PATH ?? "").split(":").filter(Boolean)) {
+    let names = [];
+    try {
+      names = readdirSync(d);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      if (n === "sha256sum" || n === "shasum" || existsSync(join(bin, n))) continue;
+      symlinkSync(join(d, n), join(bin, n));
+    }
+  }
+  const real = spawnSync("bash", ["-c", "type -P sha256sum"], { encoding: "utf8" }).stdout.trim();
+  write("hash/shasum", `#!/bin/sh\n[ "$1" = -a ] && shift 2\nexec ${real} "$@"\n`, 0o755);
+  const ran = join(dir, "command-ran");
+  write(
+    "run-tests.sh",
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `touch ${JSON.stringify(ran)}`,
+      'copy="$(mktemp -d)"',
+      'mkdir -p "$copy/scripts"',
+      'cp scripts/branchy.sh "$copy/scripts/branchy.sh"',
+      '(cd "$copy" && bash scripts/branchy.sh b)',
+      'rm -rf "$copy"',
+      "",
+    ].join("\n"),
+    0o755,
+  );
+
+  symlinkSync(join(dir, "hash/shasum"), join(bin, "shasum"));
+  let r = shcov(["run", "demo", "--", "bash", "run-tests.sh"], { PATH: bin });
+  expect(r.code, r.out).toBe(0);
+  expect(record("demo")["scripts/branchy.sh"].lines[4], "line 5, run as a copy identified by its shasum digest").toBeGreaterThan(0);
+
+  rmSync(join(bin, "shasum"));
+  rmSync(ran);
+  r = shcov(["run", "demo", "--", "bash", "run-tests.sh"], { PATH: bin });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("no sha256sum or shasum on PATH; install coreutils and re-run.");
+  expect(existsSync(ran), "the measured command never started").toBe(false);
 });
 
 test("a trace that turns unreadable keeps the lines read before it, and says so", () => {
