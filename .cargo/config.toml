@@ -9,8 +9,10 @@
 [build]
 target-dir = "target"
 
-# Line tables only for dev and test builds (`test` inherits `dev`): backtraces and
-# coverage keep file:line, and the full debuginfo cargo writes by default
-# (`debug = 2`) stays off the disk. `release` is untouched.
+# No debuginfo for dev and test builds (`test` inherits `dev`): cargo passes no
+# `-C debuginfo` level and strips the standard library's. A panic still names its
+# file:line (that location is compiled in, not read from debuginfo) and
+# `cargo llvm-cov` measures through its own instrumentation, while every test
+# binary drops the 2-3x of its size debuginfo was. `release` is untouched.
 [profile.dev]
-debug = 1
+debug = 0
