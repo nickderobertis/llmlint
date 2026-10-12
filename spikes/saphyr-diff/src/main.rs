@@ -406,6 +406,89 @@ fn candidate_version<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, 
     }
 }
 
+/// Candidate code change for the `Option<bool>` / integer fields: read through
+/// `deserialize_any`, so a quoted scalar arrives as a string and is refused,
+/// as serde_yaml_ng's `Value` → `from_value` path refuses it today.
+struct StrictBool(bool);
+struct StrictBoolVisitor;
+impl<'de> Visitor<'de> for StrictBoolVisitor {
+    type Value = StrictBool;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a boolean")
+    }
+    fn visit_bool<E: de::Error>(self, v: bool) -> Result<StrictBool, E> {
+        Ok(StrictBool(v))
+    }
+}
+impl<'de> Deserialize<'de> for StrictBool {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(StrictBoolVisitor)
+    }
+}
+struct StrictU32(u32);
+struct StrictU32Visitor;
+impl<'de> Visitor<'de> for StrictU32Visitor {
+    type Value = StrictU32;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("u32")
+    }
+    fn visit_u64<E: de::Error>(self, v: u64) -> Result<StrictU32, E> {
+        u32::try_from(v).map(StrictU32).map_err(|_| E::invalid_value(de::Unexpected::Unsigned(v), &self))
+    }
+    fn visit_i64<E: de::Error>(self, v: i64) -> Result<StrictU32, E> {
+        u32::try_from(v).map(StrictU32).map_err(|_| E::invalid_value(de::Unexpected::Signed(v), &self))
+    }
+}
+impl<'de> Deserialize<'de> for StrictU32 {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(StrictU32Visitor)
+    }
+}
+#[derive(Deserialize)]
+struct PlainFields {
+    #[serde(default)]
+    b: Option<bool>,
+    #[serde(default)]
+    n: Option<u32>,
+}
+#[derive(Deserialize)]
+struct StrictFields {
+    #[serde(default)]
+    b: Option<StrictBool>,
+    #[serde(default)]
+    n: Option<StrictU32>,
+}
+
+fn report_code_changes() {
+    println!("\n=== candidate code change: Option<bool>/u32 fields read through deserialize_any ===");
+    let fields = |p: PlainFields| format!("b={:?} n={:?}", p.b, p.n);
+    let strict = |p: StrictFields| format!("b={:?} n={:?}", p.b.map(|x| x.0), p.n.map(|x| x.0));
+    for case in [
+        "b: true", "b: True", "b: \"true\"", "b: \"yes\"", "b: yes", "b: on", "b: n", "b: ~",
+        "n: 3", "n: \"3\"", "n: 3.0", "n: 010", "n: 0o10", "n: 0x10", "n: 1_000", "n: -1", "n: ~",
+    ] {
+        let today = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(case)
+            .map_err(|e| e.to_string())
+            .and_then(|v| serde_yaml_ng::from_value::<PlainFields>(v).map_err(|e| e.to_string()))
+            .map(fields);
+        let mut o = recommended();
+        o.with_snippet = false;
+        let plain = serde_saphyr::from_str_with_options::<PlainFields>(case, o.clone()).map(fields).map_err(|e| e.to_string());
+        let changed = serde_saphyr::from_str_with_options::<StrictFields>(case, o).map(strict).map_err(|e| e.to_string());
+        let same = |r: &Result<String, String>| match (&today, r) {
+            (Ok(a), Ok(b)) => a == b,
+            (Err(_), Err(_)) => true,
+            _ => false,
+        };
+        println!(
+            "CODE {:<12} today={today:?}\n      serde-saphyr recommended, plain fields: {} {plain:?}\n      serde-saphyr recommended, deserialize_any fields: {} {changed:?}",
+            case,
+            if same(&plain) { "SAME" } else { "DIFF" },
+            if same(&changed) { "SAME" } else { "DIFF" },
+        );
+    }
+}
+
 // ------------------------------------------------------------- diffing ----
 
 /// Every path at which two JSON trees differ, as `path: before -> after`.
@@ -973,6 +1056,7 @@ fn main() {
     let all: Vec<&Doc> = repo.iter().chain(&e2e).chain(&fleet).chain(&synth).collect();
     report_version_probe(&all);
     report_version_scalars();
+    report_code_changes();
     report_workflows(&root);
 
     let mut by_kind: BTreeMap<&str, usize> = BTreeMap::new();
