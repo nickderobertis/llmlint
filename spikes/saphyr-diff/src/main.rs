@@ -745,6 +745,11 @@ fn report_version_probe(docs: &[&Doc]) {
                 .map(|p| p.version)
                 .map_err(|e| e.to_string())
         })),
+        ("candidate visitor + quote_yaml11_numbers pre-pass, serde-saphyr recommended", Box::new(|t: &str| {
+            serde_saphyr::from_str_with_options::<CandidateProbe>(&compat::quote_yaml11_numbers(t), recommended())
+                .map(|p| p.version)
+                .map_err(|e| e.to_string())
+        })),
     ];
     for (label, read) in &readers {
         println!(
