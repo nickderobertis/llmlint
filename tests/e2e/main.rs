@@ -20,6 +20,27 @@ use predicates::prelude::*;
 use serde_json::Value;
 use tempfile::TempDir;
 
+// SPIKE (serde-yaml-replacement, never lands): with `SPIKE_E2E_DUMP` set, every
+// YAML document a journey writes is also copied there, so the saphyr-diff harness
+// (`spikes/saphyr-diff`) can run the e2e suite's inline configs through both
+// YAML crates. Unset, this is `fs::write`.
+fn spike_fs_write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> std::io::Result<()> {
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+    let (path, contents) = (path.as_ref(), contents.as_ref());
+    let yaml = path
+        .extension()
+        .is_some_and(|x| x == "yml" || x == "yaml");
+    if let (true, Some(dir)) = (yaml, std::env::var_os("SPIKE_E2E_DUMP")) {
+        let test = thread::current().name().unwrap_or("unnamed").replace("::", "__");
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let name = format!("{test}__{}__{seq:03}__{file}", std::process::id());
+        fs::create_dir_all(&dir)?;
+        fs::write(Path::new(&dir).join(name), contents)?;
+    }
+    fs::write(path, contents)
+}
+
 fn mock_path() -> PathBuf {
     cargo_bin("llmlint-mock-oneharness")
 }
@@ -74,12 +95,12 @@ impl Project {
     fn write(&self, rel: &str, contents: &str) -> &Self {
         let p = self.path().join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, contents).unwrap();
+        spike_fs_write(p, contents).unwrap();
         self
     }
     fn write_verdicts(&self, json: &str) -> PathBuf {
         let p = self.path().join("verdicts.json");
-        fs::write(&p, json).unwrap();
+        spike_fs_write(&p, json).unwrap();
         p
     }
     /// The per-project history directory results logging writes to. Every command
@@ -1165,7 +1186,7 @@ fn lint_config_rejects_an_explicit_file_that_does_not_resolve() {
 fn plugin_from_a_file_url_merges_its_rules() {
     let p = Project::new();
     let plugin = p.path().join("shared.yml");
-    fs::write(
+    spike_fs_write(
         &plugin,
         format!("version: 1\nrules:\n  - {{ name: shared_rule, description: \"{RULE}\" }}\n"),
     )
@@ -1206,7 +1227,7 @@ fn plugin_version_mismatch_is_an_error() {
     let p = Project::new();
     let plugin = p.path().join("shared.yml");
     // Declares version 2, but the config pins @1 -> hard error.
-    fs::write(
+    spike_fs_write(
         &plugin,
         format!("version: 2\nrules:\n  - {{ name: shared_rule, description: \"{RULE}\" }}\n"),
     )
@@ -1463,7 +1484,7 @@ fn project_with_pinned_plugin(rule: &str, version: &str) -> (Project, PathBuf, P
     let p = Project::new();
     let origin = p.path().join("origin.yml");
     let cache = p.path().join("cache");
-    fs::write(
+    spike_fs_write(
         &origin,
         format!("version: {version}\nrules:\n  - {{ name: {rule}, description: \"{RULE}\" }}\n"),
     )
@@ -1483,7 +1504,7 @@ fn project_with_pinned_plugin(rule: &str, version: &str) -> (Project, PathBuf, P
 /// Publish a new version of the plugin at the same URL — what a plugin author
 /// does, and what a consumer pinning `@1` is promised to pick up.
 fn publish(origin: &Path, rule: &str, version: &str) {
-    fs::write(
+    spike_fs_write(
         origin,
         format!("version: {version}\nrules:\n  - {{ name: {rule}, description: \"{RULE}\" }}\n"),
     )
@@ -1832,7 +1853,7 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
         .unwrap()
         .unwrap()
         .path();
-    fs::write(
+    spike_fs_write(
         sub.join("1.yml"),
         format!(
             "version: 1.0\nrules:\n  - {{ name: previous_layout_rule, description: \"{RULE}\" }}\n"
@@ -1841,19 +1862,19 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
     .unwrap();
     // Metadata that is not this release's — unparseable, a future schema, and a
     // confirmation time no clock can hold — is passed over the same way.
-    fs::write(sub.join("v3.0.json"), "{not json").unwrap();
-    fs::write(sub.join("v3.0.yml"), "version: 3.0\nrules: []\n").unwrap();
-    fs::write(
+    spike_fs_write(sub.join("v3.0.json"), "{not json").unwrap();
+    spike_fs_write(sub.join("v3.0.yml"), "version: 3.0\nrules: []\n").unwrap();
+    spike_fs_write(
         sub.join("v4.0.json"),
         r#"{"schema":99,"url":"u","pin":"1","version":"4.0","confirmed_at":0}"#,
     )
     .unwrap();
-    fs::write(sub.join("v4.0.yml"), "version: 4.0\nrules: []\n").unwrap();
+    spike_fs_write(sub.join("v4.0.yml"), "version: 4.0\nrules: []\n").unwrap();
     // A correctly-named, current-schema sidecar whose validator is one no
     // request could carry is not repaired into an entry either — the value
     // cannot inhabit the metadata type, so the whole entry is passed over.
-    fs::write(sub.join("v5.0.yml"), "version: 5.0\nrules: []\n").unwrap();
-    fs::write(
+    spike_fs_write(sub.join("v5.0.yml"), "version: 5.0\nrules: []\n").unwrap();
+    spike_fs_write(
         sub.join("v5.0.json"),
         "{\"schema\":1,\"url\":\"u\",\"pin\":\"1\",\"version\":\"5.0\",\
          \"confirmed_at\":0,\"etag\":\"v1\\r\\nX-Injected: 1\"}",
@@ -1861,7 +1882,7 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
     .unwrap();
     // A well-formed sidecar under a filename that does not name the version it
     // declares must not adopt that version's document as an entry.
-    fs::write(
+    spike_fs_write(
         sub.join("stray.json"),
         r#"{"schema":1,"url":"u","pin":"1","version":"3.0","confirmed_at":0}"#,
     )
@@ -1874,7 +1895,7 @@ fn a_cache_entry_nothing_vouches_for_is_not_judged_against() {
         .map(|e| e.path())
         .find(|p| p.file_name().is_some_and(|n| n == "v1.2.yml"))
         .expect("the cached document is keyed by the version it declares");
-    fs::write(
+    spike_fs_write(
         &entry,
         format!("version: 1.9\nrules:\n  - {{ name: tampered_rule, description: \"{RULE}\" }}\n"),
     )
@@ -1946,7 +1967,7 @@ fn an_origin_past_the_pinned_range_leaves_the_pinned_plugin_in_place() {
     assert!(!names.contains(&"breaking_rule".to_string()), "{names:?}");
 
     // The same is true of a document that stops parsing at all.
-    fs::write(&origin, "version: : :\n  - oops\n").unwrap();
+    spike_fs_write(&origin, "version: : :\n  - oops\n").unwrap();
     let kept = run();
     assert_eq!(kept.status.code(), Some(0));
     assert!(reported_rules(&kept).contains(&"shared_rule_v1".to_string()));
@@ -3103,7 +3124,7 @@ fn diff_from_inside_a_git_hook_reads_the_repository_it_was_given() {
     let elsewhere = hook_repo.path();
     init_repo(elsewhere);
     fs::create_dir_all(elsewhere.join("src")).unwrap();
-    fs::write(elsewhere.join("src/a.rs"), CHANGED).unwrap();
+    spike_fs_write(elsewhere.join("src/a.rs"), CHANGED).unwrap();
     git(elsewhere, &["add", "."]);
     git(
         elsewhere,
@@ -3149,7 +3170,7 @@ fn diff_base_from_inside_a_git_hook_resolves_the_ref_in_the_repository_it_was_gi
     let elsewhere = hook_repo.path();
     init_repo(elsewhere);
     fs::create_dir_all(elsewhere.join("src")).unwrap();
-    fs::write(elsewhere.join("src/a.rs"), CHANGED).unwrap();
+    spike_fs_write(elsewhere.join("src/a.rs"), CHANGED).unwrap();
     git(elsewhere, &["add", "."]);
     git(
         elsewhere,
@@ -8439,7 +8460,7 @@ fn check_ignores_skips_binary_files_in_the_target_set() {
     // skipped rather than failing the scan, so a real directive elsewhere still
     // validates and the run is clean.
     let p = ignore_project("// llmlint: ignore[no_todo] handled here\n");
-    fs::write(p.path().join("src/blob.bin"), [0xff, 0xfe, 0x00, 0xff]).unwrap();
+    spike_fs_write(p.path().join("src/blob.bin"), [0xff, 0xfe, 0x00, 0xff]).unwrap();
     p.check_ignores().assert().success();
 }
 
@@ -12044,7 +12065,7 @@ fn ungrammatical_labels_in_a_stored_record_are_not_trusted() {
     record["labels"] = serde_json::json!({
         "session": "abc", "-bad": "x", "turn": 3, "ctl": "a\u{7}b"
     });
-    fs::write(&path, serde_json::to_string_pretty(&record).unwrap()).unwrap();
+    spike_fs_write(&path, serde_json::to_string_pretty(&record).unwrap()).unwrap();
 
     let listed = history_json(&p, &["--label", "session=abc"]);
     assert_eq!(listed[0]["labels"], serde_json::json!({"session": "abc"}));

@@ -1,0 +1,21 @@
+# SPIKE (plan authoring:serde-yaml-replacement) — a throwaway differential
+# harness that never lands. It runs this repository's real YAML through the
+# crate llmlint uses today (serde_yaml_ng) and through serde-saphyr (plus
+# saphyr's node tree for the schema-less walks) and prints every difference.
+# Its own `[workspace]` keeps it out of llmlint's workspace and Cargo.lock.
+# Run it with `bash spikes/saphyr-diff/run.sh`.
+[package]
+name = "saphyr-diff"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+llmlint = { path = "../.." }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml_ng = "0.10"
+serde-saphyr = "=1.3.0"
+saphyr = "=0.2.1"

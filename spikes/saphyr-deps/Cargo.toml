@@ -1,0 +1,16 @@
+# SPIKE (plan authoring:serde-yaml-replacement) — never lands. Depends on
+# nothing but the two candidate crates, at the features the port would use, so
+# `cargo deny` (with the repository's deny.toml) and `cargo tree` report exactly
+# what they would add. Run by `spikes/saphyr-diff/run.sh`.
+[package]
+name = "saphyr-deps"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+serde-saphyr = "=1.3.0"
+saphyr = "=0.2.1"
