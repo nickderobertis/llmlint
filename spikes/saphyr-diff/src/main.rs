@@ -8,6 +8,8 @@
 //!
 //! Usage: `saphyr-diff <repo-root> <e2e-dump-dir> [--time]` (see `run.sh`).
 
+mod compat;
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
@@ -129,6 +131,12 @@ fn synthetic_configs() -> Vec<Doc> {
         ("merge-list-first-wins", "x-a: &a {description: from_a}\nx-b: &b {description: from_b, judges: 2}\nrules:\n  - <<: [*a, *b]\n    name: r\n".into()),
         ("merge-nested-merge", "x-a: &a {description: from_a}\nx-b: &b\n  <<: *a\n  judges: 2\nrules:\n  - <<: *b\n    name: r\n".into()),
         ("merge-top-level", "x-defaults: &defaults\n  rationales: true\n  diff_base: main\n<<: *defaults\nrules: []\n".into()),
+        ("merge-nested-top-level", "x-a: &a {rationales: true}\nx-b: &b\n  <<: *a\n  diff_base: main\n<<: *b\nrules: []\n".into()),
+        ("merge-nested-unused", "x-a: &a {description: d}\nx-b: &b\n  <<: *a\n  judges: 2\nrules:\n  - {name: r, description: d}\n".into()),
+        ("merge-nested-source-also-aliased", "x-a: &a {include: [\"src/**\"]}\nx-f: &f\n  <<: *a\n  exclude: [\"gen/**\"]\nx-g:\n  <<: *f\nfiles: *f\nrules: []\n".into()),
+        ("merge-nested-inline", "rules:\n  - <<: {<<: {description: d}, judges: 2}\n    name: r\n".into()),
+        ("merge-double-quoted-key", "rules:\n  - \"<<\": {description: d}\n    name: r\n".into()),
+        ("merge-empty-value", "rules:\n  - <<:\n    name: r\n    description: d\n".into()),
         ("merge-inline-mapping", "rules:\n  - <<: {description: inline}\n    name: r\n".into()),
         ("merge-scalar-error", "x-s: &s hello\nrules:\n  - <<: *s\n    name: r\n    description: d\n".into()),
         ("merge-seq-of-scalar-error", "rules:\n  - <<: [1, 2]\n    name: r\n    description: d\n".into()),
@@ -184,6 +192,10 @@ fn synthetic_configs() -> Vec<Doc> {
         ("int-field-octal-ish", rule("    judges: 010\n")),
         ("int-field-0o", rule("    judges: 0o10\n")),
         ("int-field-negative", rule("    judges: -1\n")),
+        ("string-field-underscore", "rules:\n  - name: r\n    description: 1_000\n".into()),
+        ("string-field-leading-zero", "rules:\n  - name: r\n    description: 007\n".into()),
+        ("int-field-underscore", rule("    judges: 1_0\n")),
+        ("stash-underscore-key", "x-1_0: 1\nrules: []\n".into()),
         ("timeout-underscore", "oneharness:\n  timeout: 1_000\nrules: []\n".into()),
         ("plugins-scalar", "plugins: a.yml\nrules: []\n".into()),
         // document shape
@@ -219,7 +231,7 @@ fn synthetic_configs() -> Vec<Doc> {
     ];
     // `version:` text: number-or-string (version.rs `scalar_text`).
     for v in [
-        "1", "1.2", "1.10", "\"1.10\"", "'1.10'", "1.0", "1.2.3", "\"1.2.3\"", "01", "0x10", "1e2",
+        "1", "1.2", "1.10", "\"1.10\"", "'1.10'", "1.0", "1.2.3", "\"1.2.3\"", "01", "010", "0x10", "1e2",
         "1_0", "+1", ".5", "true", "~", "[1, 2]", "{a: 1}", "\"\"", "1.2.3.4", "!!str 1.10",
     ] {
         cases.push(("version", format!("version: {v}\nrules: []\n")));
@@ -287,6 +299,56 @@ fn saphyr_via_json(text: &str, opts: &Options) -> Result<Config, String> {
         return Err(cfg_err(INCLUDE_MSG));
     }
     serde_json::from_value(v).map_err(cfg_err)
+}
+
+/// The candidate compatibility pre-passes (compat.rs), in order, then the
+/// typed read. `emulate` picks the nested-merge pre-pass: quote the inner `<<`
+/// (today's literal-key result) rather than refuse.
+fn compat_prepass(text: &str, emulate: bool) -> Result<String, String> {
+    let t = compat::unquote_merge_keys(text);
+    compat::refuse_null_merge(&t).map_err(cfg_err)?;
+    let t = if emulate {
+        compat::quote_nested_merge_keys(&t)
+    } else {
+        compat::refuse_nested_merge(&t).map_err(cfg_err)?;
+        t
+    };
+    Ok(compat::quote_yaml11_numbers(&t))
+}
+fn compat_refuse(text: &str, opts: &Options) -> Result<Config, String> {
+    saphyr_typed(&compat_prepass(text, false)?, opts)
+}
+fn compat_emulate(text: &str, opts: &Options) -> Result<Config, String> {
+    saphyr_typed(&compat_prepass(text, true)?, opts)
+}
+
+/// How many documents of a kind each pre-pass changes (rewrites) or refuses.
+fn report_prepass_reach(kind: &str, docs: &[&Doc]) {
+    let (mut q, mut u, mut n, mut e, mut r) = (0, 0, 0, 0, 0);
+    let mut touched = Vec::new();
+    for d in docs {
+        let t = &d.text;
+        let mut hit = |c: &mut usize, b: bool, what: &str| {
+            if b {
+                *c += 1;
+                touched.push(format!("{what}:{}", d.name));
+            }
+        };
+        hit(&mut q, compat::quote_yaml11_numbers(t) != *t, "quote_yaml11_numbers");
+        hit(&mut u, compat::unquote_merge_keys(t) != *t, "unquote_merge_keys");
+        hit(&mut n, compat::refuse_null_merge(t).is_err(), "refuse_null_merge");
+        hit(&mut e, compat::quote_nested_merge_keys(t) != *t, "quote_nested_merge_keys");
+        hit(&mut r, compat::refuse_nested_merge(t).is_err(), "refuse_nested_merge");
+    }
+    println!(
+        "PREPASS [{kind}] {} docs: quote_yaml11_numbers rewrites {q}, unquote_merge_keys rewrites {u}, refuse_null_merge refuses {n}, quote_nested_merge_keys rewrites {e}, refuse_nested_merge refuses {r}",
+        docs.len()
+    );
+    if kind != "config:synthetic" {
+        for t in touched {
+            println!("PREPASS-HIT [{kind}] {t}");
+        }
+    }
 }
 
 /// The plugin `VersionProbe` (src/io/plugins.rs), restated: it is private.
@@ -465,7 +527,7 @@ fn report_code_changes() {
     let strict = |p: StrictFields| format!("b={:?} n={:?}", p.b.map(|x| x.0), p.n.map(|x| x.0));
     for case in [
         "b: true", "b: True", "b: \"true\"", "b: \"yes\"", "b: yes", "b: on", "b: n", "b: ~",
-        "n: 3", "n: \"3\"", "n: 3.0", "n: 010", "n: 0o10", "n: 0x10", "n: 1_000", "n: -1", "n: ~",
+        "n: 3", "n: \"3\"", "n: 3.0", "n: 010", "n: 0o10", "n: 0x10", "n: 1_000", "n: 1_0", "n: -1", "n: ~",
     ] {
         let today = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(case)
             .map_err(|e| e.to_string())
@@ -474,17 +536,20 @@ fn report_code_changes() {
         let mut o = recommended();
         o.with_snippet = false;
         let plain = serde_saphyr::from_str_with_options::<PlainFields>(case, o.clone()).map(fields).map_err(|e| e.to_string());
-        let changed = serde_saphyr::from_str_with_options::<StrictFields>(case, o).map(strict).map_err(|e| e.to_string());
+        let changed = serde_saphyr::from_str_with_options::<StrictFields>(case, o.clone()).map(strict).map_err(|e| e.to_string());
+        let quoted = compat::quote_yaml11_numbers(case);
+        let both = serde_saphyr::from_str_with_options::<StrictFields>(&quoted, o).map(strict).map_err(|e| e.to_string());
         let same = |r: &Result<String, String>| match (&today, r) {
             (Ok(a), Ok(b)) => a == b,
             (Err(_), Err(_)) => true,
             _ => false,
         };
         println!(
-            "CODE {:<12} today={today:?}\n      serde-saphyr recommended, plain fields: {} {plain:?}\n      serde-saphyr recommended, deserialize_any fields: {} {changed:?}",
+            "CODE {:<12} today={today:?}\n      serde-saphyr recommended, plain fields: {} {plain:?}\n      serde-saphyr recommended, deserialize_any fields: {} {changed:?}\n      quote_yaml11_numbers pre-pass + deserialize_any fields: {} {both:?}",
             case,
             if same(&plain) { "SAME" } else { "DIFF" },
             if same(&changed) { "SAME" } else { "DIFF" },
+            if same(&both) { "SAME" } else { "DIFF" },
         );
     }
 }
@@ -592,13 +657,15 @@ struct Tally {
 fn report_configs(kind: &str, docs: &[&Doc], pass: &str, dflt: Options) {
     println!("\n=== {kind} — configfs::parse vs serde-saphyr, {pass} options ({} documents) ===", docs.len());
     let variants = option_variants();
-    let (mut typed, mut via) = (Tally::default(), Tally::default());
+    let (mut typed, mut via, mut cref, mut cemu) = (Tally::default(), Tally::default(), Tally::default(), Tally::default());
     let mut errors: Vec<String> = Vec::new();
     for d in docs {
         let before = current_parse(&d.text);
         for (label, f, tally) in [
             ("typed", saphyr_typed as fn(&str, &Options) -> Result<Config, String>, &mut typed),
             ("via-json", saphyr_via_json, &mut via),
+            ("compat-refuse", compat_refuse, &mut cref),
+            ("compat-emulate", compat_emulate, &mut cemu),
         ] {
             tally.docs += 1;
             let after = f(&d.text, &dflt);
@@ -638,7 +705,7 @@ fn report_configs(kind: &str, docs: &[&Doc], pass: &str, dflt: Options) {
             }
         }
     }
-    for (label, t) in [("typed", &typed), ("via-json", &via)] {
+    for (label, t) in [("typed", &typed), ("via-json", &via), ("compat-refuse", &cref), ("compat-emulate", &cemu)] {
         println!(
             "SUMMARY [{kind}] [{pass}] [{label}] {} docs: {} read identically, {} refused by both, {} differ",
             t.docs, t.agree_ok, t.agree_err, t.differ
@@ -987,6 +1054,13 @@ fn report_timing(real: &[&Doc], root: &Path) {
         biggest_cfg.name,
         t.len()
     );
+    let pre = median_micros(|| {
+        compat_prepass(t, false).unwrap();
+    });
+    let compat_all = median_micros(|| {
+        compat_refuse(t, &recommended()).unwrap();
+    });
+    println!("TIME   compat pre-passes alone {pre:.1} µs | pre-passes + include probe + serde-saphyr→Config (recommended) {compat_all:.1} µs");
     let probe = median_micros(|| {
         serde_saphyr::from_str::<IncludeProbe>(t).unwrap();
     });
@@ -1052,6 +1126,7 @@ fn main() {
         let refs: Vec<&Doc> = docs.iter().collect();
         report_configs(refs[0].kind, &refs, "default", Options::default());
         report_configs(refs[0].kind, &refs, "recommended(strict_booleans+no_schema)", recommended());
+        report_prepass_reach(refs[0].kind, &refs);
     }
     let all: Vec<&Doc> = repo.iter().chain(&e2e).chain(&fleet).chain(&synth).collect();
     report_version_probe(&all);
