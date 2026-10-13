@@ -164,3 +164,19 @@ test('production Mac live steps retain canonical-repository and fork auth routin
     }
   }
 });
+
+test('malformed event configurations fail rather than producing telemetry',()=>{
+  for(const [eventName,config] of [['pull_request',[]],['push',['main']],['release',{types:'published'}],['pull_request',{types:[false]}],['schedule',[{cron:42}]]]) {
+    assert.throws(()=>graph({id:'malformed',eventName,event:event(),paths:['src/lib.rs']},{'invalid.yml':{on:{[eventName]:config},jobs:{mac:{'runs-on':'macos-latest'}}}}),/invalid trigger/);
+  }
+});
+
+test('actual reusable workflow contract rejects unknown, missing and wrongly typed inputs',()=>{
+  const original=workflows()['visual-docs.yml'];
+  const job=Object.values(original.jobs).find(job=>job.uses);
+  for(const mutation of [input=>({...input,unknown:true}),input=>{delete input['capture-command'];return input;},input=>({...input,verify:'true'})]) {
+    const doc=structuredClone(original);const changed=Object.values(doc.jobs).find(job=>job.uses);
+    changed.with=mutation(structuredClone(job.with));
+    assert.throws(()=>graph({id:'invalid-input',eventName:'pull_request',event:event(),paths:['src/lib.rs']},{'visual-docs.yml':doc}),/reusable input/);
+  }
+});

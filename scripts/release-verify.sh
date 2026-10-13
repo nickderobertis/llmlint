@@ -31,7 +31,7 @@ try:
     if target.endswith('apple-darwin'):
         require(all(re.fullmatch(r'macosx_[0-9]+_[0-9]+_' + arch, tag) for tag in platforms), 'wrong Darwin wheel tag')
     else:
-        require(all(re.fullmatch(r'(linux|manylinux(?:[0-9]+|_[0-9]+_[0-9]+)|musllinux_[0-9]+_[0-9]+)_' + arch, tag) for tag in platforms), 'wrong Linux wheel tag')
+        require(all(re.fullmatch(r'(linux|manylinux(?:[0-9]+|_[0-9]+_[0-9]+))_' + arch, tag) for tag in platforms), 'wrong Linux wheel tag')
     with zipfile.ZipFile(wheel) as z:
         scripts = [p for p in z.namelist() if p.endswith('.data/scripts/llmlint')]
         require(len(scripts) == 1, 'wheel must install exactly one llmlint executable')

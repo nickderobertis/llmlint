@@ -1975,4 +1975,27 @@ fn lint_workflows_checks_private_helper_syntax_without_node_dependencies() {
     let bad = run();
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("policy.mjs"));
+    for tool in ["bash", "dirname", "awk", "head", "sed", "cut", "grep"] {
+        let executable = std::process::Command::new("which")
+            .arg(tool)
+            .output()
+            .unwrap();
+        assert!(executable.status.success());
+        std::os::unix::fs::symlink(
+            String::from_utf8(executable.stdout).unwrap().trim(),
+            bin.join(tool),
+        )
+        .unwrap();
+    }
+    let missing = std::process::Command::new("/bin/bash")
+        .arg(p.path().join("scripts/lint-workflows.sh"))
+        .env("HOME", p.path())
+        .env("PATH", &bin)
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("Node is missing"),
+        "{missing:?}"
+    );
 }

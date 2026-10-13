@@ -78,7 +78,12 @@ export function triggered(doc, scenario) {
   const config = on[event];
   const supported = { push: ['branches','branches-ignore','tags','tags-ignore','paths','paths-ignore'], pull_request: ['branches','branches-ignore','paths','paths-ignore','types'], release: ['types'], workflow_run: ['workflows','types','branches','branches-ignore'], repository_dispatch: ['types'], workflow_dispatch: ['inputs'], schedule: [] };
   if (config && !Array.isArray(config) && (typeof config !== 'object' || Object.keys(config).some(key => !supported[event]?.includes(key)))) throw new Error(`unsupported trigger configuration for ${event}`);
-  if (!config || Array.isArray(config)) return defaultPr();
+  if (Array.isArray(config)) {
+    if (event !== 'schedule' || !config.length || config.some(entry => !entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).some(key=>key!=='cron') || typeof entry.cron !== 'string' || !entry.cron)) throw new Error(`invalid trigger configuration for ${event}`);
+    return true;
+  }
+  if (!config) return defaultPr();
+  for (const key of ['types','branches','branches-ignore','tags','tags-ignore','paths','paths-ignore','workflows']) if (Object.hasOwn(config,key) && (!Array.isArray(config[key]) || !config[key].length || config[key].some(value=>typeof value!=='string' || !value))) throw new Error(`invalid trigger ${key} for ${event}`);
   if (event === 'pull_request' && !config.types && !defaultPr()) return false;
   if (config.types && !config.types.includes(scenario.event.action)) return false;
   const branch = event === 'workflow_run' ? scenario.event.workflow_run?.head_branch ?? scenario.branch ?? 'main' : scenario.branch ?? 'main';
@@ -145,8 +150,16 @@ export function graph(scenario, docs = workflows()) {
             else if (job.uses.startsWith('./.github/workflows/')) called = parse(read(job.uses.slice(2)));
             else throw new Error(`unresolved reusable workflow ${job.uses}`);
             if (enabled) {
-              const defaults = Object.fromEntries(Object.entries(called.on.workflow_call?.inputs ?? {}).map(([k,v]) => [k,v.default ?? '']));
+              const declarations=called.on.workflow_call?.inputs ?? {};
               const supplied = Object.fromEntries(Object.entries(job.with ?? {}).map(([k,v]) => [k,resolve(v,ctx)]));
+              for (const key of Object.keys(supplied)) if (!Object.hasOwn(declarations,key)) throw new Error(`unknown reusable input ${key}`);
+              for (const [key,definition] of Object.entries(declarations)) {
+                if (!['string','number','boolean'].includes(definition.type)) throw new Error(`unsupported reusable input type ${key}`);
+                if (definition.required && !Object.hasOwn(supplied,key)) throw new Error(`missing required reusable input ${key}`);
+                const value=supplied[key] ?? definition.default ?? ({string:'',number:0,boolean:false}[definition.type]);
+                if (typeof value !== definition.type || (definition.type==='number' && !Number.isFinite(value))) throw new Error(`incorrect reusable input type ${key}`);
+              }
+              const defaults = Object.fromEntries(Object.entries(declarations).map(([k,v]) => [k,v.default ?? ({string:'',number:0,boolean:false}[v.type])]));
               jobs(called, workflow, `${prefix}${job.name ?? id} / `, {...defaults,...supplied}, [...stack,job.uses]);
             }
             continue;

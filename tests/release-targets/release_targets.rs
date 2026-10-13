@@ -1534,6 +1534,16 @@ else:
     assert!(String::from_utf8_lossy(&refusal.stderr).contains("wheel tag"));
     fs::rename(&wrong_os, &wheel).unwrap();
 
+    if target.ends_with("unknown-linux-gnu") {
+        let musl = temp.path().join(format!(
+            "llmlint_cli-{python_version}-py3-none-musllinux_1_2_{arch}.whl"
+        ));
+        fs::rename(&wheel, &musl).unwrap();
+        let refusal = verify(&compiled);
+        assert!(!refusal.status.success());
+        assert!(String::from_utf8_lossy(&refusal.stderr).contains("wheel tag"));
+        fs::rename(&musl, &wheel).unwrap();
+    }
     let platform = wheel
         .file_name()
         .unwrap()
