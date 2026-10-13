@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
+use serde::Deserialize;
 
 use crate::domain::config::{Config, FileFilter, Provenance, ProvenanceBuilder, Rule};
 use crate::domain::version::VersionReq;
@@ -126,30 +127,76 @@ pub fn discover_subtree(cwd: &Path) -> Vec<PathBuf> {
     by_dir.into_values().collect()
 }
 
-/// Parse one YAML document into a [`Config`], resolving anchors/aliases (done
-/// by the parser) and `<<` merge keys (via `apply_merge`).
+/// Parse one YAML document into a [`Config`]. The YAML parser resolves anchors
+/// and merge keys; the map adapter only rejects the retired top-level `include`.
 pub fn parse(text: &str, origin: &str) -> Result<Config> {
-    let err = |e: serde_yaml_ng::Error| Error::ConfigParse {
-        path: origin.to_string(),
-        message: e.to_string(),
-    };
-    let mut value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text).map_err(err)?;
-    value.apply_merge().map_err(err)?;
-    // The top-level config-include key was renamed `include` -> `plugins` (to
-    // avoid confusion with `files.include`). Unknown top-level keys are allowed
-    // (anchors live in throwaway keys), so a stale `include:` would silently do
-    // nothing; catch it with a clear migration error instead.
-    if let serde_yaml_ng::Value::Mapping(m) = &value {
-        if m.contains_key(serde_yaml_ng::Value::from("include")) {
-            return Err(Error::ConfigParse {
-                path: origin.to_string(),
-                message: "top-level `include` was renamed to `plugins` (it pulls in other \
-                          configs; `files.include` is the file glob). Rename the key to `plugins`."
-                    .to_string(),
-            });
+    serde_saphyr::from_str::<ConfigDocument>(text)
+        .map(|document| document.0)
+        .map_err(|error| Error::ConfigParse {
+            path: origin.to_string(),
+            message: error.to_string(),
+        })
+}
+
+struct ConfigDocument(Config);
+
+impl<'de> serde::Deserialize<'de> for ConfigDocument {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct DocumentVisitor;
+        impl<'de> serde::de::Visitor<'de> for DocumentVisitor {
+            type Value = ConfigDocument;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an llmlint configuration mapping")
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Self::Value, E> {
+                Ok(ConfigDocument(Config::default()))
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                map: M,
+            ) -> std::result::Result<Self::Value, M::Error> {
+                Config::deserialize(serde::de::value::MapAccessDeserializer::new(ConfigKeys(
+                    map,
+                )))
+                .map(ConfigDocument)
+            }
         }
+        deserializer.deserialize_any(DocumentVisitor)
     }
-    serde_yaml_ng::from_value(value).map_err(err)
+}
+
+/// Inspect keys while the typed config consumes the same map, without buffering
+/// values (which would discard the parser's field positions on errors).
+struct ConfigKeys<M>(M);
+
+impl<'de, M: serde::de::MapAccess<'de>> serde::de::MapAccess<'de> for ConfigKeys<M> {
+    type Error = M::Error;
+
+    fn next_key_seed<K: serde::de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> std::result::Result<Option<K::Value>, M::Error> {
+        use serde::de::{Error, IntoDeserializer};
+        let Some(key) = self.0.next_key::<String>()? else {
+            return Ok(None);
+        };
+        if key == "include" {
+            return Err(M::Error::custom("top-level `include` was renamed to `plugins` (it pulls in other configs; `files.include` is the file glob). Rename the key to `plugins`."));
+        }
+        seed.deserialize(key.into_deserializer()).map(Some)
+    }
+
+    fn next_value_seed<V: serde::de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: V,
+    ) -> std::result::Result<V::Value, M::Error> {
+        self.0.next_value_seed(seed)
+    }
 }
 
 /// Load and merge config. With explicit `--config` entries this is

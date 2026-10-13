@@ -21,5 +21,4 @@ assert_cmd.workspace = true
 llmlint.workspace = true
 predicates.workspace = true
 serde_json.workspace = true
-serde_yaml_ng.workspace = true
 tempfile.workspace = true

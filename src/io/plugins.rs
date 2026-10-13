@@ -844,7 +844,7 @@ struct VersionProbe {
 /// The version a fetched plugin declares, if any. Unparseable YAML is a fetch
 /// error (the document is not an llmlint config).
 fn declared_version(url: &str, text: &str) -> Result<Option<Version>> {
-    let probe: VersionProbe = serde_yaml_ng::from_str(text).map_err(|e| Error::PluginFetch {
+    let probe: VersionProbe = serde_saphyr::from_str(text).map_err(|e| Error::PluginFetch {
         url: url.to_string(),
         message: format!("reading plugin version: {e}"),
     })?;

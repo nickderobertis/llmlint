@@ -42,7 +42,7 @@ anstream.workspace = true
 indicatif.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_ng.workspace = true
+serde-saphyr.workspace = true
 minijinja.workspace = true
 ignore.workspace = true
 globset.workspace = true
@@ -83,7 +83,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT"
 
 [workspace.dependencies]
@@ -116,7 +116,7 @@ serde = { version = "1", features = ["derive"] }
 # should emit them (name -> rationale -> result). Used everywhere we hand-build
 # JSON (schema, report) and round-trip configs.
 serde_json = { version = "1", features = ["preserve_order"] }
-serde_yaml_ng = "0.10"
+serde-saphyr = "1.3"
 minijinja = "2"
 ignore = "0.4"
 globset = "0.4"
