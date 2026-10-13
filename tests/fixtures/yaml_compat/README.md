@@ -8,7 +8,9 @@ with the real config reader; plugin versions exercise the actual fetch probe.
 
 `plugins/` contains every `*.llmlint.yml` fragment from
 `nickderobertis/dero-skills`, commit `74151ab016cd72d043e5590f3fc51a5ad0e51609`,
-under `skills/bootstrap/create-repo/assets/llmlint/`, preserving relative paths.
+under `skills/bootstrap/create-repo/assets/llmlint/`, preserving relative paths with an added `.txt` suffix. This marks the copies as
+inert test inputs, rather than authored active configs; both production parsing
+entry points still consume their unchanged YAML bytes directly.
 `corpus.json` also lists this repository's five committed configs and a fixture
 covering anchors, merge keys, stash keys, both relevance forms and version pins.
 These are baseline expectations, not snapshots to regenerate after a parser change.

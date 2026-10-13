@@ -941,3 +941,20 @@ fn every_release_build_and_publish_waits_for_the_sweep_verdict_and_nothing_regat
         }
     }
 }
+
+/// Clippy's API guidance must use the same floor that workspace packages declare.
+#[test]
+fn clippy_msrv_matches_the_workspace_rust_version() {
+    let root = repo_root();
+    let cargo: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("Cargo.toml")).unwrap()).unwrap();
+    let clippy: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("clippy.toml")).unwrap()).unwrap();
+    let declared = cargo["workspace"]["package"]["rust-version"]
+        .as_str()
+        .expect("Cargo.toml declares the workspace Rust version");
+    let assumed = clippy["msrv"]
+        .as_str()
+        .expect("clippy.toml declares Clippy's MSRV");
+    assert_eq!(assumed, declared, "clippy.toml MSRV must match Cargo.toml");
+}
