@@ -1,5 +1,5 @@
-# The visual guard's offline script journeys (tests/visual_guard.rs): the real
-# pre-push hook, the lane helper, the baseline blesser and CI's freeze installer,
+# The screenshot scripts' offline script journeys (tests/visual_guard.rs): the real
+# lane helper, the baseline blesser and CI's freeze installer,
 # with only third-party tools stood in, and the demo GIF helper's outcome table
 # held to the report's `Outcome`. Test-only; never published. The capture
 # scripts, fixture and font beside it are what the Visual docs workflow runs.

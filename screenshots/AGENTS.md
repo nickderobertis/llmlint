@@ -86,14 +86,11 @@ screencomp scopes captures per CPU arch (a *lane*). `[capture].arches` declares
 `shots/baseline/<arch>.json`; CI runs one job per lane (`arm64` on
 `ubuntu-24.04-arm`).
 
-Both are declared even though the bytes are identical, because the guard is
-**local**: `.githooks/pre-push` classifies and re-blesses the lane of the host it
-runs on, and refuses a host arch no lane declares. llmlint is developed on arm64
-and released from CI's x86_64, so both are real hosts.
+Both lanes are verified by CI, even though their rendered bytes are identical.
 
 **Re-blessing, on any host:** `just screenshots-bless` rewrites **this host's lane
 only** (`screenshots/host-arch.sh` names it — the single place a lane name is derived
-from `uname -m`, shared with the capture and the guard). Commit it with
+from `uname -m`, shared with the capture). Commit it with
 `docs/screenshots/`; the identical-bytes contract is what makes that safe, and CI's
 job for the *other* lane is the check on it.
 
@@ -135,13 +132,9 @@ when the live view's format changes (`src/commands/progress.rs`).
 ## The strict gate
 
 CI (`fail-on-drift: true`) fails when a capture diverges from the committed
-baseline. The local pre-push guard (`.githooks/pre-push`, enable with
-`git config core.hooksPath .githooks`) re-captures **only** when a
-`[guard].paths` file changes (`screencomp.toml`), and on drift it regenerates
-**this host's lane** baseline, builds a review gallery (`shots/review/index.html`),
-and blocks the push so you commit the refreshed baseline + README images
-deliberately. If the host's arch is not one of the declared lanes it refuses
-instead, naming what is declared and how to add the lane.
+baseline. Ordinary pushes do not run validation or capture commands. Run
+`just lint-llm-validate` and the screenshot commands manually when reviewing changes;
+CI owns validation and the visual drift gate.
 
 ## Changing the screenshots
 
@@ -154,36 +147,7 @@ keep the two `freeze` version pins in sync (`freeze-version` in the justfile and
 equal). A reflow changes every lane identically, so one host's bless covers both
 baselines.
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] the guard's and the freeze installer's journey lists are the reference for what their script journeys prove about two tools the gate never installs, so they are kept complete rather than terse -->
-## The pre-push visual guard (`.githooks/pre-push`)
-
-The `pre_push_guard_*` journeys (`tests/visual_guard.rs`) drive the **real hook
-script** the way git does (cwd = a scratch repo, the range on
-`SCREENCOMP_GUARD_RANGE`), with stubs at its
-subprocess seams (`GuardRepo`): a `screencomp` that records argv and answers with
-a chosen exit, a `freeze`, and a `screenshots/screenshots.sh`. The real tools are not
-installed by `just setup` or CI's gate, so they are stubbed as the suite stubs
-oneharness; a change to the hook's own logic gets its journey here. The hook's own
-lane helper (`screenshots/host-arch.sh`) is **not** stubbed — the real one is copied
-in, so the lane under test is the one this host would really guard. They are
-`#[cfg(unix)]` — the hook is bash.
-
-The invariant they pin: `[capture].arches` declares one lane per arch, each with
-its own committed baseline, and the guard is **local** — it classifies and
-re-blesses the lane of the **host it runs on**, refusing a host arch no lane
-declares. Journeys cover the clean push, drift (which rewrites that lane's
-manifest and blocks), and the undeclared-host refusal; each drives configurations
-that discriminate the host's lane from the first declared one on **every** CI
-arch, so the suite is not x86_64-only. A companion check holds every declared
-lane's baseline present and byte-equal — the identical-bytes contract that lets
-one host bless its own lane and CI's job for the other check it.
-
-The hook's `just lint-llm-validate` step runs the real recipe from a copied-in
-justfile with only `llmlint` stubbed. Keep the hook's PATH to the stubs, a lone
-`just` link, and the system dirs, and HOME scratch: the recipe also looks in
-`~/.local/bin`, so a host llmlint would otherwise stand in for the stub or for
-its absence.
-
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] the freeze installer's journey list records what the script journeys prove about a tool the gate never installs, so it is kept complete rather than terse -->
 ## CI's `freeze` installer (`screenshots/ci-install-freeze.sh`)
 
 CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the

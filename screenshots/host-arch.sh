@@ -2,9 +2,8 @@
 # Print this host's screencomp capture lane: the normalized CPU architecture that
 # names shots/current/<arch>/ and shots/baseline/<arch>.json.
 #
-# One place, so the three consumers can never disagree about what a lane is
-# called: the capture (screenshots/screenshots.sh), the local pre-push guard
-# (.githooks/pre-push), and `just screenshots-bless`. The names match
+# One place, so the consumers can never disagree about what a lane is
+# called: the capture (screenshots/screenshots.sh) and `just screenshots-bless`. The names match
 # [capture].arches in screencomp.toml, which is what screencomp fans CI out over.
 set -euo pipefail
 
