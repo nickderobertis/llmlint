@@ -20,7 +20,7 @@ test('actual Darwin bundle staging and Linux release upload preserve every artif
     const bundle=join(dir,'attestation.json');
     const subjects=targets.map(target=>({name:`llmlint-${tag}-${target}.tar.gz`,digest:{sha256:'fixture-action-digest'}}));
     writeFileSync(bundle,JSON.stringify({subjects,issuer:'fixture GitHub OIDC action response'}));
-    for(const target of targets) for(const suffix of ['tar.gz','tar.gz.sha256']) writeFileSync(join(builder,'dist',`llmlint-${tag}-${target}.${suffix}`),`downloaded ${target} ${suffix}`);
+    for(const target of targets) for(const suffix of ['tar.gz','sha256']) writeFileSync(join(builder,'dist',`llmlint-${tag}-${target}.${suffix}`),`downloaded ${target} ${suffix}`);
     const env={...process.env,GITHUB_REF_NAME:tag,GITHUB_REPOSITORY:'fixture/llmlint',BUNDLE:bundle,FORGE:forge,PATH:`${bin}:${process.env.PATH}`};
     execFileSync('bash',['-euo','pipefail','-c',stage.run],{cwd:builder,env});
     for(const target of targets) assert.equal(readFileSync(join(builder,'dist',`llmlint-${tag}-${target}.sigstore.json`),'utf8'),readFileSync(bundle,'utf8'));

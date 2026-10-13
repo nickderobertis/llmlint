@@ -6,7 +6,7 @@ fail() {
   exit 1
 }
 wheel_dir='' stage='' work=''
-# llmlint: ignore-block[changed_behavior_has_e2e] The real native packaging journey proves install/run success and real archive-collision cleanup recovery; forcing every command or cleanup refusal would double the layer under test, which the task forbids (manager ruling).
+# llmlint: ignore-block[changed_behavior_has_e2e] Real native success and archive-collision recovery exercise this boundary; forcing individual installed-command or cleanup failures would replace the layer under test.
 cleanup() {
   rm -rf "${wheel_dir:-}" "${stage:-}" "${work:-}" || {
     echo "release-packages: cleanup failed; remove scratch paths $wheel_dir $stage $work before rerunning" >&2
@@ -17,6 +17,7 @@ cleanup() {
 trap cleanup EXIT
 out="${1:?usage: scripts/release-packages.sh OUT TARGET...}"
 shift
+case "$out" in -*) fail 'output path must not start with an option; use ./PATH or an absolute path' ;; esac
 [ "$#" -gt 0 ] || fail 'pass at least one Darwin or Linux Rust target'
 mkdir -p "$out" || fail "cannot create output directory $out"
 out="$(cd "$out" && pwd)" || fail "cannot resolve output directory $out"
@@ -57,7 +58,7 @@ PYVERSION
   tar -czf "$archive" -C "$stage" llmlint README.md LICENSE CHANGELOG.md || fail "cannot pack $archive"
   (
     cd "$out" || exit 1
-    shasum -a 256 "$(basename "$archive")" >"$(basename "$archive").sha256"
+    shasum -a 256 "$(basename "$archive")" >"llmlint-$GITHUB_REF_NAME-$target.sha256"
   ) || fail "cannot checksum $archive"
   bash scripts/release-verify.sh "$wheel_dir" "$archive" "$stage/llmlint" "$out" "$target" "$version" "$python_version" || fail "artifact validation failed for $target"
   wheel=("$wheel_dir"/*.whl)
@@ -73,7 +74,7 @@ PYVERSION
   for binary in "$stage/archive-install/llmlint" "$stage/wheel-install/bin/llmlint"; do
     command=("$binary")
     if [ "$target" = x86_64-apple-darwin ]; then command=(arch -x86_64 "$binary"); fi
-    # llmlint: ignore-block[changed_behavior_has_e2e] The real native packaging journey proves install/run success and real archive-collision cleanup recovery; forcing every command or cleanup refusal would double the layer under test, which the task forbids (manager ruling).
+    # llmlint: ignore-block[changed_behavior_has_e2e] Real native success and archive-collision recovery exercise this boundary; forcing individual installed-command or cleanup failures would replace the layer under test.
     installed="$("${command[@]}" --version)" || fail "cannot execute $binary; verify target toolchain/Rosetta installation"
     [ "$installed" = "llmlint $version" ] || fail "wrong installed version $installed; expected llmlint $version"
     "${command[@]}" --help >"$stage/help.log" 2>&1 || {

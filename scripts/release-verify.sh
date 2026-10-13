@@ -36,7 +36,9 @@ try:
         scripts = [p for p in z.namelist() if p.endswith('.data/scripts/llmlint')]
         require(len(scripts) == 1, 'wheel must install exactly one llmlint executable')
         payload = z.read(scripts[0])
-        metadata = email.message_from_bytes(z.read(next(p for p in z.namelist() if p.endswith('.dist-info/METADATA'))))
+        metadata_paths = [p for p in z.namelist() if p.endswith('.dist-info/METADATA')]
+        require(len(metadata_paths) == 1 and metadata_paths[0] == f'llmlint_cli-{python_version}.dist-info/METADATA', 'wheel must contain exactly one matching distribution METADATA')
+        metadata = email.message_from_bytes(z.read(metadata_paths[0]))
         require(metadata['Name'] == project['name'], f'wrong distribution name {metadata["Name"]}')
         require(metadata['Version'] == python_version, f'wrong distribution version {metadata["Version"]}, expected {python_version}')
         require(metadata['Requires-Python'] == project['requires-python'], 'Python compatibility changed')

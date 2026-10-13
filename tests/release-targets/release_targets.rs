@@ -1338,7 +1338,7 @@ fn native_release_packages_install_and_run() {
     );
     assert!(temp
         .path()
-        .join(format!("llmlint-v{version}-{target}.tar.gz.sha256"))
+        .join(format!("llmlint-v{version}-{target}.sha256"))
         .exists());
     assert!(temp.path().join(format!("{target}.json")).exists());
     let wheel = fs::read_dir(temp.path())
@@ -1395,11 +1395,35 @@ fn native_release_packages_install_and_run() {
     };
     let checksum = std::process::Command::new("shasum")
         .args(["-a", "256", "-c"])
-        .arg(format!("llmlint-v{version}-{target}.tar.gz.sha256"))
+        .arg(format!("llmlint-v{version}-{target}.sha256"))
         .current_dir(temp.path())
         .output()
         .unwrap();
     assert!(checksum.status.success(), "{checksum:?}");
+    // Only forge downloads are doubled: run the public POSIX installer against real assets.
+    let installer = std::process::Command::new("python3").arg("-c").arg(r#"
+import os,pathlib,shutil,subprocess,sys
+assets,root,version=sys.argv[1:]
+assets=pathlib.Path(assets); tools=assets/'installer-tools'; tools.mkdir()
+for name in ['uname','mktemp','rm','mkdir','tar','gzip','awk','sha256sum','shasum','openssl','cp','chmod','mv','grep','sed','cat','dirname','basename']:
+    executable=shutil.which(name)
+    if executable: (tools/name).symlink_to(executable)
+python=sys.executable
+curl=tools/'curl'
+curl.write_text('#!'+python+'\nimport pathlib,shutil,sys\nargs=sys.argv[1:]\nname=args[-1].rsplit("/",1)[-1]\nshutil.copyfile(pathlib.Path('+repr(str(assets))+')/name,args[args.index("-o")+1])\n')
+curl.chmod(0o755)
+env={**os.environ,'PATH':str(tools),'LLMLINT_VERSION':'v'+version,'LLMLINT_INSTALL_DIR':str(assets/'public-install')}
+run=lambda:subprocess.run(['/bin/sh',str(pathlib.Path(root)/'scripts/install.sh')],env=env,capture_output=True,text=True)
+result=run(); assert result.returncode==0,(result.stdout,result.stderr)
+installed=subprocess.run([str(assets/'public-install/llmlint'),'--version'],capture_output=True,text=True)
+assert installed.returncode==0 and installed.stdout.strip()=='llmlint '+version,installed
+checksum=next(assets.glob('llmlint-v'+version+'-*.sha256')); original=checksum.read_bytes()
+checksum.write_text('0'*64+'  invalid\n')
+try:
+    refused=run(); assert refused.returncode!=0 and 'checksum' in refused.stderr.lower(),refused
+finally: checksum.write_bytes(original)
+"#).arg(temp.path()).arg(&root).arg(version).output().unwrap();
+    assert!(installer.status.success(), "{installer:?}");
     let original_archive = fs::read(&archive).unwrap();
     for (kind, expected) in [
         ("metadata", "wrong distribution name"),
@@ -1409,6 +1433,14 @@ fn native_release_packages_install_and_run() {
         ("dependencies", "runtime dependencies differ"),
         ("missing-script", "exactly one llmlint"),
         ("multiple-scripts", "exactly one llmlint"),
+        (
+            "multiple-metadata",
+            "exactly one matching distribution METADATA",
+        ),
+        (
+            "foreign-metadata",
+            "exactly one matching distribution METADATA",
+        ),
         ("archive-contents", "wrong archive contents"),
         ("archive-payload", "binary reuse mismatch"),
         ("archive-mode", "executable regular file"),
@@ -1439,6 +1471,8 @@ else:
     with zipfile.ZipFile(path,'w') as z:
         for info,data in entries:
             if info.filename.endswith('/METADATA'):
+                if kind=='multiple-metadata': z.writestr('foreign-1.dist-info/METADATA',data)
+                if kind=='foreign-metadata': info.filename='foreign-1.dist-info/METADATA'
                 fields={'metadata':('Name','incorrect-package'),'version':('Version','0.0.0-corrupt'),'python':('Requires-Python','<2.7'),'dependencies':('Requires-Dist','incorrect-dependency>=99')}
                 if kind in fields:
                     key,value=fields[kind]
@@ -1582,6 +1616,7 @@ with zipfile.ZipFile(path,'w') as z:
     for info,data in entries:
         if info.filename.endswith('/METADATA'):
             data=re.sub(b'^Version:.*$',('Version: '+version).encode(),data,flags=re.M)
+        info.filename=re.sub(r'llmlint_cli-[^/]+\.dist-info/', 'llmlint_cli-'+version+'.dist-info/', info.filename)
         z.writestr(info,data)
 "#,
         )
@@ -1664,4 +1699,15 @@ with zipfile.ZipFile(path,'w') as z:
         .unwrap();
     assert!(!failure.status.success());
     assert!(String::from_utf8_lossy(&failure.stderr).contains("tag does not match"));
+}
+
+#[test]
+fn release_builder_refuses_option_shaped_output_paths() {
+    let output = std::process::Command::new("bash")
+        .args(["scripts/release-packages.sh", "-p", "x86_64-apple-darwin"])
+        .current_dir(repo_root())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("output path must not start"));
 }
