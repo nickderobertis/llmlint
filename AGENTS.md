@@ -98,7 +98,7 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
 - `github-workflows` (`type:tooling`, `.github/tooling/`) — the macOS routing
   classifier and budget proofs over the workflow graph (`test`, `budgets`); no
   edges — its `test` names every `.github` file as an input, which Nx counts as
-  touching it. See `.github/AGENTS.md`.
+  touching it.
 - `shell-tools` (`type:tooling`, `tools/shell/`) — the shell toolchain every
   shell project's `format`/`lint` runs (`shell.sh`: shfmt and shellcheck behind
   their pins, and the tree's one shell-script discovery) and its installer; no
