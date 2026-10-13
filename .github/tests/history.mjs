@@ -18,8 +18,8 @@ export function history() {
 export function event(fork = false, branch = 'release-plz-2026') {
   return { action: 'synchronize', pull_request: { title: 'chore: release', user: {login:'release-plz[bot]'}, head: {ref:branch, repo:{full_name:fork?'fork/llmlint':'nickderobertis/llmlint'}}, base:{repo:{full_name:'nickderobertis/llmlint'}} } };
 }
-export function invoke(h, payload, eventName = 'pull_request') {
+export function invoke(h, payload, eventName = 'pull_request', head = 'HEAD') {
   const path = join(h.dir,'event.json'); writeFileSync(path,typeof payload === 'string' ? payload : JSON.stringify(payload));
-  const run = spawnSync('node',[cli,'classify','--event',path,'--base',h.base,'--head','HEAD'],{cwd:h.dir,encoding:'utf8',env:{...gitEnv,GITHUB_EVENT_NAME:eventName}});
+  const run = spawnSync('node',[cli,'classify','--event',path,'--base',h.base,'--head',head],{cwd:h.dir,encoding:'utf8',env:{...gitEnv,GITHUB_EVENT_NAME:eventName}});
   assert.equal(run.status,0,run.stderr); return JSON.parse(run.stdout);
 }

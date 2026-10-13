@@ -28,12 +28,10 @@ pin bump fails until that name is re-confirmed.
 
 ## Mac scheduling proofs
 
-`github-workflows` is private tooling, installed from `.github/bun.lock`; it ships
-nothing. Its uncached `test` reads the actual workflow graph, resolves the pinned
-screencomp reusable workflow from `tests/reusable/`, and records ignored telemetry.
-The budgets reporter rejects a different source digest and never reruns scenarios.
-Repository-specific output adapters (policy and screencomp arches) are explicit;
-an unrecognized runner expression or reusable call fails the proof.
+`github-workflows` must remain private: its dependencies are proof tooling, not
+product dependencies. Keep the reusable workflow fixture tied to the upstream
+pin and source hash; a pin change requires reconciling its runner and context
+contract. Never accept cached figures after a routing or proof-source edit.
 
 `macos-policy.mjs classify` is the semantic Mac routing authority. A same-repository
 `release-plz-` head with only parsed package-version and changelog changes can omit

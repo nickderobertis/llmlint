@@ -53,3 +53,21 @@ test('malformed repository identity cannot authorize a release-only omission',()
     }
   } finally {h.close();}
 });
+test('revision, version-file and TOML failures keep Mac coverage at the real CLI boundary',()=>{
+  for(const failure of ['missing-base','missing-head','added-manifest','deleted-lock','malformed-toml']) {
+    const h=history();
+    try {
+      writeFileSync(join(h.dir,'CHANGELOG.md'),'Release notes');h.git('add','CHANGELOG.md');h.git('commit','-m','notes');
+      assert.equal(invoke(h,event()).isReleaseOnly,true);
+      if(failure==='missing-base')h.base='unavailable-revision';
+      if(failure==='added-manifest') {
+        h.git('rm','Cargo.toml');h.git('commit','-m','baseline without manifest');h.base=h.git('rev-parse','HEAD');
+        writeFileSync(join(h.dir,'Cargo.toml'),h.manifest);h.git('add','Cargo.toml');h.git('commit','-m','add manifest');
+      }
+      if(failure==='deleted-lock') {h.git('rm','Cargo.lock');h.git('commit','-m','delete lock');}
+      if(failure==='malformed-toml') {writeFileSync(join(h.dir,'Cargo.toml'),'[package\ninvalid =');h.git('add','Cargo.toml');h.git('commit','-m','malformed manifest');}
+      const decision=invoke(h,event(),'pull_request',failure==='missing-head'?'unavailable-revision':'HEAD');
+      assert.equal(decision.macosRequired,true,failure);assert.equal(decision.isReleaseOnly,false,failure);assert.ok(decision.reason);assert.doesNotMatch(decision.reason,/\n/);
+    } finally {h.close();}
+  }
+});
