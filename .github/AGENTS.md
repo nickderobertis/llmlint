@@ -36,7 +36,6 @@ contract. Never accept cached figures after a routing or proof-source edit.
 `macos-policy.mjs classify` is the semantic Mac routing authority. A same-repository
 `release-plz-` head with only parsed package-version and changelog changes can omit
 Mac coverage, regardless of author. Forks, dependency edits, unreadable PRs and
-unknown events require it; known non-PR events omit it. The two protected Mac
-contexts are Linux carriers: `always()` makes them report after prerequisite
-failures, and `macos-result.mjs` validates every required outcome. Their success
-message distinguishes executed proofs from authorized omissions.
+unknown events require it; known non-PR events omit it. Protected Mac contexts must report even after prerequisite failures and must
+never claim that an authorized omission executed a proof. Only the shared
+classifier may authorize an omitted Mac lane.

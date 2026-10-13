@@ -52,7 +52,10 @@ PYVERSION
   cp "target/$target/release/llmlint" README.md LICENSE CHANGELOG.md "$stage/" || fail "cannot stage $target binary and documentation"
   archive="$out/llmlint-$GITHUB_REF_NAME-$target.tar.gz"
   tar -czf "$archive" -C "$stage" llmlint README.md LICENSE CHANGELOG.md || fail "cannot pack $archive"
-  (cd "$out" && shasum -a 256 "$(basename "$archive")" >"$(basename "$archive").sha256") || fail "cannot checksum $archive"
+  (
+    cd "$out" || exit 1
+    shasum -a 256 "$(basename "$archive")" >"$(basename "$archive").sha256"
+  ) || fail "cannot checksum $archive"
   bash scripts/release-verify.sh "$wheel_dir" "$archive" "$stage/llmlint" "$out" "$target" "$version" "$python_version" || fail "artifact validation failed for $target"
   wheel=("$wheel_dir"/*.whl)
   platform="$(basename "${wheel[0]}" .whl)"
