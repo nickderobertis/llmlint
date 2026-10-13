@@ -1,0 +1,47 @@
+# React buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural checks that the linter enforces React's Rules of Hooks, and
+# that the feature-import boundaries are enforced at both scopes they span — the
+# in-project linter rule and the cross-project module-boundary tag rule; the
+# ongoing React code judgment (cross-feature imports,
+# server-state-in-global-store, unsanitized HTML) lives in
+# shapes/react.llmlint.yml, and the shared web-app buildout rule covers the
+# generic production-build case.
+version: 2.0.0
+
+rules:
+  - name: react_hooks_lint_rules_enabled
+    description: |
+      true when the lint config enables the Rules of Hooks and the effect
+      dependency check — `eslint-plugin-react-hooks` with `rules-of-hooks` and
+      `exhaustive-deps` as errors, or the Biome equivalents (`useHookAtTopLevel`,
+      `useExhaustiveDependencies`). false when neither is configured, so hook
+      misuse and stale-closure effect bugs pass the gate.
+    files:
+      include:
+        - "**/eslint.config.*"
+        - "**/.eslintrc*"
+        - "**/biome.json"
+        - "**/biome.jsonc"
+        - "**/package.json"
+    relevance: the target files configure the JS/TS linter
+
+  - name: feature_import_boundaries_enforced_at_both_scopes
+    description: |
+      true when the unidirectional feature-import architecture is enforced at both
+      scopes it spans: inside an app project by the linter — an
+      `import/no-restricted-paths` (ESLint) or `noRestrictedImports` (Biome) rule
+      banning cross-feature internal imports and shared code importing from
+      features — and between projects by the orchestrator's module-boundary tag
+      rule, so a second app cannot reach into the first's `src/` instead of
+      depending on a shared UI project. false when either scope is unenforced,
+      leaving the shared → features → app boundary to convention where it is
+      easiest to cross.
+    files:
+      include:
+        - "**/eslint.config.*"
+        - "**/.eslintrc*"
+        - "**/biome.json"
+        - "**/biome.jsonc"
+        - "nx.json"
+        - "**/project.json"
+    relevance: the target files configure the JS/TS linter's import rules or the project boundary tags

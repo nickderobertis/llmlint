@@ -1,0 +1,45 @@
+# Rust judge-level rules (plugin). Pairs with languages/rust.md.
+version: 1.1
+
+rules:
+  - name: invalid_states_unrepresentable
+    description: |
+      true when the domain and boundary types in the target files use newtypes and
+      enums so that invalid states cannot be represented. false when any domain or
+      boundary value is modelled with a bare bool or a stringly-typed value where a
+      newtype or enum is the natural choice.
+    files:
+      include: ["**/*.rs"]
+      exclude: ["**/tests/**", "**/*_test.rs", "**/benches/**"]
+    relevance: the target files define domain types or model boundary data
+
+  - name: no_panics_on_recoverable_errors
+    description: |
+      true when every fallible operation in the target files returns or propagates an
+      error (`Result`, `?`). false when any fallible operation uses `unwrap()`,
+      `expect()`, or `panic!` for an error that is recoverable.
+    files:
+      include: ["**/*.rs"]
+      exclude: ["**/tests/**", "**/*_test.rs", "**/benches/**"]
+    relevance: the target files perform fallible operations
+
+  - name: crates_stay_in_one_cargo_workspace
+    description: |
+      true when every crate in the repo is a `[workspace] members` entry of the
+      root virtual manifest, inherits its shared metadata and dependency versions
+      (`rust-version.workspace = true`, `serde = { workspace = true }`), depends
+      on sibling crates as path/workspace dependencies, and resolves against the
+      single root `Cargo.lock` and the single workspace-root
+      `rust-toolchain.toml`. false when a crate is invisible to the workspace,
+      commits its own `Cargo.lock` or `rust-toolchain.toml`, or pins a dependency
+      version the workspace already pins. A repo with exactly one crate at the
+      repo root needs no `[workspace]` table to be true — the claim is that no
+      crate resolves outside the one root lock.
+    files:
+      include:
+        - "**/Cargo.toml"
+        - "**/Cargo.lock"
+        - "**/rust-toolchain.toml"
+        - "**/rust-toolchain"
+        - "**/project.json"
+    relevance: the target files add or change a crate's manifest, lock, toolchain pin, or project definition

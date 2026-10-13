@@ -854,13 +854,13 @@ fn a_sweep_run_without_a_usable_creation_time_or_id_stops_the_release() {
 /// The jobs of ci.yml as status-check contexts (a matrix job reports one per
 /// `os`), read from the workflow itself.
 fn ci_contexts(job: &str) -> Vec<String> {
-    let ci: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+    let ci: serde_json::Value = serde_saphyr::from_str(
         &fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).unwrap(),
     )
     .unwrap();
     let body = &ci["jobs"][job];
     assert!(!body.is_null(), "ci.yml has no `{job}` job");
-    match body["strategy"]["matrix"]["os"].as_sequence() {
+    match body["strategy"]["matrix"]["os"].as_array() {
         Some(oses) => oses
             .iter()
             .map(|os| format!("{job} ({})", os.as_str().unwrap()))
@@ -879,7 +879,7 @@ fn the_sweep_jobs_the_verdict_reads_are_ci_yml_s_gate_and_cross() {
         .find_map(|l| l.strip_prefix("readonly SWEEP_JOBS='"))
         .and_then(|rest| rest.strip_suffix('\''))
         .expect("ci-gate.sh declares SWEEP_JOBS");
-    let declared: Vec<String> = serde_yaml_ng::from_str(line).unwrap();
+    let declared: Vec<String> = serde_saphyr::from_str(line).unwrap();
     let mut expected = ci_contexts("gate");
     expected.extend(ci_contexts("cross"));
     assert_eq!(declared, expected);
@@ -887,15 +887,15 @@ fn the_sweep_jobs_the_verdict_reads_are_ci_yml_s_gate_and_cross() {
 
 #[test]
 fn every_release_build_and_publish_waits_for_the_sweep_verdict_and_nothing_regates() {
-    let release: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+    let release: serde_json::Value = serde_saphyr::from_str(
         &fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap(),
     )
     .unwrap();
-    let jobs = release["jobs"].as_mapping().unwrap();
+    let jobs = release["jobs"].as_object().unwrap();
     let needs = |job: &str| -> Vec<String> {
         match &release["jobs"][job]["needs"] {
-            serde_yaml_ng::Value::String(n) => vec![n.clone()],
-            serde_yaml_ng::Value::Sequence(ns) => {
+            serde_json::Value::String(n) => vec![n.clone()],
+            serde_json::Value::Array(ns) => {
                 ns.iter().map(|n| n.as_str().unwrap().to_string()).collect()
             }
             _ => vec![],
@@ -903,7 +903,7 @@ fn every_release_build_and_publish_waits_for_the_sweep_verdict_and_nothing_regat
     };
     let runs = |job: &str| -> String {
         release["jobs"][job]["steps"]
-            .as_sequence()
+            .as_array()
             .into_iter()
             .flatten()
             .filter_map(|s| s["run"].as_str())
@@ -924,7 +924,7 @@ fn every_release_build_and_publish_waits_for_the_sweep_verdict_and_nothing_regat
     // A build is not a gate: no job re-runs a lint or test target over the
     // tree the sweep already proved.
     for (name, _) in jobs {
-        let name = name.as_str().unwrap();
+        let name = name.as_str();
         let script = runs(name);
         for regate in [
             "just check",
@@ -940,4 +940,21 @@ fn every_release_build_and_publish_waits_for_the_sweep_verdict_and_nothing_regat
             );
         }
     }
+}
+
+/// Clippy's API guidance must use the same floor that workspace packages declare.
+#[test]
+fn clippy_msrv_matches_the_workspace_rust_version() {
+    let root = repo_root();
+    let cargo: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("Cargo.toml")).unwrap()).unwrap();
+    let clippy: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("clippy.toml")).unwrap()).unwrap();
+    let declared = cargo["workspace"]["package"]["rust-version"]
+        .as_str()
+        .expect("Cargo.toml declares the workspace Rust version");
+    let assumed = clippy["msrv"]
+        .as_str()
+        .expect("clippy.toml declares Clippy's MSRV");
+    assert_eq!(assumed, declared, "clippy.toml MSRV must match Cargo.toml");
 }

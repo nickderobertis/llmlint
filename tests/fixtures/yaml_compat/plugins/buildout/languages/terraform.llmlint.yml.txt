@@ -1,0 +1,64 @@
+# Terraform / IaC buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural checks for the native command surface, state policy, and
+# environment isolation; ongoing IaC judgment lives in languages/terraform.llmlint.yml.
+version: 1.1
+
+rules:
+  - name: iac_command_surface_wired
+    description: |
+      true when the root recipes delegate to the orchestrator and the projects'
+      targets use the Terraform/OpenTofu-native lifecycle: `bootstrap`
+      initializes the backend in each root module; `check` runs format-check,
+      validation, tflint, and a security scan per project; and `upgrade`
+      deliberately updates provider and module constraints plus each root
+      module's lock file before re-running the gate and reviewing a plan. false
+      when the surface omits a stage, hand-rolls a per-directory loop instead of
+      delegating, applies changes from the check recipe, or updates dependencies
+      without an explicit review step.
+    files:
+      include: ["justfile", "Justfile", ".justfile", ".github/workflows/**", "nx.json", "**/project.json"]
+    relevance: the target files define or invoke the repository command surface for infrastructure work
+
+  - name: remote_state_policy_wired
+    description: |
+      true when the repository wires a remote state design with locking, encryption,
+      access control, recovery, and clear ownership appropriate to its platform,
+      while ignore policy excludes local state artifacts and `.terraform/`. false
+      when backend configuration is merely present but its concurrency, sensitivity,
+      recovery, or ownership model is incomplete or dependent on a developer machine.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", ".gitignore", "AGENTS.md", "docs/**"]
+    relevance: the target files configure or document Terraform/OpenTofu state and repository artifact policy
+
+  - name: environments_isolated_by_design
+    description: |
+      true when materially different environments/accounts and independently
+      operated systems have separate state and deployment units whose boundaries
+      contain failure and access. false when one mutable workspace or shared state
+      is the primary isolation mechanism despite different lifecycles, privileges,
+      or blast-radius needs.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml", "AGENTS.md", "docs/**"]
+    relevance: the target files define or document multiple infrastructure environments, accounts, stacks, or deployment units
+
+  - name: iac_locks_and_gate_reach_every_unit
+    description: |
+      true when each root module commits its own `.terraform.lock.hcl` — the
+      documented exception to one-lockfile-per-ecosystem, since providers resolve
+      per configuration — while any lint/scan/test harness written in another
+      language keeps that ecosystem's single root lockfile; AND the gate reaches
+      every deployment unit, with a repo-level `coverage` target that fails when a
+      directory containing `*.tf` belongs to no project or a project skipped its
+      format/validate/lint/scan checks. false when a lock file is uncommitted or
+      hoisted, or when the split leaves some `*.tf` outside the gate so a full
+      sweep silently became a partial one.
+    files:
+      include:
+        - "**/.terraform.lock.hcl"
+        - "**/*.tf"
+        - "**/project.json"
+        - "nx.json"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - ".gitignore"

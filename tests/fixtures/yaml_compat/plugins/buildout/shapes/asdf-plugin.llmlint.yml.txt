@@ -1,0 +1,27 @@
+# asdf-plugin buildout rules (plugin) — run ONCE during repo creation, then
+# discarded. They verify the plugin was wired to the asdf script contract and split
+# from its host-tool integration at setup.
+version: 1.1
+
+rules:
+  - name: plugin_never_calls_asdf
+    description: |
+      true when no plugin script in the target files invokes `asdf`. false when any
+      plugin script shells back out to `asdf` (for example `asdf reshim` from
+      `install`).
+    files:
+      include: ["bin/**", "lib/**"]
+
+  - name: plugin_split_from_host_tool_integration
+    description: |
+      true when the plugin project is rooted at the repo root — asdf requires
+      `bin/` to sit there, so this project alone cannot be moved into a
+      subdirectory — holding the scripts, any shared `lib/`, and the offline
+      `bats` tests, while the host-tool integration that installs a real version
+      over the network is a separate project with its own directory and project
+      definition, depending on the plugin. false when `asdf plugin test` is a
+      target of the plugin project itself, so editing a `bats` fixture installs a
+      real tool version, or when the plugin's `bin/` was relocated to make the
+      layout uniform and the host tool can no longer find it.
+    files:
+      include: ["nx.json", "**/project.json", "bin/**", "**/*.bats"]

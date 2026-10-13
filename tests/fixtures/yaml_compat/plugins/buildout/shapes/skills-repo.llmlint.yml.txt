@@ -1,0 +1,49 @@
+# Skills-repo buildout rules (plugin) — run ONCE during repo creation, then
+# discarded. One-time structural checks that the per-skill project split, skill
+# validation, and self-dogfooding are wired into the gate; the ongoing skills-repo
+# judgment (runtime independence, determinism-vs-judgment, each new skill joining
+# the graph) lives in shapes/skills-repo.llmlint.yml.
+version: 1.1
+
+rules:
+  - name: validate_and_smoke_every_skill_gated
+    description: |
+      true when `just check` both validates every `SKILL.md` (frontmatter,
+      forbidden runtime deps) and SMOKE-runs every bundled script once, so a broken
+      skill fails the gate. false when validation/smoke exists but is not wired into
+      `check`, or only a subset of skills is covered.
+    files:
+      include: ["justfile", "Justfile", ".justfile", ".github/workflows/**", "scripts/**"]
+
+  - name: own_checks_dogfooded
+    description: |
+      true when any repo-baseline or lint script the repo itself ships is run
+      against this repo inside `just check`, so the canonical example stays passing.
+      false when the repo authors such a check but never runs it on itself.
+    files:
+      include: ["justfile", "Justfile", ".justfile"]
+    relevance: the repo ships its own baseline/lint tooling
+
+  - name: one_project_per_skill
+    description: |
+      true when each skill directory is its own project declaring the same target
+      names as every other skill (`validate`, `smoke`, `test`, plus the repo's
+      uniform `lint`/`format`), so `nx affected -t test` fans out by name and
+      editing one skill runs that skill's targets rather than the whole catalog,
+      and the shared validation tooling is its own project the skill projects
+      depend on. false when the catalog is one project — so any skill edit runs
+      every skill's targets — or when skills invent different target names, which
+      makes a single fan-out reach only some of them.
+    files:
+      include: ["nx.json", "**/project.json", "**/SKILL.md"]
+
+  - name: skill_project_edges_are_authoring_only
+    description: |
+      true when the dependency a skill project declares on the shared validation
+      tooling exists purely to order and cache authoring targets, while the
+      bundled scripts themselves remain self-contained. false when that project
+      edge is mirrored by a real runtime import — a bundled script importing the
+      repo's tooling, or relying on the orchestrator to run — which breaks the
+      scripts inside a consuming repo where none of it exists.
+    files:
+      include: ["**/project.json", "skills/**/scripts/**", "skills/**/*.py", "skills/**/*.js"]

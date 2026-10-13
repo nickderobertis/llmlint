@@ -1,0 +1,37 @@
+# TypeScript judge-level rules (plugin). Pairs with languages/typescript.md.
+version: 1.1
+
+rules:
+  - name: no_unjustified_any_or_non_null
+    description: |
+      when every use of `any` or a non-null assertion (`!`) in the target files
+      carries a comment justifying why the type system is bypassed.
+    files:
+      include: ["**/*.ts", "**/*.tsx"]
+    relevance: the target files use `any` or a non-null assertion
+
+  - name: projects_stay_in_one_js_workspace
+    description: |
+      true when every TypeScript project in the repo is a member of the root
+      workspace (the root `package.json` `workspaces` array, or
+      `pnpm-workspace.yaml`), carries its own `package.json` and `tsconfig.json`,
+      depends on sibling projects by package name with the `workspace:*` protocol,
+      and resolves against the single root lockfile. false when a project is
+      invisible to the workspace, commits a second lockfile for the same
+      ecosystem, or reaches a sibling through a deep relative path
+      (`../other-project/src/...`) instead of a declared workspace dependency. A
+      repo with exactly one project, rooted at the repo root, needs no
+      `workspaces` array to be true — the claim is that no project resolves
+      outside the one root lock.
+    files:
+      include:
+        - "**/package.json"
+        - "**/tsconfig*.json"
+        - "pnpm-workspace.yaml"
+        - "**/bun.lock"
+        - "**/bun.lockb"
+        - "**/package-lock.json"
+        - "**/pnpm-lock.yaml"
+        - "**/yarn.lock"
+        - "**/project.json"
+    relevance: the target files add or change a TypeScript project's manifest, tsconfig, lock, or project definition

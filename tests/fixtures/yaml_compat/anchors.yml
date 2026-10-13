@@ -1,0 +1,12 @@
+version: 1.2
+x-rule: &rule
+  description: A positive invariant
+  relevance: true
+  require_line_attribution: true
+rules:
+  - <<: *rule
+    name: always
+  - <<: *rule
+    name: conditional
+    relevance: When Rust files exist
+plugins: ["https://example.com/base.yml@1", "https://example.com/rust.yml@1.2", "https://example.com/cli.yml@1.2.3"]

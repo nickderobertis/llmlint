@@ -378,26 +378,22 @@ fn published(config: &ReleaseConfig) -> Result<BTreeMap<String, Vec<Publisher>>,
 
     let mut out: BTreeMap<String, Vec<Publisher>> = BTreeMap::new();
     for (path, text) in &config.workflows {
-        let doc: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(text).map_err(|e| format!("{path} is not YAML: {e}"))?;
-        let Some(jobs) = doc.get("jobs").and_then(serde_yaml_ng::Value::as_mapping) else {
+        let doc: serde_json::Value =
+            serde_saphyr::from_str(text).map_err(|e| format!("{path} is not YAML: {e}"))?;
+        let Some(jobs) = doc.get("jobs").and_then(serde_json::Value::as_object) else {
             continue;
         };
         for (job, body) in jobs {
-            let job = job
-                .as_str()
-                .ok_or_else(|| format!("{path}: a job key is not a string"))?;
-            let steps = body
-                .get("steps")
-                .and_then(serde_yaml_ng::Value::as_sequence);
+            let job = job.as_str();
+            let steps = body.get("steps").and_then(serde_json::Value::as_array);
             for step in steps.into_iter().flatten() {
                 let run = step
                     .get("run")
-                    .and_then(serde_yaml_ng::Value::as_str)
+                    .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
                 let uses = step
                     .get("uses")
-                    .and_then(serde_yaml_ng::Value::as_str)
+                    .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
                 let words: Vec<&str> = run.split_whitespace().collect();
                 let has = |a: &str, b: &str| words.windows(2).any(|w| w[0] == a && w[1] == b);

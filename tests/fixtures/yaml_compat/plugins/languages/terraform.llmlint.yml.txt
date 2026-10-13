@@ -1,0 +1,103 @@
+# Terraform / IaC judge-level rules (plugin). Pairs with languages/terraform.md.
+version: 1.1.1
+
+rules:
+  - name: state_backend_discipline
+    description: |
+      true when state ownership, locking, encryption, access control, and recovery
+      form a coherent remote-backend design for the target infrastructure. false
+      when state depends on a developer machine, has ambiguous ownership, or lacks
+      a credible concurrency or recovery strategy.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml"]
+    relevance: the target files define or configure infrastructure state or deployment stacks
+
+  - name: cohesive_blast_radius_boundaries
+    description: |
+      true when modules/stacks have cohesive responsibilities and small interfaces,
+      while environments and independently operated systems are separated into
+      state and deployment units sized to contain failures. false when unrelated
+      resources share a convenience module or one state/deployment unit couples
+      environments or systems with independent lifecycles.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml"]
+    relevance: the target files define modules, stacks, environments, or deployment boundaries
+
+  - name: secrets_avoid_code_and_state
+    description: |
+      true when secret material is referenced from a managed secret store at
+      deployment time, secret-bearing interfaces are marked sensitive, and the
+      design avoids persisting plaintext secrets in state. false when credentials
+      are supplied as literals or ordinary inputs/outputs, or sensitivity marking
+      is treated as protection against a secret being stored in state.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml"]
+    relevance: the target files create, consume, pass, or expose credentials or other secret material
+
+  - name: declarative_drift_resistant_resources
+    description: |
+      true when desired state is expressed with native resources and lifecycle or
+      import choices preserve reconciliation. false when imperative provisioners,
+      `local-exec`, `null_resource`, timing, or broad ignored-change rules replace
+      an available resource model or conceal meaningful drift.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml"]
+    relevance: the target files provision or manage infrastructure resources or their lifecycle
+
+  - name: stable_resource_addressing
+    description: |
+      true when repeated resources use stable domain identities, choosing keyed
+      iteration such as `for_each` when insertion or reordering must not re-address
+      existing instances. false when positional `count` or generated indices make
+      ordinary collection edits replace or rename unrelated resources.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml"]
+    relevance: the target files create repeated or collection-derived infrastructure resources
+
+  - name: legible_names_tags_and_dependencies
+    description: |
+      true when stable names and tags/labels communicate ownership, environment,
+      service, and applicable cost or compliance intent, and dependencies follow
+      real data flow through references/outputs. false when generic naming obscures
+      operational intent, metadata is inconsistent, or incidental ordering stands
+      in for a real dependency (with explicit dependency metadata reserved for
+      dependencies the provider cannot infer).
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml"]
+    relevance: the target files name, tag, label, or connect infrastructure resources
+
+  - name: least_privilege_policy_intent
+    description: |
+      true when IAM and resource policies grant only the actions, resources,
+      principals, and conditions justified by the workload, with any broad grant
+      carrying a concrete constraint or migration rationale. false when authority
+      is broader than the workload requires even if the policy is syntactically
+      valid and passes a deterministic security scanner.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml", "**/*.json"]
+    relevance: the target files define or assemble IAM, identity, trust, or resource policies
+
+  - name: deliberate_provider_module_versions
+    description: |
+      true when provider and external-module constraints prevent silent unreviewed
+      changes while retaining a practical reviewed upgrade path, and unusually
+      broad, narrow, or source-ref constraints have a recorded reason. false when
+      constraints float without review intent or freeze dependencies indefinitely
+      without explaining the tradeoff.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/*.ts", "**/*.py", "**/*.yaml", "**/*.yml", "Pulumi.yaml", "Pulumi.*.yaml"]
+    relevance: the target files select, source, or constrain an infrastructure provider, module, construct, or component
+
+  - name: every_deployment_unit_is_a_project
+    description: |
+      true when it is its own project with a project definition beside its
+      configuration, and a stack consuming a shared module declares that edge
+      (via the `source` path the orchestrator can infer, or
+      `implicitDependencies`) so a module change marks exactly its consumers
+      affected. false when a new root module is added with no project definition
+      — leaving it outside the gate entirely — or when a consumed shared module
+      is not an edge, so either every stack plans on any module edit or none of
+      them do.
+    files:
+      include: ["**/*.tf", "**/*.tf.json", "**/project.json", "nx.json"]
+    relevance: the target files add or change a root module, a reusable module, or the project definition that owns one

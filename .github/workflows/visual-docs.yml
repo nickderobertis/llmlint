@@ -14,7 +14,7 @@ on:
   pull_request:
     # `closed` lets screencomp delete this PR's gh-pages preview once it closes,
     # so stale /pr-<n>/ galleries do not accumulate on the branch.
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
   push:
     branches: [main]
   schedule:

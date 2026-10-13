@@ -1,0 +1,28 @@
+# CLI judge-level rules (plugin). Pairs with shapes/cli.md.
+version: 1.1.1
+
+rules:
+  - name: cli_output_contract
+    description: |
+      true when the CLI uses distinct, documented exit codes (`0` only on success),
+      writes error messages to stderr, and keeps machine-readable output (e.g.
+      `--json`) separate from human prose. false when the CLI conflates exit codes,
+      prints errors to stdout, or mixes machine-readable output with human prose.
+    relevance: the target files implement CLI output or exit-code handling
+
+  - name: new_command_or_client_gets_its_own_project
+    description: |
+      true when it arrives as its own project — so `nx affected` can run it
+      alone and its live-service suite stays out of reach of unrelated changes.
+      false when a second command is folded into the existing CLI project as
+      another entry point, or an external-system client is added inside it,
+      making every change to argument parsing pay for that command's tests and
+      its network calls.
+    files:
+      include:
+        - "**/project.json"
+        - "nx.json"
+        - "**/pyproject.toml"
+        - "**/Cargo.toml"
+        - "**/package.json"
+    relevance: the target files add a command the tool exposes, or a client for an external system it calls

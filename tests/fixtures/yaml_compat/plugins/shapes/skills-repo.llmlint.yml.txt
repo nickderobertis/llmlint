@@ -1,0 +1,58 @@
+# Skills-repo judge-level rules (plugin). Pairs with shapes/skills-repo.md.
+# llmlint: ignore-file[changed_behavior_has_e2e] these are LLM-judge config invariants with no deterministic runtime path; the blocking model lint exercises the changed rule configuration.
+version: 1.2.1
+
+rules:
+  - name: scripts_runtime_independent
+    description: |
+      when every bundled skill script in the target files is self-contained (PEP 723
+      inline metadata for Python, Node built-ins for JavaScript) and depends on no
+      orchestrator, repo-root manifest or lockfile, asdf or direnv, or import from the
+      repo's own source tree.
+    files:
+      include:
+        - "skills/**/*.py"
+        - "skills/**/*.js"
+        - "skills/**/*.mjs"
+        - "skills/**/scripts/**"
+    require_line_attribution: true
+
+  - name: determinism_vs_judgment
+    # Each deterministic procedure narrated in prose is line-localizable.
+    description: |
+      true when the deterministic steps described in the target files are implemented
+      as scripts and prose is reserved for genuine judgment. false when a SKILL.md or
+      AGENTS.md narrates step-by-step deterministic actions that a script should own.
+    files:
+      include:
+        - "**/SKILL.md"
+        - "**/AGENTS.md"
+        - "**/CLAUDE.md"
+    relevance: the target files describe procedural steps
+    require_line_attribution: true
+
+  - name: skill_description_trigger_and_compatibility_needs
+    description: |
+      true when every SKILL.md `description` in the target files is trigger-oriented
+      (states when to use the skill, e.g. "Use when …") and `compatibility` states
+      the skill's real runtime needs. false when any description is a vague title or
+      omits real runtime needs.
+    files:
+      include: ["**/SKILL.md"]
+    require_line_attribution: true
+
+  - name: each_skill_is_its_own_project
+    description: |
+      true when that directory has its own project definition, so `nx affected`
+      runs that skill's targets and leaves the rest of the catalog alone, and an
+      expensive harness-driving eval it ships sits in a project of its own.
+      false when a skill is added with no project definition — leaving it
+      outside the graph, so editing it either runs the whole catalog or nothing
+      — or when its slow eval is declared as another target of the skill's own
+      project, making every edit to that skill pay for a real harness run.
+    files:
+      include:
+        - "**/SKILL.md"
+        - "**/project.json"
+        - "nx.json"
+    relevance: the target files add, move, or restructure a skill directory

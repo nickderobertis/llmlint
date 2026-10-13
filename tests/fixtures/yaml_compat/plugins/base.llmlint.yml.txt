@@ -1,0 +1,347 @@
+# Standard llmlint config — the org-wide rules every repo gets, regardless of
+# stack. Consumed as a plugin: the composer wires it into the generated
+# top-level llmlint.yml (always first, after the bundled config_lint plugin).
+# These are the ONGOING judgment checks an LLM judge can make that deterministic
+# linters can't; keep using ruff/clippy/biome/shellcheck/tsc for what they cover.
+#
+# `version` is the published plugin version consumers pin with `@` (e.g. `@1`).
+# Version classification and consumer pinning: see references/llmlint.md
+# ("Fragment versioning").
+# llmlint: ignore-file[description_and_relevance_are_concise] the explicit inverse verdict is part of this rule's required compliance contract, not optional explanatory repetition.
+version: 1.13.0
+
+rules:
+  - name: comments_earn_their_place
+    description: |
+      true when every code comment in the target files earns its place: it explains
+      something the code does not make obvious — intent, a non-obvious constraint, a
+      tradeoff, a subtle "why" — and does so tersely. false when a comment restates
+      what the adjacent code plainly says or narrates mechanics a reader can see
+      (`# increment i`, `// loop over users`, `# return the result`), is a decorative
+      section banner or divider that adds no information, is dead weight (commented-out
+      code, a stale TODO with no owner or context, changelog or session notes left in
+      the source), is verbose where a short phrase would do, or reproduces explanatory
+      content already covered by a reference it links (or that the file links elsewhere)
+      instead of keeping just the repo-specific "why" and deferring the rest to that
+      reference — a copy that both bloats the comment and silently drifts from its
+      source. A docstring or comment that documents a public contract, an example, or a
+      genuinely non-obvious rule is NOT a violation even if longer.
+    relevance: the target files contain code comments
+    require_line_attribution: true
+
+  - name: e2e_not_mocked
+    description: |
+      true when every end-to-end or integration test in the target files drives the
+      real artifact across real boundaries (the entry point as a subprocess, real
+      temp files, a real local server or database). false when any such test mocks
+      the network, filesystem, subprocess, or the entry point it is meant to exercise.
+    files:
+      include:
+        # `**/e2e/**` catches any file inside an e2e/ dir (whatever its name);
+        # `**/*e2e*` catches e2e-named files outside such a dir. `**/tests/e2e/**`
+        # would be a strict subset of the first, so it is intentionally omitted.
+        - "**/e2e/**"
+        - "**/*e2e*"
+        - "**/integration/**"
+        - "**/*.integration.*"
+    relevance: the target files define an end-to-end or integration test
+    require_line_attribution: true
+
+  - name: tests_mirror_real_usage
+    description: |
+      true when every end-to-end or integration test in the target files exercises
+      the software through the same interface its real users use — invoking the real
+      entry point (a CLI as a command, an HTTP route as a request, a public API as a
+      caller, a UI through user-facing actions like click/type/navigate) with
+      realistic inputs, and asserting on user-observable outcomes. false when a test
+      reaches past that interface to take a shortcut a real user could not: calling
+      private internals, firing synthetic events, driving component handlers
+      directly, or mutating internal state to reach a condition only the interface
+      should produce.
+    files:
+      include:
+        - "**/e2e/**"
+        - "**/*e2e*"
+        - "**/integration/**"
+        - "**/*.integration.*"
+    relevance: the target files define an end-to-end or integration test
+    require_line_attribution: true
+
+  # llmlint: ignore[names_match_behavior, name_describes_what_the_rule_checks] this published rule identifier must remain stable for consumer overrides and allowlisted ignores; renaming it for the structural-proof exception would break those consumers.
+  - name: changed_behavior_has_e2e
+    # llmlint: ignore[description_omits_already_excluded_situations] relevance controls admission; the description quantifies only admitted behavior, avoiding both a redundant relevance qualifier and a broader admission condition.
+    description: |
+      true when EVERY distinct behavior these changes ADD or MODIFY is exercised
+      by a real end-to-end or integration test — each new or altered code path,
+      output, exit status, and failure/recovery path, not one happy-path test standing in for the whole change — and every
+      behavior they REMOVE has had its obsolete end-to-end test removed with it.
+      Where the cheapest honest end-to-end proof would cost more than the defect
+      it prevents, a deterministic structural assertion satisfies this rule,
+      provided that assertion states at its own site why the end-to-end proof was
+      declined.
+      Locate the tests for this entry point or module — read the repo's test tree
+      as needed — and confirm coverage by an existing or new test, or by the
+      justified structural assertion above. false when an assertion lacks that
+      reason, any added or modified behavior lacks proof, or a removed behavior
+      retains an obsolete test.
+    relevance: |
+      the target files add, alter, or remove observable behavior and BOTH criteria
+      hold. Judge only those changed paths, not pre-existing, untouched behavior:
+      (1) The behavior is authored in this repository. A guarantee a third-party
+      tool makes in isolation belongs to that tool's maintainers: clippy failing
+      on its own finding, a formatter reformatting, or a package manager refusing
+      an unlocked dependency. What this repository composes out of tools into a
+      path of its own is authored here and tested by nobody else — which artifacts
+      get published and where, what an installer writes and starts, or what a
+      script does around the tool it calls. A structural claim is excluded even
+      when authored here: it is settled by reading a file rather than running
+      anything. Whether a gate recipe invokes every tier the policy declares is
+      proved by a deterministic check reading the recipe; running the gate proves
+      it more slowly and no better. Apply this criterion rather than matching a
+      list; the examples illustrate its reach, not its limits.
+      (2) The failure would otherwise be silent. Ask what happens if this behavior
+      breaks and nothing tests it. A release or publication path shipping a broken
+      artifact is discovered by whoever installs it; a deployment or provisioning
+      script, a scheduled job, and a developer tool that checks something are
+      discovered late or never. Those failures are silent and owe end-to-end proof.
+      A quality gate that stops refusing bad code is loud — the first red change
+      that merges says so — as is a build that stops building or an entry point
+      that stops running. Apply this criterion rather than matching a list; it
+      reaches equally a silent failure none of these examples names.
+      A test is not itself the behavior under test, and a behavior-preserving edit
+      (a refactor, formatting, a comment, docs, configuration, or a type-only
+      change) that no user could observe does not meet the criterion.
+    # llmlint: ignore[line_localizable_rules_require_attribution] missing coverage is attributed to the changed production line whose behavior lacks an e2e test.
+    require_line_attribution: true
+
+  - name: tests_assert_real_behavior
+    description: |
+      when every test in the target files asserts on an observable outcome (a
+      returned value, an exit code, persisted state) rather than exercising code
+      without asserting any behavior.
+    files:
+      include:
+        - "**/tests/**"
+        - "**/test_*.py"
+        - "**/*_test.py"
+        - "**/*_test.rs"
+        - "**/*_test.go"
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "**/*.spec.ts"
+        - "**/*.spec.tsx"
+        - "**/e2e/**"
+    relevance: the target files define tests
+    require_line_attribution: true
+
+  - name: names_match_behavior
+    description: |
+      true when every name the target files declare describes what it actually is or
+      does at the breadth it claims: a broad name (`process`, `data`, `utils`, `--all`)
+      covers everything it implies or is narrowed to its real job, a specific name does
+      exactly that. false when a name overclaims its breadth, hides a side effect, or
+      contradicts what its value or body does.
+    relevance: the target files declare a named variable, function, command, flag, type, module, or file
+    require_line_attribution: true
+
+  - name: suppressions_justified
+    description: |
+      when every comment-style linter or type-checker suppression directive and every
+      in-language type-system escape hatch in the target files carries a brief reason
+      why it is necessary. Such suppressions include Python `Any`, `cast`, and
+      `# type: ignore`; TypeScript `any`, `as`/`as any`, non-null `!`,
+      `@ts-ignore`, and `@ts-expect-error`; Go `interface{}`/`any` and unchecked type
+      assertions; and directives such as `# noqa`, `eslint-disable`, and Rust
+      `#[allow(...)]`. These examples are illustrative, not exhaustive: justified
+      uses at genuinely dynamic or deserialization boundaries comply, while
+      unjustified uses are findings.
+    relevance: the target files contain a linter or type-checker suppression directive or an in-language type-system escape hatch
+    require_line_attribution: true
+
+  - name: boundary_inputs_validated
+    description: |
+      when every external or IO input read in the target files (request bodies,
+      environment variables, config files, third-party responses, CLI arguments,
+      stdin) is validated at the boundary before use.
+    relevance: the target files read external or IO input
+    require_line_attribution: true
+
+  - name: no_hardcoded_secrets
+    description: |
+      when every secret the target files rely on — a credential, API key, access token,
+      connection string, or private key — is read from an environment variable or a
+      secret store by name rather than embedded as an inline literal.
+    relevance: the target files handle credentials, connect to a service, or hold configuration
+    require_line_attribution: true
+
+  - name: least_privilege_grants
+    description: |
+      when every access grant in the target files (a CI token's `permissions:`, an agent
+      command allowlist, a cloud IAM policy, a database role, an OAuth scope) is scoped to
+      the minimum the work needs — no write access where read suffices, no wildcard
+      permission, no unbounded allowlist.
+    relevance: the target files grant a permission, token scope, role, or command allowlist
+    require_line_attribution: true
+
+  - name: diagnostics_error_or_absent
+    description: |
+      true when the quality gate treats every diagnostic as a hard failure — no
+      linter, type checker, or compiler is configured to emit warning-level output.
+      false when any check is left warning-only.
+    files:
+      include:
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - ".github/workflows/**"
+    relevance: the target files configure a linter, type checker, or compiler
+    require_line_attribution: true
+
+  - name: tool_output_is_signal
+    # Narrowed to output the repo controls: a recipe that delegates to an
+    # orchestrator does not own that tool's stdout, and references/project-graph.md
+    # *requires* those recipes to delegate.
+    description: |
+      Judges the output a repository's OWN code produces — the lines its scripts,
+      functions, and recipe bodies print themselves.
+      true when every script or command recipe in the target files is quiet on
+      success (a single line or nothing) and, on failure, prints the exact error
+      plus a concrete next action; a body that only hands work to a build
+      orchestrator, task runner, package manager, or test runner (`nx affected`,
+      `uv sync`, `pytest`) is true whatever that tool prints, which the repo
+      neither owns nor should silence.
+      false when a script's or recipe's own output is noisy on success, or when it
+      fails with a message that omits the cause or the fix — including a delegated
+      command's failure that it swallows or reports without either.
+    files:
+      include:
+        - "scripts/**"
+        - "**/scripts/**"
+        - "bin/**"
+        - "**/*.sh"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+    relevance: the target files define a script or command recipe
+    require_line_attribution: true
+
+  - name: agents_md_durable_and_terse
+    # Each stale, verbose, or session-like passage is line-localizable.
+    description: |
+      true when each durable instruction file in the target files (AGENTS.md,
+      CLAUDE.md, and a skill's SKILL.md) reads as durable, terse instructions —
+      constraints, tradeoffs, and judgment a future maintainer or agent needs. false
+      when any reads as a session or changelog narrative, or restates what a command,
+      a failing gate, or a linked doc already shows.
+    files:
+      include:
+        - "**/AGENTS.md"
+        - "**/CLAUDE.md"
+        - "**/SKILL.md"
+    require_line_attribution: true
+
+  - name: no_redundant_instruction_pointers
+    description: |
+      The agent harness auto-loads every AGENTS.md/CLAUDE.md colocated with or in an
+      ancestor of the files in scope, and any markdown doc reachable from one of those by
+      following reference links — directly, or nested through other docs — is thereby
+      surfaced to the reader as already available to load. This rule judges the files in
+      that set. true when the target file does not redirect the reader to read, see, or
+      consult another file already present in the same context — a colocated or containing
+      AGENTS.md/CLAUDE.md (auto-loaded up the tree), or a doc already loaded or already
+      advertised upstream on the reference path that reached this file (e.g. a referenced
+      doc pointing back at the parent that linked it). false when it defers content to, or
+      tells the reader to go read, such an already-present file as if it were not already
+      available: dead weight that silently rots when the target moves or is renamed.
+      Introducing a genuinely new resource — one not already reachable in the current
+      context — is fine, as is a plain note about a file's role (e.g. that CLAUDE.md is a
+      symlink of AGENTS.md).
+    files:
+      include:
+        - "**/*.md"
+    relevance: |
+      the target file is an AGENTS.md/CLAUDE.md, or a markdown doc reachable from one by
+      following reference links (directly or nested through other docs) — i.e. a file the
+      agent already loads automatically or has been prompted it can load; skip markdown no
+      AGENTS.md reaches
+    require_line_attribution: true
+
+  - name: new_code_lands_in_a_project
+    description: |
+      Every repo is laid out as an Nx project graph, so nothing runs outside it.
+      true when the file belongs to a project the graph already declares (the nearest
+      project definition covers its path), or the change declares that project
+      itself. false when it lands at a path no project definition covers, so Nx can
+      neither run nor skip it and the work escapes `affected` entirely.
+    files:
+      include:
+        - "**/*.py"
+        - "**/*.ts"
+        - "**/*.tsx"
+        - "**/*.js"
+        - "**/*.jsx"
+        - "**/*.rs"
+        - "**/*.go"
+        - "**/*.rb"
+        - "**/*.java"
+        - "**/*.kt"
+        - "**/*.cs"
+        - "**/*.swift"
+        - "**/*.c"
+        - "**/*.h"
+        - "**/*.cc"
+        - "**/*.cpp"
+        - "**/*.hpp"
+        - "**/*.php"
+        - "**/*.sh"
+        - "**/*.tf"
+    relevance: the change adds the file rather than editing one that already exists
+
+  - name: work_goes_through_command_surface
+    description: |
+      true when docs, CI workflows, and scripts invoke build, test, lint, format, or
+      setup work through the project's documented command surface (its `just`/task
+      recipes) rather than re-implementing the underlying commands inline. false when a
+      workflow, doc, or script hand-rolls the raw command a recipe already wraps, so the
+      two drift and the recipe stops being the single place that defines the behavior.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "**/*.md"
+        - "scripts/**"
+        - "**/scripts/**"
+    relevance: the target files run a build, test, lint, format, or setup step that a documented recipe already wraps
+    require_line_attribution: true
+
+  - name: contracts_have_one_source_or_a_drift_gate
+    # Agreement among contract copies is cross-cutting, so no single line owns a violation.
+    # Storage and internal-code seams were WIDENED into this rule rather than split
+    # into their own: the premise is one positive invariant (a fact that must agree
+    # is kept aligned by one source), and which boundary it spans does not change
+    # it — a second rule would judge the same premise twice. The other half of an
+    # internal seam, which project may depend on which, is already judged by
+    # project-graph's `new_projects_keep_the_graph_uniform` and the buildout
+    # `project_boundaries_enforced`.
+    description: |
+      true when the restatement is anchored to one authoritative source:
+      derived from it by codegen, with the output checked in and its freshness
+      gated, or reconciled against it by a check in the quality gate that fails
+      on drift. false when only convention holds the restatement and its
+      original together, so the two diverge silently the next time either side
+      changes.
+    relevance: |
+      the target files restate a value, type, schema, column, key, field, or
+      enum that is also declared across a contract seam — any agreement two or
+      more parties must both hold to where at least one side can change
+      independently of the other. Apply that criterion rather than matching a
+      list: it is met by a call or transport surface (an HTTP route, a method
+      signature, a CLI flag schema, an event payload), by a persistence or
+      storage schema and the data model behind it (a table and its columns, a
+      document or key shape, an on-disk or wire format, a cache or queue entry,
+      a store shared across a boundary), and by an interface between internal
+      collections of code (what a package, module, or library owns and what
+      another may assume of it) alike, and equally by a store, serialization, or
+      internal boundary none of those examples names. A duplicated literal or
+      constant list, a re-declared field, column, or key set, and a parallel type
+      beside the original are restatements; reading, calling, importing from, or
+      annotating against a data model or an internal module is not
