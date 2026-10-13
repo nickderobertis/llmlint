@@ -46,7 +46,7 @@ Composes the `create-repo` skill's `base.md` + `project-graph.md` +
 `intersections/rust-cli.md` + `ci.md` + `releasing.md` + `llmlint.md`
 (`llmlint.yml` pins each one's rule fragment). Bash is a composed language
 because the scripts (`scripts/`, and those in the screenshots, live, bench,
-real-oneharness, CI, coverage and shell-tools projects) and `.githooks/pre-push`
+real-oneharness, CI, coverage and shell-tools projects)
 carry real logic — its target shell, toolchain and coverage floor are under
 "Shell" below; four other languages are **supporting tooling** only:
 
@@ -84,16 +84,14 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
 - `live` (`type:live`, `tests/live/`) — the paid live tier, plus its offline
   input checks (`test`).
 - `win-color` (`type:e2e`, `tests/win-color/`) — the Windows console rendering check.
-- `screenshots` (`type:capture`, `screenshots/`) — the capture, and the pre-push
-  guard's and freeze installer's journeys.
+- `screenshots` (`type:capture`, `screenshots/`) — the capture and freeze
+  installer's journeys.
 - `bench` (`type:bench`, `benches/`) — the informational performance suite, plus
   its harness scripts' offline input checks (`test`).
 - `repo-tooling` (`type:tooling`, `scripts/`) — setup, the Nx and gate plumbing,
   the actionlint installer and workflow lint, with their journeys.
 - `ci-workflows` (`type:tooling`, `.github/`) — the workflows, the CI routing and
   release-verdict script, and their drift gates; actionlint is its `lint-workflows`.
-- `git-hooks` (`type:tooling`, `.githooks/`) — the pre-push hook (its journeys are
-  the screenshots project's).
 - `shell-tools` (`type:tooling`, `tools/shell/`) — the shell toolchain every
   shell project's `format`/`lint` runs (`shell.sh`: shfmt and shellcheck behind
   their pins, and the tree's one shell-script discovery) and its installer; no
@@ -133,15 +131,13 @@ Deliberately excluded or deviating (so it isn't re-litigated):
   root containing it, so every unclaimed repo-root file (the justfile, README,
   `AGENTS.md`, `.claude/`, `docs/`, `shots/`, the root configs)
   belongs to `llmlint` and an edit there selects every project downstream of it.
-  That is why the workflows (`.github/`), the git hooks (`.githooks/`), the
-  scripts (`scripts/`) and each suite's own scripts live in project directories
+  That is why the workflows (`.github/`), the scripts (`scripts/`) and each
+  suite's own scripts live in project directories
   of their own.
 - **Where checks live**: actionlint is `ci-workflows`' `lint-workflows`, not
   `repo-tooling`'s, because the workflow files are that project's (`repo-tooling`
-  keeps the script it runs); `ci-workflows` and `git-hooks` exist for the
-  ownership reason above, `workspace`/`coverage` for the repo-level gates; the
-  pre-push guard's journeys sit in `screenshots`, whose capture scripts the hook
-  drives.
+  keeps the script it runs); `ci-workflows` exists for the ownership reason above,
+  `workspace`/`coverage` for the repo-level gates.
 - **No remote Nx cache** — the repo runs on the Nx local cache only
   (`.nx/cache`, gitignored), kept per checkout: `scripts/nx` pins it there,
   since Nx 23 otherwise shares the main git worktree's cache across worktrees.
@@ -251,8 +247,9 @@ Use the `just` recipes; do not hand-roll equivalents.
   against `llmlint.yml` + `oneharness.toml`. CI's `llmlint` job runs validate, then
   the judge, and must provision and authenticate the harness `oneharness.toml`
   selects first (codex, keyed by `OPENAI_API_KEY`); a missing key fails the job,
-  never a green no-op. The pre-push hook runs `just lint-llm-validate` too (see
-  `.githooks/AGENTS.md`).
+  never a green no-op. Run `just lint-llm-validate` manually for local validation;
+  pushes run no judge
+  or visual checks.
 - `just lint-live` — opt-in, ad-hoc live run against real oneharness + a real
   harness (`cargo run -- …`); never in the gate or CI.
 - `just live-claude` — the paid **live e2e tier** (the live project): runs on PRs
@@ -281,7 +278,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   workflow (screencomp, `fail-on-drift`) per declared capture lane, which also
   publishes a GitHub Pages gallery. The screenshots project's `format`, `lint`
   and `test` are in the gate tiers; its `capture` needs `freeze`, so it is left to that
-  workflow and the pre-push guard. See `screenshots/AGENTS.md`.
+  workflow.
 
 ## Shell
 
@@ -306,7 +303,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   `tools/coverage/shcov.sh run`. Every bash process the suite starts, however
   deep, records its own xtrace through `BASH_ENV`, and a scratch copy counts for
   the script it is byte-identical to. `shell-coverage:coverage` merges the
-  records over every script `tools/shell/shell.sh files` finds (30, none
+  records over every script `tools/shell/shell.sh files` finds (none
   excluded) and fails below the floor. A journey that clears its child's
   environment hands `SHCOV_BASH_ENV` back as `BASH_ENV`, or the child goes
   unmeasured.

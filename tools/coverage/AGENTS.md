@@ -54,11 +54,11 @@ binary and the fixture they drive.
 - **The measurement behind the 50% floor.** The floor was approved against
   51.81% (1057/2040). Re-taken on the finished tree of the change that set it
   (aarch64 Linux, all 9 projects, `bash scripts/nx run shell-coverage:coverage`),
-  it is 55.90%, 1175/2102:
+  it was 55.90%, 1175/2102, including the now-removed pre-push hook
+  (66/89 lines). The table below lists the retained scripts from that measurement:
 
   | script | lines | % |
   |---|---|---|
-  | `.githooks/pre-push` | 66/89 | 74.2 |
   | `.github/scripts/ci-gate.sh` | 101/123 | 82.1 |
   | `benches/bench-instructions.sh` | 16/92 | 17.4 |
   | `benches/bench.sh` | 21/77 | 27.3 |

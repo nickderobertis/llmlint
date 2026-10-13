@@ -105,7 +105,7 @@ test("an edit to a sourced shell library selects the project of every script sou
   // input (nx.json's shellTools/shellCoverage), and Nx counts that as touching
   // them: an edit to it re-runs every project's shell format, lint and coverage.
   const tools = selected("tools/shell/shell.sh");
-  for (const p of ["shell-tools", "repo-tooling", "git-hooks", "bench", "screenshots", "ci-workflows", "live", "real-oneharness", "coverage-driver", "shell-coverage"]) {
+  for (const p of ["shell-tools", "repo-tooling", "bench", "screenshots", "ci-workflows", "live", "real-oneharness", "coverage-driver", "shell-coverage"]) {
     expect(tools, p).toContain(p);
   }
   expect(tools).not.toContain("llmlint");

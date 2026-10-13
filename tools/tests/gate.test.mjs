@@ -70,7 +70,7 @@ test("every shell script in the tree is under some project's shfmt format and sh
   }
   // The tree scan, not a list: every .sh/.bash file and every sh-family shebang.
   const scripts = shellScripts();
-  expect(scripts).toContain(".githooks/pre-push");
+  expect(scripts).not.toContain(".githooks/pre-push");
   expect(scripts).toContain("scripts/nx");
   expect(scripts.length).toBeGreaterThan(20);
   expect(scripts.filter((f) => !formatted.has(f)), "shell scripts no project's format checks with shfmt").toEqual([]);

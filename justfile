@@ -346,7 +346,7 @@ profile *ARGS:
 # pinned font, gated/galleried/PR-commented by screencomp (see screenshots/AGENTS.md).
 # Regenerating is out of the gate, like the benches; CI's Visual-docs workflow owns
 # the comparison — one job per lane in [capture].arches (x86_64 and arm64) — and the
-# pre-push guard regenerates THIS host's lane baseline locally on drift.
+# manual `just screenshots-bless` refreshes this host's baseline.
 
 # Install the pinned screenshot renderer (`freeze`) on demand. Needs Go.
 screenshots-tools:
@@ -376,7 +376,7 @@ screenshots-gif:
 # There is one lane per arch in [capture].arches (screencomp.toml), and this
 # refreshes THIS host's lane only — an arm64 host rewrites shots/baseline/arm64.json,
 # an x86_64 host shots/baseline/x86_64.json, each via screenshots/host-arch.sh so the
-# name matches what the pre-push guard classifies. The shots are byte-identical
+# capture and baseline use the same lane name. The shots are byte-identical
 # across arches, so the other lane needs no local rewrite; CI's job for it is what
 # checks the two agree.
 screenshots-bless:

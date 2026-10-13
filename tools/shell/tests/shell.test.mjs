@@ -71,11 +71,11 @@ test("format --write rewrites a script to the style, after which the check passe
 });
 
 test("the style is the one .editorconfig records, for a script with no extension too", () => {
-  // `.githooks/pre-push`-style: no .sh, so only its own section styles it.
-  write(".githooks/pre-push", UNFORMATTED);
-  expect(shell(["format", ".githooks/pre-push"]).code).toBe(1);
-  write(".githooks/pre-push", FORMATTED);
-  expect(shell(["format", ".githooks/pre-push"]).code).toBe(0);
+  // `scripts/nx`-style: no .sh, so only its own section styles it.
+  write("scripts/nx", UNFORMATTED);
+  expect(shell(["format", "scripts/nx"]).code).toBe(1);
+  write("scripts/nx", FORMATTED);
+  expect(shell(["format", "scripts/nx"]).code).toBe(0);
 });
 
 test("a file that is missing, a glob that matched nothing, or one shfmt cannot parse is named as that, not as drift", () => {

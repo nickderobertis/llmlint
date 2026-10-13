@@ -2,10 +2,8 @@
 # Refresh THIS host's committed screencomp baseline from the capture in
 # shots/current — the one place that decides which lane gets rewritten and where.
 #
-# Shared by `just screenshots-bless` (an intended output change) and the pre-push
-# guard's drift path (.githooks/pre-push), so the two can never disagree about the
-# lane or the manifest path; the guard's drift journey in tests/visual_guard.rs drives
-# this script through the real hook. $SHOTS_CURRENT overrides the capture root.
+# Used by `just screenshots-bless` for an intended output change.
+# $SHOTS_CURRENT overrides the capture root.
 #
 set -euo pipefail
 

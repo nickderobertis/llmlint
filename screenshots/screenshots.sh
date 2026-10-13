@@ -70,8 +70,8 @@ cd "$repo_root" || {
   exit 1
 }
 
-# This host's capture lane (shots/current/<arch>), named the same way the pre-push
-# guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT per lane.
+# This host's capture lane (shots/current/<arch>), named the same way
+# `just screenshots-bless` names it. CI overrides SHOTS_OUT per lane.
 arch="$(bash "$repo_root/screenshots/host-arch.sh")" \
   || {
     echo "screenshots: could not name this host's lane (host-arch.sh's error above); fix what it names, then re-run just screenshots." >&2

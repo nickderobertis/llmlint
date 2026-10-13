@@ -6,12 +6,8 @@
 # on every arch and runner — the manifests carry no arch field, and each lane's
 # baseline is derived from (and must equal) the others'.
 #
-# Both lanes are declared anyway, because the guard is LOCAL: the pre-push hook
-# classifies the lane of the host it runs on and re-blesses that lane's baseline,
-# so a host whose arch is undeclared cannot guard its own pushes. llmlint is
-# developed on arm64 and released from CI's x86_64, so both are real hosts. CI
-# fans one job out per lane (arm64 on ubuntu-24.04-arm), which is what checks the
-# two baselines against each other.
+# Both development architectures are declared: arm64 and x86_64. CI fans one
+# job out per lane (arm64 on ubuntu-24.04-arm), checking both baselines.
 arches = ["x86_64", "arm64"]
 
 [comment]
@@ -32,7 +28,7 @@ label = "View"
 values = ["default", "verbose", "debug"]
 
 [guard]
-# Local pre-push guard (.githooks/pre-push): re-capture only when something that
+# Manual screencomp scope: identify changes to files that
 # can change the rendered report changes — the formatter, the CLI surface, the
 # capture machinery, or the vendored font.
 paths = [
