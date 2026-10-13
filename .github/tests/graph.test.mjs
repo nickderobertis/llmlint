@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { graph, workflows, digest, root, expression } from '../workflow-graph.mjs';
+import { graph, workflows, digest, root, expression, expand } from '../workflow-graph.mjs';
 import { policyOutputs } from '../workflow-outputs.mjs';
 import { history, event, invoke } from './history.mjs';
 const contextSource=readFileSync(new URL('./workflows.rs',import.meta.url),'utf8').match(/const PR_CONTEXTS:[\s\S]*?= &\[([\s\S]*?)\];/);
@@ -166,8 +166,8 @@ test('production Mac live steps retain canonical-repository and fork auth routin
 });
 
 test('malformed event configurations fail rather than producing telemetry',()=>{
-  for(const [eventName,config] of [['pull_request',[]],['push',['main']],['release',{types:'published'}],['pull_request',{types:[false]}],['schedule',[{cron:42}]]]) {
-    assert.throws(()=>graph({id:'malformed',eventName,event:event(),paths:['src/lib.rs']},{'invalid.yml':{on:{[eventName]:config},jobs:{mac:{'runs-on':'macos-latest'}}}}),/invalid trigger/);
+  for(const [eventName,config] of [['pull_request',[]],['push',false],['push',0],['push',''],['push',['main']],['release',{types:'published'}],['pull_request',{types:[false]}],['schedule',[{cron:42}]]]) {
+    assert.throws(()=>graph({id:'malformed',eventName,event:event(),paths:['src/lib.rs']},{'invalid.yml':{on:{[eventName]:config},jobs:{mac:{'runs-on':'macos-latest'}}}}),/(invalid|unsupported) trigger/);
   }
 });
 
@@ -179,4 +179,8 @@ test('actual reusable workflow contract rejects unknown, missing and wrongly typ
     changed.with=mutation(structuredClone(job.with));
     assert.throws(()=>graph({id:'invalid-input',eventName:'pull_request',event:event(),paths:['src/lib.rs']},{'visual-docs.yml':doc}),/reusable input/);
   }
+});
+
+test('matrix mappings reject arrays and falsy scalar values',()=>{
+  for(const matrix of [[],[{}],false,0,'']) assert.throws(()=>expand(matrix,{}),/unresolved matrix/);
 });

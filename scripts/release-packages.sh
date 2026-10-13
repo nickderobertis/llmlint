@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build each target once through maturin; archive and wheel must contain those exact bytes.
 set -euo pipefail
+# llmlint: ignore[code_lands_in_the_domain_that_owns_it] Production release builders stay in scripts, their existing owning domain; release-targets owns their artifact contract and on-demand journeys.
 fail() {
   echo "release-packages: $*; fix the named input/tool and rerun scripts/release-packages.sh OUT TARGET" >&2
   exit 1
@@ -62,7 +63,7 @@ PYVERSION
   ) || fail "cannot checksum $archive"
   bash scripts/release-verify.sh "$wheel_dir" "$archive" "$stage/llmlint" "$out" "$target" "$version" "$python_version" || fail "artifact validation failed for $target"
   wheel=("$wheel_dir"/*.whl)
-  platform="$(basename "${wheel[0]}" .whl)"
+  platform="$(basename "${wheel[0]}" .whl)" || fail 'cannot determine staged wheel basename'
   platform="${platform##*-}"
   python3 -m venv "$stage/installer" || fail 'cannot provision isolated installer; install Python with venv/ensurepip support'
   "$stage/installer/bin/python" -m pip install --no-deps --only-binary=:all: --platform "$platform" --target "$stage/wheel-install" "${wheel[0]}" >"$stage/install.log" 2>&1 || {

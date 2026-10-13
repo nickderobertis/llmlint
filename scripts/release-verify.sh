@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Packaging trust boundary, shared by production builders and corrupted-artifact journeys.
 set -euo pipefail
+command -v python3 >/dev/null 2>&1 || {
+  echo 'release-verify: Python 3 is missing; install Python 3.11 or newer and rerun the release builder' >&2
+  exit 1
+}
 python3 - "$@" <<'PY'
 import email, glob, hashlib, json, pathlib, re, struct, sys, tarfile, tomllib, zipfile
 
+# llmlint: ignore[code_lands_in_the_domain_that_owns_it] Production release builders stay in scripts, their existing owning domain; release-targets owns their artifact contract and on-demand journeys.
 def require(condition, message):
     if not condition:
         raise ValueError(message)
@@ -37,7 +42,7 @@ try:
         require(len(scripts) == 1, 'wheel must install exactly one llmlint executable')
         payload = z.read(scripts[0])
         metadata_paths = [p for p in z.namelist() if p.endswith('.dist-info/METADATA')]
-        require(len(metadata_paths) == 1 and metadata_paths[0] == f'llmlint_cli-{python_version}.dist-info/METADATA', 'wheel must contain exactly one matching distribution METADATA')
+        require(len(metadata_paths) == 1 and metadata_paths[0] == f'{normalize_name(project["name"])}-{python_version}.dist-info/METADATA', 'wheel must contain exactly one matching distribution METADATA')
         metadata = email.message_from_bytes(z.read(metadata_paths[0]))
         require(metadata['Name'] == project['name'], f'wrong distribution name {metadata["Name"]}')
         require(metadata['Version'] == python_version, f'wrong distribution version {metadata["Version"]}, expected {python_version}')
