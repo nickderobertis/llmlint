@@ -1262,7 +1262,14 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
         .lines()
         .find(|line| line.starts_with("bash scripts/release-packages.sh"))
         .unwrap();
-    let targets: Vec<_> = invocation.split_whitespace().rev().take(2).collect();
+    let targets: Vec<_> = invocation
+        .split(" ||")
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .rev()
+        .take(2)
+        .collect();
     assert_eq!(targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
     assert!(
         steps
@@ -1778,4 +1785,23 @@ fn release_builder_refuses_option_shaped_output_paths() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("output path must not start"));
+}
+
+#[test]
+fn darwin_wrapper_names_its_failure_after_the_builders_diagnostic() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new("bash")
+        .arg("scripts/release-darwin.sh")
+        .arg(temp.path())
+        .current_dir(repo_root())
+        .env("GITHUB_REF_NAME", "v0.0.0-wrong")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("tag does not match"), "{stderr}");
+    assert!(
+        stderr.contains("release-darwin: Darwin packaging into"),
+        "{stderr}"
+    );
 }
