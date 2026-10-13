@@ -32,7 +32,7 @@ export function archesOutputs(step, inputs, root) {
   try {
     const arches=execFileSync('python3',['-c','import tomllib,json; print(json.dumps(tomllib.load(open("screencomp.toml","rb"))["capture"]["arches"]))'],{cwd:root,encoding:'utf8'}).trim();
     mkdirSync(join(dir,'bin'));
-    writeFileSync(join(dir,'bin','screencomp'),`#!/usr/bin/env bash\n[ "$*" = 'arches --format json' ] || exit 1\nprintf '%s\\n' '${arches}'\n`,{mode:0o755});
-    return stepOutputs(step,{ARCHES_OVERRIDE:inputs.arches??'',PATH:`${join(dir,'bin')}:${process.env.PATH}`},root);
+    writeFileSync(join(dir,'bin','screencomp'),`#!/usr/bin/env bash\n[ "$*" = 'arches --format json' ] || exit 1\nprintf '%s\\n' "$SCREENCOMP_ARCHES_FIXTURE"\n`,{mode:0o755});
+    return stepOutputs(step,{ARCHES_OVERRIDE:inputs.arches??'',SCREENCOMP_ARCHES_FIXTURE:arches,PATH:`${join(dir,'bin')}:${process.env.PATH}`},root);
   } finally {rmSync(dir,{recursive:true,force:true});}
 }

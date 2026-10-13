@@ -1368,6 +1368,13 @@ fn native_release_packages_install_and_run() {
             .output()
             .unwrap()
     };
+    let checksum = std::process::Command::new("shasum")
+        .args(["-a", "256", "-c"])
+        .arg(format!("llmlint-v{version}-{target}.tar.gz.sha256"))
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+    assert!(checksum.status.success(), "{checksum:?}");
     let original_archive = fs::read(&archive).unwrap();
     for (kind, expected) in [
         ("metadata", "wrong distribution name"),
@@ -1380,6 +1387,8 @@ fn native_release_packages_install_and_run() {
         ("archive-contents", "wrong archive contents"),
         ("archive-payload", "binary reuse mismatch"),
         ("archive-mode", "executable regular file"),
+        ("archive-duplicate", "wrong archive contents"),
+        ("archive-link", "non-regular member"),
     ] {
         let mutation = std::process::Command::new("python3").arg("-c").arg(r#"
 import io,re,sys,tarfile,zipfile
@@ -1388,10 +1397,15 @@ if kind.startswith('archive-'):
     with tarfile.open(archive) as t:
         entries=[(info,t.extractfile(info).read()) for info in t.getmembers()]
     with tarfile.open(archive,'w:gz') as t:
+        if kind=='archive-duplicate':
+            info,data=entries[0]
+            t.addfile(info,io.BytesIO(data))
         for info,data in entries:
             if kind=='archive-contents' and info.name=='LICENSE': continue
             if kind=='archive-payload' and info.name=='llmlint': data+=b'corrupt'
             if kind=='archive-mode' and info.name=='llmlint': info.mode=0o644
+            if kind=='archive-link' and info.name=='README.md':
+                info.type=tarfile.SYMTYPE; info.linkname='../../outside'; data=b''
             info.size=len(data)
             t.addfile(info,io.BytesIO(data))
 else:
@@ -1469,6 +1483,29 @@ else:
     assert!(
         String::from_utf8_lossy(&refusal.stderr).contains("CPU"),
         "{refusal:?}"
+    );
+    // A real filesystem refusal after compilation must remove both scratch directories.
+    let scratch = temp.path().join("failure-scratch");
+    let failed_out = temp.path().join("failure-output");
+    fs::create_dir(&scratch).unwrap();
+    fs::create_dir_all(failed_out.join(format!("llmlint-v{version}-{target}.tar.gz"))).unwrap();
+    let collision = std::process::Command::new("bash")
+        .arg("scripts/release-packages.sh")
+        .arg(&failed_out)
+        .arg(target)
+        .current_dir(&root)
+        .env("GITHUB_REF_NAME", format!("v{version}"))
+        .env("TMPDIR", &scratch)
+        .output()
+        .unwrap();
+    assert!(!collision.status.success());
+    assert!(
+        String::from_utf8_lossy(&collision.stderr).contains("cannot pack"),
+        "{collision:?}"
+    );
+    assert!(
+        fs::read_dir(&scratch).unwrap().next().is_none(),
+        "failure leaked staging data"
     );
     let failure = std::process::Command::new("bash")
         .arg("scripts/release-packages.sh")

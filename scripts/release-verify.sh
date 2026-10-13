@@ -27,7 +27,9 @@ try:
         normalize = lambda r: r.replace(' ', '').replace('(', '').replace(')', '')
         require(sorted(map(normalize, metadata.get_all('Requires-Dist', []))) == sorted(map(normalize, project['dependencies'])), 'runtime dependencies differ from pyproject.toml')
     with tarfile.open(archive) as t:
-        require(set(t.getnames()) == {'llmlint', 'README.md', 'LICENSE', 'CHANGELOG.md'}, 'wrong archive contents')
+        members = t.getmembers()
+        require(len(members) == 4 and set(t.getnames()) == {'llmlint', 'README.md', 'LICENSE', 'CHANGELOG.md'}, 'wrong archive contents')
+        require(all(member.isfile() for member in members), 'archive contains a non-regular member')
         require(t.getmember('llmlint').isfile() and t.getmember('llmlint').mode & 0o111, 'archive executable is not an executable regular file')
         archived = t.extractfile('llmlint').read()
     compiled = pathlib.Path(binary).read_bytes()
