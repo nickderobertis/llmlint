@@ -179,6 +179,5 @@ export function graph(scenario, docs = workflows()) {
     }
   }
   for (const [file,doc] of Object.entries(docs)) if (triggered(doc,scenario)) jobs(doc,file,'',{macos_diagnostic:scenario.diagnostic ?? false});
-  // llmlint: ignore-end[boundary_inputs_validated]
   return rows;
 }

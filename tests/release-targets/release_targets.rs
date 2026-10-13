@@ -1307,6 +1307,64 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
     }
 }
 
+/// The verifier restates the builder's supported targets and archive members, so this
+/// offline drift gate holds the two scripts to one set each.
+#[test]
+fn release_verifier_accepts_exactly_what_the_builder_packs() {
+    let root = repo_root();
+    let builder = read(&root.join("scripts/release-packages.sh"));
+    let verifier = read(&root.join("scripts/release-verify.sh"));
+    let quoted = |text: &str| -> BTreeSet<String> {
+        text.split('\'')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect()
+    };
+    let arms = builder
+        .split_once("case \"$target\" in")
+        .unwrap()
+        .1
+        .split_once("*)")
+        .unwrap()
+        .0;
+    let built: BTreeSet<String> = arms
+        .lines()
+        .filter_map(|line| line.trim().split_once(')'))
+        .flat_map(|(pattern, _)| pattern.split('|').map(|t| t.trim().to_owned()))
+        .collect();
+    let accepted = verifier
+        .lines()
+        .find(|line| line.contains("require(target in ["))
+        .unwrap();
+    assert_eq!(quoted(accepted.split_once("], ").unwrap().0), built);
+    let packed: BTreeSet<String> = builder
+        .lines()
+        .find(|line| line.trim_start().starts_with("tar -czf"))
+        .unwrap()
+        .split_once("-C \"$stage\" ")
+        .unwrap()
+        .1
+        .split(" ||")
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    let members = verifier
+        .lines()
+        .find(|line| line.contains("set(t.getnames()) == {"))
+        .unwrap()
+        .split_once("set(t.getnames()) == {")
+        .unwrap()
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    assert_eq!(quoted(members), packed);
+    assert!(verifier.contains(&format!("len(members) == {}", packed.len())));
+}
+
 /// On-demand production packaging journey: real compiler, maturin, pip and installed CLI.
 #[test]
 #[ignore = "native release builder; run the release-targets packaging target"]
