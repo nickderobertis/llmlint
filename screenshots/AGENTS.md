@@ -153,7 +153,7 @@ baselines.
 CI runs the arm64 lane on an arm64 runner, so the capture step must fetch the
 `freeze` release matching the **runner's** architecture, and validate it against
 digests pinned in this repository. The `ci_install_freeze_*` journeys
-(`tests/visual_guard.rs`) drive the real script with real `curl`/`tar`/`install`;
+(`tests/screenshot_scripts.rs`) drive the real script with real `curl`/`tar`/`install`;
 only what a test cannot own is stood in — the runner's CPU (a `uname` ahead of the real one on `PATH`) and
 charmbracelet's release server (a local release tree over `file://`, with its own
 pin file). They cover every `uname -m` spelling installing the matching asset

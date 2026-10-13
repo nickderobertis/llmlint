@@ -278,7 +278,7 @@ Use the `just` recipes; do not hand-roll equivalents.
   workflow (screencomp, `fail-on-drift`) per declared capture lane, which also
   publishes a GitHub Pages gallery. The screenshots project's `format`, `lint`
   and `test` are in the gate tiers; its `capture` needs `freeze`, so it is left to that
-  workflow. See `screenshots/AGENTS.md`.
+  workflow.
 
 ## Shell
 

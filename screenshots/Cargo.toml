@@ -1,4 +1,4 @@
-# The screenshot scripts' offline script journeys (tests/visual_guard.rs): the real
+# The screenshot scripts' offline script journeys (tests/screenshot_scripts.rs): the real
 # lane helper, the baseline blesser and CI's freeze installer,
 # with only third-party tools stood in, and the demo GIF helper's outcome table
 # held to the report's `Outcome`. Test-only; never published. The capture
@@ -11,8 +11,8 @@ license.workspace = true
 publish = false
 
 [[test]]
-name = "visual_guard"
-path = "tests/visual_guard.rs"
+name = "screenshot_scripts"
+path = "tests/screenshot_scripts.rs"
 
 [dev-dependencies]
 llmlint.workspace = true
