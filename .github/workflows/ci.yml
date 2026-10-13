@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # llmlint: ignore[no_second_broader_sweep_over_an_already_gated_commit] Draft-era runs skip these jobs and cannot supply the merge path's required verdict after the draft is lifted; ready_for_review is the only run that supplies that verdict for an unchanged head.
+    types: [opened, synchronize, reopened, ready_for_review]
   # A manual full sweep of the dispatched commit: the recovery when a release
   # finds no sweep verdict for its tree (.github/scripts/ci-gate.sh verdict).
   workflow_dispatch:

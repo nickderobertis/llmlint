@@ -204,6 +204,31 @@ fn pr_job_gap(jobs: &serde_json::Map<String, serde_json::Value>, id: &str) -> Op
 }
 
 // llmlint: ignore-block[tests_mirror_real_usage] a drift gate over the committed workflows: GitHub is the only thing that turns them into status checks, which a test run cannot reach, so the workflow files are the interface under test
+/// Lifting a draft must start required checks even when its head did not change.
+#[test]
+fn required_context_workflows_run_when_a_draft_is_ready_for_review() {
+    for (file, doc) in workflow_docs() {
+        if doc["on"].get("pull_request").is_none() {
+            continue;
+        }
+        let jobs = doc["jobs"].as_object().unwrap();
+        if !jobs.iter().any(|(id, job)| {
+            job_contexts(id, job)
+                .iter()
+                .any(|context| PR_CONTEXTS.contains(&context.as_str()))
+        }) {
+            continue;
+        }
+        let types = doc["on"]["pull_request"]["types"].as_array();
+        assert!(
+            types.is_some_and(|types| types
+                .iter()
+                .any(|event| event.as_str() == Some("ready_for_review"))),
+            "{file} must explicitly trigger on ready_for_review so lifting a draft reports required checks"
+        );
+    }
+}
+
 /// Every context in the fixed contract is reported, under exactly its name, by a
 /// job that runs on every pull request to `main`: no trigger filter, `if:`, or
 /// `needs` edge can leave one unreported. Read from the committed workflows, so
