@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.8](https://github.com/nickderobertis/llmlint/compare/v0.4.7...v0.4.8) - 2026-10-13
+
+### Fixed
+
+- *(deps)* read llmlint configs with serde-saphyr in place of serde_yaml_ng ([#242](https://github.com/nickderobertis/llmlint/pull/242))
+
 ## [0.4.6](https://github.com/nickderobertis/llmlint/compare/v0.4.5...v0.4.6) - 2026-10-07
 
 ### Fixed

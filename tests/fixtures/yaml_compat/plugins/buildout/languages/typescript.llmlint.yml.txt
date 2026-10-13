@@ -1,0 +1,61 @@
+# TypeScript buildout rules (plugin) — run ONCE during repo creation, then
+# discarded. One-time structural checks on the command surface and package
+# manager; the ongoing TS judgment rules live in languages/typescript.llmlint.yml.
+version: 1.1
+
+rules:
+  - name: command_surface_wired_bun
+    description: |
+      true when the root recipes delegate to the orchestrator (`nx affected` /
+      `nx run-many`) and the projects' targets map the standard work to the
+      bun-native commands: `bootstrap` -> `bun install` at the workspace root,
+      `check` -> the `format`/`lint`/`typecheck`/`test` targets running the
+      format check + lint + `tsc --noEmit` + tests with coverage, and `upgrade`
+      -> `bun update`. false when a mapping is missing, a recipe hand-rolls a
+      per-project loop instead of delegating, or any of it bypasses bun (bare
+      `npm`/`yarn`/`pnpm` with no documented reason).
+    files:
+      include:
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "nx.json"
+        - "**/project.json"
+
+  - name: single_lockfile_bun
+    description: |
+      true when exactly one `bun.lock` (or `bun.lockb`) is committed at the
+      workspace root, covering every project, and no competing
+      `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock` sits beside it or in
+      a project subdirectory. false when a second package manager's lockfile is
+      committed without a documented fallback reason, or a project carries its
+      own lockfile for the same ecosystem — either way two lockfiles resolve to
+      different trees.
+    files:
+      include:
+        - "**/bun.lock"
+        - "**/bun.lockb"
+        - "**/package-lock.json"
+        - "**/pnpm-lock.yaml"
+        - "**/yarn.lock"
+
+  - name: coverage_thresholds_survive_the_split
+    description: |
+      true when the 95% (or documented lower) coverage bar is still enforced with
+      the suite spread across projects: every project that has tests sets
+      `coverageThreshold` in its own `bunfig.toml` (or Vitest
+      `coverage.thresholds`), OR each project emits LCOV into its declared target
+      outputs and a repo-level `coverage` target depending on every `test` merges
+      them and fails below the bar. false when a project shipping code declares
+      no threshold and feeds no aggregate, so its coverage is measured by nobody,
+      or when the bar was lowered to accommodate the split.
+    files:
+      include:
+        - "**/bunfig.toml"
+        - "**/vitest.config.*"
+        - "**/package.json"
+        - "**/project.json"
+        - "nx.json"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"

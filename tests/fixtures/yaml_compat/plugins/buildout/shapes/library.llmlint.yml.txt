@@ -1,0 +1,29 @@
+# Library buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural checks on the project split and consumer-facing docs; the
+# ongoing library judgment (stable public surface, shared internals as a project)
+# lives in shapes/library.llmlint.yml.
+version: 1.1
+
+rules:
+  - name: consumer_docs_and_changelog_present
+    description: |
+      true when the repo ships usage documentation written for a consumer of the
+      package (how to install and call the public API) and a changelog that records
+      releases and breaking changes. false when the only docs are internal
+      development notes.
+    files:
+      include: ["**/README*", "CHANGELOG*", "docs/**"]
+    relevance: the repo ships an installable/consumable package
+
+  - name: deliverables_and_their_install_suites_split
+    description: |
+      true when every published package and deployed service is its own project
+      with its own manifest and fast tests, code shared between them is a project
+      those consumers depend on, and the suites that install the built artifact or
+      drive a running service over its real interface are separate projects
+      depending only on what they exercise. false when several deliverables share
+      one project, or the install-the-artifact / drive-the-service suite rides
+      inside the package project, so an unrelated change builds a distributable or
+      starts a server.
+    files:
+      include: ["nx.json", "**/project.json", "**/e2e/**", "**/integration/**"]

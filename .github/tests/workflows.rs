@@ -47,10 +47,10 @@ fn bench_workflow_spells_out_equal_push_and_pull_request_paths() {
             "bench.yml's triggers use a YAML anchor or alias: {line}"
         );
     }
-    let doc: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text).unwrap();
+    let doc: serde_json::Value = serde_saphyr::from_str(&text).unwrap();
     let paths = |event: &str| -> Vec<String> {
         doc["on"][event]["paths"]
-            .as_sequence()
+            .as_array()
             .unwrap_or_else(|| panic!("bench.yml's {event} trigger has no paths list"))
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
@@ -90,7 +90,7 @@ const PR_CONTEXTS: &[&str] = &[
 /// `pull_request` event, so it can never leave the context unreported.
 const PR_TRUE_CONDITIONS: &[&str] = &["github.event_name == 'pull_request'"];
 
-fn workflow_docs() -> Vec<(String, serde_yaml_ng::Value)> {
+fn workflow_docs() -> Vec<(String, serde_json::Value)> {
     let dir = repo_root().join(".github/workflows");
     let mut docs: Vec<_> = fs::read_dir(&dir)
         .unwrap()
@@ -98,7 +98,7 @@ fn workflow_docs() -> Vec<(String, serde_yaml_ng::Value)> {
         .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
         .map(|p| {
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
-            let doc = serde_yaml_ng::from_str(&fs::read_to_string(&p).unwrap()).unwrap();
+            let doc = serde_saphyr::from_str(&fs::read_to_string(&p).unwrap()).unwrap();
             (name, doc)
         })
         .collect();
@@ -108,9 +108,9 @@ fn workflow_docs() -> Vec<(String, serde_yaml_ng::Value)> {
 
 /// Why a workflow would not run on every pull request to `main`, or `None`
 /// when it always does.
-fn pr_trigger_gap(doc: &serde_yaml_ng::Value) -> Option<String> {
+fn pr_trigger_gap(doc: &serde_json::Value) -> Option<String> {
     let on = &doc["on"];
-    let pr = match on.as_mapping() {
+    let pr = match on.as_object() {
         Some(m) => match m.get("pull_request") {
             Some(pr) => pr,
             None => return Some("no pull_request trigger".into()),
@@ -120,7 +120,7 @@ fn pr_trigger_gap(doc: &serde_yaml_ng::Value) -> Option<String> {
     if pr.is_null() {
         return None;
     }
-    if let Some(branches) = pr["branches"].as_sequence() {
+    if let Some(branches) = pr["branches"].as_array() {
         if !branches.iter().any(|b| b.as_str() == Some("main")) {
             return Some(format!("pull_request branches {branches:?} omit main"));
         }
@@ -130,7 +130,7 @@ fn pr_trigger_gap(doc: &serde_yaml_ng::Value) -> Option<String> {
             return Some(format!("pull_request carries a `{filter}` filter"));
         }
     }
-    if let Some(types) = pr["types"].as_sequence() {
+    if let Some(types) = pr["types"].as_array() {
         for needed in ["opened", "synchronize", "reopened"] {
             if !types.iter().any(|t| t.as_str() == Some(needed)) {
                 return Some(format!("pull_request types {types:?} omit {needed}"));
@@ -150,7 +150,7 @@ const VISUAL_DOCS_REUSABLE: &str =
 /// suffixed with the matrix value for a one-axis matrix. A reusable-workflow call
 /// (`uses:`) to screencomp's visual-docs reports `<caller> / report (<arch>)`
 /// per `[capture].arches` lane in screencomp.toml, which the reusable reads.
-fn job_contexts(id: &str, job: &serde_yaml_ng::Value) -> Vec<String> {
+fn job_contexts(id: &str, job: &serde_json::Value) -> Vec<String> {
     let base = job["name"].as_str().unwrap_or(id).to_string();
     if let Some(uses) = job["uses"].as_str() {
         if uses.contains("/visual-docs-reusable.yml@") {
@@ -171,9 +171,9 @@ fn job_contexts(id: &str, job: &serde_yaml_ng::Value) -> Vec<String> {
         }
         return vec![base];
     }
-    match job["strategy"]["matrix"].as_mapping() {
+    match job["strategy"]["matrix"].as_object() {
         Some(m) if m.len() == 1 => {
-            let values = m.values().next().unwrap().as_sequence().unwrap();
+            let values = m.values().next().unwrap().as_array().unwrap();
             values
                 .iter()
                 .map(|v| format!("{base} ({})", v.as_str().unwrap()))
@@ -186,7 +186,7 @@ fn job_contexts(id: &str, job: &serde_yaml_ng::Value) -> Vec<String> {
 
 /// Why a job could be skipped on a pull request (its own `if:` or one along its
 /// `needs` chain), or `None` when it always runs once its workflow triggers.
-fn pr_job_gap(jobs: &serde_yaml_ng::Mapping, id: &str) -> Option<String> {
+fn pr_job_gap(jobs: &serde_json::Map<String, serde_json::Value>, id: &str) -> Option<String> {
     let job = &jobs[id];
     if let Some(cond) = job["if"].as_str() {
         if cond.trim() == "always()" {
@@ -197,8 +197,8 @@ fn pr_job_gap(jobs: &serde_yaml_ng::Mapping, id: &str) -> Option<String> {
         }
     }
     let needs: Vec<&str> = match &job["needs"] {
-        serde_yaml_ng::Value::String(n) => vec![n.as_str()],
-        serde_yaml_ng::Value::Sequence(ns) => ns.iter().map(|n| n.as_str().unwrap()).collect(),
+        serde_json::Value::String(n) => vec![n.as_str()],
+        serde_json::Value::Array(ns) => ns.iter().map(|n| n.as_str().unwrap()).collect(),
         _ => vec![],
     };
     needs
@@ -207,6 +207,31 @@ fn pr_job_gap(jobs: &serde_yaml_ng::Mapping, id: &str) -> Option<String> {
 }
 
 // llmlint: ignore-block[tests_mirror_real_usage] a drift gate over the committed workflows: GitHub is the only thing that turns them into status checks, which a test run cannot reach, so the workflow files are the interface under test
+/// Lifting a draft must start required checks even when its head did not change.
+#[test]
+fn required_context_workflows_run_when_a_draft_is_ready_for_review() {
+    for (file, doc) in workflow_docs() {
+        if doc["on"].get("pull_request").is_none() {
+            continue;
+        }
+        let jobs = doc["jobs"].as_object().unwrap();
+        if !jobs.iter().any(|(id, job)| {
+            job_contexts(id, job)
+                .iter()
+                .any(|context| PR_CONTEXTS.contains(&context.as_str()))
+        }) {
+            continue;
+        }
+        let types = doc["on"]["pull_request"]["types"].as_array();
+        assert!(
+            types.is_some_and(|types| types
+                .iter()
+                .any(|event| event.as_str() == Some("ready_for_review"))),
+            "{file} must explicitly trigger on ready_for_review so lifting a draft reports required checks"
+        );
+    }
+}
+
 /// Every context in the fixed contract is reported, under exactly its name, by a
 /// job that runs on every pull request to `main`: no trigger filter, `if:`, or
 /// `needs` edge can leave one unreported. Read from the committed workflows, so
@@ -218,9 +243,9 @@ fn every_required_context_is_reported_on_every_pull_request() {
         if doc["on"].get("pull_request").is_none() {
             continue;
         }
-        let jobs = doc["jobs"].as_mapping().unwrap();
+        let jobs = doc["jobs"].as_object().unwrap();
         for (id, job) in jobs {
-            let id = id.as_str().unwrap();
+            let id = id.as_str();
             for ctx in job_contexts(id, job) {
                 let gap = pr_trigger_gap(&doc).or_else(|| pr_job_gap(jobs, id));
                 let prev = reported.insert(ctx.clone(), (file.clone(), gap));
@@ -283,14 +308,14 @@ fn notignored_runs_on_pull_requests_outside_the_required_contexts() {
     assert_eq!(pr_trigger_gap(doc), None);
     assert_eq!(doc["permissions"]["contents"].as_str(), Some("read"));
     assert_eq!(doc["permissions"]["pull-requests"].as_str(), Some("write"));
-    let jobs = doc["jobs"].as_mapping().unwrap();
+    let jobs = doc["jobs"].as_object().unwrap();
     assert_eq!(jobs.len(), 1, "{jobs:?}");
     let (id, job) = jobs.iter().next().unwrap();
     assert_eq!(
         job["if"].as_str(),
         Some("github.event.pull_request.head.repo.full_name == github.repository")
     );
-    let steps = job["steps"].as_sequence().unwrap();
+    let steps = job["steps"].as_array().unwrap();
     assert!(steps.iter().any(|s| s["uses"]
         .as_str()
         .is_some_and(|u| u.starts_with("actions/checkout@"))
@@ -298,7 +323,7 @@ fn notignored_runs_on_pull_requests_outside_the_required_contexts() {
     assert!(steps
         .iter()
         .any(|s| s["uses"].as_str() == Some("nickderobertis/notignored@v0")));
-    for ctx in job_contexts(id.as_str().unwrap(), job) {
+    for ctx in job_contexts(id.as_str(), job) {
         assert!(!PR_CONTEXTS.contains(&ctx.as_str()), "{ctx} is required");
     }
 }

@@ -1,0 +1,94 @@
+# React judge-level rules (plugin). Pairs with shapes/react.md. Applies to any
+# React app (including Next.js, which builds on this shape). The server-boundary,
+# authorization, and URL-state rules come from shapes/web-app.llmlint.yml; the
+# one-time hooks-lint/import-boundary setup checks are buildout-only
+# (buildout/shapes/react.llmlint.yml). This adds the ongoing React-code judgment
+# that ESLint/Biome can't express.
+version: 1.2.0
+
+rules:
+  - name: features_do_not_cross_import
+    description: |
+      true when no module under `src/features/<A>` imports from another feature's
+      internals (`src/features/<B>/...`); features are composed only at the
+      routes/app layer or through shared top-level modules. false when a feature
+      module reaches directly into another feature's internal files, coupling the
+      two and breaking the unidirectional shared → features → app flow.
+    files:
+      include:
+        - "**/features/**/*.ts"
+        - "**/features/**/*.tsx"
+    relevance: the target files live inside a feature module
+
+  - name: server_state_not_duplicated_in_global_store
+    files:
+      include:
+        - "**/*.ts"
+        - "**/*.tsx"
+        - "**/*.js"
+        - "**/*.jsx"
+    description: |
+      true when server-fetched data is owned by a data-fetching/query layer (e.g.
+      TanStack Query, RTK Query) and read from there. false when data fetched from
+      the server is copied into a global client store (Redux/Zustand/Context) as
+      the source of truth, so the store and the server can drift out of sync.
+    relevance: the target files fetch server data or define a global client store
+
+  - name: stateful_logic_extracted_to_hooks
+    description: |
+      true when a component's data-fetching, mutations, subscriptions, and
+      non-trivial derived state live in custom hooks (`useX`), leaving the
+      component body mostly declarative markup that wires hook results to JSX.
+      false when a component inlines substantial business logic — fetching,
+      effects, and branching orchestration — beside its render instead of
+      extracting it into a hook.
+    files:
+      include:
+        - "**/*.tsx"
+        - "**/*.jsx"
+    relevance: the target files define a React component
+
+  - name: feature_code_colocated
+    description: |
+      true when a feature's components, hooks, API calls, state, and types live
+      together under its own app project's `src/features/<feature>/`. false when
+      code belonging to one feature is scattered across that project's global
+      type-based folders (a top-level `components/`, `hooks/`, or `services/`)
+      instead of being colocated with its feature, so no directory owns the
+      feature end to end.
+    files:
+      include:
+        - "**/features/**/*.ts"
+        - "**/features/**/*.tsx"
+        - "**/components/**/*.tsx"
+        - "**/hooks/**/*.ts"
+        - "**/services/**/*.ts"
+    relevance: the target files belong to a feature that should be colocated
+
+  - name: dangerous_html_is_sanitized
+    description: |
+      true when every `dangerouslySetInnerHTML` is fed HTML that is constant or
+      sanitized (e.g. via DOMPurify) before rendering. false when user-supplied or
+      other untrusted content is passed to `dangerouslySetInnerHTML` without
+      sanitization, opening an XSS hole.
+    files:
+      include:
+        - "**/*.tsx"
+        - "**/*.jsx"
+    relevance: the target files render `dangerouslySetInnerHTML`
+
+  - name: shared_ui_graduates_to_its_own_project
+    description: |
+      true when it lives in a shared UI project that each app depends on. false
+      when a second app consumes it by importing across app-project boundaries —
+      a relative path into another app's `src/`, or a deep import past a
+      project's public entry point — instead of graduating it into a project of
+      its own, which couples the two apps without an edge the graph or the
+      module-boundary rule can see.
+    files:
+      include:
+        - "**/*.ts"
+        - "**/*.tsx"
+        - "**/project.json"
+    relevance: the target files share a component, hook, or utility between two apps in this repo
+    require_line_attribution: true

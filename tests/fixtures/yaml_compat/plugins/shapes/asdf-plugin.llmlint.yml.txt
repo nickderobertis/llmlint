@@ -1,0 +1,40 @@
+# asdf-plugin judge-level rules (plugin). Pairs with shapes/asdf-plugin.md. The
+# "plugin scripts never shell back to asdf" convention is a one-time structural
+# check — see buildout/shapes/asdf-plugin.llmlint.yml.
+version: 1.1.1
+
+rules:
+  - name: safe_pinned_downloads
+    description: |
+      true when every download in the target files pins an exact HTTPS version URL
+      and either verifies a published checksum or uses an atomic `.part` download,
+      cleaning up temp files on failure. false when any download uses a mutable
+      `latest` URL, skips checksum verification without an atomic download, or leaves
+      partial files behind on failure.
+    files:
+      include: ["bin/download*", "bin/install*", "lib/**"]
+    relevance: the target files download a file
+
+  - name: portable_version_handling
+    description: |
+      when version sorting in the target files uses a portable comparator (never
+      `sort -V`) and normalizes OS and arch names portably.
+    files:
+      include: ["bin/list-all*", "bin/latest-stable*", "lib/**"]
+    relevance: the target files sort versions or normalize OS or arch names
+
+  - name: plugin_scripts_stay_at_the_contract_path
+    description: |
+      true when it stays in the repo-root `bin/` the host tool looks in,
+      belonging to the plugin project whose root is therefore the repo root,
+      with shared helpers in `lib/` beside it. false when a plugin script is
+      moved into a subdirectory to make the layout look like the other projects
+      — asdf resolves `bin/` relative to the plugin repo root, so the plugin
+      silently stops working — or when a non-plugin concern is added to `bin/`,
+      where asdf will treat it as part of the contract.
+    files:
+      include:
+        - "bin/**"
+        - "lib/**"
+        - "**/project.json"
+    relevance: the target files add, move, or remove a script asdf invokes, or the project definition that owns them

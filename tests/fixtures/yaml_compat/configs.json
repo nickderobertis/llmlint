@@ -1,0 +1,3424 @@
+{
+  "llmlint.yml": {
+    "version": null,
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": [
+        "**/.git/**"
+      ]
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "rationales": true,
+    "plugins": [
+      "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1",
+      "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/base.llmlint.yml@1",
+      "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/shapes/cli.llmlint.yml@1",
+      "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/languages/rust.llmlint.yml@1",
+      "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/languages/bash.llmlint.yml@1",
+      "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/ci.llmlint.yml@1",
+      "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/releasing.llmlint.yml@1",
+      "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/project-graph.llmlint.yml@1"
+    ],
+    "agents": {},
+    "rules": []
+  },
+  "assets/init.llmlint.yml": {
+    "version": "1",
+    "prompt_template": null,
+    "files": {
+      "include": [
+        "src/**"
+      ],
+      "exclude": [
+        "**/target/**"
+      ]
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "rationales": true,
+    "plugins": [
+      "https://raw.githubusercontent.com/nickderobertis/llmlint/main/assets/config_lint.yml@1"
+    ],
+    "agents": {
+      "default": {
+        "harness": "claude-code",
+        "model": null,
+        "batch_size": null,
+        "prompt_template": null
+      }
+    },
+    "rules": [
+      {
+        "name": "public_items_are_documented",
+        "description": "Every public function, struct, enum, and module has a doc comment\nexplaining its purpose.\n",
+        "agent": null,
+        "judges": 1,
+        "files": null,
+        "rationale": null
+      }
+    ]
+  },
+  "assets/config_lint.yml": {
+    "version": "1.4",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "description_yields_clear_verdict",
+        "description": "Every lint rule's `description` states one unambiguous property whose truth\nis the verdict — written as a plain invariant naming just the condition for\nthe property to hold, and spelling out the violating case only when it adds\ndetail the positive statement leaves unclear (such as concrete examples).\nFalse when a description leaves the judge to infer which verdict a clause\nmaps to, naming the failing case in prose (\"is a violation\", \"is not\nallowed\", \"should be avoided\", \"is discouraged\") instead of the direct\n`false when <condition>`, or when its holding and violating conditions\noverlap.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "name_describes_what_the_rule_checks",
+        "description": "Every lint rule `name` is a descriptive identifier that conveys the property\nits `description` checks — a meaningful token, never a placeholder or nonsense\none (for example rule1, foo, bar, baz, test, todo, asdf, temp, thing, xxx),\nthat names the same thing the description evaluates.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "relevance_scopes_conditional_rules",
+        "description": "A lint rule that only applies in some situations expresses that with a\n`relevance:` condition rather than an inline applicability clause in its\n`description` (for example \"or not applicable\", \"if present\", \"when\nrelevant\"), keeping the verdict a clean pass/fail.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "path_scoped_rules_use_files_not_relevance",
+        "description": "A lint rule that applies only to a subset of files identifiable by path — a\nfile type or extension (for example only `*.py`) or a location or directory\n(for example only files under `src/`) — declares that subset with `files`\nglobs rather than a `relevance:` condition, since a path scope is\ndeterministic and spends no judge tokens; `relevance` is reserved for\nconditions on a file's content or changes that a glob cannot express.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "description_omits_already_excluded_situations",
+        "description": "A lint rule's `description` specifies behavior only for situations the rule\nactually evaluates, never stating a property, exception, or caveat for a case\nits own `relevance:` condition or `files` scope already excludes (for example\na rule scoped by `files` to `*.py` adding \"for Python files\" or \"non-Python\nfiles are exempt\", or one whose `relevance` gates a condition that the\ndescription then repeats) — the excluded case never reaches the judge, so the\nredundant clause only spends tokens and blurs the verdict.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "relevance_scopes_without_deciding_the_verdict",
+        "description": "A lint rule's `relevance` condition decides when the rule is judged, not how\nit comes out: among the files it admits, the `description` can still land\neither true or false. False when a `relevance` asserts the checked property\nitself (so every admitted file passes) or names exactly the violating case\n(so every admitted file fails) — for example\n`relevance: the file defines a function with no docstring` under\n`description: every function has a docstring`.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "description_and_relevance_are_concise",
+        "description": "Every rule's `description` and any `relevance` condition state their point in\nthe fewest words that keep the verdict unambiguous — no filler, no restating\nthe inverse, no narrative beyond the check. A judge call batches an agent's\nrules into one prompt, so tokens one rule wastes degrade the judge on the\nothers; extra length is warranted only when it adds clarity the shorter form\nlacks, such as concrete examples or easily-confused edge cases.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "line_localizable_rules_require_attribution",
+        "description": "A lint rule sets `require_line_attribution: true` exactly when every violation\nits `description` permits can be pinned to specific line(s) containing the\nconcrete offending token, statement, directive, comment, declaration, or config\nkey, and omits the field when a violation is inherently cross-cutting and cannot\nbe pinned to one source line, such as agreement across files or a whole-file or\narchitectural property.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/llmlint.yml",
+            "**/llmlint.yaml",
+            "**/.llmlint.yml",
+            "**/.llmlint.yaml",
+            "**/*.llmlint.yml",
+            "**/*.llmlint.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "screenshots/fixture/llmlint.yml": {
+    "version": "1",
+    "prompt_template": null,
+    "files": {
+      "include": [
+        "src/**"
+      ],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "handlers_delegate_to_services",
+        "description": "Request handlers delegate business logic to a service layer.",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null
+      },
+      {
+        "name": "modules_have_doc_comments",
+        "description": "Every module begins with a doc comment explaining its purpose.",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null
+      },
+      {
+        "name": "errors_are_contextualized",
+        "description": "Every returned error adds context about the operation that failed.",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the change adds or modifies error handling"
+      },
+      {
+        "name": "no_todo_without_ticket",
+        "description": "No TODO comment without a tracking ticket reference.",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "migrations/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "screenshots/fixture/multijudge/llmlint.yml": {
+    "version": "1",
+    "prompt_template": null,
+    "files": {
+      "include": [
+        "src/**"
+      ],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "no_inline_sql",
+        "description": "All database access goes through the query builder, never inline SQL.",
+        "agent": null,
+        "judges": 3,
+        "files": null,
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/anchors.yml": {
+    "version": "1.2",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [
+      "https://example.com/base.yml@1",
+      "https://example.com/rust.yml@1.2",
+      "https://example.com/cli.yml@1.2.3"
+    ],
+    "agents": {},
+    "rules": [
+      {
+        "name": "always",
+        "description": "A positive invariant",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": true,
+        "require_line_attribution": true
+      },
+      {
+        "name": "conditional",
+        "description": "A positive invariant",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "When Rust files exist",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/base.llmlint.yml.txt": {
+    "version": "1.13.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "comments_earn_their_place",
+        "description": "true when every code comment in the target files earns its place: it explains\nsomething the code does not make obvious — intent, a non-obvious constraint, a\ntradeoff, a subtle \"why\" — and does so tersely. false when a comment restates\nwhat the adjacent code plainly says or narrates mechanics a reader can see\n(`# increment i`, `// loop over users`, `# return the result`), is a decorative\nsection banner or divider that adds no information, is dead weight (commented-out\ncode, a stale TODO with no owner or context, changelog or session notes left in\nthe source), is verbose where a short phrase would do, or reproduces explanatory\ncontent already covered by a reference it links (or that the file links elsewhere)\ninstead of keeping just the repo-specific \"why\" and deferring the rest to that\nreference — a copy that both bloats the comment and silently drifts from its\nsource. A docstring or comment that documents a public contract, an example, or a\ngenuinely non-obvious rule is NOT a violation even if longer.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files contain code comments",
+        "require_line_attribution": true
+      },
+      {
+        "name": "e2e_not_mocked",
+        "description": "true when every end-to-end or integration test in the target files drives the\nreal artifact across real boundaries (the entry point as a subprocess, real\ntemp files, a real local server or database). false when any such test mocks\nthe network, filesystem, subprocess, or the entry point it is meant to exercise.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/e2e/**",
+            "**/*e2e*",
+            "**/integration/**",
+            "**/*.integration.*"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define an end-to-end or integration test",
+        "require_line_attribution": true
+      },
+      {
+        "name": "tests_mirror_real_usage",
+        "description": "true when every end-to-end or integration test in the target files exercises\nthe software through the same interface its real users use — invoking the real\nentry point (a CLI as a command, an HTTP route as a request, a public API as a\ncaller, a UI through user-facing actions like click/type/navigate) with\nrealistic inputs, and asserting on user-observable outcomes. false when a test\nreaches past that interface to take a shortcut a real user could not: calling\nprivate internals, firing synthetic events, driving component handlers\ndirectly, or mutating internal state to reach a condition only the interface\nshould produce.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/e2e/**",
+            "**/*e2e*",
+            "**/integration/**",
+            "**/*.integration.*"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define an end-to-end or integration test",
+        "require_line_attribution": true
+      },
+      {
+        "name": "changed_behavior_has_e2e",
+        "description": "true when EVERY distinct behavior these changes ADD or MODIFY is exercised\nby a real end-to-end or integration test — each new or altered code path,\noutput, exit status, and failure/recovery path, not one happy-path test standing in for the whole change — and every\nbehavior they REMOVE has had its obsolete end-to-end test removed with it.\nWhere the cheapest honest end-to-end proof would cost more than the defect\nit prevents, a deterministic structural assertion satisfies this rule,\nprovided that assertion states at its own site why the end-to-end proof was\ndeclined.\nLocate the tests for this entry point or module — read the repo's test tree\nas needed — and confirm coverage by an existing or new test, or by the\njustified structural assertion above. false when an assertion lacks that\nreason, any added or modified behavior lacks proof, or a removed behavior\nretains an obsolete test.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files add, alter, or remove observable behavior and BOTH criteria\nhold. Judge only those changed paths, not pre-existing, untouched behavior:\n(1) The behavior is authored in this repository. A guarantee a third-party\ntool makes in isolation belongs to that tool's maintainers: clippy failing\non its own finding, a formatter reformatting, or a package manager refusing\nan unlocked dependency. What this repository composes out of tools into a\npath of its own is authored here and tested by nobody else — which artifacts\nget published and where, what an installer writes and starts, or what a\nscript does around the tool it calls. A structural claim is excluded even\nwhen authored here: it is settled by reading a file rather than running\nanything. Whether a gate recipe invokes every tier the policy declares is\nproved by a deterministic check reading the recipe; running the gate proves\nit more slowly and no better. Apply this criterion rather than matching a\nlist; the examples illustrate its reach, not its limits.\n(2) The failure would otherwise be silent. Ask what happens if this behavior\nbreaks and nothing tests it. A release or publication path shipping a broken\nartifact is discovered by whoever installs it; a deployment or provisioning\nscript, a scheduled job, and a developer tool that checks something are\ndiscovered late or never. Those failures are silent and owe end-to-end proof.\nA quality gate that stops refusing bad code is loud — the first red change\nthat merges says so — as is a build that stops building or an entry point\nthat stops running. Apply this criterion rather than matching a list; it\nreaches equally a silent failure none of these examples names.\nA test is not itself the behavior under test, and a behavior-preserving edit\n(a refactor, formatting, a comment, docs, configuration, or a type-only\nchange) that no user could observe does not meet the criterion.\n",
+        "require_line_attribution": true
+      },
+      {
+        "name": "tests_assert_real_behavior",
+        "description": "when every test in the target files asserts on an observable outcome (a\nreturned value, an exit code, persisted state) rather than exercising code\nwithout asserting any behavior.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/tests/**",
+            "**/test_*.py",
+            "**/*_test.py",
+            "**/*_test.rs",
+            "**/*_test.go",
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "**/*.spec.ts",
+            "**/*.spec.tsx",
+            "**/e2e/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define tests",
+        "require_line_attribution": true
+      },
+      {
+        "name": "names_match_behavior",
+        "description": "true when every name the target files declare describes what it actually is or\ndoes at the breadth it claims: a broad name (`process`, `data`, `utils`, `--all`)\ncovers everything it implies or is narrowed to its real job, a specific name does\nexactly that. false when a name overclaims its breadth, hides a side effect, or\ncontradicts what its value or body does.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files declare a named variable, function, command, flag, type, module, or file",
+        "require_line_attribution": true
+      },
+      {
+        "name": "suppressions_justified",
+        "description": "when every comment-style linter or type-checker suppression directive and every\nin-language type-system escape hatch in the target files carries a brief reason\nwhy it is necessary. Such suppressions include Python `Any`, `cast`, and\n`# type: ignore`; TypeScript `any`, `as`/`as any`, non-null `!`,\n`@ts-ignore`, and `@ts-expect-error`; Go `interface{}`/`any` and unchecked type\nassertions; and directives such as `# noqa`, `eslint-disable`, and Rust\n`#[allow(...)]`. These examples are illustrative, not exhaustive: justified\nuses at genuinely dynamic or deserialization boundaries comply, while\nunjustified uses are findings.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files contain a linter or type-checker suppression directive or an in-language type-system escape hatch",
+        "require_line_attribution": true
+      },
+      {
+        "name": "boundary_inputs_validated",
+        "description": "when every external or IO input read in the target files (request bodies,\nenvironment variables, config files, third-party responses, CLI arguments,\nstdin) is validated at the boundary before use.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files read external or IO input",
+        "require_line_attribution": true
+      },
+      {
+        "name": "no_hardcoded_secrets",
+        "description": "when every secret the target files rely on — a credential, API key, access token,\nconnection string, or private key — is read from an environment variable or a\nsecret store by name rather than embedded as an inline literal.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files handle credentials, connect to a service, or hold configuration",
+        "require_line_attribution": true
+      },
+      {
+        "name": "least_privilege_grants",
+        "description": "when every access grant in the target files (a CI token's `permissions:`, an agent\ncommand allowlist, a cloud IAM policy, a database role, an OAuth scope) is scoped to\nthe minimum the work needs — no write access where read suffices, no wildcard\npermission, no unbounded allowlist.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files grant a permission, token scope, role, or command allowlist",
+        "require_line_attribution": true
+      },
+      {
+        "name": "diagnostics_error_or_absent",
+        "description": "true when the quality gate treats every diagnostic as a hard failure — no\nlinter, type checker, or compiler is configured to emit warning-level output.\nfalse when any check is left warning-only.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files configure a linter, type checker, or compiler",
+        "require_line_attribution": true
+      },
+      {
+        "name": "tool_output_is_signal",
+        "description": "Judges the output a repository's OWN code produces — the lines its scripts,\nfunctions, and recipe bodies print themselves.\ntrue when every script or command recipe in the target files is quiet on\nsuccess (a single line or nothing) and, on failure, prints the exact error\nplus a concrete next action; a body that only hands work to a build\norchestrator, task runner, package manager, or test runner (`nx affected`,\n`uv sync`, `pytest`) is true whatever that tool prints, which the repo\nneither owns nor should silence.\nfalse when a script's or recipe's own output is noisy on success, or when it\nfails with a message that omits the cause or the fix — including a delegated\ncommand's failure that it swallows or reports without either.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "scripts/**",
+            "**/scripts/**",
+            "bin/**",
+            "**/*.sh",
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a script or command recipe",
+        "require_line_attribution": true
+      },
+      {
+        "name": "agents_md_durable_and_terse",
+        "description": "true when each durable instruction file in the target files (AGENTS.md,\nCLAUDE.md, and a skill's SKILL.md) reads as durable, terse instructions —\nconstraints, tradeoffs, and judgment a future maintainer or agent needs. false\nwhen any reads as a session or changelog narrative, or restates what a command,\na failing gate, or a linked doc already shows.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/AGENTS.md",
+            "**/CLAUDE.md",
+            "**/SKILL.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "no_redundant_instruction_pointers",
+        "description": "The agent harness auto-loads every AGENTS.md/CLAUDE.md colocated with or in an\nancestor of the files in scope, and any markdown doc reachable from one of those by\nfollowing reference links — directly, or nested through other docs — is thereby\nsurfaced to the reader as already available to load. This rule judges the files in\nthat set. true when the target file does not redirect the reader to read, see, or\nconsult another file already present in the same context — a colocated or containing\nAGENTS.md/CLAUDE.md (auto-loaded up the tree), or a doc already loaded or already\nadvertised upstream on the reference path that reached this file (e.g. a referenced\ndoc pointing back at the parent that linked it). false when it defers content to, or\ntells the reader to go read, such an already-present file as if it were not already\navailable: dead weight that silently rots when the target moves or is renamed.\nIntroducing a genuinely new resource — one not already reachable in the current\ncontext — is fine, as is a plain note about a file's role (e.g. that CLAUDE.md is a\nsymlink of AGENTS.md).\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file is an AGENTS.md/CLAUDE.md, or a markdown doc reachable from one by\nfollowing reference links (directly or nested through other docs) — i.e. a file the\nagent already loads automatically or has been prompted it can load; skip markdown no\nAGENTS.md reaches\n",
+        "require_line_attribution": true
+      },
+      {
+        "name": "new_code_lands_in_a_project",
+        "description": "Every repo is laid out as an Nx project graph, so nothing runs outside it.\ntrue when the file belongs to a project the graph already declares (the nearest\nproject definition covers its path), or the change declares that project\nitself. false when it lands at a path no project definition covers, so Nx can\nneither run nor skip it and the work escapes `affected` entirely.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py",
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.jsx",
+            "**/*.rs",
+            "**/*.go",
+            "**/*.rb",
+            "**/*.java",
+            "**/*.kt",
+            "**/*.cs",
+            "**/*.swift",
+            "**/*.c",
+            "**/*.h",
+            "**/*.cc",
+            "**/*.cpp",
+            "**/*.hpp",
+            "**/*.php",
+            "**/*.sh",
+            "**/*.tf"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the change adds the file rather than editing one that already exists"
+      },
+      {
+        "name": "work_goes_through_command_surface",
+        "description": "true when docs, CI workflows, and scripts invoke build, test, lint, format, or\nsetup work through the project's documented command surface (its `just`/task\nrecipes) rather than re-implementing the underlying commands inline. false when a\nworkflow, doc, or script hand-rolls the raw command a recipe already wraps, so the\ntwo drift and the recipe stops being the single place that defines the behavior.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "**/*.md",
+            "scripts/**",
+            "**/scripts/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files run a build, test, lint, format, or setup step that a documented recipe already wraps",
+        "require_line_attribution": true
+      },
+      {
+        "name": "contracts_have_one_source_or_a_drift_gate",
+        "description": "true when the restatement is anchored to one authoritative source:\nderived from it by codegen, with the output checked in and its freshness\ngated, or reconciled against it by a check in the quality gate that fails\non drift. false when only convention holds the restatement and its\noriginal together, so the two diverge silently the next time either side\nchanges.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files restate a value, type, schema, column, key, field, or\nenum that is also declared across a contract seam — any agreement two or\nmore parties must both hold to where at least one side can change\nindependently of the other. Apply that criterion rather than matching a\nlist: it is met by a call or transport surface (an HTTP route, a method\nsignature, a CLI flag schema, an event payload), by a persistence or\nstorage schema and the data model behind it (a table and its columns, a\ndocument or key shape, an on-disk or wire format, a cache or queue entry,\na store shared across a boundary), and by an interface between internal\ncollections of code (what a package, module, or library owns and what\nanother may assume of it) alike, and equally by a store, serialization, or\ninternal boundary none of those examples names. A duplicated literal or\nconstant list, a re-declared field, column, or key set, and a parallel type\nbeside the original are restatements; reading, calling, importing from, or\nannotating against a data model or an internal module is not\n"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/base.llmlint.yml.txt": {
+    "version": "1.4.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "project_graph_is_present",
+        "description": "true when the repo declares an Nx project graph — an `nx.json` at the root\nplus project definitions covering its work.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "package.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "session_bootstrap_provisions_toolchain",
+        "description": "true when the session bootstrap makes a fresh web/cloud session able to run\nthe `just` command surface with no manual step: a `SessionStart` hook in\n`.claude/settings.json` runs an idempotent, non-blocking\n`scripts/session-setup.sh` that ensures `just` itself — a cloud image often\nships the language runtime but not `just`, and there is no asdf there to read\n`.tool-versions`, so the first `just ...` call would otherwise fail — before\nhanding off to any llmlint installer. false when the hook is absent, points\nat a script that never provisions `just` (leaving the recipes unrunnable), or\nthe provisioner is not idempotent / does not skip when `CI` is set.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".claude/settings.json",
+            "scripts/**",
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo automates session setup via a Claude Code SessionStart hook"
+      },
+      {
+        "name": "gate_runs_every_stage",
+        "description": "true when `just check` composes the FULL gate for this stack — format check,\nlint, type check (where the language has one), unit tests, AND e2e — each an\nactually-invoked command. false when a stage the stack needs is missing from\n`check` (e.g. type checking or e2e is defined as a recipe but never reached by\n`check`), so the gate passes while a whole class of defect goes unchecked.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "coverage_gate_actually_fails",
+        "description": "true when the test command in the gate both measures coverage and FAILS the\nbuild below the threshold — a real `--cov-fail-under`, `coverageThreshold`,\n`--fail-under-lines`, or equivalent enforcing flag. false when coverage is\nonly reported (printed, uploaded) without a failing threshold, or the\nthreshold is commented out.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "pyproject.toml",
+            "vitest.config.*",
+            "vite.config.*",
+            "jest.config.*",
+            "Cargo.toml",
+            ".coveragerc"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo enforces coverage in-gate rather than documenting an opt-out in AGENTS.md"
+      },
+      {
+        "name": "upgrade_refreshes_and_gates",
+        "description": "true when `just upgrade` (or the equivalent recipe) upgrades dependencies to\ntheir latest allowed versions AND re-runs the full gate, so a fresh repo lands\non current deps proven green. false when `upgrade` only bumps a lockfile\nwithout re-running `check`, or no upgrade path exists at all.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "dependencies_upgraded_to_latest",
+        "description": "true when the committed lockfile is on the latest versions the repo's declared\nconstraints allow; false when any dependency is behind a newer version reachable\nwithin its constraint and no committed file records why it is held back (a\nrationale in AGENTS.md, or a comment on the pin / lock entry). A fresh repo must\nland on current deps, and the `upgrade` recipe merely existing (see\n`upgrade_refreshes_and_gates`) does not prove it ran — so verify behaviorally by\nrunning the stack's read-only dependency-staleness check (a dry-run upgrade or an\n`outdated` listing) and reading what it reports.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "pyproject.toml",
+            "uv.lock",
+            "package.json",
+            "bun.lock",
+            "bun.lockb",
+            "package-lock.json",
+            "Cargo.toml",
+            "Cargo.lock",
+            "**/AGENTS.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo declares and locks third-party dependencies (a dependency manifest\nplus a committed lockfile the staleness check can read)\n"
+      },
+      {
+        "name": "no_secret_committed_in_tree",
+        "description": "true when no credential, API key, access token, connection string, or private\nkey is committed anywhere in the tree — every secret is referenced by name from\nan environment variable or secret store. false when any real secret value is\nembedded in a committed file.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target file could hold a credential, token, key, or connection string"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/ci.llmlint.yml.txt": {
+    "version": "1.3.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "ci_runs_the_real_gate",
+        "description": "true when CI bootstraps a clean checkout and runs the full `just check` gate.\nfalse when CI omits the gate or runs only a reduced subset of it.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "ci_llmlint_job_provisions_a_runnable_harness",
+        "description": "true when the CI job running the llmlint tier installs a harness the repo's\n`oneharness.toml` fallback list names (e.g. codex, or claude-code) onto PATH\nbefore the lint step — `setup-llmlint.sh` installs `llmlint` + `oneharness`\nbut no harness. false when the job wires only the harness credential (e.g.\n`CLAUDE_CODE_OAUTH_TOKEN`): oneharness then finds no harness, skips every file,\nand the job passes while linting nothing.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "oneharness.toml",
+            ".oneharness.toml",
+            "scripts/setup-llmlint.sh"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo runs the llmlint LLM-judge tier as a CI check"
+      },
+      {
+        "name": "install_path_matches_docs",
+        "description": "when the CI end-user install job installs the artifact via the exact command the\nREADME documents.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "**/README*"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repository ships an installable artifact"
+      },
+      {
+        "name": "pr_gate_runs_the_affected_tier",
+        "description": "true when the pull-request gate job runs the affected tier — the repo's gate\nrecipe delegating to `nx affected` keyed off an explicitly derived merge base\n(`nx-set-shas`, or an explicit `--base` computed from `git merge-base`). false\nwhen the PR gate sweeps every project with `run-many`, or leaves the base for Nx\nto infer, which a shallow CI checkout makes non-deterministic.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "nx.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "broader_sweep_runs_at_exactly_one_lifecycle_point",
+        "description": "true when exactly one job runs the broader-tier full sweep, placed where the\nrepo's release model puts it: at merge-to-main when the merged commit is the\ncommit that ships, or at release-prep when releases are batched behind a release\nPR or a manual cut.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "AGENTS.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "required_checks_name_only_pr_context_jobs",
+        "description": "true when every context named is a job that reports on a pull request — the\naffected-tier gate, the PR-title lint, the llmlint tier. false when the\nbroader-tier sweep, or any other job that runs only after merge or at\nrelease-prep, is named.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "AGENTS.md",
+            ".github/workflows/**",
+            "scripts/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files record the repo's required status-check contexts",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/intersections/python-cli.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "console_entry_point",
+        "description": "true when the CLI is declared as a `project.scripts` entry point in its own\nproject's `pyproject.toml` (the uv workspace member that owns the command,\nnot the workspace-root manifest), so it installs as a real command. false\nwhen the CLI is only runnable via `python -m` with no console entry point\ndeclared, or the entry point is declared on a manifest that does not ship\nthe command's code.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/pyproject.toml"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/intersections/rust-cli.llmlint.yml.txt": {
+    "version": "1.1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "supply_chain_gate",
+        "description": "when `cargo deny` and `cargo machete` run as a dedicated CI job and a `deny.toml`\nis committed.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "deny.toml",
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "binary_e2e_is_its_own_crate",
+        "description": "true when that suite lives in its own `publish = false` Cargo workspace\nmember holding only `tests/`, declared as its own project whose `test`\ntarget depends on the binary crate's `build`, so it drives a freshly built\nartifact and a library-only change cannot reach it. false when the binary\nsuite sits in the binary crate's own `tests/`, or is separated only by an\n`#[ignore]` or a nextest filter — the tests are still compiled and\ncollected for every change, so nothing is skipped.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/Cargo.toml",
+            "**/project.json",
+            "nx.json",
+            "**/tests/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo ships a compiled binary with a subprocess-level end-to-end suite"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/languages/bash.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "shell_quality_gated",
+        "description": "true when both `shellcheck` and `shfmt` run in the gate for every shell\nproject and fail on issues (no warnings backlog) — as each project's\n`lint` and `format` targets, reached by root recipes that delegate to the\norchestrator. false when either is absent from `just check`/CI, is run\nadvisory-only, or covers only some projects because the root recipe\nhand-rolls the list — so a lint or format drift never blocks a merge.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**",
+            "nx.json",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "target_shell_chosen",
+        "description": "true when the target shell is an explicit decision — POSIX `sh` (no bashisms)\nor `bash` — declared via a consistent shebang and stated in AGENTS.md, with\nthe CI matrix matching. false when scripts mix `sh` and `bash` shebangs with\nno stated target, so portability is accidental rather than decided.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.sh",
+            "bin/**",
+            "**/AGENTS.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files are shell scripts or record the shell decision"
+      },
+      {
+        "name": "shell_coverage_merged_and_gated",
+        "description": "true when the coverage bar is still enforced with the `bats` suite spread\nacross projects: each project's `test` target writes `kcov`/`bashcov` data\ninto its declared target outputs, and a repo-level `coverage` target\ndepending on every `test` merges them (`kcov --merge`, or SimpleCov's\nresult merging) and fails below the bar — reading the merged line rate\nitself, since `kcov` has no fail-under flag. false when the projects' data\nis merged but nothing thresholds it, when only one project's coverage is\nmeasured, or when the bar was dropped rather than documented in AGENTS.md\nwith a reason and still enforced at the lower value.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/project.json",
+            "nx.json",
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "**/AGENTS.md",
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/languages/python.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "command_surface_wired_uv",
+        "description": "true when the root recipes delegate to the orchestrator (`nx affected` /\n`nx run-many`) and the projects' targets map the standard work to the\nuv-native commands: `bootstrap` -> `uv sync` at the workspace root,\n`check` -> the `format`/`lint`/`typecheck`/`test` targets running `ruff\nformat --check` + `ruff check` + the type checker (`ty`) + `pytest` with\ncoverage, and `upgrade` -> `uv lock --upgrade`. false when a mapping is\nmissing, a recipe hand-rolls a per-project loop instead of delegating, or\nany of it bypasses uv (bare `pip`, `python -m venv`, a hand-rolled\nvirtualenv).\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "nx.json",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "pyproject_single_source_of_config",
+        "description": "true when each project's metadata and tool config live in that project's\n`pyproject.toml` alone. false when a committed `setup.py`, `setup.cfg`, or\n`requirements*.txt` duplicates dependencies or tool config that a\n`pyproject.toml` already owns (two sources of truth that drift).\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/pyproject.toml",
+            "**/setup.py",
+            "**/setup.cfg",
+            "**/requirements*.txt"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "coverage_combined_across_projects",
+        "description": "true when coverage is measured per project and enforced once over the\nunion: `[tool.coverage.run]` sets `parallel` and `relative_files`, each\nproject's `test` target runs `pytest --cov` writing to its own\n`COVERAGE_FILE` without a per-project `--cov-fail-under`, and a repo-level\n`coverage` target depending on every `test` runs `coverage combine` then\n`coverage report --fail-under=<the repo's bar, 95 by default>`, wired into\n`just check`. false when the aggregate target is missing so nobody measures\nthe union, when the threshold is enforced only per project (which cannot\nsee the lines a sibling e2e project covers), or when the bar was lowered to\naccommodate the split rather than the union being measured.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/pyproject.toml",
+            "**/project.json",
+            "nx.json",
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".coveragerc"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/languages/rust.llmlint.yml.txt": {
+    "version": "1.2",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "toolchain_pinned_and_installed",
+        "description": "true when one workspace-root `rust-toolchain.toml` pins the channel and the\ncomponents/targets the build needs, and CI installs the toolchain from it\nrather than a floating `stable`. false when there is no pinned toolchain\nfile, a crate carries a competing one, or CI hardcodes a channel that can\ndrift from the committed pin.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/rust-toolchain.toml",
+            "**/rust-toolchain",
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "dev_profile_and_target_dir",
+        "description": "true when the repository root carries `.cargo/config.toml` with\n`[build] target-dir = \"target\"` and `[profile.dev] debug = 1` (the integer\n1: line tables only for dev and test builds, `release` untouched), so every\ncrate in the clone builds into `<clone>/target` and each worktree into its\nown. false when the file is missing, either key is absent or holds another\nvalue (`true` is full debuginfo), `target-dir` points outside the clone\n(one target directory shared across worktrees), or the keys sit in a\n`Cargo.toml` instead of the config file.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".cargo/config.toml",
+            "**/Cargo.toml"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "clippy_denies_warnings",
+        "description": "true when the gate runs `clippy` with warnings promoted to errors (`-D\nwarnings` or an equivalent `deny` config) for every crate — as each\nproject's `lint` target, reached by root recipes that delegate to the\norchestrator — so a lint is a hard failure anywhere in the workspace. false\nwhen clippy runs warning-only, is absent from the gate, or covers only some\ncrates because the root recipe hand-rolls the list.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**",
+            "nx.json",
+            "**/project.json",
+            "clippy.toml",
+            ".cargo/config.toml"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "coverage_combined_across_crates",
+        "description": "true when coverage is measured per project and enforced once over the\nunion: each project's `test` target runs `cargo llvm-cov --no-report` into\nthe shared profile directory (declared as that target's outputs) and a\nrepo-level `coverage` target depending on every `test` runs `cargo llvm-cov\nreport --fail-under-lines <the repo's bar, 95 by default>`, wired into\n`just check`. false when the aggregate target is missing so nobody measures\nthe union, when `--fail-under-lines` is enforced only per crate (which\ncannot see the lines a sibling e2e crate covers), or when the bar was\nlowered to accommodate the split.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/project.json",
+            "nx.json",
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/languages/terraform.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "iac_command_surface_wired",
+        "description": "true when the root recipes delegate to the orchestrator and the projects'\ntargets use the Terraform/OpenTofu-native lifecycle: `bootstrap`\ninitializes the backend in each root module; `check` runs format-check,\nvalidation, tflint, and a security scan per project; and `upgrade`\ndeliberately updates provider and module constraints plus each root\nmodule's lock file before re-running the gate and reviewing a plan. false\nwhen the surface omits a stage, hand-rolls a per-directory loop instead of\ndelegating, applies changes from the check recipe, or updates dependencies\nwithout an explicit review step.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**",
+            "nx.json",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define or invoke the repository command surface for infrastructure work"
+      },
+      {
+        "name": "remote_state_policy_wired",
+        "description": "true when the repository wires a remote state design with locking, encryption,\naccess control, recovery, and clear ownership appropriate to its platform,\nwhile ignore policy excludes local state artifacts and `.terraform/`. false\nwhen backend configuration is merely present but its concurrency, sensitivity,\nrecovery, or ownership model is incomplete or dependent on a developer machine.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            ".gitignore",
+            "AGENTS.md",
+            "docs/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files configure or document Terraform/OpenTofu state and repository artifact policy"
+      },
+      {
+        "name": "environments_isolated_by_design",
+        "description": "true when materially different environments/accounts and independently\noperated systems have separate state and deployment units whose boundaries\ncontain failure and access. false when one mutable workspace or shared state\nis the primary isolation mechanism despite different lifecycles, privileges,\nor blast-radius needs.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml",
+            "AGENTS.md",
+            "docs/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define or document multiple infrastructure environments, accounts, stacks, or deployment units"
+      },
+      {
+        "name": "iac_locks_and_gate_reach_every_unit",
+        "description": "true when each root module commits its own `.terraform.lock.hcl` — the\ndocumented exception to one-lockfile-per-ecosystem, since providers resolve\nper configuration — while any lint/scan/test harness written in another\nlanguage keeps that ecosystem's single root lockfile; AND the gate reaches\nevery deployment unit, with a repo-level `coverage` target that fails when a\ndirectory containing `*.tf` belongs to no project or a project skipped its\nformat/validate/lint/scan checks. false when a lock file is uncommitted or\nhoisted, or when the split leaves some `*.tf` outside the gate so a full\nsweep silently became a partial one.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/.terraform.lock.hcl",
+            "**/*.tf",
+            "**/project.json",
+            "nx.json",
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".gitignore"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/languages/typescript.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "command_surface_wired_bun",
+        "description": "true when the root recipes delegate to the orchestrator (`nx affected` /\n`nx run-many`) and the projects' targets map the standard work to the\nbun-native commands: `bootstrap` -> `bun install` at the workspace root,\n`check` -> the `format`/`lint`/`typecheck`/`test` targets running the\nformat check + lint + `tsc --noEmit` + tests with coverage, and `upgrade`\n-> `bun update`. false when a mapping is missing, a recipe hand-rolls a\nper-project loop instead of delegating, or any of it bypasses bun (bare\n`npm`/`yarn`/`pnpm` with no documented reason).\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "nx.json",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "single_lockfile_bun",
+        "description": "true when exactly one `bun.lock` (or `bun.lockb`) is committed at the\nworkspace root, covering every project, and no competing\n`package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock` sits beside it or in\na project subdirectory. false when a second package manager's lockfile is\ncommitted without a documented fallback reason, or a project carries its\nown lockfile for the same ecosystem — either way two lockfiles resolve to\ndifferent trees.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/bun.lock",
+            "**/bun.lockb",
+            "**/package-lock.json",
+            "**/pnpm-lock.yaml",
+            "**/yarn.lock"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "coverage_thresholds_survive_the_split",
+        "description": "true when the 95% (or documented lower) coverage bar is still enforced with\nthe suite spread across projects: every project that has tests sets\n`coverageThreshold` in its own `bunfig.toml` (or Vitest\n`coverage.thresholds`), OR each project emits LCOV into its declared target\noutputs and a repo-level `coverage` target depending on every `test` merges\nthem and fails below the bar. false when a project shipping code declares\nno threshold and feeds no aggregate, so its coverage is measured by nobody,\nor when the bar was lowered to accommodate the split.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/bunfig.toml",
+            "**/vitest.config.*",
+            "**/package.json",
+            "**/project.json",
+            "nx.json",
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/project-graph.llmlint.yml.txt": {
+    "version": "1.3.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "root_commands_delegate",
+        "description": "true when each root command recipe shells out to the orchestrator (for example\n`nx affected` or `nx run-many`). false when any recipe hand-rolls a\nfor-each-package loop instead of delegating to the orchestrator.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "affected_only_explicit_base",
+        "description": "true when pull-request CI runs affected-only targets against an explicitly\nderived merge base and a full sweep runs on the main branch or nightly.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "project_boundaries_enforced",
+        "description": "true when projects declare tags and an enforced allowed-dependency rule.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/.eslintrc*",
+            "eslint.config.*"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "each_deliverable_is_its_own_project",
+        "description": "true when every app/package in the repo has its own project definition\ndeclaring its local targets (`build`, `lint`, `test`, `typecheck`) that call\nits own language-native tool.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/package.json",
+            "**/Cargo.toml",
+            "**/pyproject.toml"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "graph_splits_by_tier_and_cost",
+        "description": "true when the project graph splits the repo's work beyond its deliverables:\nthe integration and e2e tiers are projects of their own depending on what\nthey test, and every slow or external-service-touching suite is its own\nproject depending only on what it tests. The fast unit tier belongs inside\nthe project whose code it covers. false when the whole repo is one project,\nor an expensive suite rides along inside a broadly-depended-on project.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/e2e/**",
+            "**/integration/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "graph_splits_by_domain",
+        "description": "true when the graph's units are domains — each project holds one concern's\ntypes, interfaces, and logic together — and the only projects several\nothers depend on are genuine cross-domain contracts. A shared package is a\ncontract only if adding or changing one domain's concept does not require\nediting it. A contract holds what every domain must agree on and never\nenumerates the domains: a closed sum type, registry, or table in a central\npackage with an entry per domain's things is a bag with a type signature,\nhowever it is persisted or served. false when a central project grouped by\nkind of code (`types`, `models`, `store`, `data-access`, `utils`, `common`)\nsits under every other project, so a change to one domain's concern\nrebuilds and re-tests every other; and false when a central project holds\na sum type, registry, or table with an entry per domain, so a domain adding\na concept edits the center and rebuilds every other.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/Cargo.toml",
+            "**/pyproject.toml",
+            "**/package.json",
+            "**/*.rs",
+            "**/*.py",
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.go",
+            "**/*.java",
+            "**/*.kt",
+            "**/*.cs"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files declare the workspace's projects, or declare a sum type,\nregistry, or table that more than one project depends on\n"
+      },
+      {
+        "name": "language_workspace_resolves_dependencies",
+        "description": "true when the repo's projects are declared to the language's own workspace\nprimitive as well as to Nx — a uv workspace, a Cargo workspace, or\nbun/pnpm workspaces — with ONE lockfile per language ecosystem covering them\nall. false when each project carries its own lockfile for the same ecosystem,\nor dependency resolution is hand-wired per project because only Nx knows the\nprojects exist.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "pyproject.toml",
+            "uv.lock",
+            "Cargo.toml",
+            "Cargo.lock",
+            "package.json",
+            "bun.lock",
+            "pnpm-workspace.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo declares third-party dependencies in a language ecosystem with a workspace primitive"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/releasing.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "no_manual_deploy_step",
+        "description": "true when the only human action in a release is merging a PR. false when any\nrelease step requires a manual command, a \"Run workflow\" click, or hand-editing\na version number.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "release-plz.toml",
+            ".releaserc*",
+            "release-please*"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "versioning_decoupled_from_building",
+        "description": "true when the version job only computes the version and writes the changelog,\nmanifests, lockfiles, and tag, and a separate workflow builds and publishes on\nthe tag. false when the version job also builds or publishes artifacts itself.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "release-plz.toml",
+            ".releaserc*",
+            "release-please*"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "release_job_uses_pat",
+        "description": "true when the release or version job authenticates with a PAT or GitHub App\ntoken. false when it authenticates with the default `GITHUB_TOKEN` (whose tag\npush does not fire downstream release or publish workflows).\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "publish_idempotent",
+        "description": "true when publishing skips a version that is already live and reads registry\ntokens from secrets. false when a re-run would double-publish a version or a\nregistry token is committed in the tree.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repository publishes to a package registry"
+      },
+      {
+        "name": "pr_title_conventional_commit_linted",
+        "description": "true when a CI job runs on `pull_request` that lints the PR title (the\nsquash-merge subject the release pipeline reads) against Conventional Commits\n— a `commitlint` or equivalent PR-title-lint step. false when no workflow lints\nthe PR title.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "commitlint.config.*",
+            ".commitlintrc*"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "broader_sweep_placement_matches_the_release_driver",
+        "description": "true when the broader-tier sweep sits where the repo's release driver implies —\nat merge-to-main for a push-to-main driver (`semantic-release`, `release-please`\nin non-PR mode), where the merged commit is the released commit; on the release PR\nfor a release-PR gate (`release-plz`, `release-please`), where the commit that\nships is a new commit over a batch of merges. false when a push-to-main repo\nsweeps again at release time after sweeping at merge, or a batched repo releases a\ncommit no job ever swept.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "release-plz.toml",
+            ".releaserc*",
+            "release-please*",
+            "AGENTS.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/shapes/asdf-plugin.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "plugin_never_calls_asdf",
+        "description": "true when no plugin script in the target files invokes `asdf`. false when any\nplugin script shells back out to `asdf` (for example `asdf reshim` from\n`install`).\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "bin/**",
+            "lib/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "plugin_split_from_host_tool_integration",
+        "description": "true when the plugin project is rooted at the repo root — asdf requires\n`bin/` to sit there, so this project alone cannot be moved into a\nsubdirectory — holding the scripts, any shared `lib/`, and the offline\n`bats` tests, while the host-tool integration that installs a real version\nover the network is a separate project with its own directory and project\ndefinition, depending on the plugin. false when `asdf plugin test` is a\ntarget of the plugin project itself, so editing a `bats` fixture installs a\nreal tool version, or when the plugin's `bin/` was relocated to make the\nlayout uniform and the host tool can no longer find it.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "bin/**",
+            "**/*.bats"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/shapes/cli.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "asset_naming_contract_shared",
+        "description": "true when every install surface that downloads a release asset (an install\nscript, a Homebrew/Scoop manifest, a CI job) constructs the SAME archive and\n`.sha256` name the release workflow produced, from one shared naming scheme.\nfalse when a surface hardcodes an asset name that can drift from what the\nrelease job uploads.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "**/install*.sh",
+            "**/*.rb",
+            "**/*.json",
+            "**/*formula*"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo distributes downloadable release assets across more than one install surface"
+      },
+      {
+        "name": "cli_split_from_its_e2e_and_externals",
+        "description": "true when the command and its fast unit tests are one project, the suite that\ninstalls and drives the built command is a separate project depending on it,\nand each external system the command talks to is its own project carrying its\nown live-service suite. false when the subprocess-level suite sits inside the\nCLI project — so every change spawns the binary — or when a client for an\nexternal system has no project of its own, so a change to argument parsing\nreaches the network.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/e2e/**",
+            "**/tests/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/shapes/library.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "consumer_docs_and_changelog_present",
+        "description": "true when the repo ships usage documentation written for a consumer of the\npackage (how to install and call the public API) and a changelog that records\nreleases and breaking changes. false when the only docs are internal\ndevelopment notes.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/README*",
+            "CHANGELOG*",
+            "docs/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo ships an installable/consumable package"
+      },
+      {
+        "name": "deliverables_and_their_install_suites_split",
+        "description": "true when every published package and deployed service is its own project\nwith its own manifest and fast tests, code shared between them is a project\nthose consumers depend on, and the suites that install the built artifact or\ndrive a running service over its real interface are separate projects\ndepending only on what they exercise. false when several deliverables share\none project, or the install-the-artifact / drive-the-service suite rides\ninside the package project, so an unrelated change builds a distributable or\nstarts a server.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/e2e/**",
+            "**/integration/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/shapes/nextjs.llmlint.yml.txt": {
+    "version": "1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "next_build_gates_type_and_lint_errors",
+        "description": "true when CI runs `next build` and type/lint errors are build blockers — the\nNext.js config does not set `typescript.ignoreBuildErrors` or\n`eslint.ignoreDuringBuilds` to silence them. false when the production build is\nnever run in CI, or errors are configured away so a broken build ships.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "next.config.*",
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/shapes/react.llmlint.yml.txt": {
+    "version": "2.0.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "react_hooks_lint_rules_enabled",
+        "description": "true when the lint config enables the Rules of Hooks and the effect\ndependency check — `eslint-plugin-react-hooks` with `rules-of-hooks` and\n`exhaustive-deps` as errors, or the Biome equivalents (`useHookAtTopLevel`,\n`useExhaustiveDependencies`). false when neither is configured, so hook\nmisuse and stale-closure effect bugs pass the gate.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/eslint.config.*",
+            "**/.eslintrc*",
+            "**/biome.json",
+            "**/biome.jsonc",
+            "**/package.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files configure the JS/TS linter"
+      },
+      {
+        "name": "feature_import_boundaries_enforced_at_both_scopes",
+        "description": "true when the unidirectional feature-import architecture is enforced at both\nscopes it spans: inside an app project by the linter — an\n`import/no-restricted-paths` (ESLint) or `noRestrictedImports` (Biome) rule\nbanning cross-feature internal imports and shared code importing from\nfeatures — and between projects by the orchestrator's module-boundary tag\nrule, so a second app cannot reach into the first's `src/` instead of\ndepending on a shared UI project. false when either scope is unenforced,\nleaving the shared → features → app boundary to convention where it is\neasiest to cross.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/eslint.config.*",
+            "**/.eslintrc*",
+            "**/biome.json",
+            "**/biome.jsonc",
+            "nx.json",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files configure the JS/TS linter's import rules or the project boundary tags"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/shapes/skills-repo.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "validate_and_smoke_every_skill_gated",
+        "description": "true when `just check` both validates every `SKILL.md` (frontmatter,\nforbidden runtime deps) and SMOKE-runs every bundled script once, so a broken\nskill fails the gate. false when validation/smoke exists but is not wired into\n`check`, or only a subset of skills is covered.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**",
+            "scripts/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "own_checks_dogfooded",
+        "description": "true when any repo-baseline or lint script the repo itself ships is run\nagainst this repo inside `just check`, so the canonical example stays passing.\nfalse when the repo authors such a check but never runs it on itself.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the repo ships its own baseline/lint tooling"
+      },
+      {
+        "name": "one_project_per_skill",
+        "description": "true when each skill directory is its own project declaring the same target\nnames as every other skill (`validate`, `smoke`, `test`, plus the repo's\nuniform `lint`/`format`), so `nx affected -t test` fans out by name and\nediting one skill runs that skill's targets rather than the whole catalog,\nand the shared validation tooling is its own project the skill projects\ndepend on. false when the catalog is one project — so any skill edit runs\nevery skill's targets — or when skills invent different target names, which\nmakes a single fan-out reach only some of them.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/SKILL.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "skill_project_edges_are_authoring_only",
+        "description": "true when the dependency a skill project declares on the shared validation\ntooling exists purely to order and cache authoring targets, while the\nbundled scripts themselves remain self-contained. false when that project\nedge is mirrored by a real runtime import — a bundled script importing the\nrepo's tooling, or relying on the orchestrator to run — which breaks the\nscripts inside a consuming repo where none of it exists.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/project.json",
+            "skills/**/scripts/**",
+            "skills/**/*.py",
+            "skills/**/*.js"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/buildout/shapes/web-app.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "production_build_validated_in_ci",
+        "description": "true when CI builds the PRODUCTION bundle (not just starts the dev server) and\ntreats type and lint errors as build blockers. false when CI only runs the dev\nserver or tests, so a production build could be broken and merge anyway.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "justfile",
+            "Justfile",
+            ".justfile",
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "app_browser_suite_and_services_split",
+        "description": "true when the app and its fast unit/component tests are one project, the\nbrowser suite is its own project whose `test` target depends on the app's\n`build`, and each backend service the app calls is its own project rather\nthan a directory inside the app. false when the browser suite lives in the\napp project — so any change can start a browser — or when a backend service\nis a folder of the app project, so a server-only change rebuilds the frontend\nand vice versa.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json",
+            "**/e2e/**",
+            "**/playwright.config.*"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/ci.llmlint.yml.txt": {
+    "version": "1.5",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "live_tier_compiles_and_requires_credential",
+        "description": "true when every test in the tier stays compiled (never `#[cfg]`'d out or\ndeleted) and the workflow requires the credential, failing fast with a clear\nmessage when it is absent. false when a test is excluded from compilation, or\nthe workflow skips or no-ops to a green pass without the credential —\nreporting the tier as covered when it never ran.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "**/tests/live/**",
+            "**/tests/integration/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a live or integration test tier"
+      },
+      {
+        "name": "no_untrusted_interpolation_in_run",
+        "description": "when a workflow reads untrusted event data (`${{ github.event.* }}` — a PR title,\nbody, branch name, or comment) only by binding it to an `env:` variable and then\nreferencing that variable inside `run:` (e.g. `env: TITLE: ${{ github.event.pull_request.title }}`\nthen `run: echo \"$TITLE\"`), never by expanding `${{ github.event.* }}` literally in\nthe `run:` script text. Event data mapped into `env:`, `with:`, `if:`, or an action's\ninputs is compliant — only a `${{ github.event.* }}` expansion written directly in a\n`run:` block, where a crafted value is parsed as shell, is a violation.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a GitHub Actions workflow with a `run:` step",
+        "require_line_attribution": true
+      },
+      {
+        "name": "ci_invokes_gate_recipe_not_inline_stages",
+        "description": "true when a workflow job that runs the quality gate invokes the project's single\ngate recipe (e.g. `just check`) rather than re-listing its individual stages\n(format check, lint, type check, unit tests, e2e) as inline commands. false when a\njob reimplements gate stages inline, so the gate CI runs can silently drift out of\nparity with the one a contributor runs locally. A job that legitimately runs\nsomething outside the gate (a separate install-smoke, live-test, or release job) is\nnot a violation.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a CI job that runs the quality gate",
+        "require_line_attribution": true
+      },
+      {
+        "name": "external_service_suite_stays_out_of_the_affected_tier",
+        "description": "true when every such suite runs from its own credential-gated workflow or a\ntarget promoted out of the affected tier, rather than from the affected-tier\ngate a pull request runs. false when a change wires one into the PR gate —\nincluding a fast one, since that promotion is decided by what the suite\ntouches, not by how long it takes.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "justfile",
+            "Justfile",
+            ".justfile",
+            "**/project.json",
+            "nx.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files wire a test suite that contacts an external service",
+        "require_line_attribution": true
+      },
+      {
+        "name": "no_second_broader_sweep_over_an_already_gated_commit",
+        "description": "true when no job runs the broader-tier sweep (a full `run-many` over every\nproject, or the same gating targets) against a commit another job already swept —\nthe same SHA, or a different SHA over an identical tree, such as a tag build or a\nrelease-prep job following the merge that swept it. false when a workflow adds a\nsecond sweep of an already-swept commit, e.g. a release, tag, or publish workflow\nre-running lint, type-check, or tests over the commit merge-to-main already swept.\nBuilding or publishing an artifact from a swept commit is not gating and is not a\nviolation; neither is the first sweep of a squash-merge commit, whose tree is new.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a job that runs gating targets (lint, type-check, tests, or a full sweep)",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/languages/bash.llmlint.yml.txt": {
+    "version": "1.3.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "robust_shell",
+        "description": "true when `set -euo pipefail` is set, every expansion is quoted, and network\nand filesystem failures are handled explicitly. false when `set -euo pipefail`\nis omitted, an expansion is unquoted, or an operation is assumed to succeed.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.sh",
+            "bin/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "portable_to_target_shell",
+        "description": "when every construct stays within the declared target shell and avoids\nnon-portable operations (`sort -V`, bashisms under POSIX `sh`) the declared\nshell or platform does not support.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.sh",
+            "bin/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "shell_test_tiers_stay_split",
+        "description": "true when it lives in the project whose cost it matches — the offline\nbehaviour tests in the script project, and any suite that drives a real\nhost tool, installs a real version, or reaches the network in a separate\nproject depending only on the scripts it exercises. false when a network-\nor host-tool-touching test is added to the offline project, so every\nunrelated script edit pays for it, or when an env-var guard skips it at\nruntime in place of moving it out of the fast project. A guard that skips\nbecause a credential or host tool the suite genuinely requires is absent\nis a capability check, not a tier, and is not a violation.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.bats",
+            "**/test/**",
+            "**/tests/**",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change a shell test suite, or the project definition that owns one",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/languages/python.llmlint.yml.txt": {
+    "version": "1.4.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "async_typed_clients_at_boundaries",
+        "description": "true when every external network or IO service uses an async, typed client (an\nofficial typed client, or a small typed async client written for the repo).\nfalse when any such call uses an untyped or synchronous ad-hoc client.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files call an external network or IO service",
+        "require_line_attribution": true
+      },
+      {
+        "name": "structural_pattern_matching",
+        "description": "true when multi-branch dispatch on one subject's shape, type, or value uses\n`match`/`case` with destructuring where that reads more clearly than an if/elif\nchain. false when an if/elif chain repeats `isinstance`, index, or attribute\nchecks on that subject where `match`/`case` would express it directly.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files dispatch on the shape, type, or value of a subject",
+        "require_line_attribution": true
+      },
+      {
+        "name": "modern_domain_modeling",
+        "description": "true when structured data in the target files is modelled with dataclasses,\nenums, `NamedTuple`, or typed models (e.g. Pydantic), and a meaningful\nprimitive (id, token) uses a `NewType` or type alias. false when structured\ndata is passed around as bare dicts, positional tuples, or stringly-typed\nconstants where a typed model or enum is the natural choice.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define or pass around structured domain data",
+        "require_line_attribution": true
+      },
+      {
+        "name": "protocol_based_seams",
+        "description": "true when a pluggable dependency or seam in the target files is typed with a\n`typing.Protocol` so callers depend on the structural interface. false when a\nseam meant to be swappable is bound to a concrete class or a heavyweight\nnominal ABC where a `Protocol` fits.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a pluggable dependency or seam",
+        "require_line_attribution": true
+      },
+      {
+        "name": "no_injection_from_untrusted_input",
+        "description": "when the target files keep untrusted input out of dangerous sinks: no `shell=True`\non externally-influenced input, no `eval`/`exec` or unsafe deserialization\n(`pickle.loads`, `yaml.load` without `SafeLoader`) of untrusted data, and SQL and\nOS commands built with parameterized APIs rather than string interpolation.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files run subprocesses, execute dynamic code, deserialize data, or build SQL or OS commands",
+        "require_line_attribution": true
+      },
+      {
+        "name": "projects_stay_in_one_uv_workspace",
+        "description": "true when every Python distribution is a member of the root uv workspace\n(`[tool.uv.workspace] members`), carries its own `pyproject.toml`, depends on\nsibling distributions through `[tool.uv.sources] workspace = true`, and\nresolves against the single root `uv.lock` — a repo with exactly one\ndistribution, at the repo root, needs no `[tool.uv.workspace]` table.\nfalse when a distribution is invisible to the workspace, commits a second\n`uv.lock`/`requirements.txt` for the same ecosystem, or reaches a sibling's\nsource by a relative path import instead of a declared workspace dependency.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/pyproject.toml",
+            "**/uv.lock",
+            "**/requirements*.txt",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change the manifest, lock, or project definition of a Python distribution — a unit that owns Python source together with its own dependency set, not a build-graph project that only declares targets run over source rooted elsewhere in the workspace"
+      },
+      {
+        "name": "test_tiers_split_by_project_not_by_marker",
+        "description": "true when it lives in its own project whose `test` target runs it, so `nx\naffected` can skip it. false when the tier is expressed as a pytest marker\nthe default run deselects (`-m \"not slow\"`, `addopts` with a deselecting\n`-m`, or a skip keyed off an env var) while the tests stay inside the fast\nproject — which hides the cost instead of removing it. A guard that skips\nbecause a credential or provider the suite genuinely requires is absent is\na capability check, not a tier, and is not a violation.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/pyproject.toml",
+            "**/pytest.ini",
+            "**/conftest.py",
+            "**/test_*.py",
+            "**/*_test.py"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change a pytest suite that is slow or reaches an external service, or the marker configuration that selects one",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/languages/rust.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "invalid_states_unrepresentable",
+        "description": "true when the domain and boundary types in the target files use newtypes and\nenums so that invalid states cannot be represented. false when any domain or\nboundary value is modelled with a bare bool or a stringly-typed value where a\nnewtype or enum is the natural choice.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.rs"
+          ],
+          "exclude": [
+            "**/tests/**",
+            "**/*_test.rs",
+            "**/benches/**"
+          ]
+        },
+        "rationale": null,
+        "relevance": "the target files define domain types or model boundary data"
+      },
+      {
+        "name": "no_panics_on_recoverable_errors",
+        "description": "true when every fallible operation in the target files returns or propagates an\nerror (`Result`, `?`). false when any fallible operation uses `unwrap()`,\n`expect()`, or `panic!` for an error that is recoverable.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.rs"
+          ],
+          "exclude": [
+            "**/tests/**",
+            "**/*_test.rs",
+            "**/benches/**"
+          ]
+        },
+        "rationale": null,
+        "relevance": "the target files perform fallible operations"
+      },
+      {
+        "name": "crates_stay_in_one_cargo_workspace",
+        "description": "true when every crate in the repo is a `[workspace] members` entry of the\nroot virtual manifest, inherits its shared metadata and dependency versions\n(`rust-version.workspace = true`, `serde = { workspace = true }`), depends\non sibling crates as path/workspace dependencies, and resolves against the\nsingle root `Cargo.lock` and the single workspace-root\n`rust-toolchain.toml`. false when a crate is invisible to the workspace,\ncommits its own `Cargo.lock` or `rust-toolchain.toml`, or pins a dependency\nversion the workspace already pins. A repo with exactly one crate at the\nrepo root needs no `[workspace]` table to be true — the claim is that no\ncrate resolves outside the one root lock.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/Cargo.toml",
+            "**/Cargo.lock",
+            "**/rust-toolchain.toml",
+            "**/rust-toolchain",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change a crate's manifest, lock, toolchain pin, or project definition"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/languages/terraform.llmlint.yml.txt": {
+    "version": "1.1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "state_backend_discipline",
+        "description": "true when state ownership, locking, encryption, access control, and recovery\nform a coherent remote-backend design for the target infrastructure. false\nwhen state depends on a developer machine, has ambiguous ownership, or lacks\na credible concurrency or recovery strategy.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define or configure infrastructure state or deployment stacks"
+      },
+      {
+        "name": "cohesive_blast_radius_boundaries",
+        "description": "true when modules/stacks have cohesive responsibilities and small interfaces,\nwhile environments and independently operated systems are separated into\nstate and deployment units sized to contain failures. false when unrelated\nresources share a convenience module or one state/deployment unit couples\nenvironments or systems with independent lifecycles.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define modules, stacks, environments, or deployment boundaries"
+      },
+      {
+        "name": "secrets_avoid_code_and_state",
+        "description": "true when secret material is referenced from a managed secret store at\ndeployment time, secret-bearing interfaces are marked sensitive, and the\ndesign avoids persisting plaintext secrets in state. false when credentials\nare supplied as literals or ordinary inputs/outputs, or sensitivity marking\nis treated as protection against a secret being stored in state.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files create, consume, pass, or expose credentials or other secret material"
+      },
+      {
+        "name": "declarative_drift_resistant_resources",
+        "description": "true when desired state is expressed with native resources and lifecycle or\nimport choices preserve reconciliation. false when imperative provisioners,\n`local-exec`, `null_resource`, timing, or broad ignored-change rules replace\nan available resource model or conceal meaningful drift.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files provision or manage infrastructure resources or their lifecycle"
+      },
+      {
+        "name": "stable_resource_addressing",
+        "description": "true when repeated resources use stable domain identities, choosing keyed\niteration such as `for_each` when insertion or reordering must not re-address\nexisting instances. false when positional `count` or generated indices make\nordinary collection edits replace or rename unrelated resources.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files create repeated or collection-derived infrastructure resources"
+      },
+      {
+        "name": "legible_names_tags_and_dependencies",
+        "description": "true when stable names and tags/labels communicate ownership, environment,\nservice, and applicable cost or compliance intent, and dependencies follow\nreal data flow through references/outputs. false when generic naming obscures\noperational intent, metadata is inconsistent, or incidental ordering stands\nin for a real dependency (with explicit dependency metadata reserved for\ndependencies the provider cannot infer).\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files name, tag, label, or connect infrastructure resources"
+      },
+      {
+        "name": "least_privilege_policy_intent",
+        "description": "true when IAM and resource policies grant only the actions, resources,\nprincipals, and conditions justified by the workload, with any broad grant\ncarrying a concrete constraint or migration rationale. false when authority\nis broader than the workload requires even if the policy is syntactically\nvalid and passes a deterministic security scanner.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml",
+            "**/*.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define or assemble IAM, identity, trust, or resource policies"
+      },
+      {
+        "name": "deliberate_provider_module_versions",
+        "description": "true when provider and external-module constraints prevent silent unreviewed\nchanges while retaining a practical reviewed upgrade path, and unusually\nbroad, narrow, or source-ref constraints have a recorded reason. false when\nconstraints float without review intent or freeze dependencies indefinitely\nwithout explaining the tradeoff.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/*.ts",
+            "**/*.py",
+            "**/*.yaml",
+            "**/*.yml",
+            "Pulumi.yaml",
+            "Pulumi.*.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files select, source, or constrain an infrastructure provider, module, construct, or component"
+      },
+      {
+        "name": "every_deployment_unit_is_a_project",
+        "description": "true when it is its own project with a project definition beside its\nconfiguration, and a stack consuming a shared module declares that edge\n(via the `source` path the orchestrator can infer, or\n`implicitDependencies`) so a module change marks exactly its consumers\naffected. false when a new root module is added with no project definition\n— leaving it outside the gate entirely — or when a consumed shared module\nis not an edge, so either every stack plans on any module edit or none of\nthem do.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tf",
+            "**/*.tf.json",
+            "**/project.json",
+            "nx.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change a root module, a reusable module, or the project definition that owns one"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/languages/typescript.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "no_unjustified_any_or_non_null",
+        "description": "when every use of `any` or a non-null assertion (`!`) in the target files\ncarries a comment justifying why the type system is bypassed.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.ts",
+            "**/*.tsx"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files use `any` or a non-null assertion"
+      },
+      {
+        "name": "projects_stay_in_one_js_workspace",
+        "description": "true when every TypeScript project in the repo is a member of the root\nworkspace (the root `package.json` `workspaces` array, or\n`pnpm-workspace.yaml`), carries its own `package.json` and `tsconfig.json`,\ndepends on sibling projects by package name with the `workspace:*` protocol,\nand resolves against the single root lockfile. false when a project is\ninvisible to the workspace, commits a second lockfile for the same\necosystem, or reaches a sibling through a deep relative path\n(`../other-project/src/...`) instead of a declared workspace dependency. A\nrepo with exactly one project, rooted at the repo root, needs no\n`workspaces` array to be true — the claim is that no project resolves\noutside the one root lock.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/package.json",
+            "**/tsconfig*.json",
+            "pnpm-workspace.yaml",
+            "**/bun.lock",
+            "**/bun.lockb",
+            "**/package-lock.json",
+            "**/pnpm-lock.yaml",
+            "**/yarn.lock",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change a TypeScript project's manifest, tsconfig, lock, or project definition"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/project-graph.llmlint.yml.txt": {
+    "version": "1.4.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "instruction_layer_localized",
+        "description": "true when subtree rules live in a nested `AGENTS.md` inside each project,\nleaving the root `AGENTS.md` to repo-wide constraints only. false when\nproject-specific rules are piled into the root `AGENTS.md`.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/AGENTS.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null
+      },
+      {
+        "name": "expensive_tests_stay_behind_their_own_edge",
+        "description": "true when the test lives in a project whose graph edges reach only what it\nactually tests, so an unrelated change cannot make it run. false when it sits\nin a broadly-depended-on project, or its project depends on unrelated code\n(an import, a `dependsOn`, or an implicit dependency), so every change in the\nrepo pays for it.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/e2e/**",
+            "**/*e2e*",
+            "**/integration/**",
+            "**/*.integration.*",
+            "**/project.json",
+            "nx.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change a test that is slow or reaches an external\nservice (a live API, a container, a browser, a real database), or change the\nproject definition that owns one\n"
+      },
+      {
+        "name": "new_projects_keep_the_graph_uniform",
+        "description": "true when the project declares the repo's standard target names for the work\nit has (`build`, `lint`, `test`, `typecheck`) and the boundary tags its layer\nrequires, so `nx affected`/`run-many` fan out by name and the module-boundary\nrule can judge it. false when it invents a target name the repo already names,\nomits a target it has work for, or is untagged where its layer is tag-enforced.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "nx.json",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files declare a project that did not exist before"
+      },
+      {
+        "name": "code_lands_in_the_domain_that_owns_it",
+        "description": "true when a new or changed type, interface (a trait, protocol, abstract base,\nor port), store or repository interface, or helper lands in the project of\nthe domain that owns it — the project whose other code changes when that\nconcern changes — or in a project that is a genuine cross-domain contract: a\nshared identity, an envelope or representation rule, a wire or storage\nformat, or an interface every domain must agree on. A shared package is a\ncontract only if adding or changing one domain's concept does not require\nediting it. A contract holds what every domain must agree on and never\nenumerates the domains: a closed sum type, registry, or table in a central\npackage with an entry per domain's things is a bag with a type signature,\nhowever it is persisted or served. false when it lands in a project grouped\nby the kind of code it is rather than by the concern it serves — a central\n`types`, `models`, `store`, `data-access`, `utils`, `common` or `shared`\npackage several domains depend on — so that a change to one domain's concern\nre-touches a package every other domain builds against; and false when it\nadds one domain's entry — a variant, a registration, a row, a case — to a\nclosed sum type, registry, or table in a central package, or declares one\ndomain's structs in the central package because a central enumeration\nreaches them. The project's name is a signal, not the test: a `types`\nproject holding only the identities, the envelope and the formats every\ndomain agrees on is a contract, and a `contract` project holding one\ndomain's structs beside another's is a bag.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py",
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.jsx",
+            "**/*.rs",
+            "**/*.go",
+            "**/*.rb",
+            "**/*.java",
+            "**/*.kt",
+            "**/*.cs",
+            "**/*.swift",
+            "**/*.c",
+            "**/*.h",
+            "**/*.cc",
+            "**/*.cpp",
+            "**/*.hpp",
+            "**/*.php",
+            "**/*.sh",
+            "**/*.tf"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the change adds, moves, or re-homes a type, interface, store or repository\ninterface, or helper declaration; adds a variant, registration, row, or\ncase to a sum type, registry, or table shared across projects; or gives one\nproject a dependency on another. A change confined to the body of an\nexisting function inside one project is not judged\n",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/releasing.llmlint.yml.txt": {
+    "version": "1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "release_does_not_regate_an_already_swept_commit",
+        "description": "true when it only computes the version, writes the changelog and manifests,\nbuilds, and publishes — running no lint, type-check, or test target over a\ncommit the merge (or the release PR) already swept with the broader tier.\nCompiling the artifact it ships is building, not gating, and is not a\nviolation.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            ".github/workflows/**",
+            "release-plz.toml",
+            ".releaserc*",
+            "release-please*"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a release, tag, or publish workflow",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/shapes/asdf-plugin.llmlint.yml.txt": {
+    "version": "1.1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "safe_pinned_downloads",
+        "description": "true when every download in the target files pins an exact HTTPS version URL\nand either verifies a published checksum or uses an atomic `.part` download,\ncleaning up temp files on failure. false when any download uses a mutable\n`latest` URL, skips checksum verification without an atomic download, or leaves\npartial files behind on failure.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "bin/download*",
+            "bin/install*",
+            "lib/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files download a file"
+      },
+      {
+        "name": "portable_version_handling",
+        "description": "when version sorting in the target files uses a portable comparator (never\n`sort -V`) and normalizes OS and arch names portably.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "bin/list-all*",
+            "bin/latest-stable*",
+            "lib/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files sort versions or normalize OS or arch names"
+      },
+      {
+        "name": "plugin_scripts_stay_at_the_contract_path",
+        "description": "true when it stays in the repo-root `bin/` the host tool looks in,\nbelonging to the plugin project whose root is therefore the repo root,\nwith shared helpers in `lib/` beside it. false when a plugin script is\nmoved into a subdirectory to make the layout look like the other projects\n— asdf resolves `bin/` relative to the plugin repo root, so the plugin\nsilently stops working — or when a non-plugin concern is added to `bin/`,\nwhere asdf will treat it as part of the contract.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "bin/**",
+            "lib/**",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add, move, or remove a script asdf invokes, or the project definition that owns them"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/shapes/cli.llmlint.yml.txt": {
+    "version": "1.1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "cli_output_contract",
+        "description": "true when the CLI uses distinct, documented exit codes (`0` only on success),\nwrites error messages to stderr, and keeps machine-readable output (e.g.\n`--json`) separate from human prose. false when the CLI conflates exit codes,\nprints errors to stdout, or mixes machine-readable output with human prose.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files implement CLI output or exit-code handling"
+      },
+      {
+        "name": "new_command_or_client_gets_its_own_project",
+        "description": "true when it arrives as its own project — so `nx affected` can run it\nalone and its live-service suite stays out of reach of unrelated changes.\nfalse when a second command is folded into the existing CLI project as\nanother entry point, or an external-system client is added inside it,\nmaking every change to argument parsing pay for that command's tests and\nits network calls.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/project.json",
+            "nx.json",
+            "**/pyproject.toml",
+            "**/Cargo.toml",
+            "**/package.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add a command the tool exposes, or a client for an external system it calls"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/shapes/library.llmlint.yml.txt": {
+    "version": "1.2.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "stable_public_surface",
+        "description": "true when the target files mark what is public versus internal (explicit\nexports, `__all__`, or visibility modifiers) so the public API is intentional.\nfalse when internal implementation is exposed in the public surface with no\npublic/internal distinction.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files define part of the package's public API"
+      },
+      {
+        "name": "shared_internals_are_a_project_not_a_reach_in",
+        "description": "true when that code lives in a project of its own that each consumer\ndeclares a dependency on. false when one package reaches into another's\ninternals — a relative path import across package directories, or a\nre-export of a sibling's private module — so the graph shows no edge where\na real coupling exists and affected detection cannot see it.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.py",
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.rs",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files share implementation code between two packages or services in this repo",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/shapes/nextjs.llmlint.yml.txt": {
+    "version": "1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "server_input_validated_with_schema",
+        "description": "true when every Route Handler and Server Action in the target files validates\nits input (request body, form data, search params) with a runtime schema (e.g.\nZod) before using it. false when a handler or action trusts `unknown`/`any`\ninput from the request directly, so malformed or hostile input reaches the\nserver logic unchecked.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/route.ts",
+            "**/route.tsx",
+            "**/actions.ts",
+            "**/actions.tsx",
+            "**/*.action.ts"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a Next.js Route Handler or Server Action"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/shapes/react.llmlint.yml.txt": {
+    "version": "1.2.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "features_do_not_cross_import",
+        "description": "true when no module under `src/features/<A>` imports from another feature's\ninternals (`src/features/<B>/...`); features are composed only at the\nroutes/app layer or through shared top-level modules. false when a feature\nmodule reaches directly into another feature's internal files, coupling the\ntwo and breaking the unidirectional shared → features → app flow.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/features/**/*.ts",
+            "**/features/**/*.tsx"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files live inside a feature module"
+      },
+      {
+        "name": "server_state_not_duplicated_in_global_store",
+        "description": "true when server-fetched data is owned by a data-fetching/query layer (e.g.\nTanStack Query, RTK Query) and read from there. false when data fetched from\nthe server is copied into a global client store (Redux/Zustand/Context) as\nthe source of truth, so the store and the server can drift out of sync.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.jsx"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files fetch server data or define a global client store"
+      },
+      {
+        "name": "stateful_logic_extracted_to_hooks",
+        "description": "true when a component's data-fetching, mutations, subscriptions, and\nnon-trivial derived state live in custom hooks (`useX`), leaving the\ncomponent body mostly declarative markup that wires hook results to JSX.\nfalse when a component inlines substantial business logic — fetching,\neffects, and branching orchestration — beside its render instead of\nextracting it into a hook.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tsx",
+            "**/*.jsx"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define a React component"
+      },
+      {
+        "name": "feature_code_colocated",
+        "description": "true when a feature's components, hooks, API calls, state, and types live\ntogether under its own app project's `src/features/<feature>/`. false when\ncode belonging to one feature is scattered across that project's global\ntype-based folders (a top-level `components/`, `hooks/`, or `services/`)\ninstead of being colocated with its feature, so no directory owns the\nfeature end to end.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/features/**/*.ts",
+            "**/features/**/*.tsx",
+            "**/components/**/*.tsx",
+            "**/hooks/**/*.ts",
+            "**/services/**/*.ts"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files belong to a feature that should be colocated"
+      },
+      {
+        "name": "dangerous_html_is_sanitized",
+        "description": "true when every `dangerouslySetInnerHTML` is fed HTML that is constant or\nsanitized (e.g. via DOMPurify) before rendering. false when user-supplied or\nother untrusted content is passed to `dangerouslySetInnerHTML` without\nsanitization, opening an XSS hole.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.tsx",
+            "**/*.jsx"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files render `dangerouslySetInnerHTML`"
+      },
+      {
+        "name": "shared_ui_graduates_to_its_own_project",
+        "description": "true when it lives in a shared UI project that each app depends on. false\nwhen a second app consumes it by importing across app-project boundaries —\na relative path into another app's `src/`, or a deep import past a\nproject's public entry point — instead of graduating it into a project of\nits own, which couples the two apps without an edge the graph or the\nmodule-boundary rule can see.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/*.ts",
+            "**/*.tsx",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files share a component, hook, or utility between two apps in this repo",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/shapes/skills-repo.llmlint.yml.txt": {
+    "version": "1.2.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "scripts_runtime_independent",
+        "description": "when every bundled skill script in the target files is self-contained (PEP 723\ninline metadata for Python, Node built-ins for JavaScript) and depends on no\norchestrator, repo-root manifest or lockfile, asdf or direnv, or import from the\nrepo's own source tree.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "skills/**/*.py",
+            "skills/**/*.js",
+            "skills/**/*.mjs",
+            "skills/**/scripts/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "determinism_vs_judgment",
+        "description": "true when the deterministic steps described in the target files are implemented\nas scripts and prose is reserved for genuine judgment. false when a SKILL.md or\nAGENTS.md narrates step-by-step deterministic actions that a script should own.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/SKILL.md",
+            "**/AGENTS.md",
+            "**/CLAUDE.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files describe procedural steps",
+        "require_line_attribution": true
+      },
+      {
+        "name": "skill_description_trigger_and_compatibility_needs",
+        "description": "true when every SKILL.md `description` in the target files is trigger-oriented\n(states when to use the skill, e.g. \"Use when …\") and `compatibility` states\nthe skill's real runtime needs. false when any description is a vague title or\nomits real runtime needs.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/SKILL.md"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "require_line_attribution": true
+      },
+      {
+        "name": "each_skill_is_its_own_project",
+        "description": "true when that directory has its own project definition, so `nx affected`\nruns that skill's targets and leaves the rest of the catalog alone, and an\nexpensive harness-driving eval it ships sits in a project of its own.\nfalse when a skill is added with no project definition — leaving it\noutside the graph, so editing it either runs the whole catalog or nothing\n— or when its slow eval is declared as another target of the skill's own\nproject, making every edit to that skill pay for a real harness run.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/SKILL.md",
+            "**/project.json",
+            "nx.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add, move, or restructure a skill directory"
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/shapes/web-app.llmlint.yml.txt": {
+    "version": "1.2.0",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "secrets_stay_server_side",
+        "description": "true when secrets and privileged data access stay in server-only code and only\nnon-sensitive data crosses to the client. false when a secret or a privileged\ndata-access path is reachable from client code.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files handle secrets or privileged data access"
+      },
+      {
+        "name": "authorization_enforced_server_side",
+        "description": "when every privileged action or data-access path in the target files verifies\nauthentication and authorization on the server before acting — a control hidden in\nthe UI is never the only guard.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files expose a server route, action, or data-access path"
+      },
+      {
+        "name": "url_state_validated",
+        "description": "when shareable state kept in the URL is parsed and validated before use.\n",
+        "agent": null,
+        "judges": null,
+        "files": null,
+        "rationale": null,
+        "relevance": "the target files read shareable state from the URL"
+      },
+      {
+        "name": "e2e_uses_accessible_selectors",
+        "description": "true when every end-to-end test in the target files selects elements by\naccessible role or user-facing text. false when any end-to-end test selects\nelements by a brittle CSS or DOM selector.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/e2e/**",
+            "**/tests/e2e/**",
+            "**/*e2e*",
+            "**/*.spec.ts",
+            "**/*.spec.tsx"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files define end-to-end tests that select page elements"
+      },
+      {
+        "name": "browser_journeys_run_against_the_built_app",
+        "description": "true when the spec lives in the app's separate e2e project, whose `test`\ntarget depends on the app's `build`, so the journey drives the production\nbundle. false when a browser journey is added inside the app project\nitself — where every unrelated change pays to start a browser — or when\nthe e2e project drives a development server instead of the built artifact,\nso the bundle users receive is never the one exercised.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/e2e/**",
+            "**/*.spec.ts",
+            "**/*.spec.tsx",
+            "**/playwright.config.*",
+            "**/project.json"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target files add or change a browser-driven end-to-end journey, or the project definition that owns one",
+        "require_line_attribution": true
+      }
+    ]
+  },
+  "tests/fixtures/yaml_compat/plugins/tools/onebudgetspec.llmlint.yml.txt": {
+    "version": "1.1.1",
+    "prompt_template": null,
+    "files": {
+      "include": [],
+      "exclude": []
+    },
+    "oneharness": {
+      "config": [],
+      "bin": null,
+      "model": null,
+      "timeout": null,
+      "schema_max_retries": null
+    },
+    "plugins": [],
+    "agents": {},
+    "rules": [
+      {
+        "name": "budget_descriptions_durable_and_terse",
+        "description": "true when each budget's `description` says, in one or two sentences, what is\nmeasured and what it protects. false when a description reads as session or\nchangelog narrative — base figures from an old commit, a history of the\nfigure, or what each journey did — or restates the budget's own fields: its\ncommand, unit, direction or threshold.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/budgets.yaml",
+            "**/*budget*",
+            "**/scripts/**",
+            "**/*.sh",
+            "**/tests/**",
+            "**/e2e/**",
+            "**/benches/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file declares a budget with a `description`",
+        "require_line_attribution": true
+      },
+      {
+        "name": "budgets_scoped_to_minimal_tree",
+        "description": "true when everything specific to a `budgets.yaml`'s measurements lives in the\ntree that file's directory roots: the commands it names, the tests they run,\nand budget-only fixtures. Calling shared code that lives elsewhere is fine —\na common harness, the code under measurement, a fixture other tests also\nuse, or telemetry recording added to an existing test or runtime code. false\nonly when something that exists solely to serve one of its budgets\nlives outside that tree.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/budgets.yaml",
+            "**/*budget*",
+            "**/scripts/**",
+            "**/*.sh",
+            "**/tests/**",
+            "**/e2e/**",
+            "**/benches/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file declares budgets, or is a script, test or fixture that a\nbudget's `command` runs or reads\n"
+      },
+      {
+        "name": "onebudgetspec_is_the_only_judge",
+        "description": "true when the code a budget's `command` runs reports its figure (to the file\n`ONEBUDGETSPEC_RESULT` names, or as its elapsed run) and leaves the comparison\nwith the threshold to onebudgetspec. false when that code reads a\n`budgets.yaml`, or asserts the figure against a threshold itself.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/budgets.yaml",
+            "**/*budget*",
+            "**/scripts/**",
+            "**/*.sh",
+            "**/tests/**",
+            "**/e2e/**",
+            "**/benches/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file declares budgets, or is code a budget's `command` runs to\nproduce its figure\n",
+        "require_line_attribution": true
+      },
+      {
+        "name": "budget_commands_measure_directly",
+        "description": "true when each budget's `command` runs its measurement directly, or through\none generic runner shared by every budget. false when it goes through a\nper-budget wrapper that re-lists budget ids or re-checks that a result was\nwritten — work onebudgetspec already does.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/budgets.yaml",
+            "**/*budget*",
+            "**/scripts/**",
+            "**/*.sh",
+            "**/tests/**",
+            "**/e2e/**",
+            "**/benches/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file declares budgets, or is a script or program a budget's\n`command` names\n",
+        "require_line_attribution": true
+      },
+      {
+        "name": "budgets_reuse_gate_telemetry",
+        "description": "true when a budget whose behaviour an existing gate's tests or runtime already\nexercise takes its figure from telemetry those runs record and save\ntemporarily (for example as the test target's output), its `command` only\nanalysing that data. Also true when no existing gate exercises the measured\nbehaviour, or when recording it there would cost more than a standalone\nmeasurement. false when a budget re-runs a scenario an existing test already\nruns, only to count or time it, where adding telemetry to that test or its\nruntime code would be cheaper than the extra gate time.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/budgets.yaml",
+            "**/*budget*",
+            "**/scripts/**",
+            "**/*.sh",
+            "**/tests/**",
+            "**/e2e/**",
+            "**/benches/**"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file declares budgets, or is code a budget's `command` runs, or a\ntest exercising behaviour a budget measures\n"
+      },
+      {
+        "name": "tests_hold_no_nonfunctional_thresholds",
+        "description": "false when the file asserts a cost figure against a fixed bound — wall\nclock, request, query or API-point count, payload or artifact size, memory\nor money at a realistic workload — or tells two behaviours apart by elapsed\ntime (\"returned within 2 s, so it did not wait\") rather than asserting the\nobservable event. true otherwise, including a configured timeout, deadline\nor backoff asserted near its value, an exact count of an action, the\nabsence of an operation, a limit the product itself enforces, and a timeout\nthat only guards against a hang.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/tests/**",
+            "**/test/**",
+            "**/e2e/**",
+            "**/__tests__/**",
+            "**/test_*.py",
+            "**/*_test.py",
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "**/*.spec.ts",
+            "**/*.spec.tsx",
+            "**/*.rs",
+            "**/*.bats",
+            "**/test_*.sh",
+            "**/*_test.sh"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file is test code (a test file, or a Rust file with a\n`#[cfg(test)]` module) that asserts, measures or records a timing, size or\ncount figure, reads the clock, or bounds a wait with a timeout\n",
+        "require_line_attribution": true
+      },
+      {
+        "name": "budgets_track_product_owner_outcomes",
+        "description": "Budgets track product-owner outcomes, with finer figures as their breakdown.\nfalse when the file registers a budget whose figure is a part of another\nbudget's figure the repository registers — a step, phase or operation of it\n— or the same concern as another budget in a second unit, such as requests\nbeside points for one quota. true otherwise. Whether a product owner would\ncare about a figure is never judged.\n",
+        "agent": null,
+        "judges": null,
+        "files": {
+          "include": [
+            "**/budgets.yaml"
+          ],
+          "exclude": []
+        },
+        "rationale": null,
+        "relevance": "the target file declares budgets",
+        "require_line_attribution": true
+      }
+    ]
+  }
+}

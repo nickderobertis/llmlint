@@ -1,0 +1,15 @@
+# Next.js buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural check on the Next.js production build; the ongoing Next.js
+# judgment (server-action input validation) lives in shapes/nextjs.llmlint.yml,
+# and the shared web-app buildout rule covers the generic prod-build case.
+version: 1
+
+rules:
+  - name: next_build_gates_type_and_lint_errors
+    description: |
+      true when CI runs `next build` and type/lint errors are build blockers — the
+      Next.js config does not set `typescript.ignoreBuildErrors` or
+      `eslint.ignoreDuringBuilds` to silence them. false when the production build is
+      never run in CI, or errors are configured away so a broken build ships.
+    files:
+      include: [".github/workflows/**", "next.config.*", "justfile", "Justfile", ".justfile"]

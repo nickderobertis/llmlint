@@ -128,14 +128,37 @@ impl<'de> Deserialize<'de> for VersionReq {
 
 /// The textual form of a numeric-or-string scalar, for the two impls above.
 fn scalar_text<'de, D: Deserializer<'de>>(d: D, what: &str) -> Result<String, D::Error> {
-    let value = serde_yaml_ng::Value::deserialize(d)?;
-    match &value {
-        serde_yaml_ng::Value::Number(n) => Ok(n.to_string()),
-        serde_yaml_ng::Value::String(s) => Ok(s.clone()),
-        other => Err(de::Error::custom(format!(
-            "{what} must be a number or string like 1, 1.2, or \"1.2.3\"; got {other:?}"
-        ))),
+    struct Scalar<'a>(&'a str);
+    impl<'de> de::Visitor<'de> for Scalar<'_> {
+        type Value = String;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                f,
+                "{} must be a number or string like 1, 1.2, or \"1.2.3\"",
+                self.0
+            )
+        }
+
+        fn visit_u64<E: de::Error>(self, value: u64) -> Result<String, E> {
+            Ok(value.to_string())
+        }
+
+        fn visit_i64<E: de::Error>(self, value: i64) -> Result<String, E> {
+            Ok(value.to_string())
+        }
+
+        fn visit_f64<E: de::Error>(self, value: f64) -> Result<String, E> {
+            serde_json::Number::from_f64(value)
+                .map(|n| n.to_string())
+                .ok_or_else(|| E::invalid_value(de::Unexpected::Float(value), &self))
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<String, E> {
+            Ok(value.to_string())
+        }
     }
+    d.deserialize_any(Scalar(what))
 }
 
 // A version accepts a YAML integer (`1`), float (`1.2`), or string (`"1.2.3"`),
@@ -210,17 +233,26 @@ mod tests {
 
     #[test]
     fn deserializes_from_int_float_and_string() {
-        let v: Version = serde_yaml_ng::from_str("1").unwrap();
+        let v: Version = serde_saphyr::from_str("1").unwrap();
         assert_eq!(v.to_string(), "1");
-        let v: Version = serde_yaml_ng::from_str("1.2").unwrap();
+        let v: Version = serde_saphyr::from_str("1.2").unwrap();
         assert_eq!(v.to_string(), "1.2");
-        let v: Version = serde_yaml_ng::from_str("\"1.2.3\"").unwrap();
-        assert_eq!(v.to_string(), "1.2.3");
+        for (yaml, expected) in [
+            ("1.10", "1.1"),
+            ("\"1.10\"", "1.10"),
+            ("1.2.3", "1.2.3"),
+            ("\"1.2.3\"", "1.2.3"),
+        ] {
+            let version: Version = serde_saphyr::from_str(yaml).unwrap();
+            let pin: VersionReq = serde_saphyr::from_str(yaml).unwrap();
+            assert_eq!(version.to_string(), expected);
+            assert_eq!(pin.to_string(), expected);
+        }
     }
 
     #[test]
     fn rejects_non_scalar_version() {
-        assert!(serde_yaml_ng::from_str::<Version>("[1, 2]").is_err());
+        assert!(serde_saphyr::from_str::<Version>("[1, 2]").is_err());
     }
 
     #[test]

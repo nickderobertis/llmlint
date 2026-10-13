@@ -1,0 +1,22 @@
+# Releasing judge-level rules (plugin). Pairs with releasing.md. Pulled in when
+# the repo ships a versioned artifact (`--releasing`). One-time structural checks
+# on the release wiring are buildout-only — see buildout/releasing.llmlint.yml.
+# llmlint: ignore-file[changed_behavior_has_e2e] these are LLM-judge config invariants with no deterministic runtime path; the blocking model lint exercises the changed rule configuration.
+version: 1.1
+
+rules:
+  - name: release_does_not_regate_an_already_swept_commit
+    description: |
+      true when it only computes the version, writes the changelog and manifests,
+      builds, and publishes — running no lint, type-check, or test target over a
+      commit the merge (or the release PR) already swept with the broader tier.
+      Compiling the artifact it ships is building, not gating, and is not a
+      violation.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "release-plz.toml"
+        - ".releaserc*"
+        - "release-please*"
+    relevance: the target files define a release, tag, or publish workflow
+    require_line_attribution: true

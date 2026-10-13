@@ -844,7 +844,7 @@ struct VersionProbe {
 /// The version a fetched plugin declares, if any. Unparseable YAML is a fetch
 /// error (the document is not an llmlint config).
 fn declared_version(url: &str, text: &str) -> Result<Option<Version>> {
-    let probe: VersionProbe = serde_yaml_ng::from_str(text).map_err(|e| Error::PluginFetch {
+    let probe: VersionProbe = serde_saphyr::from_str(text).map_err(|e| Error::PluginFetch {
         url: url.to_string(),
         message: format!("reading plugin version: {e}"),
     })?;
@@ -1959,5 +1959,29 @@ mod tests {
                 assert!(msg.contains("whole number of seconds"), "got: {msg}");
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod yaml_compat_tests {
+    #[test]
+    fn fleet_plugin_versions_keep_baseline_text() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let paths: Vec<String> =
+            serde_json::from_str(include_str!("../../tests/fixtures/yaml_compat/corpus.json"))
+                .unwrap();
+        let mut expected = serde_json::Map::new();
+        for path in paths.into_iter().filter(|p| p.contains("/plugins/")) {
+            let text = std::fs::read_to_string(root.join(&path)).unwrap();
+            let version = super::declared_version(&path, &text)
+                .unwrap()
+                .map(|v| v.to_string());
+            expected.insert(path, serde_json::to_value(version).unwrap());
+        }
+        let baseline: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            include_str!("../../tests/fixtures/yaml_compat/versions.json"),
+        )
+        .unwrap();
+        assert_eq!(expected, baseline);
     }
 }

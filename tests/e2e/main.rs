@@ -5553,11 +5553,26 @@ fn missing_config_is_a_usage_error() {
 #[test]
 fn malformed_config_is_a_usage_error() {
     let p = Project::new();
-    p.write("llmlint.yml", "rules:\n  - name: r\n    bogus_field: 1\n");
-    p.lint()
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("config"));
+    for (yaml, explanation, location) in [
+        (
+            "rules:\n  - name: r\n    bogus_field: 1\n",
+            "unknown field",
+            "bogus_field",
+        ),
+        ("include: []\n", "renamed to `plugins`", "include"),
+        ("[", "unclosed bracket", "line 1"),
+    ] {
+        p.write("llmlint.yml", yaml);
+        p.lint()
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("llmlint.yml"))
+            .stderr(predicate::str::contains(explanation))
+            .stderr(predicate::str::contains(location));
+    }
+    // Repairing the same config allows the real command to finish normally.
+    p.write("llmlint.yml", "rules: []\n");
+    p.lint().assert().success();
 }
 
 #[test]

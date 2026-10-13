@@ -1,0 +1,118 @@
+# Base buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# These are the universal, one-time STRUCTURAL invariants that the deterministic
+# `check_repo_baseline.py` can only weakly signal (it is stack-agnostic, so it
+# confirms a coverage *word* appears and that `check` runs `test`, but cannot see
+# that every gate stage is wired or that the threshold actually fails the build).
+# The ongoing judgment rules live in the committed base.llmlint.yml; these do not
+# persist.
+#
+# llmlint: ignore-file[changed_behavior_has_e2e] every rule here is an LLM-judge config invariant with no in-gate runtime path — like the other buildout rules, its firing is exercised by the opt-in custom-prompt skilltest (skills/bootstrap/create-repo/tests/AGENTS.md), never by an in-gate e2e (this repo keeps real-harness evals out of the gate on purpose).
+version: 1.4.0
+
+rules:
+  - name: project_graph_is_present
+    description: |
+      true when the repo declares an Nx project graph — an `nx.json` at the root
+      plus project definitions covering its work.
+    files:
+      include:
+        - "nx.json"
+        - "**/project.json"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "package.json"
+
+  - name: session_bootstrap_provisions_toolchain
+    description: |
+      true when the session bootstrap makes a fresh web/cloud session able to run
+      the `just` command surface with no manual step: a `SessionStart` hook in
+      `.claude/settings.json` runs an idempotent, non-blocking
+      `scripts/session-setup.sh` that ensures `just` itself — a cloud image often
+      ships the language runtime but not `just`, and there is no asdf there to read
+      `.tool-versions`, so the first `just ...` call would otherwise fail — before
+      handing off to any llmlint installer. false when the hook is absent, points
+      at a script that never provisions `just` (leaving the recipes unrunnable), or
+      the provisioner is not idempotent / does not skip when `CI` is set.
+    files:
+      include:
+        - ".claude/settings.json"
+        - "scripts/**"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+    relevance: the repo automates session setup via a Claude Code SessionStart hook
+  - name: gate_runs_every_stage
+    description: |
+      true when `just check` composes the FULL gate for this stack — format check,
+      lint, type check (where the language has one), unit tests, AND e2e — each an
+      actually-invoked command. false when a stage the stack needs is missing from
+      `check` (e.g. type checking or e2e is defined as a recipe but never reached by
+      `check`), so the gate passes while a whole class of defect goes unchecked.
+    files:
+      include: ["justfile", "Justfile", ".justfile", ".github/workflows/**"]
+
+  - name: coverage_gate_actually_fails
+    description: |
+      true when the test command in the gate both measures coverage and FAILS the
+      build below the threshold — a real `--cov-fail-under`, `coverageThreshold`,
+      `--fail-under-lines`, or equivalent enforcing flag. false when coverage is
+      only reported (printed, uploaded) without a failing threshold, or the
+      threshold is commented out.
+    files:
+      include:
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "pyproject.toml"
+        - "vitest.config.*"
+        - "vite.config.*"
+        - "jest.config.*"
+        - "Cargo.toml"
+        - ".coveragerc"
+    relevance: the repo enforces coverage in-gate rather than documenting an opt-out in AGENTS.md
+
+  - name: upgrade_refreshes_and_gates
+    description: |
+      true when `just upgrade` (or the equivalent recipe) upgrades dependencies to
+      their latest allowed versions AND re-runs the full gate, so a fresh repo lands
+      on current deps proven green. false when `upgrade` only bumps a lockfile
+      without re-running `check`, or no upgrade path exists at all.
+    files:
+      include: ["justfile", "Justfile", ".justfile"]
+
+  - name: dependencies_upgraded_to_latest
+    description: |
+      true when the committed lockfile is on the latest versions the repo's declared
+      constraints allow; false when any dependency is behind a newer version reachable
+      within its constraint and no committed file records why it is held back (a
+      rationale in AGENTS.md, or a comment on the pin / lock entry). A fresh repo must
+      land on current deps, and the `upgrade` recipe merely existing (see
+      `upgrade_refreshes_and_gates`) does not prove it ran — so verify behaviorally by
+      running the stack's read-only dependency-staleness check (a dry-run upgrade or an
+      `outdated` listing) and reading what it reports.
+    files:
+      include:
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "pyproject.toml"
+        - "uv.lock"
+        - "package.json"
+        - "bun.lock"
+        - "bun.lockb"
+        - "package-lock.json"
+        - "Cargo.toml"
+        - "Cargo.lock"
+        - "**/AGENTS.md"
+    relevance: |
+      the repo declares and locks third-party dependencies (a dependency manifest
+      plus a committed lockfile the staleness check can read)
+
+  - name: no_secret_committed_in_tree
+    description: |
+      true when no credential, API key, access token, connection string, or private
+      key is committed anywhere in the tree — every secret is referenced by name from
+      an environment variable or secret store. false when any real secret value is
+      embedded in a committed file.
+    relevance: the target file could hold a credential, token, key, or connection string

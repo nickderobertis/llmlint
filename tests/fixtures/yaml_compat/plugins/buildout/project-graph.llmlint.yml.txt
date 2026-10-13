@@ -1,0 +1,105 @@
+# Project-graph buildout rules (plugin) — run ONCE during repo creation, then
+# discarded. They verify the mandatory Nx project graph was wired correctly at
+# setup.
+version: 1.3.0
+
+rules:
+  - name: root_commands_delegate
+    description: |
+      true when each root command recipe shells out to the orchestrator (for example
+      `nx affected` or `nx run-many`). false when any recipe hand-rolls a
+      for-each-package loop instead of delegating to the orchestrator.
+    files:
+      include: ["justfile", "Justfile", ".justfile"]
+    require_line_attribution: true
+
+  - name: affected_only_explicit_base
+    description: |
+      true when pull-request CI runs affected-only targets against an explicitly
+      derived merge base and a full sweep runs on the main branch or nightly.
+    files:
+      include: [".github/workflows/**"]
+
+  - name: project_boundaries_enforced
+    description: |
+      true when projects declare tags and an enforced allowed-dependency rule.
+    files:
+      include: ["nx.json", "**/project.json", "**/.eslintrc*", "eslint.config.*"]
+
+  - name: each_deliverable_is_its_own_project
+    description: |
+      true when every app/package in the repo has its own project definition
+      declaring its local targets (`build`, `lint`, `test`, `typecheck`) that call
+      its own language-native tool.
+    files:
+      include: ["nx.json", "**/project.json", "**/package.json", "**/Cargo.toml", "**/pyproject.toml"]
+
+  - name: graph_splits_by_tier_and_cost
+    description: |
+      true when the project graph splits the repo's work beyond its deliverables:
+      the integration and e2e tiers are projects of their own depending on what
+      they test, and every slow or external-service-touching suite is its own
+      project depending only on what it tests. The fast unit tier belongs inside
+      the project whose code it covers. false when the whole repo is one project,
+      or an expensive suite rides along inside a broadly-depended-on project.
+    files:
+      include: ["nx.json", "**/project.json", "**/e2e/**", "**/integration/**"]
+
+  - name: graph_splits_by_domain
+    # Pairs with project-graph.md "Boundaries follow domains, not kinds of code".
+    # The contract test below is spelled identically to the reference's. Sources
+    # are in scope because a manifest alone cannot show an enumeration.
+    # llmlint: ignore[description_and_relevance_are_concise] the description is the reference's contract test verbatim plus both false cases, which is the whole of what a judge needs to refuse a central enumeration a schedule argument would otherwise admit.
+    description: |
+      true when the graph's units are domains — each project holds one concern's
+      types, interfaces, and logic together — and the only projects several
+      others depend on are genuine cross-domain contracts. A shared package is a
+      contract only if adding or changing one domain's concept does not require
+      editing it. A contract holds what every domain must agree on and never
+      enumerates the domains: a closed sum type, registry, or table in a central
+      package with an entry per domain's things is a bag with a type signature,
+      however it is persisted or served. false when a central project grouped by
+      kind of code (`types`, `models`, `store`, `data-access`, `utils`, `common`)
+      sits under every other project, so a change to one domain's concern
+      rebuilds and re-tests every other; and false when a central project holds
+      a sum type, registry, or table with an entry per domain, so a domain adding
+      a concept edits the center and rebuilds every other.
+    files:
+      include:
+        - "nx.json"
+        - "**/project.json"
+        - "**/Cargo.toml"
+        - "**/pyproject.toml"
+        - "**/package.json"
+        - "**/*.rs"
+        - "**/*.py"
+        - "**/*.ts"
+        - "**/*.tsx"
+        - "**/*.go"
+        - "**/*.java"
+        - "**/*.kt"
+        - "**/*.cs"
+    relevance: |
+      the target files declare the workspace's projects, or declare a sum type,
+      registry, or table that more than one project depends on
+
+  - name: language_workspace_resolves_dependencies
+    description: |
+      true when the repo's projects are declared to the language's own workspace
+      primitive as well as to Nx — a uv workspace, a Cargo workspace, or
+      bun/pnpm workspaces — with ONE lockfile per language ecosystem covering them
+      all. false when each project carries its own lockfile for the same ecosystem,
+      or dependency resolution is hand-wired per project because only Nx knows the
+      projects exist.
+    files:
+      include:
+        - "nx.json"
+        - "**/project.json"
+        - "pyproject.toml"
+        - "uv.lock"
+        - "Cargo.toml"
+        - "Cargo.lock"
+        - "package.json"
+        - "bun.lock"
+        - "pnpm-workspace.yaml"
+    relevance: the repo declares third-party dependencies in a language ecosystem with a workspace primitive

@@ -1,0 +1,55 @@
+# Web app judge-level rules (plugin). Pairs with shapes/web-app.md. Applies to any
+# web app (including Next.js, which builds on this shape).
+version: 1.2.0
+
+rules:
+  - name: secrets_stay_server_side
+    description: |
+      true when secrets and privileged data access stay in server-only code and only
+      non-sensitive data crosses to the client. false when a secret or a privileged
+      data-access path is reachable from client code.
+    relevance: the target files handle secrets or privileged data access
+
+  - name: authorization_enforced_server_side
+    description: |
+      when every privileged action or data-access path in the target files verifies
+      authentication and authorization on the server before acting — a control hidden in
+      the UI is never the only guard.
+    relevance: the target files expose a server route, action, or data-access path
+
+  - name: url_state_validated
+    description: |
+      when shareable state kept in the URL is parsed and validated before use.
+    relevance: the target files read shareable state from the URL
+
+  - name: e2e_uses_accessible_selectors
+    description: |
+      true when every end-to-end test in the target files selects elements by
+      accessible role or user-facing text. false when any end-to-end test selects
+      elements by a brittle CSS or DOM selector.
+    files:
+      include:
+        - "**/e2e/**"
+        - "**/tests/e2e/**"
+        - "**/*e2e*"
+        - "**/*.spec.ts"
+        - "**/*.spec.tsx"
+    relevance: the target files define end-to-end tests that select page elements
+
+  - name: browser_journeys_run_against_the_built_app
+    description: |
+      true when the spec lives in the app's separate e2e project, whose `test`
+      target depends on the app's `build`, so the journey drives the production
+      bundle. false when a browser journey is added inside the app project
+      itself — where every unrelated change pays to start a browser — or when
+      the e2e project drives a development server instead of the built artifact,
+      so the bundle users receive is never the one exercised.
+    files:
+      include:
+        - "**/e2e/**"
+        - "**/*.spec.ts"
+        - "**/*.spec.tsx"
+        - "**/playwright.config.*"
+        - "**/project.json"
+    relevance: the target files add or change a browser-driven end-to-end journey, or the project definition that owns one
+    require_line_attribution: true

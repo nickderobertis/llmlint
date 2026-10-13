@@ -1,0 +1,69 @@
+# Rust buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural checks on toolchain pinning and the strict clippy gate; the
+# ongoing Rust judgment rules live in languages/rust.llmlint.yml.
+version: 1.2
+
+rules:
+  - name: toolchain_pinned_and_installed
+    description: |
+      true when one workspace-root `rust-toolchain.toml` pins the channel and the
+      components/targets the build needs, and CI installs the toolchain from it
+      rather than a floating `stable`. false when there is no pinned toolchain
+      file, a crate carries a competing one, or CI hardcodes a channel that can
+      drift from the committed pin.
+    files:
+      include: ["**/rust-toolchain.toml", "**/rust-toolchain", ".github/workflows/**"]
+
+  - name: dev_profile_and_target_dir
+    description: |
+      true when the repository root carries `.cargo/config.toml` with
+      `[build] target-dir = "target"` and `[profile.dev] debug = 1` (the integer
+      1: line tables only for dev and test builds, `release` untouched), so every
+      crate in the clone builds into `<clone>/target` and each worktree into its
+      own. false when the file is missing, either key is absent or holds another
+      value (`true` is full debuginfo), `target-dir` points outside the clone
+      (one target directory shared across worktrees), or the keys sit in a
+      `Cargo.toml` instead of the config file.
+    files:
+      include:
+        - ".cargo/config.toml"
+        - "**/Cargo.toml"
+
+  - name: clippy_denies_warnings
+    description: |
+      true when the gate runs `clippy` with warnings promoted to errors (`-D
+      warnings` or an equivalent `deny` config) for every crate — as each
+      project's `lint` target, reached by root recipes that delegate to the
+      orchestrator — so a lint is a hard failure anywhere in the workspace. false
+      when clippy runs warning-only, is absent from the gate, or covers only some
+      crates because the root recipe hand-rolls the list.
+    files:
+      include:
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - ".github/workflows/**"
+        - "nx.json"
+        - "**/project.json"
+        - "clippy.toml"
+        - ".cargo/config.toml"
+
+  - name: coverage_combined_across_crates
+    description: |
+      true when coverage is measured per project and enforced once over the
+      union: each project's `test` target runs `cargo llvm-cov --no-report` into
+      the shared profile directory (declared as that target's outputs) and a
+      repo-level `coverage` target depending on every `test` runs `cargo llvm-cov
+      report --fail-under-lines <the repo's bar, 95 by default>`, wired into
+      `just check`. false when the aggregate target is missing so nobody measures
+      the union, when `--fail-under-lines` is enforced only per crate (which
+      cannot see the lines a sibling e2e crate covers), or when the bar was
+      lowered to accommodate the split.
+    files:
+      include:
+        - "**/project.json"
+        - "nx.json"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - ".github/workflows/**"

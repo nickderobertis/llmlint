@@ -1,0 +1,53 @@
+# Bash buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural checks that the shell quality gates and target shell were
+# decided; the ongoing shell judgment rules live in languages/bash.llmlint.yml.
+version: 1.1
+
+rules:
+  - name: shell_quality_gated
+    description: |
+      true when both `shellcheck` and `shfmt` run in the gate for every shell
+      project and fail on issues (no warnings backlog) — as each project's
+      `lint` and `format` targets, reached by root recipes that delegate to the
+      orchestrator. false when either is absent from `just check`/CI, is run
+      advisory-only, or covers only some projects because the root recipe
+      hand-rolls the list — so a lint or format drift never blocks a merge.
+    files:
+      include:
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - ".github/workflows/**"
+        - "nx.json"
+        - "**/project.json"
+
+  - name: target_shell_chosen
+    description: |
+      true when the target shell is an explicit decision — POSIX `sh` (no bashisms)
+      or `bash` — declared via a consistent shebang and stated in AGENTS.md, with
+      the CI matrix matching. false when scripts mix `sh` and `bash` shebangs with
+      no stated target, so portability is accidental rather than decided.
+    files:
+      include: ["**/*.sh", "bin/**", "**/AGENTS.md"]
+    relevance: the target files are shell scripts or record the shell decision
+
+  - name: shell_coverage_merged_and_gated
+    description: |
+      true when the coverage bar is still enforced with the `bats` suite spread
+      across projects: each project's `test` target writes `kcov`/`bashcov` data
+      into its declared target outputs, and a repo-level `coverage` target
+      depending on every `test` merges them (`kcov --merge`, or SimpleCov's
+      result merging) and fails below the bar — reading the merged line rate
+      itself, since `kcov` has no fail-under flag. false when the projects' data
+      is merged but nothing thresholds it, when only one project's coverage is
+      measured, or when the bar was dropped rather than documented in AGENTS.md
+      with a reason and still enforced at the lower value.
+    files:
+      include:
+        - "**/project.json"
+        - "nx.json"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "**/AGENTS.md"
+        - ".github/workflows/**"

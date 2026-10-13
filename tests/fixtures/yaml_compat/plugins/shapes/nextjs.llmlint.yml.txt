@@ -1,0 +1,25 @@
+# Next.js judge-level rules (plugin). Pairs with shapes/nextjs.md. Composed on top
+# of the react + web-app fragments (nextjs builds on react builds on web-app), so
+# the server-boundary/authorization/URL-state rules come from
+# shapes/web-app.llmlint.yml and the React architecture/hooks/XSS rules from
+# shapes/react.llmlint.yml; this adds only the Next.js-specific
+# server-action/route-handler validation judgment. The one-time production-build
+# check is buildout-only (buildout/shapes/nextjs...).
+version: 1
+
+rules:
+  - name: server_input_validated_with_schema
+    description: |
+      true when every Route Handler and Server Action in the target files validates
+      its input (request body, form data, search params) with a runtime schema (e.g.
+      Zod) before using it. false when a handler or action trusts `unknown`/`any`
+      input from the request directly, so malformed or hostile input reaches the
+      server logic unchecked.
+    files:
+      include:
+        - "**/route.ts"
+        - "**/route.tsx"
+        - "**/actions.ts"
+        - "**/actions.tsx"
+        - "**/*.action.ts"
+    relevance: the target files define a Next.js Route Handler or Server Action

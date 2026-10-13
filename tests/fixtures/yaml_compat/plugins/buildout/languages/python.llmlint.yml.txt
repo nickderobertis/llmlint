@@ -1,0 +1,59 @@
+# Python buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural checks that the command surface and config were wired the
+# uv-native way; the ongoing Python judgment rules live in languages/python.llmlint.yml.
+version: 1.1
+
+rules:
+  - name: command_surface_wired_uv
+    description: |
+      true when the root recipes delegate to the orchestrator (`nx affected` /
+      `nx run-many`) and the projects' targets map the standard work to the
+      uv-native commands: `bootstrap` -> `uv sync` at the workspace root,
+      `check` -> the `format`/`lint`/`typecheck`/`test` targets running `ruff
+      format --check` + `ruff check` + the type checker (`ty`) + `pytest` with
+      coverage, and `upgrade` -> `uv lock --upgrade`. false when a mapping is
+      missing, a recipe hand-rolls a per-project loop instead of delegating, or
+      any of it bypasses uv (bare `pip`, `python -m venv`, a hand-rolled
+      virtualenv).
+    files:
+      include:
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "nx.json"
+        - "**/project.json"
+
+  - name: pyproject_single_source_of_config
+    description: |
+      true when each project's metadata and tool config live in that project's
+      `pyproject.toml` alone. false when a committed `setup.py`, `setup.cfg`, or
+      `requirements*.txt` duplicates dependencies or tool config that a
+      `pyproject.toml` already owns (two sources of truth that drift).
+    files:
+      include:
+        - "**/pyproject.toml"
+        - "**/setup.py"
+        - "**/setup.cfg"
+        - "**/requirements*.txt"
+
+  - name: coverage_combined_across_projects
+    description: |
+      true when coverage is measured per project and enforced once over the
+      union: `[tool.coverage.run]` sets `parallel` and `relative_files`, each
+      project's `test` target runs `pytest --cov` writing to its own
+      `COVERAGE_FILE` without a per-project `--cov-fail-under`, and a repo-level
+      `coverage` target depending on every `test` runs `coverage combine` then
+      `coverage report --fail-under=<the repo's bar, 95 by default>`, wired into
+      `just check`. false when the aggregate target is missing so nobody measures
+      the union, when the threshold is enforced only per project (which cannot
+      see the lines a sibling e2e project covers), or when the bar was lowered to
+      accommodate the split rather than the union being measured.
+    files:
+      include:
+        - "**/pyproject.toml"
+        - "**/project.json"
+        - "nx.json"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - ".coveragerc"
