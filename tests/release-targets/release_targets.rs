@@ -1351,10 +1351,38 @@ fn native_release_packages_install_and_run() {
         .find(|p| p.extension().is_some_and(|e| e == "whl"))
         .unwrap();
     let original_wheel = fs::read(&wheel).unwrap();
+    let python_version = wheel
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split('-')
+        .nth(1)
+        .unwrap();
+    let record: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&read(&temp.path().join(format!("{target}.json")))).unwrap();
+    assert_eq!(record["target"].as_str(), Some(target));
+    assert_eq!(record["version"].as_str(), Some(version));
+    assert_eq!(
+        record["wheel"].as_str(),
+        wheel.file_name().unwrap().to_str()
+    );
+
     let archive = temp
         .path()
         .join(format!("llmlint-v{version}-{target}.tar.gz"));
     let compiled = root.join(format!("target/{target}/release/llmlint"));
+    let digest = std::process::Command::new("shasum")
+        .args(["-a", "256"])
+        .arg(&compiled)
+        .output()
+        .unwrap();
+    assert!(digest.status.success());
+    let digest = String::from_utf8(digest.stdout).unwrap();
+    let hash = digest.split_whitespace().next().unwrap();
+    for key in ["binarySha256", "archiveBinarySha256", "wheelBinarySha256"] {
+        assert_eq!(record[key].as_str(), Some(hash));
+    }
     let verify = |binary: &Path| {
         std::process::Command::new("bash")
             .arg("scripts/release-verify.sh")
@@ -1364,6 +1392,7 @@ fn native_release_packages_install_and_run() {
             .arg(temp.path())
             .arg(target)
             .arg(version)
+            .arg(python_version)
             .current_dir(&root)
             .output()
             .unwrap()
@@ -1446,12 +1475,82 @@ else:
     assert!(!refusal.status.success());
     assert!(String::from_utf8_lossy(&refusal.stderr).contains("expected one wheel"));
     fs::remove_file(&duplicate).unwrap();
-    let wrong_tag = temp.path().join("llmlint-wrong-platform.whl");
+    let wrong_tag = temp
+        .path()
+        .join(format!("llmlint_cli-{python_version}-py3-none-invalid.whl"));
     fs::rename(&wheel, &wrong_tag).unwrap();
     let refusal = verify(&compiled);
     assert!(!refusal.status.success());
     assert!(String::from_utf8_lossy(&refusal.stderr).contains("wheel tag"));
     fs::rename(&wrong_tag, &wheel).unwrap();
+    let opposite_os = if target.ends_with("apple-darwin") {
+        "linux"
+    } else {
+        "macosx_11_0"
+    };
+    let arch = if target.starts_with("x86_64") {
+        "x86_64"
+    } else if target.ends_with("apple-darwin") {
+        "arm64"
+    } else {
+        "aarch64"
+    };
+    let wrong_os = temp.path().join(format!(
+        "llmlint_cli-{version}-py3-none-{opposite_os}_{arch}.whl"
+    ));
+    fs::rename(&wheel, &wrong_os).unwrap();
+    let refusal = verify(&compiled);
+    assert!(!refusal.status.success());
+    assert!(String::from_utf8_lossy(&refusal.stderr).contains("wheel tag"));
+    fs::rename(&wrong_os, &wheel).unwrap();
+
+    let platform = wheel
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .rsplit('-')
+        .next()
+        .unwrap();
+    for (filename, reason) in [
+        (
+            format!("incorrect-{python_version}-py3-none-{platform}"),
+            "distribution filename",
+        ),
+        (
+            format!("llmlint_cli-0.0.0-py3-none-{platform}"),
+            "version filename",
+        ),
+        (
+            format!("llmlint_cli-{python_version}-py2-none-{platform}"),
+            "Python/ABI tag",
+        ),
+        (
+            format!("llmlint_cli-{python_version}-py3-cp312-{platform}"),
+            "Python/ABI tag",
+        ),
+        (
+            format!("llmlint_cli-{python_version}-invalid-py3-none-{platform}"),
+            "build tag",
+        ),
+    ] {
+        let renamed = temp.path().join(filename);
+        fs::rename(&wheel, &renamed).unwrap();
+        let refused = verify(&compiled);
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(reason),
+            "{refused:?}"
+        );
+        fs::rename(&renamed, &wheel).unwrap();
+    }
+    let numbered = temp.path().join(format!(
+        "llmlint_cli-{python_version}-1-py3-none-{platform}"
+    ));
+    fs::rename(&wheel, &numbered).unwrap();
+    let accepted = verify(&compiled);
+    assert!(accepted.status.success(), "{accepted:?}");
+    fs::rename(&numbered, &wheel).unwrap();
     let invalid_format = temp.path().join("invalid-format");
     fs::write(&invalid_format, b"invalid binary format").unwrap();
     let refusal = verify(&invalid_format);
@@ -1470,6 +1569,58 @@ else:
         .unwrap();
     assert!(!unsupported.status.success());
     assert!(String::from_utf8_lossy(&unsupported.stderr).contains("unsupported target"));
+    // The backend's normalized PEP-440 spelling is distinct from the Cargo tag.
+    // This checks metadata acceptance only; the builder separately runs the CLI version check.
+    let core_version = version.split(['-', '+']).next().unwrap();
+    let normalized = format!("{core_version}rc1");
+    let prerelease = format!("{core_version}-rc.1");
+    let normalize_fixture = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(
+            r#"
+import re,sys,zipfile
+path,version=sys.argv[1:]
+with zipfile.ZipFile(path) as z:
+    entries=[(info,z.read(info.filename)) for info in z.infolist()]
+with zipfile.ZipFile(path,'w') as z:
+    for info,data in entries:
+        if info.filename.endswith('/METADATA'):
+            data=re.sub(b'^Version:.*$',('Version: '+version).encode(),data,flags=re.M)
+        z.writestr(info,data)
+"#,
+        )
+        .arg(&wheel)
+        .arg(&normalized)
+        .output()
+        .unwrap();
+    assert!(normalize_fixture.status.success());
+    let normalized_wheel = temp.path().join(format!(
+        "llmlint_cli-{normalized}-py3-none-{}",
+        wheel
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .rsplit('-')
+            .next()
+            .unwrap()
+    ));
+    fs::rename(&wheel, &normalized_wheel).unwrap();
+    let accepted = std::process::Command::new("bash")
+        .arg("scripts/release-verify.sh")
+        .arg(temp.path())
+        .arg(&archive)
+        .arg(&compiled)
+        .arg(temp.path())
+        .arg(target)
+        .arg(&prerelease)
+        .arg(&normalized)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(accepted.status.success(), "{accepted:?}");
+    fs::rename(&normalized_wheel, &wheel).unwrap();
+    fs::write(&wheel, &original_wheel).unwrap();
     let wrong_cpu = temp.path().join("wrong-cpu");
     let mut bytes = fs::read(&compiled).unwrap();
     if target.ends_with("apple-darwin") {

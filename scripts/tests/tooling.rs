@@ -1937,7 +1937,6 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
 }
 // llmlint: ignore-end[e2e_not_mocked]
 
-/// Workflow syntax lint also parses the real helper modules, without a Node project install.
 #[cfg(unix)]
 #[test]
 fn lint_workflows_checks_private_helper_syntax_without_node_dependencies() {

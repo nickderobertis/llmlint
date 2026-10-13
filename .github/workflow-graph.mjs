@@ -61,19 +61,24 @@ export function expand(matrix, context) {
   }
   return rows;
 }
-const glob = (pattern, value) => new RegExp(`^${pattern.split('**').map(s => s.split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')}$`).test(value);
+const glob = (pattern, value) => {
+  if(typeof pattern !== 'string' || !pattern || /[!+?\[\]{}()\\]/.test(pattern) || (pattern.includes('**') && pattern !== '**' && !/^[^*]*\/\*\*$/.test(pattern))) throw new Error(`unsupported Actions glob ${pattern}`);
+  return new RegExp(`^${pattern.split('**').map(s => s.split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')}$`).test(value);
+};
 export function triggered(doc, scenario) {
   const on = doc.on;
   const event = scenario.eventName;
-  if (typeof on === 'string') return on === event;
-  if (Array.isArray(on)) return on.includes(event);
+  const defaultPr = () => event !== 'pull_request' || ['opened','synchronize','reopened'].includes(scenario.event.action);
+  if (typeof on === 'string') return on === event && defaultPr();
+  if (Array.isArray(on)) return on.includes(event) && defaultPr();
   if (!Object.hasOwn(on ?? {}, event)) return false;
   const config = on[event];
   const supported = { push: ['branches','branches-ignore','tags','tags-ignore','paths','paths-ignore'], pull_request: ['branches','branches-ignore','paths','paths-ignore','types'], release: ['types'], workflow_run: ['workflows','types','branches','branches-ignore'], repository_dispatch: ['types'], workflow_dispatch: ['inputs'], schedule: [] };
   if (config && !Array.isArray(config) && (typeof config !== 'object' || Object.keys(config).some(key => !supported[event]?.includes(key)))) throw new Error(`unsupported trigger configuration for ${event}`);
-  if (!config || Array.isArray(config)) return true;
+  if (!config || Array.isArray(config)) return defaultPr();
+  if (event === 'pull_request' && !config.types && !defaultPr()) return false;
   if (config.types && !config.types.includes(scenario.event.action)) return false;
-  const branch = scenario.branch ?? 'main';
+  const branch = event === 'workflow_run' ? scenario.event.workflow_run?.head_branch ?? scenario.branch ?? 'main' : scenario.branch ?? 'main';
   if (event === 'push' && scenario.tag) return (!config.branches && !config['branches-ignore'] || !!config.tags || !!config['tags-ignore']) && (!config.tags || config.tags.some(p => glob(p, scenario.tag))) && !config['tags-ignore']?.some(p => glob(p, scenario.tag));
   if (event === 'push' && !scenario.tag && (config.tags || config['tags-ignore']) && !config.branches && !config['branches-ignore']) return false;
   if (config.branches && !config.branches.some(p => glob(p, branch))) return false;
@@ -101,14 +106,29 @@ export function graph(scenario, docs = workflows()) {
         if (names.some(n => !outcomes[n])) continue;
         progressed = true; pending.delete(id);
         const needs = Object.fromEntries(names.map(n => [n,outcomes[n]]));
-        const context = { github: { event_name: scenario.eventName, event: scenario.event, repository: 'nickderobertis/llmlint', ref: scenario.tag ? `refs/tags/${scenario.tag}` : 'refs/heads/main', ref_name: scenario.tag ?? 'main', sha: 'exact-head' }, needs, inputs, vars: { PYPI_PUBLISH: scenario.publish ? 'true' : 'false' }, matrix: {} };
+        const context = { github: { event_name: scenario.eventName, event: scenario.event, repository: 'nickderobertis/llmlint', ref: scenario.tag ? `refs/tags/${scenario.tag}` : 'refs/heads/main', ref_name: scenario.tag ?? 'main', sha: 'exact-head' }, needs, inputs, vars: { PYPI_PUBLISH: (scenario.publishPypi ?? scenario.publish) ? 'true' : 'false' }, matrix: {} };
         const condition = job.if ?? 'success()';
         const enabled = !!expression(condition, context) && (/\b(always|success|failure|cancelled)\(/.test(condition) || expression('success()', context));
         const result = enabled ? 'success' : 'skipped';
         let outputs = {};
         if (id === 'policy' && enabled) outputs = scenario.policyOutputs ?? policyOutputs(doc, scenario, scenario.cwd);
-        if (id === 'guard' && enabled) outputs = stepOutputs(job.steps.find(s => s.id === 'check'), { TOKEN: scenario.publish ? 'fixture-secret' : '' }, root);
+        if (id === 'guard' && enabled) {
+          const step=job.steps.find(s => s.id === 'check');
+          const binding=workflow==='release.yml'?'${{ secrets.CARGO_REGISTRY_TOKEN }}':workflow==='release-plz.yml'?'${{ secrets.RELEASE_PLZ_TOKEN }}':null;
+          if(!binding || step?.env?.TOKEN !== binding) throw new Error('unsupported release guard secret binding');
+          const present=workflow==='release-plz.yml'?(scenario.releaseAutomation??true):(scenario.publishCrate??scenario.publish);
+          outputs=stepOutputs(step, { TOKEN: present ? 'fixture-secret' : '' }, root);
+        }
         if (id === 'arches' && enabled) outputs = archesOutputs(job.steps.find(s => s.id === 'read'), inputs, root);
+        if (enabled && ['policy','guard','arches'].includes(id)) {
+          const stepId=id==='policy'?'classify':id==='guard'?'check':'read';
+          const stepContext={...context,steps:{[stepId]:{outputs}}};
+          outputs=Object.fromEntries(Object.entries(job.outputs??{}).map(([name,value])=>{
+            const resolved=resolve(value,stepContext);
+            if(typeof resolved!=='string'||!resolved)throw new Error(`${workflow}/${id}: unresolved job output ${name}`);
+            return [name,resolved];
+          }));
+        }
         // Skipped arches has no output, but skipped dependants do not request runners.
         if (id === 'arches' && !enabled) outputs.matrix = '[]';
         outcomes[id] = { result, outputs };

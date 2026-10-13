@@ -17,3 +17,14 @@ test('production architecture output step preserves shell metacharacters as data
     assert.equal(existsSync(sentinel),false);
   } finally {rmSync(dir,{recursive:true,force:true});}
 });
+test('workflow output adapters reject changed production environment bindings',async()=>{
+  const { policyOutputs }=await import('../workflow-outputs.mjs');
+  const { workflows, graph }=await import('../workflow-graph.mjs');
+  const docs=workflows();
+  const changed=structuredClone(docs['ci.yml']);
+  changed.jobs.policy.steps.find(s=>s.id==='classify').env.BASE='HEAD';
+  assert.throws(()=>policyOutputs(changed,{event:{},eventName:'push'}),/unsupported CI classifier environment/);
+  const release=structuredClone(docs['release.yml']);
+  release.jobs.guard.steps.find(s=>s.id==='check').env.TOKEN='';
+  assert.throws(()=>graph({id:'bad-binding',eventName:'release',event:{action:'published'},paths:[]},{'release.yml':release}),/unsupported release guard secret binding/);
+});

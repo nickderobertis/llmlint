@@ -24,6 +24,8 @@ export function policyOutputs(doc, scenario, cwd = fileURLToPath(new URL('../',i
     }
     const step=doc.jobs.policy.steps.find(s=>s.id==='classify');
     if(!step)throw new Error('CI policy lacks classify step');
+    const bindings={BASE:'${{ github.event.pull_request.base.sha }}',HEAD:'${{ github.event.pull_request.head.sha }}',DIAGNOSTIC:'${{ inputs.macos_diagnostic }}'};
+    if(Object.keys(step.env??{}).length!==Object.keys(bindings).length||Object.entries(bindings).some(([key,value])=>step.env?.[key]!==value)) throw new Error('unsupported CI classifier environment bindings; reconcile the production event adapter');
     return stepOutputs(step,{GITHUB_EVENT_PATH:event,GITHUB_EVENT_NAME:scenario.eventName,BASE:scenario.base??'HEAD',HEAD:scenario.head??'HEAD',DIAGNOSTIC:String(scenario.diagnostic??false)},cwd);
   } finally {rmSync(dir,{recursive:true,force:true});}
 }

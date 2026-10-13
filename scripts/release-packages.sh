@@ -28,7 +28,23 @@ for target in "$@"; do
   esac
   wheel_dir="$(mktemp -d)" || fail 'cannot create wheel scratch directory'
   stage="$(mktemp -d)" || fail 'cannot create package staging directory'
-  # Preserve tool diagnostics while the shared EXIT path removes staging data.
+  # The backend owns Cargo-to-PEP-440 normalization, including prerelease spelling.
+  maturin pep517 write-dist-info --locked --target "$target" --metadata-directory "$stage/metadata" >"$stage/metadata.log" 2>&1 || {
+    cat "$stage/metadata.log" >&2
+    fail "cannot prepare expected Python metadata for $target"
+  }
+  python_version="$(
+    python3 - "$stage/metadata" <<'PYVERSION'
+import email, glob, pathlib, sys
+files = glob.glob(sys.argv[1] + '/*.dist-info/METADATA')
+if len(files) != 1:
+    sys.exit('expected one backend METADATA file')
+version = email.message_from_bytes(pathlib.Path(files[0]).read_bytes())['Version']
+if not version or any(c.isspace() for c in version):
+    sys.exit('backend emitted no single-line Python version')
+print(version)
+PYVERSION
+  )" || fail 'cannot read the backend Python version'
   maturin build --release --locked --target "$target" --out "$wheel_dir" "${compatibility[@]}" >"$stage/build.log" 2>&1 || {
     cat "$stage/build.log" >&2
     fail "maturin build failed for $target"
@@ -37,7 +53,7 @@ for target in "$@"; do
   archive="$out/llmlint-$GITHUB_REF_NAME-$target.tar.gz"
   tar -czf "$archive" -C "$stage" llmlint README.md LICENSE CHANGELOG.md || fail "cannot pack $archive"
   (cd "$out" && shasum -a 256 "$(basename "$archive")" >"$(basename "$archive").sha256") || fail "cannot checksum $archive"
-  bash scripts/release-verify.sh "$wheel_dir" "$archive" "$stage/llmlint" "$out" "$target" "$version" || fail "artifact validation failed for $target"
+  bash scripts/release-verify.sh "$wheel_dir" "$archive" "$stage/llmlint" "$out" "$target" "$version" "$python_version" || fail "artifact validation failed for $target"
   wheel=("$wheel_dir"/*.whl)
   platform="$(basename "${wheel[0]}" .whl)"
   platform="${platform##*-}"

@@ -22,13 +22,16 @@ test('actual workflow call graph, matrices, event fan-out and required names rec
       if(diff==='version-only') { paths=['Cargo.toml','Cargo.lock','CHANGELOG.md']; writeFileSync(join(h.dir,'Cargo.toml'),h.manifest.replace('version = "1.0.0"','version = "1.0.1"'));writeFileSync(join(h.dir,'Cargo.lock'),h.lock.replace('version = "1.0.0"','version = "1.0.1"')); }
       if(diff==='dependency') { paths=['Cargo.toml']; writeFileSync(join(h.dir,'Cargo.toml'),h.manifest.replace('llmlint = "2.0.0"','llmlint = "2.0.1"')); }
       h.git('add','.');h.git('commit','-m',diff);
-      for(const fork of [false,true]) for(const [id,eventName,action] of classes) for(const publish of [false,true]) {
+      for(const fork of [false,true]) for(const [id,eventName,action] of classes) for(const publishCrate of [false,true]) for(const publishPypi of [false,true]) {
         const payload = event(fork,diff==='source'?'feature/change':'release-plz-2026'); payload.action=action;
         payload.workflow_run={name:'Release',head_sha:'exact-head',conclusion:'success'};
         const decision = invoke(h,payload,eventName);
-        const scenario = {id:`${id}/${diff}/${fork?'fork':'same'}/${publish?'publish':'no-publish'}`,class:id,eventName,event:payload,paths,diff,fork,publish,diagnostic:id==='manual-opt-in',tag:id==='release-tag'||id==='release-published'?'v1.0.1':undefined,...decision};
+        const scenario = {id:`${id}/${diff}/${fork?'fork':'same'}/crate-${publishCrate}/pypi-${publishPypi}`,class:id,eventName,event:payload,paths,diff,fork,publishCrate,publishPypi,diagnostic:id==='manual-opt-in',tag:id==='release-tag'||id==='release-published'?'v1.0.1':undefined,...decision};
         scenario.base=h.base;scenario.head='HEAD';scenario.cwd=h.dir;scenario.policyOutputs=policyOutputs(docs['ci.yml'],scenario,h.dir);
         const rows = graph(scenario,docs); scenarios.push({...scenario,rows});
+        if(eventName==='release') {
+          for(const [job,active] of [['publish-crate',publishCrate],['verify-crate',publishCrate],['publish-pypi',publishPypi],['verify-pypi',publishPypi]]) assert.equal(rows.find(r=>r.workflow==='release.yml'&&r.job===job).result,active?'success':'skipped',`${scenario.id}: ${job}`);
+        }
         if(eventName==='pull_request') {
           for(const ctx of contexts) assert.equal(rows.filter(r=>r.name===ctx).length,1,`${scenario.id}: missing/duplicate ${ctx}`);
           assert.equal(rows.find(r=>r.job==='macos').result,decision.macosRequired?'success':'skipped');
@@ -44,18 +47,32 @@ test('actual workflow call graph, matrices, event fan-out and required names rec
   }
   // Follow the complete single-push chain, including downstream completions.
   const lifecycles = [];
-  for(const fork of [false,true]) for(const publish of [false,true]) {
-    const pick=(cls,diff,ownership=fork)=>scenarios.find(s=>s.class===cls&&s.diff===diff&&s.fork===ownership&&s.publish===publish);
+  const derived = [];
+  for(const fork of [false,true]) for(const publishCrate of [false,true]) for(const publishPypi of [false,true]) {
+    const pick=(cls,diff,ownership=fork)=>scenarios.find(s=>s.class===cls&&s.diff===diff&&s.fork===ownership&&s.publishCrate===publishCrate&&s.publishPypi===publishPypi);
     const chain=[pick('pr-synchronize','source'),pick('base-push','source'),pick('pr-opened','version-only',false),pick('release-pr-merge','version-only',false),pick('release-tag','version-only',false),pick('release-published','version-only',false)];
-    const downstream=chain.flatMap(s=>[...new Set(s.rows.map(r=>r.workflow))].map(workflow=>{
-      const doc=docs[workflow];const scenario={...s,id:`${s.id}/completed/${workflow}`,class:'downstream',eventName:'workflow_run',policyOutputs:undefined,cwd:undefined,event:{workflow_run:{name:doc.name,head_sha:'exact-head',conclusion:'success'},action:'completed'}};
+    // Merge closures are derived fan-out, in addition to the twelve explicit event classes.
+    const closures=[chain[0],chain[2]].map(s=>{
+      const scenario={...s,id:`${s.id}/merged-closure`,event:{...s.event,action:'closed'},policyOutputs:undefined,cwd:undefined};
       return {...scenario,rows:graph(scenario,docs)};
-    }));
-    const runs=[...chain,...downstream].flatMap(s=>Object.keys(docs).map(workflow=>({event:s.id,workflow,jobs:s.rows.filter(r=>r.workflow===workflow&&r.macos)}))).filter(r=>r.jobs.length);
-    lifecycles.push({fork,publish,runs,macosRuns:runs.length});
+    });
+    const downstream=[];
+    function completed(s, ancestors=[]) {
+      for(const workflow of [...new Set(s.rows.map(r=>r.workflow))]) {
+        if(ancestors.includes(workflow))throw new Error(`cyclic workflow_run fan-out: ${[...ancestors,workflow].join(' -> ')}`);
+        const scenario={...s,id:`${s.id}/completed/${workflow}`,class:'downstream',eventName:'workflow_run',tag:undefined,policyOutputs:undefined,cwd:undefined,event:{workflow_run:{name:docs[workflow].name,head_sha:s.head??'exact-head',head_branch:s.tag??s.branch??'main',conclusion:'success'},action:'completed'}};
+        const next={...scenario,rows:graph(scenario,docs)};
+        downstream.push(next);
+        if(next.rows.length)completed(next,[...ancestors,workflow]);
+      }
+    }
+    [...chain,...closures].forEach(s=>completed(s));
+    derived.push(...closures,...downstream);
+    const runs=[...chain,...closures,...downstream].flatMap(s=>Object.keys(docs).map(workflow=>({event:s.id,workflow,jobs:s.rows.filter(r=>r.workflow===workflow&&r.macos)}))).filter(r=>r.jobs.length);
+    lifecycles.push({fork,publishCrate,publishPypi,runs,macosRuns:runs.length});
   }
-  const perRun=scenarios.flatMap(s=>Object.keys(docs).map(workflow=>({event:s.id,workflow,jobs:s.rows.filter(r=>r.workflow===workflow&&r.macos)})));
-  const telemetry={schemaVersion:1,sourceDigest:digest(),scenarios,lifecycles,perRun,jobsPerRun:Math.max(...perRun.map(r=>r.jobs.length)),runsPerChange:Math.max(...lifecycles.map(l=>l.macosRuns))};
+  const perRun=[...scenarios,...derived].flatMap(s=>Object.keys(docs).map(workflow=>({event:s.id,workflow,jobs:s.rows.filter(r=>r.workflow===workflow&&r.macos)})));
+  const telemetry={schemaVersion:1,sourceDigest:digest(),scenarios,derived,lifecycles,perRun,jobsPerRun:Math.max(...perRun.map(r=>r.jobs.length)),runsPerChange:Math.max(...lifecycles.map(l=>l.macosRuns))};
   mkdirSync(new URL('.github/.telemetry/',root),{recursive:true});writeFileSync(new URL('.github/.telemetry/macos-policy.json',root),JSON.stringify(telemetry,null,2));
 });
 test('unsupported runners, reusable calls and matrix expressions fail explicitly',()=>{
@@ -70,7 +87,7 @@ test('forged, mixed, unknown-input and ordinary fork PRs route through the actua
     for(const payload of [event(),event(true),event(false,'feature/forged'),null]) {
       const decision=invoke(h,payload);
       assert.equal(decision.macosRequired,true);
-      const rows=graph({id:'untrusted-pr',eventName:'pull_request',event:payload??{},paths:['Cargo.toml','source.rs'],base:h.base,head:'HEAD',cwd:h.dir,...decision});
+      const rows=graph({id:'untrusted-pr',eventName:'pull_request',event:payload??{action:'synchronize'},paths:['Cargo.toml','source.rs'],base:h.base,head:'HEAD',cwd:h.dir,...decision});
       assert.equal(rows.find(r=>r.job==='macos').result,'success');
     }
   } finally {h.close();}
@@ -111,4 +128,14 @@ test('unsupported triggers fail and dispatch/tag filters are honored',()=>{
   assert.equal(graph({...s,tag:undefined},{'filtered.yml':{...job,on:{push:{tags:['v*']}}}}).length,0);
   assert.equal(graph({...s,eventName:'repository_dispatch',event:{action:'wrong'}},{'filtered.yml':{...job,on:{repository_dispatch:{types:['smoke']}}}}).length,0);
   assert.throws(()=>graph(s,{'unknown.yml':{...job,on:{push:{unknown_filter:true}}}}),/unsupported trigger/);
+});
+test('merge closures use real default PR types and forwarded visual-docs cleanup only',()=>{
+  const rows=graph({id:'merge-closure',eventName:'pull_request',event:{...event(),action:'closed'},paths:['src/lib.rs']});
+  assert.ok(rows.every(r=>r.workflow!=='ci.yml'));
+  assert.ok(rows.some(r=>r.workflow==='visual-docs.yml'&&r.job.endsWith('cleanup-preview')));
+  assert.ok(rows.every(r=>!r.macos));
+});
+test('unsupported Actions globs refuse measurement instead of treating them as literals',()=>{
+  const scenario={id:'unsupported-glob',eventName:'push',event:{},paths:['src/lib.rs']};
+  for(const pattern of ['!src/**','src/?oo.rs','src/[ab].rs','**/file.rs','src/{a,b}.rs']) assert.throws(()=>graph(scenario,{'unsupported.yml':{on:{push:{paths:[pattern]}},jobs:{job:{'runs-on':'macos-latest'}}}}),/unsupported Actions glob/);
 });
