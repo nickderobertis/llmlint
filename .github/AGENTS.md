@@ -25,3 +25,20 @@ the branch protection that governance applies. A job condition is allowed on a
 contract job only when it is true on every PR (`PR_TRUE_CONDITIONS`). screencomp's
 inner `report` job name is known only for the pinned `VISUAL_DOCS_REUSABLE`, so a
 pin bump fails until that name is re-confirmed.
+
+## Mac scheduling proofs
+
+`github-workflows` is private tooling, installed from `.github/bun.lock`; it ships
+nothing. Its uncached `test` reads the actual workflow graph, resolves the pinned
+screencomp reusable workflow from `tests/reusable/`, and records ignored telemetry.
+The budgets reporter rejects a different source digest and never reruns scenarios.
+Repository-specific output adapters (policy and screencomp arches) are explicit;
+an unrecognized runner expression or reusable call fails the proof.
+
+`macos-policy.mjs classify` is the semantic Mac routing authority. A same-repository
+`release-plz-` head with only parsed package-version and changelog changes can omit
+Mac coverage, regardless of author. Forks, dependency edits, unreadable PRs and
+unknown events require it; known non-PR events omit it. The two protected Mac
+contexts are Linux carriers: `always()` makes them report after prerequisite
+failures, and `macos-result.mjs` validates every required outcome. Their success
+message distinguishes executed proofs from authorized omissions.

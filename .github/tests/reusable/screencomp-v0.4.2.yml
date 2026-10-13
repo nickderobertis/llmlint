@@ -1,3 +1,4 @@
+# llmlint: ignore-file[comments_earn_their_place] The remainder is a verbatim upstream workflow at v0.4.2, reconciled to its downloaded SHA-256 by the graph tests; editing upstream comments would corrupt that provenance fixture.
 # screencomp reusable visual-docs workflow.
 #
 # Call it from a consumer repo and own only the capture; everything downstream —

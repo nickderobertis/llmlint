@@ -129,6 +129,7 @@ jobs:
           cp "${{ steps.attest.outputs.bundle-path }}" "$bundle"
           gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
 
+  # macos-latest is Apple Silicon; cross-compile Intel and execute it with Rosetta.
   darwin:
     needs: verdict
     runs-on: macos-latest

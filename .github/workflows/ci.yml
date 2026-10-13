@@ -122,6 +122,7 @@ jobs:
           echo "macosRequired=$required" >> "$GITHUB_OUTPUT"
           echo "reason=$(jq -r .reason <<<"$decision")" >> "$GITHUB_OUTPUT"
 
+  # The single PR Mac lane proves cross, end-user install, and authenticated live usage sequentially.
   macos:
     needs: policy
     if: needs.policy.outputs.macosRequired == 'true'
@@ -191,13 +192,16 @@ jobs:
           npm install -g @anthropic-ai/claude-code
           claude --version
       - name: Live e2e against the real claude-code harness
+        # llmlint: ignore[live_tier_compiles_and_requires_credential] Preserve the original live workflow's fork omission because forks receive no auth secrets; protected cross/install contexts still require their real Mac assertions, and do not claim a live proof ran. Authenticated live runs remain hard failures on missing credentials.
         if: github.repository == 'nickderobertis/llmlint' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_E2E_MODEL: ${{ vars.CLAUDE_E2E_MODEL }}
+        # llmlint: ignore[external_service_suite_stays_out_of_the_affected_tier] The approved scheduling contract requires the Mac cross, install and live proofs in one PR job; Linux and Windows live proofs retain their independent workflow. A failed Mac proof must fail both protected carriers.
         run: just live-claude
 
+  # Linux carriers keep protected contexts present, including an authorized release-only omission.
   cross-macos:
     name: cross (macos-latest)
     needs: [policy, gate, macos]

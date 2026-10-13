@@ -1248,3 +1248,236 @@ mod probe {
         }
     }
 }
+
+/// Both Darwin products remain declared even though their builder now shares a runner.
+#[test]
+fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
+    let root = repo_root();
+    let doc: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&read(&root.join(".github/workflows/release.yml"))).unwrap();
+    let jobs = &doc["jobs"];
+    assert_eq!(jobs["darwin"]["runs-on"].as_str(), Some("macos-latest"));
+    let steps = jobs["darwin"]["steps"].as_sequence().unwrap();
+    // This Linux tier cannot execute Darwin/Rosetta. The real native builder journey
+    // below proves the shared pack/install commands; this artifact contract reconciles
+    // both non-native targets, and the declared Mac job executes both installed products.
+    let wrapper = read(&root.join("scripts/release-darwin.sh"));
+    let invocation = wrapper
+        .lines()
+        .find(|line| line.starts_with("bash scripts/release-packages.sh"))
+        .unwrap();
+    let targets: Vec<_> = invocation.split_whitespace().rev().take(2).collect();
+    assert_eq!(targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+    assert!(
+        steps
+            .iter()
+            .any(|s| s["with"]["targets"].as_str()
+                == Some("x86_64-apple-darwin,aarch64-apple-darwin"))
+    );
+    assert!(steps
+        .iter()
+        .any(|s| s["run"].as_str() == Some("bash scripts/release-darwin.sh dist")));
+    assert!(steps
+        .iter()
+        .any(|s| s["with"]["name"].as_str() == Some("darwin-archives")));
+    assert!(steps
+        .iter()
+        .any(|s| s["with"]["name"].as_str() == Some("wheels-darwin")));
+    assert_eq!(
+        jobs["upload-darwin"]["runs-on"].as_str(),
+        Some("ubuntu-latest")
+    );
+    assert_eq!(jobs["upload-darwin"]["needs"].as_str(), Some("darwin"));
+    assert!(jobs["publish-pypi"]["needs"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .any(|n| n.as_str() == Some("darwin")));
+    for job in ["upload", "build-wheels"] {
+        let targets: std::collections::BTreeSet<_> = jobs[job]["strategy"]["matrix"]["include"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|row| row["target"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            targets,
+            std::collections::BTreeSet::from([
+                "x86_64-unknown-linux-gnu",
+                "aarch64-unknown-linux-gnu",
+                "x86_64-pc-windows-msvc"
+            ])
+        );
+    }
+}
+
+/// On-demand production packaging journey: real compiler, maturin, pip and installed CLI.
+#[test]
+#[ignore = "native release builder; run the release-targets packaging target"]
+fn native_release_packages_install_and_run() {
+    let root = repo_root();
+    let temp = tempfile::tempdir().unwrap();
+    let manifest: toml::Value = toml::from_str(&read(&root.join("Cargo.toml"))).unwrap();
+    let version = manifest["package"]["version"].as_str().unwrap();
+    let host = std::process::Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .unwrap();
+    assert!(host.status.success());
+    let host = String::from_utf8(host.stdout).unwrap();
+    let target = host.lines().find_map(|l| l.strip_prefix("host: ")).unwrap();
+    let output = std::process::Command::new("bash")
+        .arg("scripts/release-packages.sh")
+        .arg(temp.path())
+        .arg(target)
+        .current_dir(&root)
+        .env("GITHUB_REF_NAME", format!("v{version}"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(temp
+        .path()
+        .join(format!("llmlint-v{version}-{target}.tar.gz.sha256"))
+        .exists());
+    assert!(temp.path().join(format!("{target}.json")).exists());
+    let wheel = fs::read_dir(temp.path())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "whl"))
+        .unwrap();
+    let original_wheel = fs::read(&wheel).unwrap();
+    let archive = temp
+        .path()
+        .join(format!("llmlint-v{version}-{target}.tar.gz"));
+    let compiled = root.join(format!("target/{target}/release/llmlint"));
+    let verify = |binary: &Path| {
+        std::process::Command::new("bash")
+            .arg("scripts/release-verify.sh")
+            .arg(temp.path())
+            .arg(&archive)
+            .arg(binary)
+            .arg(temp.path())
+            .arg(target)
+            .arg(version)
+            .current_dir(&root)
+            .output()
+            .unwrap()
+    };
+    let original_archive = fs::read(&archive).unwrap();
+    for (kind, expected) in [
+        ("metadata", "wrong distribution name"),
+        ("payload", "binary reuse mismatch"),
+        ("version", "wrong distribution version"),
+        ("python", "Python compatibility changed"),
+        ("dependencies", "runtime dependencies differ"),
+        ("missing-script", "exactly one llmlint"),
+        ("multiple-scripts", "exactly one llmlint"),
+        ("archive-contents", "wrong archive contents"),
+        ("archive-payload", "binary reuse mismatch"),
+        ("archive-mode", "executable regular file"),
+    ] {
+        let mutation = std::process::Command::new("python3").arg("-c").arg(r#"
+import io,re,sys,tarfile,zipfile
+path,archive,kind=sys.argv[1:]
+if kind.startswith('archive-'):
+    with tarfile.open(archive) as t:
+        entries=[(info,t.extractfile(info).read()) for info in t.getmembers()]
+    with tarfile.open(archive,'w:gz') as t:
+        for info,data in entries:
+            if kind=='archive-contents' and info.name=='LICENSE': continue
+            if kind=='archive-payload' and info.name=='llmlint': data+=b'corrupt'
+            if kind=='archive-mode' and info.name=='llmlint': info.mode=0o644
+            info.size=len(data)
+            t.addfile(info,io.BytesIO(data))
+else:
+    with zipfile.ZipFile(path) as z:
+        entries=[(info,z.read(info.filename)) for info in z.infolist()]
+    with zipfile.ZipFile(path,'w') as z:
+        for info,data in entries:
+            if info.filename.endswith('/METADATA'):
+                fields={'metadata':('Name','incorrect-package'),'version':('Version','0.0.0-corrupt'),'python':('Requires-Python','<2.7'),'dependencies':('Requires-Dist','incorrect-dependency>=99')}
+                if kind in fields:
+                    key,value=fields[kind]
+                    data=re.sub(('^'+key+':.*$').encode(),(key+': '+value).encode(),data,flags=re.M)
+            if info.filename.endswith('.data/scripts/llmlint'):
+                if kind=='missing-script': continue
+                if kind=='payload': data+=b'corrupt'
+                if kind=='multiple-scripts': z.writestr('duplicate.data/scripts/llmlint',data)
+            z.writestr(info,data)
+"#).arg(&wheel).arg(&archive).arg(kind).output().unwrap();
+        assert!(mutation.status.success(), "{mutation:?}");
+        let refusal = verify(&compiled);
+        assert!(!refusal.status.success(), "accepted corrupted {kind}");
+        assert!(
+            String::from_utf8_lossy(&refusal.stderr).contains(expected),
+            "{refusal:?}"
+        );
+        fs::write(&wheel, &original_wheel).unwrap();
+        fs::write(&archive, &original_archive).unwrap();
+    }
+    let hidden_wheel = wheel.with_extension("hidden");
+    fs::rename(&wheel, &hidden_wheel).unwrap();
+    let refusal = verify(&compiled);
+    assert!(!refusal.status.success());
+    assert!(String::from_utf8_lossy(&refusal.stderr).contains("expected one wheel"));
+    fs::rename(&hidden_wheel, &wheel).unwrap();
+    let duplicate = temp.path().join("duplicate.whl");
+    fs::copy(&wheel, &duplicate).unwrap();
+    let refusal = verify(&compiled);
+    assert!(!refusal.status.success());
+    assert!(String::from_utf8_lossy(&refusal.stderr).contains("expected one wheel"));
+    fs::remove_file(&duplicate).unwrap();
+    let wrong_tag = temp.path().join("llmlint-wrong-platform.whl");
+    fs::rename(&wheel, &wrong_tag).unwrap();
+    let refusal = verify(&compiled);
+    assert!(!refusal.status.success());
+    assert!(String::from_utf8_lossy(&refusal.stderr).contains("wheel tag"));
+    fs::rename(&wrong_tag, &wheel).unwrap();
+    let invalid_format = temp.path().join("invalid-format");
+    fs::write(&invalid_format, b"invalid binary format").unwrap();
+    let refusal = verify(&invalid_format);
+    assert!(!refusal.status.success());
+    assert!(String::from_utf8_lossy(&refusal.stderr).contains("not a"));
+    let unsupported = std::process::Command::new("bash")
+        .arg("scripts/release-verify.sh")
+        .arg(temp.path())
+        .arg(&archive)
+        .arg(&compiled)
+        .arg(temp.path())
+        .arg("../unsupported-apple-darwin")
+        .arg(version)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(!unsupported.status.success());
+    assert!(String::from_utf8_lossy(&unsupported.stderr).contains("unsupported target"));
+    let wrong_cpu = temp.path().join("wrong-cpu");
+    let mut bytes = fs::read(&compiled).unwrap();
+    if target.ends_with("apple-darwin") {
+        bytes[4..8].copy_from_slice(&0u32.to_le_bytes());
+    } else {
+        bytes[18..20].copy_from_slice(&0u16.to_le_bytes());
+    }
+    fs::write(&wrong_cpu, bytes).unwrap();
+    let refusal = verify(&wrong_cpu);
+    assert!(!refusal.status.success());
+    assert!(
+        String::from_utf8_lossy(&refusal.stderr).contains("CPU"),
+        "{refusal:?}"
+    );
+    let failure = std::process::Command::new("bash")
+        .arg("scripts/release-packages.sh")
+        .arg(temp.path())
+        .arg(target)
+        .current_dir(&root)
+        .env("GITHUB_REF_NAME", "v0.0.0-wrong")
+        .output()
+        .unwrap();
+    assert!(!failure.status.success());
+    assert!(String::from_utf8_lossy(&failure.stderr).contains("tag does not match"));
+}

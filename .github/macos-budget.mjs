@@ -1,0 +1,18 @@
+import { readFileSync } from 'node:fs';
+import { report } from '@onebudgetspec/sdk';
+import { digest } from './workflow-graph.mjs';
+const args = process.argv.slice(2);
+if (args.length !== 4 || args[0] !== '--metric' || args[2] !== '--telemetry') throw new Error('usage: --metric jobs-per-run|runs-per-change --telemetry PATH');
+const metric = args[1];
+const path = args[3];
+if (!['jobs-per-run','runs-per-change'].includes(metric) || !path) throw new Error('usage: --metric jobs-per-run|runs-per-change --telemetry PATH');
+const telemetry = JSON.parse(readFileSync(path,'utf8'));
+if (telemetry.schemaVersion !== 1 || telemetry.sourceDigest !== digest()) throw new Error('missing or stale Mac telemetry: run github-workflows:test');
+for (const key of ['jobsPerRun','runsPerChange']) if (!Number.isInteger(telemetry[key]) || telemetry[key] < 0) throw new Error(`invalid telemetry ${key}; rerun github-workflows:test`);
+const validRun = row => row && typeof row.workflow === 'string' && typeof row.event === 'string' && Array.isArray(row.jobs) && row.jobs.every(job => job && typeof job.job === 'string' && typeof job.runner === 'string' && job.macos === true && Array.isArray(job.targets));
+if (!Array.isArray(telemetry.perRun) || !telemetry.perRun.length || !telemetry.perRun.every(validRun) || !Array.isArray(telemetry.lifecycles) || !telemetry.lifecycles.length || !telemetry.lifecycles.every(l => Array.isArray(l.runs) && l.runs.every(validRun) && Number.isInteger(l.macosRuns) && l.macosRuns === l.runs.length)) throw new Error('invalid telemetry run collections; rerun github-workflows:test');
+if (telemetry.jobsPerRun !== Math.max(...telemetry.perRun.map(r => r.jobs.length)) || telemetry.runsPerChange !== Math.max(...telemetry.lifecycles.map(l => l.macosRuns))) throw new Error('inconsistent telemetry metrics; rerun github-workflows:test');
+const value = metric === 'jobs-per-run' ? telemetry.jobsPerRun : telemetry.runsPerChange;
+const detail = JSON.stringify(metric === 'jobs-per-run' ? telemetry.perRun.filter(r=>r.jobs.length) : telemetry.lifecycles);
+report(value, detail);
+console.log(JSON.stringify({metric,value}));

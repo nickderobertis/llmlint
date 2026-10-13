@@ -189,6 +189,9 @@ fn job_contexts(id: &str, job: &serde_yaml_ng::Value) -> Vec<String> {
 fn pr_job_gap(jobs: &serde_yaml_ng::Mapping, id: &str) -> Option<String> {
     let job = &jobs[id];
     if let Some(cond) = job["if"].as_str() {
+        if cond.trim() == "always()" {
+            return None;
+        }
         if !PR_TRUE_CONDITIONS.contains(&cond.trim()) {
             return Some(format!("job {id} is conditioned on `{cond}`"));
         }

@@ -1936,3 +1936,44 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
     assert!(p.path().join(".dev/setup.stamp").exists());
 }
 // llmlint: ignore-end[e2e_not_mocked]
+
+/// Workflow syntax lint also parses the real helper modules, without a Node project install.
+#[cfg(unix)]
+#[test]
+fn lint_workflows_checks_private_helper_syntax_without_node_dependencies() {
+    let p = Project::new();
+    for path in [
+        "scripts/lint-workflows.sh",
+        "scripts/setup-lib.sh",
+        "justfile",
+    ] {
+        p.write(path, &fs::read_to_string(repo_root().join(path)).unwrap());
+    }
+    let bin = p.path().join("bin");
+    write_exe(
+        &bin.join("actionlint"),
+        &format!(
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = -version ]; then echo '{}'; fi\n",
+            actionlint_version()
+        ),
+    );
+    let run = || {
+        std::process::Command::new("bash")
+            .arg(p.path().join("scripts/lint-workflows.sh"))
+            .env("HOME", p.path())
+            .env(
+                "PATH",
+                format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+            )
+            .output()
+            .unwrap()
+    };
+    p.write(".github/policy.mjs", "export const valid = true;\n");
+    let good = run();
+    assert!(good.status.success(), "{good:?}");
+    assert!(!p.path().join("node_modules").exists());
+    p.write(".github/policy.mjs", "export const broken = ;\n");
+    let bad = run();
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("policy.mjs"));
+}
