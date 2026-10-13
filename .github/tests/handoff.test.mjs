@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { workflows } from '../workflow-graph.mjs';
 // Forge artifact downloads and the OIDC attestation action supply these bytes.
-// This journey proves transport/handoff; release-targets:packaging proves package validity.
+// This journey proves transport/handoff; release-packaging:packaging proves package validity.
 test('actual Darwin bundle staging and Linux release upload preserve every artifact byte',()=>{
   const dir=mkdtempSync(join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR??tmpdir(),'handoff-'));
   try {

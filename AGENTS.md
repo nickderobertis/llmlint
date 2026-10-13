@@ -79,6 +79,9 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   depends on the builds of `llmlint` and the fixture.
 - `release-targets` (`type:external`, `tests/release-targets/`) — the release
   declaration's offline checks (`test`) and network checks (`network`).
+- `release-packaging` (`type:external`, `tests/release-packaging/`) — the native
+  release-packaging journey (`packaging`): the release builder run with the real
+  compiler, maturin and pip, its archive and wheel installed and run.
 - `real-oneharness` (`type:external`, `tests/real-oneharness/`) — the PyPI-installed
   oneharness suite (`network`), plus its offline pin check (`test`).
 - `live` (`type:live`, `tests/live/`) — the paid live tier, plus its offline
@@ -92,6 +95,10 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   the actionlint installer and workflow lint, with their journeys.
 - `ci-workflows` (`type:tooling`, `.github/`) — the workflows, the CI routing and
   release-verdict script, and their drift gates; actionlint is its `lint-workflows`.
+- `github-workflows` (`type:tooling`, `.github/tooling/`) — the macOS routing
+  classifier and budget proofs over the workflow graph (`test`, `budgets`); no
+  edges — its `test` names every `.github` file as an input, which Nx counts as
+  touching it. See `.github/AGENTS.md`.
 - `shell-tools` (`type:tooling`, `tools/shell/`) — the shell toolchain every
   shell project's `format`/`lint` runs (`shell.sh`: shfmt and shellcheck behind
   their pins, and the tree's one shell-script discovery) and its installer; no
@@ -111,7 +118,7 @@ Every project declares the repo-uniform target names that apply to it: `format`
 (a check — cargo fmt and/or shfmt; `--configuration=write` writes), `lint`
 (clippy and/or shellcheck, or the boundary check), `lint-workflows` (actionlint),
 `build`, `test`, `doc`, and the two gates' `coverage`. A target that must never fan out into a gate tier gets a name of its own —
-`network` (release-targets, real-oneharness), `live`, `win-color`, `capture`,
+`network` (release-targets, real-oneharness), `packaging` (release-packaging), `live`, `win-color`, `capture`,
 `bless`, `gif`, the `bench*` targets, `check-version-bump`, `supply-chain` — so
 `nx run-many -t test` can never reach it. Tags bound the edges
 (`tools/project-boundaries.json`, checked by the `workspace` project's `lint`):

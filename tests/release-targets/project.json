@@ -61,13 +61,6 @@
         "command": "cargo nextest run -p llmlint-release-targets --locked --run-ignored only"
       },
       "//": "The network half, outside the gate tiers: the restated schema reconciled against onevcs's canonical one, and the probe against live crates.io and PyPI. Run by `just test-release-targets` in the Release targets workflow."
-    },
-    "packaging": {
-      "executor": "nx:run-commands",
-      "cache": false,
-      "options": {
-        "command": "cargo nextest run -p llmlint-release-targets --locked --run-ignored only -E \"test(native_release_packages_install_and_run)\""
-      }
     }
   }
 }
