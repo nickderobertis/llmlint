@@ -9,8 +9,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The repository root: this crate lives two levels below it
-/// (`tests/release-packaging/`).
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -19,7 +17,6 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }
 
-/// Real compiler, maturin, pip and installed CLI.
 #[test]
 fn native_release_packages_install_and_run() {
     let root = repo_root();

@@ -1,6 +1,6 @@
 {
   "name": "github-workflows",
-  "//": "The macOS routing/budget proofs over the workflows. No implicitDependencies on purpose: Nx counts an edit to a named target input as touching this project, so a change to any .github file, release-targets.toml or pyproject.toml selects it in the affected tier (as shell-tools' consumers do), while a crate-only edit, which none of its proofs read, does not.",
+  "//": "The macOS routing/budget proofs over the workflows. No implicitDependencies on purpose: Nx counts an edit to a named target input as touching this project, so a change to any .github file, release-targets.toml, pyproject.toml or screencomp.toml selects it in the affected tier (as shell-tools' consumers do), while a crate-only edit, which none of its proofs read, does not.",
   "projectType": "library",
   "tags": [
     "type:tooling"
@@ -12,7 +12,8 @@
       "inputs": [
         "{workspaceRoot}/.github/**/*",
         "{workspaceRoot}/release-targets.toml",
-        "{workspaceRoot}/pyproject.toml"
+        "{workspaceRoot}/pyproject.toml",
+        "{workspaceRoot}/screencomp.toml"
       ],
       "options": {
         "command": "node --test .github/tests/*.test.mjs && node .github/node_modules/@onebudgetspec/cli/bin/onebudgetspec.js check .github/budgets.yaml"

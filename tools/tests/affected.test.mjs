@@ -89,6 +89,7 @@ test("an edit to a shared script or workflow selects exactly its consumers", () 
   // a workflow edit selects it beside ci-workflows' consumers and nothing else.
   const workflow = selected(".github/workflows/ci.yml");
   expect(workflow).toEqual([...dependents("ci-workflows"), "github-workflows"].sort());
+  for (const file of ["release-targets.toml", "pyproject.toml", "screencomp.toml"]) expect(selected(file), file).toContain("github-workflows");
   expect(selected("src/main.rs")).not.toContain("github-workflows");
   for (const got of [script, workflow]) {
     for (const p of ["llmlint", "llmlint-mock-oneharness", "llmlint-e2e", "bench"]) expect(got).not.toContain(p);

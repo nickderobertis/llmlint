@@ -1254,9 +1254,10 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
     let jobs = &doc["jobs"];
     assert_eq!(jobs["darwin"]["runs-on"].as_str(), Some("macos-latest"));
     let steps = jobs["darwin"]["steps"].as_array().unwrap();
-    // This Linux tier cannot execute Darwin/Rosetta. The real native builder journey
-    // below proves the shared pack/install commands; this artifact contract reconciles
-    // both non-native targets, and the declared Mac job executes both installed products.
+    // This Linux tier cannot execute Darwin/Rosetta. The native builder journey in
+    // tests/release-packaging proves the shared pack/install commands; this artifact
+    // contract reconciles both non-native targets, and the declared Mac job executes
+    // both installed products.
     let wrapper = read(&root.join("scripts/release-darwin.sh"));
     let invocation = wrapper
         .lines()
