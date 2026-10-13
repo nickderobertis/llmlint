@@ -25,7 +25,7 @@ test('real budget reporter writes both graph-derived metrics and refuses invalid
       const output=run(args(metric));assert.equal(output.status,0,output.stderr);
       const report=JSON.parse(readFileSync(result,'utf8'));assert.equal(report.value,telemetry[key]);assert.match(report.detail,/macos-latest/);
     }
-    for(const change of [{sourceDigest:'stale'},{jobsPerRun:-1},{jobsPerRun:null},{perRun:{}},{lifecycles:[]},{jobsPerRun:telemetry.jobsPerRun+1}]) {
+    for(const change of [{sourceDigest:'stale'},{schemaVersion:2},{perRun:[{workflow:'ci.yml',event:'pr',jobs:[{job:'mac',runner:'macos-latest',macos:true,targets:null}]}]},{lifecycles:[{runs,macosRuns:runs.length+1}]},{runsPerChange:runs.length+1},{jobsPerRun:-1},{jobsPerRun:null},{perRun:{}},{lifecycles:[]},{jobsPerRun:telemetry.jobsPerRun+1}]) {
       writeFileSync(path,JSON.stringify({...telemetry,...change}));assert.notEqual(run(args('jobs-per-run')).status,0);
     }
     for(const invalid of [[],['--metric','unknown','--telemetry',path],['--metric','jobs-per-run','--telemetry',join(dir,'missing')],['--telemetry',path,'--metric','jobs-per-run']]) assert.notEqual(run(invalid).status,0);

@@ -26,7 +26,7 @@
         "{workspaceRoot}/.github/**/*.mjs"
       ]
     },
-    "budgets": {
+    "budgets": { "//": "llmlint: ignore[new_projects_keep_the_graph_uniform] The approved contract explicitly requires a budgets target depending on telemetry-producing test; these resource bounds are reported through onebudgetspec, separately from source lint.",
       "executor": "nx:run-commands",
       "dependsOn": [
         "test"

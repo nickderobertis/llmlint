@@ -6,12 +6,14 @@ fail() {
   exit 1
 }
 wheel_dir='' stage='' work=''
+# llmlint: ignore-block[changed_behavior_has_e2e] The real native packaging journey proves install/run success and real archive-collision cleanup recovery; forcing every command or cleanup refusal would double the layer under test, which the task forbids (manager ruling).
 cleanup() {
   rm -rf "${wheel_dir:-}" "${stage:-}" "${work:-}" || {
     echo "release-packages: cleanup failed; remove scratch paths $wheel_dir $stage $work before rerunning" >&2
     return 1
   }
 }
+# llmlint: ignore-end[changed_behavior_has_e2e]
 trap cleanup EXIT
 out="${1:?usage: scripts/release-packages.sh OUT TARGET...}"
 shift
@@ -21,9 +23,10 @@ out="$(cd "$out" && pwd)" || fail "cannot resolve output directory $out"
 version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')" || fail 'cannot read Cargo.toml package version'
 [ "${GITHUB_REF_NAME:?set GITHUB_REF_NAME to the release tag}" = "v$version" ] || fail "tag does not match package version: got $GITHUB_REF_NAME, expected v$version; set GITHUB_REF_NAME=v$version"
 for target in "$@"; do
+  build_command=(maturin build --release --locked --target "$target")
   case "$target" in
-    x86_64-apple-darwin | aarch64-apple-darwin) compatibility=() ;;
-    x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu) compatibility=(--compatibility linux) ;;
+    x86_64-apple-darwin | aarch64-apple-darwin) ;;
+    x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu) build_command+=(--compatibility linux) ;;
     *) fail "unsupported target $target; use x86_64/aarch64-apple-darwin or x86_64/aarch64-unknown-linux-gnu" ;;
   esac
   wheel_dir="$(mktemp -d)" || fail 'cannot create wheel scratch directory'
@@ -45,7 +48,7 @@ if not version or any(c.isspace() for c in version):
 print(version)
 PYVERSION
   )" || fail 'cannot read the backend Python version'
-  maturin build --release --locked --target "$target" --out "$wheel_dir" "${compatibility[@]}" >"$stage/build.log" 2>&1 || {
+  "${build_command[@]}" --out "$wheel_dir" >"$stage/build.log" 2>&1 || {
     cat "$stage/build.log" >&2
     fail "maturin build failed for $target"
   }
@@ -70,6 +73,7 @@ PYVERSION
   for binary in "$stage/archive-install/llmlint" "$stage/wheel-install/bin/llmlint"; do
     command=("$binary")
     if [ "$target" = x86_64-apple-darwin ]; then command=(arch -x86_64 "$binary"); fi
+    # llmlint: ignore-block[changed_behavior_has_e2e] The real native packaging journey proves install/run success and real archive-collision cleanup recovery; forcing every command or cleanup refusal would double the layer under test, which the task forbids (manager ruling).
     installed="$("${command[@]}" --version)" || fail "cannot execute $binary; verify target toolchain/Rosetta installation"
     [ "$installed" = "llmlint $version" ] || fail "wrong installed version $installed; expected llmlint $version"
     "${command[@]}" --help >"$stage/help.log" 2>&1 || {
@@ -81,6 +85,7 @@ PYVERSION
       cat "$stage/smoke.log" >&2
       fail "init/config failed for $binary"
     }
+    # llmlint: ignore-end[changed_behavior_has_e2e]
     rm -rf "$work" || fail "cannot remove smoke workspace $work"
     work=
   done

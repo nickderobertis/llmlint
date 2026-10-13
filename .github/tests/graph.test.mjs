@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { graph, workflows, digest, root } from '../workflow-graph.mjs';
+import { graph, workflows, digest, root, expression } from '../workflow-graph.mjs';
 import { policyOutputs } from '../workflow-outputs.mjs';
 import { history, event, invoke } from './history.mjs';
-const contexts = ['cross (macos-latest)','cross (windows-latest)','deny','gate','install (macos-latest)','install (ubuntu-latest)','install (windows-latest)','llmlint','pr-title','visual-docs / report (arm64)','visual-docs / report (x86_64)'];
+const contextSource=readFileSync(new URL('./workflows.rs',import.meta.url),'utf8').match(/const PR_CONTEXTS:[\s\S]*?= &\[([\s\S]*?)\];/);
+assert.ok(contextSource,'workflows.rs declares the protected context authority');
+const contexts=[...contextSource[1].matchAll(/"([^"\n]+)"/g)].map(match=>match[1]);
+
 const classes = [
   ['pr-opened','pull_request','opened'],['pr-synchronize','pull_request','synchronize'],['pr-reopened','pull_request','reopened'],
   ['base-push','push'],['release-pr-merge','push'],['release-tag','push'],['release-published','release','published'],
@@ -29,6 +32,7 @@ test('actual workflow call graph, matrices, event fan-out and required names rec
         const scenario = {id:`${id}/${diff}/${fork?'fork':'same'}/crate-${publishCrate}/pypi-${publishPypi}`,class:id,eventName,event:payload,paths,diff,fork,publishCrate,publishPypi,diagnostic:id==='manual-opt-in',tag:id==='release-tag'||id==='release-published'?'v1.0.1':undefined,...decision};
         scenario.base=h.base;scenario.head='HEAD';scenario.cwd=h.dir;scenario.policyOutputs=policyOutputs(docs['ci.yml'],scenario,h.dir);
         const rows = graph(scenario,docs); scenarios.push({...scenario,rows});
+        if(eventName==='workflow_dispatch') assert.deepEqual(rows.filter(r=>r.macos).map(r=>r.job),id==='manual-opt-in'?['macos']:[],scenario.id);
         if(eventName==='release') {
           for(const [job,active] of [['publish-crate',publishCrate],['verify-crate',publishCrate],['publish-pypi',publishPypi],['verify-pypi',publishPypi]]) assert.equal(rows.find(r=>r.workflow==='release.yml'&&r.job===job).result,active?'success':'skipped',`${scenario.id}: ${job}`);
         }
@@ -45,13 +49,11 @@ test('actual workflow call graph, matrices, event fan-out and required names rec
       }
     } finally {h.close();}
   }
-  // Follow the complete single-push chain, including downstream completions.
   const lifecycles = [];
   const derived = [];
   for(const fork of [false,true]) for(const publishCrate of [false,true]) for(const publishPypi of [false,true]) {
     const pick=(cls,diff,ownership=fork)=>scenarios.find(s=>s.class===cls&&s.diff===diff&&s.fork===ownership&&s.publishCrate===publishCrate&&s.publishPypi===publishPypi);
     const chain=[pick('pr-synchronize','source'),pick('base-push','source'),pick('pr-opened','version-only',false),pick('release-pr-merge','version-only',false),pick('release-tag','version-only',false),pick('release-published','version-only',false)];
-    // Merge closures are derived fan-out, in addition to the twelve explicit event classes.
     const closures=[chain[0],chain[2]].map(s=>{
       const scenario={...s,id:`${s.id}/merged-closure`,event:{...s.event,action:'closed'},policyOutputs:undefined,cwd:undefined};
       return {...scenario,rows:graph(scenario,docs)};
@@ -142,4 +144,23 @@ test('unsupported Actions globs refuse measurement instead of treating them as l
 test('unmodeled workflow trigger declarations fail before scenario filtering',()=>{
   const scenario={id:'ordinary',eventName:'pull_request',event:event(),paths:['src/lib.rs']};
   for(const trigger of ['pull_request_target','merge_group'])assert.throws(()=>graph(scenario,{'unmodeled.yml':{on:{[trigger]:null},jobs:{mac:{'runs-on':'macos-latest'}}}}),/unsupported workflow trigger/);
+});
+// Authenticated Claude execution needs hosted credentials and incurs model cost;
+// offline routing proof evaluates the production conditions with Actions' evaluator.
+test('production Mac live steps retain canonical-repository and fork auth routing',()=>{
+  const steps=workflows()['ci.yml'].jobs.macos.steps;
+  const live=steps.find(s=>s.name==='Live e2e against the real claude-code harness');
+  const install=steps.find(s=>s.name==='Install live harnesses');
+  const node=steps.find(s=>s.uses?.startsWith('actions/setup-node@'));
+  assert.equal(live.run,'just live-claude');
+  assert.match(install.run,/oneharness --version/);assert.match(install.run,/@anthropic-ai\/claude-code/);
+  assert.equal(live.env.CLAUDE_CODE_OAUTH_TOKEN,'${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}');
+  assert.equal(live.env.ANTHROPIC_API_KEY,'${{ secrets.ANTHROPIC_API_KEY }}');
+  for(const step of [node,install,live]) {
+    assert.ok(step?.if);
+    for(const [repository,fork,allowed] of [['nickderobertis/llmlint',false,true],['nickderobertis/llmlint',true,false],['fork/llmlint',false,false]]) {
+      const payload=event(fork);const ctx={github:{repository,event_name:'pull_request',event:payload}};
+      assert.equal(expression(step.if,ctx),allowed,`${step.name??step.uses}: ${repository}/${fork}`);
+    }
+  }
 });

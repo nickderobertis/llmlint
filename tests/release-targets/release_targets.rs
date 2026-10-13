@@ -1249,11 +1249,11 @@ mod probe {
 #[test]
 fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
     let root = repo_root();
-    let doc: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&read(&root.join(".github/workflows/release.yml"))).unwrap();
+    let doc: serde_json::Value =
+        serde_saphyr::from_str(&read(&root.join(".github/workflows/release.yml"))).unwrap();
     let jobs = &doc["jobs"];
     assert_eq!(jobs["darwin"]["runs-on"].as_str(), Some("macos-latest"));
-    let steps = jobs["darwin"]["steps"].as_sequence().unwrap();
+    let steps = jobs["darwin"]["steps"].as_array().unwrap();
     // This Linux tier cannot execute Darwin/Rosetta. The real native builder journey
     // below proves the shared pack/install commands; this artifact contract reconciles
     // both non-native targets, and the declared Mac job executes both installed products.
@@ -1285,13 +1285,13 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
     );
     assert_eq!(jobs["upload-darwin"]["needs"].as_str(), Some("darwin"));
     assert!(jobs["publish-pypi"]["needs"]
-        .as_sequence()
+        .as_array()
         .unwrap()
         .iter()
         .any(|n| n.as_str() == Some("darwin")));
     for job in ["upload", "build-wheels"] {
         let targets: std::collections::BTreeSet<_> = jobs[job]["strategy"]["matrix"]["include"]
-            .as_sequence()
+            .as_array()
             .unwrap()
             .iter()
             .map(|row| row["target"].as_str().unwrap())
@@ -1355,8 +1355,8 @@ fn native_release_packages_install_and_run() {
         .split('-')
         .nth(1)
         .unwrap();
-    let record: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&read(&temp.path().join(format!("{target}.json")))).unwrap();
+    let record: serde_json::Value =
+        serde_json::from_str(&read(&temp.path().join(format!("{target}.json")))).unwrap();
     assert_eq!(record["target"].as_str(), Some(target));
     assert_eq!(record["version"].as_str(), Some(version));
     assert_eq!(

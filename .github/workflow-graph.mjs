@@ -112,7 +112,8 @@ export function graph(scenario, docs = workflows()) {
         const context = { github: { event_name: scenario.eventName, event: scenario.event, repository: 'nickderobertis/llmlint', ref: scenario.tag ? `refs/tags/${scenario.tag}` : 'refs/heads/main', ref_name: scenario.tag ?? 'main', sha: 'exact-head' }, needs, inputs, vars: { PYPI_PUBLISH: (scenario.publishPypi ?? scenario.publish) ? 'true' : 'false' }, matrix: {} };
         const condition = job.if ?? 'success()';
         const enabled = !!expression(condition, context) && (/\b(always|success|failure|cancelled)\(/.test(condition) || expression('success()', context));
-        const result = enabled ? 'success' : 'skipped';
+        const result = enabled ? scenario.conclusions?.[workflow]?.[id] ?? 'success' : 'skipped';
+        if(!['success','failure','cancelled','skipped'].includes(result)) throw new Error(`${workflow}/${id}: unknown GitHub conclusion ${result}`);
         let outputs = {};
         if (id === 'policy' && enabled) outputs = scenario.policyOutputs ?? policyOutputs(doc, scenario, scenario.cwd);
         if (id === 'guard' && enabled) {
