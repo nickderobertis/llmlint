@@ -1,0 +1,15 @@
+# Python-CLI buildout rules (plugin) — run ONCE during repo creation, then
+# discarded. Carries the one-time packaging check.
+version: 1.1
+
+rules:
+  - name: console_entry_point
+    description: |
+      true when the CLI is declared as a `project.scripts` entry point in its own
+      project's `pyproject.toml` (the uv workspace member that owns the command,
+      not the workspace-root manifest), so it installs as a real command. false
+      when the CLI is only runnable via `python -m` with no console entry point
+      declared, or the entry point is declared on a manifest that does not ship
+      the command's code.
+    files:
+      include: ["**/pyproject.toml"]

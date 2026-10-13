@@ -1220,3 +1220,31 @@ rules:
         assert_eq!(loaded.sources.len(), 2);
     }
 }
+
+#[cfg(test)]
+mod yaml_compat_tests {
+    #[test]
+    fn committed_yaml_keeps_baseline_meaning() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let paths: Vec<String> =
+            serde_json::from_str(include_str!("../../tests/fixtures/yaml_compat/corpus.json"))
+                .unwrap();
+        let mut expected = serde_json::Map::new();
+        for path in paths {
+            let text = std::fs::read_to_string(root.join(&path)).unwrap();
+            let config = super::parse(&text, &path).unwrap();
+            expected.insert(path, serde_json::to_value(config).unwrap());
+        }
+        let baseline: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            include_str!("../../tests/fixtures/yaml_compat/configs.json"),
+        )
+        .unwrap();
+        assert_eq!(expected.len(), baseline.len());
+        for (path, actual) in expected {
+            let actual: crate::domain::config::Config = serde_json::from_value(actual).unwrap();
+            let original: crate::domain::config::Config =
+                serde_json::from_value(baseline[&path].clone()).unwrap();
+            assert_eq!(actual, original, "{path}");
+        }
+    }
+}

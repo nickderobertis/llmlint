@@ -1,0 +1,27 @@
+# Web-app buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# One-time structural checks on the project split and that CI validates the
+# production build; the ongoing web-app judgment (server boundary, authz, URL
+# state, browser journeys against the built app) lives in
+# shapes/web-app.llmlint.yml.
+version: 1.1
+
+rules:
+  - name: production_build_validated_in_ci
+    description: |
+      true when CI builds the PRODUCTION bundle (not just starts the dev server) and
+      treats type and lint errors as build blockers. false when CI only runs the dev
+      server or tests, so a production build could be broken and merge anyway.
+    files:
+      include: ["justfile", "Justfile", ".justfile", ".github/workflows/**"]
+
+  - name: app_browser_suite_and_services_split
+    description: |
+      true when the app and its fast unit/component tests are one project, the
+      browser suite is its own project whose `test` target depends on the app's
+      `build`, and each backend service the app calls is its own project rather
+      than a directory inside the app. false when the browser suite lives in the
+      app project — so any change can start a browser — or when a backend service
+      is a folder of the app project, so a server-only change rebuilds the frontend
+      and vice versa.
+    files:
+      include: ["nx.json", "**/project.json", "**/e2e/**", "**/playwright.config.*"]

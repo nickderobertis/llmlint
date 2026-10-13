@@ -1,0 +1,75 @@
+# CI buildout rules (plugin) — run ONCE during repo creation, then discarded.
+# These verify the CI was set up right; they are not an ongoing PR check.
+version: 1.3.0
+
+rules:
+  - name: ci_runs_the_real_gate
+    description: |
+      true when CI bootstraps a clean checkout and runs the full `just check` gate.
+      false when CI omits the gate or runs only a reduced subset of it.
+    files:
+      include: [".github/workflows/**", "justfile", "Justfile", ".justfile"]
+
+  - name: ci_llmlint_job_provisions_a_runnable_harness
+    description: |
+      true when the CI job running the llmlint tier installs a harness the repo's
+      `oneharness.toml` fallback list names (e.g. codex, or claude-code) onto PATH
+      before the lint step — `setup-llmlint.sh` installs `llmlint` + `oneharness`
+      but no harness. false when the job wires only the harness credential (e.g.
+      `CLAUDE_CODE_OAUTH_TOKEN`): oneharness then finds no harness, skips every file,
+      and the job passes while linting nothing.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "oneharness.toml"
+        - ".oneharness.toml"
+        - "scripts/setup-llmlint.sh"
+    relevance: the repo runs the llmlint LLM-judge tier as a CI check
+
+  - name: install_path_matches_docs
+    description: |
+      when the CI end-user install job installs the artifact via the exact command the
+      README documents.
+    files:
+      include: [".github/workflows/**", "**/README*"]
+    relevance: the repository ships an installable artifact
+
+  - name: pr_gate_runs_the_affected_tier
+    description: |
+      true when the pull-request gate job runs the affected tier — the repo's gate
+      recipe delegating to `nx affected` keyed off an explicitly derived merge base
+      (`nx-set-shas`, or an explicit `--base` computed from `git merge-base`). false
+      when the PR gate sweeps every project with `run-many`, or leaves the base for Nx
+      to infer, which a shallow CI checkout makes non-deterministic.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "nx.json"
+
+  - name: broader_sweep_runs_at_exactly_one_lifecycle_point
+    description: |
+      true when exactly one job runs the broader-tier full sweep, placed where the
+      repo's release model puts it: at merge-to-main when the merged commit is the
+      commit that ships, or at release-prep when releases are batched behind a release
+      PR or a manual cut.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "AGENTS.md"
+
+  - name: required_checks_name_only_pr_context_jobs
+    description: |
+      true when every context named is a job that reports on a pull request — the
+      affected-tier gate, the PR-title lint, the llmlint tier. false when the
+      broader-tier sweep, or any other job that runs only after merge or at
+      release-prep, is named.
+    files:
+      include:
+        - "AGENTS.md"
+        - ".github/workflows/**"
+        - "scripts/**"
+    relevance: the target files record the repo's required status-check contexts
+    require_line_attribution: true

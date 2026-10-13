@@ -1,0 +1,88 @@
+# CI judge-level rules (plugin). Pairs with ci.md. Always pulled in (ci.md is
+# always composed). Structural one-time CI checks are buildout-only — see
+# buildout/ci.llmlint.yml.
+# llmlint: ignore-file[changed_behavior_has_e2e] these are LLM-judge config invariants with no deterministic runtime path; the blocking model lint exercises the changed rule configuration.
+version: 1.5
+
+rules:
+  - name: live_tier_compiles_and_requires_credential
+    description: |
+      true when every test in the tier stays compiled (never `#[cfg]`'d out or
+      deleted) and the workflow requires the credential, failing fast with a clear
+      message when it is absent. false when a test is excluded from compilation, or
+      the workflow skips or no-ops to a green pass without the credential —
+      reporting the tier as covered when it never ran.
+    files:
+      include:
+        # Directory-scoped, never a filename substring: `**/*live*` selected every
+        # `deliver.rs` and `live_view.ts` in a tree, so ordinary files drew
+        # credential-and-compilation findings that had nothing to do with them.
+        # Whether a selected file really defines the tier is left to `relevance`.
+        - ".github/workflows/**"
+        - "**/tests/live/**"
+        - "**/tests/integration/**"
+    relevance: the target files define a live or integration test tier
+
+  - name: no_untrusted_interpolation_in_run
+    description: |
+      when a workflow reads untrusted event data (`${{ github.event.* }}` — a PR title,
+      body, branch name, or comment) only by binding it to an `env:` variable and then
+      referencing that variable inside `run:` (e.g. `env: TITLE: ${{ github.event.pull_request.title }}`
+      then `run: echo "$TITLE"`), never by expanding `${{ github.event.* }}` literally in
+      the `run:` script text. Event data mapped into `env:`, `with:`, `if:`, or an action's
+      inputs is compliant — only a `${{ github.event.* }}` expansion written directly in a
+      `run:` block, where a crafted value is parsed as shell, is a violation.
+    files:
+      include:
+        - ".github/workflows/**"
+    relevance: the target files define a GitHub Actions workflow with a `run:` step
+    require_line_attribution: true
+
+  - name: ci_invokes_gate_recipe_not_inline_stages
+    description: |
+      true when a workflow job that runs the quality gate invokes the project's single
+      gate recipe (e.g. `just check`) rather than re-listing its individual stages
+      (format check, lint, type check, unit tests, e2e) as inline commands. false when a
+      job reimplements gate stages inline, so the gate CI runs can silently drift out of
+      parity with the one a contributor runs locally. A job that legitimately runs
+      something outside the gate (a separate install-smoke, live-test, or release job) is
+      not a violation.
+    files:
+      include:
+        - ".github/workflows/**"
+    relevance: the target files define a CI job that runs the quality gate
+    require_line_attribution: true
+
+  - name: external_service_suite_stays_out_of_the_affected_tier
+    description: |
+      true when every such suite runs from its own credential-gated workflow or a
+      target promoted out of the affected tier, rather than from the affected-tier
+      gate a pull request runs. false when a change wires one into the PR gate —
+      including a fast one, since that promotion is decided by what the suite
+      touches, not by how long it takes.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "justfile"
+        - "Justfile"
+        - ".justfile"
+        - "**/project.json"
+        - "nx.json"
+    relevance: the target files wire a test suite that contacts an external service
+    require_line_attribution: true
+
+  - name: no_second_broader_sweep_over_an_already_gated_commit
+    description: |
+      true when no job runs the broader-tier sweep (a full `run-many` over every
+      project, or the same gating targets) against a commit another job already swept —
+      the same SHA, or a different SHA over an identical tree, such as a tag build or a
+      release-prep job following the merge that swept it. false when a workflow adds a
+      second sweep of an already-swept commit, e.g. a release, tag, or publish workflow
+      re-running lint, type-check, or tests over the commit merge-to-main already swept.
+      Building or publishing an artifact from a swept commit is not gating and is not a
+      violation; neither is the first sweep of a squash-merge commit, whose tree is new.
+    files:
+      include:
+        - ".github/workflows/**"
+    relevance: the target files define a job that runs gating targets (lint, type-check, tests, or a full sweep)
+    require_line_attribution: true

@@ -1,0 +1,71 @@
+# Releasing buildout rules (plugin) — run ONCE during repo creation, then
+# discarded. They verify the release pipeline was wired correctly at setup.
+version: 1.1
+
+rules:
+  - name: no_manual_deploy_step
+    description: |
+      true when the only human action in a release is merging a PR. false when any
+      release step requires a manual command, a "Run workflow" click, or hand-editing
+      a version number.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "release-plz.toml"
+        - ".releaserc*"
+        - "release-please*"
+
+  - name: versioning_decoupled_from_building
+    description: |
+      true when the version job only computes the version and writes the changelog,
+      manifests, lockfiles, and tag, and a separate workflow builds and publishes on
+      the tag. false when the version job also builds or publishes artifacts itself.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "release-plz.toml"
+        - ".releaserc*"
+        - "release-please*"
+
+  - name: release_job_uses_pat
+    description: |
+      true when the release or version job authenticates with a PAT or GitHub App
+      token. false when it authenticates with the default `GITHUB_TOKEN` (whose tag
+      push does not fire downstream release or publish workflows).
+    files:
+      include: [".github/workflows/**"]
+
+  - name: publish_idempotent
+    description: |
+      true when publishing skips a version that is already live and reads registry
+      tokens from secrets. false when a re-run would double-publish a version or a
+      registry token is committed in the tree.
+    files:
+      include: [".github/workflows/**"]
+    relevance: the repository publishes to a package registry
+
+  - name: pr_title_conventional_commit_linted
+    description: |
+      true when a CI job runs on `pull_request` that lints the PR title (the
+      squash-merge subject the release pipeline reads) against Conventional Commits
+      — a `commitlint` or equivalent PR-title-lint step. false when no workflow lints
+      the PR title.
+    files:
+      include: [".github/workflows/**", "commitlint.config.*", ".commitlintrc*"]
+
+  - name: broader_sweep_placement_matches_the_release_driver
+    description: |
+      true when the broader-tier sweep sits where the repo's release driver implies —
+      at merge-to-main for a push-to-main driver (`semantic-release`, `release-please`
+      in non-PR mode), where the merged commit is the released commit; on the release PR
+      for a release-PR gate (`release-plz`, `release-please`), where the commit that
+      ships is a new commit over a batch of merges. false when a push-to-main repo
+      sweeps again at release time after sweeping at merge, or a batched repo releases a
+      commit no job ever swept.
+    files:
+      include:
+        - ".github/workflows/**"
+        - "release-plz.toml"
+        - ".releaserc*"
+        - "release-please*"
+        - "AGENTS.md"

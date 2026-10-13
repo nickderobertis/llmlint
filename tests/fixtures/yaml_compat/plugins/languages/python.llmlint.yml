@@ -1,0 +1,105 @@
+# Python judge-level rules (plugin). Pulled in by the composer when the repo's
+# language includes python. Pairs with languages/python.md.
+# llmlint: ignore-file[changed_behavior_has_e2e] these are LLM-judge config invariants with no deterministic runtime path; the blocking model lint exercises the changed rule configuration.
+version: 1.4.1
+
+rules:
+  - name: async_typed_clients_at_boundaries
+    description: |
+      true when every external network or IO service uses an async, typed client (an
+      official typed client, or a small typed async client written for the repo).
+      false when any such call uses an untyped or synchronous ad-hoc client.
+    files:
+      include: ["**/*.py"]
+    relevance: the target files call an external network or IO service
+    require_line_attribution: true
+
+  - name: structural_pattern_matching
+    description: |
+      true when multi-branch dispatch on one subject's shape, type, or value uses
+      `match`/`case` with destructuring where that reads more clearly than an if/elif
+      chain. false when an if/elif chain repeats `isinstance`, index, or attribute
+      checks on that subject where `match`/`case` would express it directly.
+    files:
+      include: ["**/*.py"]
+    relevance: the target files dispatch on the shape, type, or value of a subject
+    require_line_attribution: true
+
+  - name: modern_domain_modeling
+    description: |
+      true when structured data in the target files is modelled with dataclasses,
+      enums, `NamedTuple`, or typed models (e.g. Pydantic), and a meaningful
+      primitive (id, token) uses a `NewType` or type alias. false when structured
+      data is passed around as bare dicts, positional tuples, or stringly-typed
+      constants where a typed model or enum is the natural choice.
+    files:
+      include: ["**/*.py"]
+    relevance: the target files define or pass around structured domain data
+    require_line_attribution: true
+
+  - name: protocol_based_seams
+    description: |
+      true when a pluggable dependency or seam in the target files is typed with a
+      `typing.Protocol` so callers depend on the structural interface. false when a
+      seam meant to be swappable is bound to a concrete class or a heavyweight
+      nominal ABC where a `Protocol` fits.
+    files:
+      include: ["**/*.py"]
+    relevance: the target files define a pluggable dependency or seam
+    require_line_attribution: true
+
+  - name: no_injection_from_untrusted_input
+    description: |
+      when the target files keep untrusted input out of dangerous sinks: no `shell=True`
+      on externally-influenced input, no `eval`/`exec` or unsafe deserialization
+      (`pickle.loads`, `yaml.load` without `SafeLoader`) of untrusted data, and SQL and
+      OS commands built with parameterized APIs rather than string interpolation.
+    files:
+      include: ["**/*.py"]
+    relevance: the target files run subprocesses, execute dynamic code, deserialize data, or build SQL or OS commands
+    require_line_attribution: true
+
+  - name: projects_stay_in_one_uv_workspace
+    # Narrowed to distributions, and the exclusion lives in `relevance`: a
+    # build-graph project is not a Python package merely because Python runs
+    # inside it, and references/project-graph.md warns against inventing packages
+    # to have projects.
+    description: |
+      true when every Python distribution is a member of the root uv workspace
+      (`[tool.uv.workspace] members`), carries its own `pyproject.toml`, depends on
+      sibling distributions through `[tool.uv.sources] workspace = true`, and
+      resolves against the single root `uv.lock` — a repo with exactly one
+      distribution, at the repo root, needs no `[tool.uv.workspace]` table.
+      false when a distribution is invisible to the workspace, commits a second
+      `uv.lock`/`requirements.txt` for the same ecosystem, or reaches a sibling's
+      source by a relative path import instead of a declared workspace dependency.
+    files:
+      include:
+        - "**/pyproject.toml"
+        - "**/uv.lock"
+        - "**/requirements*.txt"
+        - "**/project.json"
+    relevance: >-
+      the target files add or change the manifest, lock, or project definition of a
+      Python distribution — a unit that owns Python source together with its own
+      dependency set, not a build-graph project that only declares targets run over
+      source rooted elsewhere in the workspace
+
+  - name: test_tiers_split_by_project_not_by_marker
+    description: |
+      true when it lives in its own project whose `test` target runs it, so `nx
+      affected` can skip it. false when the tier is expressed as a pytest marker
+      the default run deselects (`-m "not slow"`, `addopts` with a deselecting
+      `-m`, or a skip keyed off an env var) while the tests stay inside the fast
+      project — which hides the cost instead of removing it. A guard that skips
+      because a credential or provider the suite genuinely requires is absent is
+      a capability check, not a tier, and is not a violation.
+    files:
+      include:
+        - "**/pyproject.toml"
+        - "**/pytest.ini"
+        - "**/conftest.py"
+        - "**/test_*.py"
+        - "**/*_test.py"
+    relevance: the target files add or change a pytest suite that is slow or reaches an external service, or the marker configuration that selects one
+    require_line_attribution: true

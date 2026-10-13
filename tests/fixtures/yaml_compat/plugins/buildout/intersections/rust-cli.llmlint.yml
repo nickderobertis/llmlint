@@ -1,0 +1,24 @@
+# Rust-CLI buildout rules (plugin) — run ONCE during repo creation, then
+# discarded. Carries the one-time supply-chain and e2e-crate-split checks.
+version: 1.1.1
+
+rules:
+  - name: supply_chain_gate
+    description: |
+      when `cargo deny` and `cargo machete` run as a dedicated CI job and a `deny.toml`
+      is committed.
+    files:
+      include: ["deny.toml", ".github/workflows/**"]
+
+  - name: binary_e2e_is_its_own_crate
+    description: |
+      true when that suite lives in its own `publish = false` Cargo workspace
+      member holding only `tests/`, declared as its own project whose `test`
+      target depends on the binary crate's `build`, so it drives a freshly built
+      artifact and a library-only change cannot reach it. false when the binary
+      suite sits in the binary crate's own `tests/`, or is separated only by an
+      `#[ignore]` or a nextest filter — the tests are still compiled and
+      collected for every change, so nothing is skipped.
+    files:
+      include: ["**/Cargo.toml", "**/project.json", "nx.json", "**/tests/**"]
+    relevance: the repo ships a compiled binary with a subprocess-level end-to-end suite
