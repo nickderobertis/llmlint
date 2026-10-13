@@ -68,6 +68,9 @@ const glob = (pattern, value) => {
 export function triggered(doc, scenario) {
   const on = doc.on;
   const event = scenario.eventName;
+  const events=typeof on==='string'?[on]:Array.isArray(on)?on:Object.keys(on??{});
+  const supportedEvents=['push','pull_request','release','workflow_run','repository_dispatch','schedule','workflow_dispatch','workflow_call'];
+  if(events.some(name=>!supportedEvents.includes(name))) throw new Error(`unsupported workflow trigger ${events.filter(name=>!supportedEvents.includes(name)).join(', ')}`);
   const defaultPr = () => event !== 'pull_request' || ['opened','synchronize','reopened'].includes(scenario.event.action);
   if (typeof on === 'string') return on === event && defaultPr();
   if (Array.isArray(on)) return on.includes(event) && defaultPr();

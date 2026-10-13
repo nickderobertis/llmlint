@@ -139,3 +139,7 @@ test('unsupported Actions globs refuse measurement instead of treating them as l
   const scenario={id:'unsupported-glob',eventName:'push',event:{},paths:['src/lib.rs']};
   for(const pattern of ['!src/**','src/?oo.rs','src/[ab].rs','**/file.rs','src/{a,b}.rs']) assert.throws(()=>graph(scenario,{'unsupported.yml':{on:{push:{paths:[pattern]}},jobs:{job:{'runs-on':'macos-latest'}}}}),/unsupported Actions glob/);
 });
+test('unmodeled workflow trigger declarations fail before scenario filtering',()=>{
+  const scenario={id:'ordinary',eventName:'pull_request',event:event(),paths:['src/lib.rs']};
+  for(const trigger of ['pull_request_target','merge_group'])assert.throws(()=>graph(scenario,{'unmodeled.yml':{on:{[trigger]:null},jobs:{mac:{'runs-on':'macos-latest'}}}}),/unsupported workflow trigger/);
+});
