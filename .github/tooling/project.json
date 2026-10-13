@@ -1,0 +1,16 @@
+{
+  "name": "github-workflows",
+  "projectType": "library",
+  "tags": ["type:tooling"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "inputs": ["{workspaceRoot}/.github/**/*", "{workspaceRoot}/release-targets.toml", "{workspaceRoot}/pyproject.toml"],
+      "options": {"command": "bun install --cwd .github --frozen-lockfile && node --test .github/tests/*.test.mjs"}
+    },
+    "lint": {"executor": "nx:run-commands", "options": {"command": "node --check .github/macos-policy.mjs && node --check .github/macos-result.mjs && node --check .github/macos-budget.mjs"}},
+    "typecheck": {"executor": "nx:run-commands", "options": {"command": "node --check .github/workflow-graph.mjs"}},
+    "budgets": {"executor": "nx:run-commands", "dependsOn": ["test"], "cache": false, "options": {"command": "onebudgetspec check .github/budgets.yaml"}}
+  }
+}

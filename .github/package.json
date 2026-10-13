@@ -1,0 +1,10 @@
+{
+  "name": "llmlint-github-workflows",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@actions/expressions": "0.3.61",
+    "@onebudgetspec/sdk": "0.1.4",
+    "yaml": "2.8.1"
+  }
+}

@@ -89,12 +89,6 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             ext: tar.gz
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            ext: tar.gz
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            ext: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             ext: zip
@@ -135,6 +129,63 @@ jobs:
           cp "${{ steps.attest.outputs.bundle-path }}" "$bundle"
           gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
 
+  darwin:
+    needs: verdict
+    runs-on: macos-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install 'maturin>=1.7,<2.0'
+      - run: softwareupdate --install-rosetta --agree-to-license
+      - name: Build and test both Darwin packages
+        run: bash scripts/release-darwin.sh dist
+      - name: Attest both Darwin archives
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Stage attestation bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          for target in x86_64-apple-darwin aarch64-apple-darwin; do
+            cp "$BUNDLE" "dist/llmlint-${GITHUB_REF_NAME}-${target}.sigstore.json"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-archives
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/*.sigstore.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-darwin
+          path: dist/*.whl
+
+  upload-darwin:
+    needs: darwin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: darwin-archives
+          path: dist
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
   # Prove the offline verification path end to end on every real release: install
   # the verifiers the easy ways (the official cosign installer action; `pip
   # install sigstore` from PyPI) and run the EXACT commands scripts/install.sh
@@ -146,7 +197,7 @@ jobs:
   # fallback. Downloads from canonical GitHub (no mirror needed) since it is only
   # exercising the verifiers.
   verify-attestation:
-    needs: upload
+    needs: [upload, upload-darwin]
     runs-on: ubuntu-latest
     steps:
       # Pin >= 2.4.0: --new-bundle-format (new Sigstore bundle) lands there, and
@@ -274,10 +325,6 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
@@ -303,7 +350,7 @@ jobs:
   # auto-generates PEP 740 attestations, so pip consumers get the same Sigstore
   # build provenance the GitHub release assets carry.
   publish-pypi:
-    needs: build-wheels
+    needs: [build-wheels, darwin]
     if: ${{ vars.PYPI_PUBLISH == 'true' }}
     runs-on: ubuntu-latest
     permissions:
