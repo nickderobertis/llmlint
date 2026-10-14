@@ -6,10 +6,12 @@
 # ONEBUDGETSPEC_RESULT set, and the figure is the pruner's own report of the
 # timed pass, (d) below; this script never times or judges anything itself.
 #
-#   (a) one declared pass clears any backlog. Its report goes to a scratch file
-#       and reaches the result only as evidence in the detail, never the figure.
-#   (b) the workspace's test targets, built as the gate builds them (`cargo
-#       test --no-run`, the build nextest runs), under a per-package profile
+#   (a) one declared pass clears any backlog, after the ordinary build (the
+#       gate's `cargo test --no-run`, the build nextest runs), so the backlog
+#       includes whatever that build supersedes. Its report goes to a scratch
+#       file and reaches the result only as evidence in the detail, never the
+#       figure.
+#   (b) the workspace's test targets, built that way under a per-package profile
 #       override for every workspace member (`debug = 1`), which gives this
 #       repository's own crates new metadata hashes. Every entry that build
 #       created is backdated past the 2-day window, standing in for one run's
@@ -90,7 +92,9 @@ builds_removed() {
   jq -r '.detail' "$1" | sed -n 's/.*builds removed: \([0-9][0-9]*\).*/\1/p'
 }
 
-# (a) The backlog pass, its report kept apart from the figure.
+# (a) The ordinary build, then the backlog pass, its report kept apart from the
+# figure.
+cargo test --workspace --locked --no-run >&2 || fail "the ordinary build failed (above); fix the build, then re-run."
 ONEBUDGETSPEC_RESULT="$WORK/backlog.json" just pool-maintenance >&2
 [ -s "$WORK/backlog.json" ] || fail "the backlog pass wrote no report to $WORK/backlog.json; check the pruner's output above."
 backlog_seconds="$(jq -r '.value' "$WORK/backlog.json")"
@@ -111,7 +115,7 @@ LC_ALL=C comm -13 "$WORK/before-alternative.txt" "$WORK/after-alternative.txt" >
   || fail "the alternative build created no entry, so it gave no crate a new metadata hash; nothing would be superseded."
 tr '\n' '\0' <"$WORK/alternative.txt" | xargs -0 sh -c 'find "$@" -exec touch -h -t 200001010000 {} +' sh
 
-# (c) The ordinary build.
+# (c) The ordinary build again, now the newest of every unit.
 cargo test --workspace --locked --no-run >&2 || fail "the ordinary build failed (above); fix the build, then re-run."
 entries >"$WORK/before-pass.txt"
 LC_ALL=C comm -23 "$WORK/before-pass.txt" "$WORK/alternative.txt" >"$WORK/ordinary.txt"

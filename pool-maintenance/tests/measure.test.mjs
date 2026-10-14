@@ -75,14 +75,12 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 unix("a backlog is cleared untimed, then the timed pass removes only the alternative build and keeps the ordinary one", () => {
-  // A backlog: an older configuration's builds, superseded and past the window.
+  // A backlog: an older configuration's builds, past the window. Nothing has
+  // superseded them yet: the ordinary build measure.sh makes does that.
   cargo("test", "--no-run", "--locked", "--config", 'profile.dev.package."demo".opt-level = 1');
   backdateTarget();
   const backlog = entries();
   expect(backlog.length).toBeGreaterThan(0);
-  // The ordinary build, as a slot's last run left it.
-  cargo("test", "--no-run", "--locked");
-  const ordinary = entries().filter((e) => !backlog.includes(e));
 
   const result = join(dir, "result.json");
   writeFileSync(result, "");
@@ -99,14 +97,20 @@ unix("a backlog is cleared untimed, then the timed pass removes only the alterna
   expect(report.detail).toMatch(/; untimed backlog pass \(evidence, not the figure\): [\d.e-]+ s, builds removed: [1-9]\d*;/);
   expect(report.detail).toMatch(/; entries removed: [1-9]\d*, all of the alternative build's [1-9]\d*; ordinary entries retained: all [1-9]\d*$/);
 
-  // What is left is exactly the ordinary build: the backlog and the alternative
-  // build are gone, and no ordinary entry was touched.
-  expect(entries()).toEqual(ordinary);
+  // The backlog and the alternative build are gone; the timed pass removed only
+  // the alternative build's entries.
   const lists = join(dir, "target/pool-maintenance-measure");
   const removed = readFileSync(join(lists, "removed.txt"), "utf8").split("\n").filter(Boolean);
   const alternative = readFileSync(join(lists, "alternative.txt"), "utf8").split("\n").filter(Boolean);
   expect(removed.length).toBeGreaterThan(0);
   expect(removed.filter((e) => !alternative.includes(e))).toEqual([]);
+  const left = entries();
+  expect(left.filter((e) => backlog.includes(e))).toEqual([]);
+  expect(left.filter((e) => alternative.includes(`target/debug/${e}`))).toEqual([]);
+  // The ordinary build is whole: building it again compiles nothing.
+  const again = spawnSync("cargo", ["test", "--no-run", "--locked"], { cwd: dir, encoding: "utf8", env: env() });
+  expect(again.status, again.stderr).toBe(0);
+  expect(again.stderr).not.toContain("Compiling");
 });
 
 unix("run outside onebudgetspec it refuses before anything builds", () => {
