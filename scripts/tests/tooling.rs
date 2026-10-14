@@ -936,6 +936,10 @@ impl GateRepo {
 #[cfg(unix)]
 const GATE_TARGETS: &str = "-t format lint lint-workflows build test doc coverage";
 
+/// The onebudgetspec targets `check` runs after the gate targets, at its tier.
+#[cfg(unix)]
+const BUDGET_TARGETS: &str = "-t budgets budgets-host";
+
 #[cfg(unix)]
 #[test]
 fn check_runs_the_affected_tier_from_the_merge_base_with_origin_main_by_default() {
@@ -944,7 +948,10 @@ fn check_runs_the_affected_tier_from_the_merge_base_with_origin_main_by_default(
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         calls,
-        vec![format!("affected --base={} {GATE_TARGETS}", repo.base)]
+        vec![
+            format!("affected --base={} {GATE_TARGETS}", repo.base),
+            format!("affected --base={} {BUDGET_TARGETS}", repo.base),
+        ]
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("merge-base with origin/main"));
 }
@@ -958,7 +965,10 @@ fn check_takes_its_base_from_a_valid_nx_base() {
         assert!(out.status.success(), "{base}: {out:?}");
         assert_eq!(
             calls,
-            vec![format!("affected --base={base} {GATE_TARGETS}")]
+            vec![
+                format!("affected --base={base} {GATE_TARGETS}"),
+                format!("affected --base={base} {BUDGET_TARGETS}"),
+            ]
         );
         assert!(String::from_utf8_lossy(&out.stderr).contains("(NX_BASE)"));
     }
@@ -992,7 +1002,13 @@ fn check_all_runs_the_full_sweep_and_a_mistyped_tier_runs_nothing() {
     let repo = GateRepo::new();
     let (out, calls) = repo.just(&["check", "--all"], Some("main..feature"));
     assert!(out.status.success(), "{out:?}");
-    assert_eq!(calls, vec![format!("run-many --all {GATE_TARGETS}")]);
+    assert_eq!(
+        calls,
+        vec![
+            format!("run-many --all {GATE_TARGETS}"),
+            format!("run-many --all {BUDGET_TARGETS}"),
+        ]
+    );
 
     let (out, calls) = repo.just(&["check", "--al"], None);
     assert_eq!(out.status.code(), Some(2), "{out:?}");
@@ -1021,6 +1037,7 @@ fn every_gate_recipe_takes_the_same_tier() {
         ("fmt-check", "-t format"),
         ("format", "-t format --configuration=write"),
         ("doc", "-t doc"),
+        ("budgets", "-t budgets budgets-host"),
         (
             "check-portable",
             "-t format lint test --exclude=coverage-driver,shell-tools",
@@ -1058,7 +1075,7 @@ fn check_portable_leaves_coverage_and_the_shell_tools_to_the_linux_gate() {
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         repo.switches(),
-        vec!["LLMLINT_COVERAGE= LLMLINT_SHELL_TOOLS="]
+        vec!["LLMLINT_COVERAGE= LLMLINT_SHELL_TOOLS="; 2]
     );
 }
 

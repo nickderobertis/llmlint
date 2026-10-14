@@ -1,0 +1,23 @@
+# The pool-maintenance project's budget. Basis: an estimate. A walk of every
+# pooled slot worktree on the host (3.0 million entries) took 40 s, about 75,000
+# entries a second, so walking this repository's largest slot takes a few
+# seconds and removing one run's superseded builds is a small part of a target
+# dir; 20 s holds that with room for a cold cache. A first pass over weeks of
+# history is far slower, but never recurs once maintenance runs daily, so
+# measure.sh clears it untimed. The check builds the workspace twice (about ten
+# minutes), so it runs only on the release PR's full sweep.
+schema_version: 1
+budgets:
+  - id: llmlint-pool-maintenance-seconds
+    description: |
+      Wall-clock seconds one steady-state pass of this repository's declared pool
+      maintenance takes over one ordinary run's worth of superseded builds, as
+      cargo-prune-superseded reports it. Protects how long a regular post-run pass
+      holds one of this repository's warm-pool slots out of service.
+    labels: [host]
+    measure: reported
+    command: ["./measure.sh"]
+    unit: seconds
+    direction: max
+    threshold: 20
+    timeout_seconds: 3600

@@ -26,7 +26,8 @@
       "{workspaceRoot}/tools/coverage/shcov.rb",
       "{workspaceRoot}/tools/shell/shell.sh",
       { "env": "LLMLINT_COVERAGE" }
-    ]
+    ],
+    "production": ["default"]
   },
   "targetDefaults": {
     "format": {
@@ -46,6 +47,18 @@
     },
     "test": {
       "inputs": ["default", "^default"]
+    },
+    "budgets": {
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^production",
+        { "dependentTasksOutputFiles": "**/telemetry/*.json" },
+        { "externalDependencies": ["@onebudgetspec/cli"] }
+      ]
+    },
+    "budgets-host": {
+      "cache": false
     }
   }
 }

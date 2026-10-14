@@ -1,0 +1,57 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "pool-maintenance",
+  "//": "The budget of this repository's declared pool maintenance (onevcs.toml, the justfile's pool-maintenance recipe): budgets.yaml and the measure.sh it runs. measure.sh builds the workspace twice, so its target has a name of its own, maintenance-budget, which neither check nor the affected run (`-t budgets budgets-host`) selects; `just pool-maintenance-budget` and ci.yml's release-PR sweep run it. The gate tiers reach only its format, lint and test, the journeys of measure.sh over a scratch workspace. It depends on nothing: the journeys build no crate of this workspace.",
+  "projectType": "application",
+  "tags": [
+    "type:bench",
+    "coverage:shell"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh format pool-maintenance/*.sh"
+      },
+      "configurations": {
+        "write": {
+          "command": "bash tools/shell/shell.sh format --write pool-maintenance/*.sh"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh lint pool-maintenance/*.sh"
+      },
+      "inputs": [
+        "default",
+        "shellTools"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "bash tools/coverage/shcov.sh run pool-maintenance -- bun test --timeout 600000 pool-maintenance/tests"
+      },
+      "inputs": [
+        "default",
+        "{workspaceRoot}/justfile",
+        "{workspaceRoot}/.cargo/config.toml",
+        "shellCoverage"
+      ],
+      "outputs": [
+        "{workspaceRoot}/target/shcov/pool-maintenance.json"
+      ],
+      "//": "measure.sh over a one-crate scratch workspace with the real justfile recipe, cargo and the pinned cargo-prune-superseded: a backlog cleared untimed, the alternative build removed by the timed pass and the ordinary build kept; and its refusals, before anything builds."
+    },
+    "maintenance-budget": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "onebudgetspec check pool-maintenance/budgets.yaml --label host"
+      }
+    }
+  }
+}

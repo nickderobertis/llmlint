@@ -1,0 +1,15 @@
+# This repository's warm-pool maintenance, declared for onevcs. onevcs pool
+# maintenance reads this file from the publication checkout on the base branch
+# (never from a session's branch) and runs `command` in each idle slot's
+# worktree, never in a slot a session holds; without it the slots are never
+# maintained. The command is the justfile's `pool-maintenance` recipe, which
+# runs cargo-prune-superseded over every target dir this repository's cargo
+# builds write to (`target`): it removes each unit's superseded builds older
+# than 2 days and keeps each unit's newest build plus every build modified
+# within 2 days, so rebuilds in the slot stay warm. Its time per pass is the
+# `llmlint-pool-maintenance-seconds` budget in pool-maintenance/budgets.yaml.
+schema_version = 1
+
+[pool.maintain]
+command = ["just", "pool-maintenance"]
+timeout = "30m"

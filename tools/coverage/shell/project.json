@@ -25,7 +25,7 @@
       ],
       "//suppression-end": "llmlint: ignore-end[expensive_tests_stay_behind_their_own_edge]",
       "options": {
-        "command": "bash tools/coverage/shcov.sh report bench ci-workflows coverage-driver live real-oneharness release-targets repo-tooling screenshots shell-tools"
+        "command": "bash tools/coverage/shcov.sh report bench ci-workflows coverage-driver live pool-maintenance real-oneharness release-targets repo-tooling screenshots shell-tools"
       },
       "//": "The projects named are exactly the coverage:shell ones (a workspace journey holds the two equal), so a record is never missed or read stale: each was just written or restored by the test it dependsOn. Uncached, like the Rust gate: a replay could report on records that no longer exist."
     }
