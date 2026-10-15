@@ -2010,16 +2010,22 @@ fn install_sh_refuses_intel_macos_before_fetching_anything() {
 #[test]
 fn install_sh_fetches_the_arm64_build_on_apple_silicon_and_every_other_platform_as_before() {
     let base = "https://github.com/nickderobertis/llmlint/releases/download/v9.9.9";
-    for (os, arch, translated, target) in [
-        ("Darwin", "arm64", None, "aarch64-apple-darwin"),
+    for (os, arch, translated, asset) in [
+        ("Darwin", "arm64", None, "aarch64-apple-darwin.tar.gz"),
         // A Rosetta shell on Apple Silicon reports x86_64 but is translated.
-        ("Darwin", "x86_64", Some("1"), "aarch64-apple-darwin"),
-        ("Linux", "x86_64", None, "x86_64-unknown-linux-gnu"),
-        ("Linux", "aarch64", None, "aarch64-unknown-linux-gnu"),
+        ("Darwin", "x86_64", Some("1"), "aarch64-apple-darwin.tar.gz"),
+        ("Linux", "x86_64", None, "x86_64-unknown-linux-gnu.tar.gz"),
+        ("Linux", "aarch64", None, "aarch64-unknown-linux-gnu.tar.gz"),
+        (
+            "MINGW64_NT-10.0",
+            "x86_64",
+            None,
+            "x86_64-pc-windows-msvc.zip",
+        ),
     ] {
         let (out, fetched) = install_sh_on(os, arch, translated);
         assert_eq!(out.status.code(), Some(1), "{os}/{arch}: {out:?}");
-        let archive = format!("{base}/llmlint-v9.9.9-{target}.tar.gz");
+        let archive = format!("{base}/llmlint-v9.9.9-{asset}");
         assert_eq!(fetched.lines().collect::<Vec<_>>(), [archive.as_str()]);
         assert!(
             String::from_utf8_lossy(&out.stderr).contains(&format!("download failed: {archive}")),
