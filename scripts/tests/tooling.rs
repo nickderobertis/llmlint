@@ -1056,6 +1056,91 @@ fn every_gate_recipe_takes_the_same_tier() {
     }
 }
 
+/// Stands in `scripts/bun.sh` (the pinned bun the `budgets` recipe runs
+/// onebudgetspec through) in a [`GateRepo`]: `path` prints a stub bun that
+/// appends `bun <argv>` to the same log as the Nx stub, then exits `exit`.
+#[cfg(unix)]
+fn stand_in_bun(repo: &GateRepo, exit: u8) {
+    use std::os::unix::fs::PermissionsExt;
+    let bun = repo.p.path().join("stand-in-bun");
+    repo.p.write(
+        "stand-in-bun",
+        &format!("#!/usr/bin/env bash\nprintf 'bun %s\\n' \"$*\" >> \"$NX_CALLS\"\nexit {exit}\n"),
+    );
+    fs::set_permissions(&bun, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.p.write(
+        "scripts/bun.sh",
+        &format!(
+            "#!/usr/bin/env bash\n[ \"$1\" = path ] && echo '{}'\n",
+            bun.display()
+        ),
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn budgets_checks_a_root_budgets_yaml_after_the_project_budgets_and_fails_with_it() {
+    let repo = GateRepo::new();
+    stand_in_bun(&repo, 0);
+    // No root budgets.yaml: only the project budgets run.
+    let (out, calls) = repo.just(&["budgets"], None);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        calls,
+        vec![format!("affected --base={} {BUDGET_TARGETS}", repo.base)]
+    );
+
+    repo.p
+        .write("budgets.yaml", "schema_version: 1\nbudgets: []\n");
+    for (args, nx) in [
+        (
+            &["budgets"][..],
+            format!("affected --base={} {BUDGET_TARGETS}", repo.base),
+        ),
+        (
+            &["budgets", "--all"][..],
+            format!("run-many --all {BUDGET_TARGETS}"),
+        ),
+    ] {
+        let (out, calls) = repo.just(args, None);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        assert_eq!(
+            calls,
+            vec![nx, "bun x onebudgetspec check budgets.yaml".to_string()],
+            "{args:?}"
+        );
+    }
+
+    // A root budget over its threshold fails the recipe, and so `check`.
+    stand_in_bun(&repo, 1);
+    let (out, _) = repo.just(&["budgets"], None);
+    assert!(!out.status.success(), "{out:?}");
+    let (out, calls) = repo.just(&["check"], None);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("check: ok"),
+        "{out:?}"
+    );
+    assert_eq!(
+        calls.last().map(String::as_str),
+        Some("bun x onebudgetspec check budgets.yaml")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn budgets_host_runs_every_projects_host_budgets_whatever_the_tier() {
+    // The host-labelled budgets (pool-maintenance's builds the workspace twice)
+    // are never tiered: `just budgets-host` always runs them all, and no `check`
+    // tier reaches them (the check journeys above pin its exact Nx calls).
+    let repo = GateRepo::new();
+    for base in [None, Some("main")] {
+        let (out, calls) = repo.just(&["budgets-host"], base);
+        assert!(out.status.success(), "{base:?}: {out:?}");
+        assert_eq!(calls, vec!["run-many --all -t budgets-host"], "{base:?}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn check_portable_leaves_coverage_and_the_shell_tools_to_the_linux_gate() {
