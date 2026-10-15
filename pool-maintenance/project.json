@@ -38,12 +38,13 @@
       "inputs": [
         "default",
         "{workspaceRoot}/justfile",
+        "{workspaceRoot}/onevcs.toml",
         "shellCoverage"
       ],
       "outputs": [
         "{workspaceRoot}/target/shcov/pool-maintenance.json"
       ],
-      "//": "Offline journeys with stand-in tools: install-pruner.sh as just bootstrap drives it (installs the pin once, replaces an off-pin pruner, and its failures), and measure.sh's refusals before anything builds."
+      "//": "Offline journeys with stand-in tools: onevcs.toml's declared command run as onevcs runs it (the drift gate between the declaration and the recipe), install-pruner.sh as just bootstrap drives it (installs the pin once, replaces an off-pin pruner, and its failures), and measure.sh's refusals before anything builds."
     },
     "budgets-host": {
       "executor": "nx:run-commands",
