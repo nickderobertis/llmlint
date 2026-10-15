@@ -72,6 +72,7 @@ members = [
     "tests/mock-oneharness",
     "tests/e2e",
     "tests/release-targets",
+    "tests/release-packaging",
     "tests/real-oneharness",
     "tests/live",
     "benches",

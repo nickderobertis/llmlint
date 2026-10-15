@@ -1,0 +1,40 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "release-packaging",
+  "//": "The native release-packaging journey: scripts/release-packages.sh, scripts/release-verify.sh and scripts/install.sh driven with the real compiler, maturin and pip. Its own project because it drives real host tools for minutes, so no edit to the offline release-targets suite pays for it. Edges: llmlint is the crate it builds, repo-tooling owns the scripts it runs.",
+  "projectType": "application",
+  "tags": [
+    "type:external"
+  ],
+  "implicitDependencies": [
+    "llmlint",
+    "repo-tooling"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-release-packaging -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-release-packaging"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-release-packaging --all-targets --locked -- -D warnings"
+      }
+    },
+    "packaging": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "cargo nextest run -p llmlint-release-packaging --locked"
+      },
+      "//": "Outside the gate tiers: a release build, a maturin wheel and a pip install for the host target. Run with `bash scripts/nx run release-packaging:packaging`."
+    }
+  }
+}

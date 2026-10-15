@@ -865,7 +865,7 @@ fn ci_contexts(job: &str) -> Vec<String> {
             .iter()
             .map(|os| format!("{job} ({})", os.as_str().unwrap()))
             .collect(),
-        None => vec![job.to_string()],
+        None => vec![body["name"].as_str().unwrap_or(job).to_string()],
     }
 }
 
@@ -881,6 +881,7 @@ fn the_sweep_jobs_the_verdict_reads_are_ci_yml_s_gate_and_cross() {
         .expect("ci-gate.sh declares SWEEP_JOBS");
     let declared: Vec<String> = serde_saphyr::from_str(line).unwrap();
     let mut expected = ci_contexts("gate");
+    expected.extend(ci_contexts("cross-macos"));
     expected.extend(ci_contexts("cross"));
     assert_eq!(declared, expected);
 }

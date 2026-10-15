@@ -79,6 +79,7 @@ bootstrap:
     cargo fetch --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
+    bun install --cwd .github --frozen-lockfile
     bash tools/shell/install-shell-tools.sh
     bash tools/coverage/shcov.sh install
 

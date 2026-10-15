@@ -121,6 +121,26 @@ test("the workflows are linted by actionlint, ci-workflows' lint-workflows", () 
   expect(commandOf(targetsOf("ci-workflows")["lint-workflows"])).toBe("bash scripts/lint-workflows.sh");
 });
 
+// The .github policy helpers' syntax check is github-workflows:lint's alone. The
+// workflow lint reaches it through the task graph Nx resolves, never by starting
+// Nx from inside its own task (Nx refuses that as a recursive task invocation)
+// nor by restating the check in its script.
+test("the workflow lint runs the policy helpers' lint as a task dependency, not a copy", () => {
+  const dir = mkdtempSync(join(tmpdir(), "llmlint-tasks-"));
+  try {
+    const file = join(dir, "tasks.json");
+    const r = run("bash", ["scripts/nx", "run", "ci-workflows:lint-workflows", `--graph=${file}`]);
+    expect(r.code, r.stderr).toBe(0);
+    const { dependencies } = JSON.parse(readFileSync(file, "utf8")).tasks;
+    expect(dependencies["ci-workflows:lint-workflows"]).toEqual(["github-workflows:lint"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  expect(commandOf(targetsOf("github-workflows").lint)).toContain("node --check .github/macos-policy.mjs");
+  const script = readFileSync(join(REPO, "scripts/lint-workflows.sh"), "utf8");
+  expect(script).not.toMatch(/\bnode\b|scripts\/nx|\.mjs/);
+});
+
 test("the check recipe runs every gate target, the workflow lint and both coverage gates included, at either tier", () => {
   const justfile = readFileSync(join(REPO, "justfile"), "utf8");
   const recipe = justfile.slice(justfile.indexOf("\ncheck *flags:") + 1);

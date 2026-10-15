@@ -1,0 +1,42 @@
+{
+  "name": "github-workflows",
+  "//": "The macOS routing/budget proofs over the workflows. No implicitDependencies on purpose: Nx counts an edit to a named target input as touching this project, so a change to any .github file, release-targets.toml, pyproject.toml or screencomp.toml selects it in the affected tier (as shell-tools' consumers do), while a crate-only edit, which none of its proofs read, does not.",
+  "projectType": "library",
+  "tags": [
+    "type:tooling"
+  ],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "inputs": [
+        "{workspaceRoot}/.github/**/*",
+        "{workspaceRoot}/release-targets.toml",
+        "{workspaceRoot}/pyproject.toml",
+        "{workspaceRoot}/screencomp.toml"
+      ],
+      "options": {
+        "command": "node --test .github/tests/*.test.mjs && node .github/node_modules/@onebudgetspec/cli/bin/onebudgetspec.js check .github/budgets.yaml"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --check .github/macos-policy.mjs && node --check .github/macos-result.mjs && node --check .github/macos-budget.mjs && node --check .github/workflow-graph.mjs && node --check .github/workflow-outputs.mjs"
+      },
+      "inputs": [
+        "{workspaceRoot}/.github/**/*.mjs"
+      ]
+    },
+    "budgets": { "//": "llmlint: ignore[new_projects_keep_the_graph_uniform] The approved contract explicitly requires a budgets target depending on telemetry-producing test; these resource bounds are reported through onebudgetspec, separately from source lint.",
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "test"
+      ],
+      "cache": false,
+      "options": {
+        "command": "node .github/node_modules/@onebudgetspec/cli/bin/onebudgetspec.js check .github/budgets.yaml"
+      }
+    }
+  }
+}

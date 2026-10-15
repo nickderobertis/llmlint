@@ -44,7 +44,10 @@
         "{workspaceRoot}/release-plz.toml",
         "{workspaceRoot}/.github/workflows/*.yml",
         "{workspaceRoot}/scripts/release-probe.sh",
-        "shellCoverage"
+        "shellCoverage",
+        "{workspaceRoot}/scripts/release-darwin.sh",
+        "{workspaceRoot}/scripts/release-packages.sh",
+        "{workspaceRoot}/scripts/release-verify.sh"
       ],
       "//": "The offline half: the declaration held to the canonical schema (restated here), to release.yml and the manifests, and the probe against a local stand-in registry. Cached: its inputs are every file it reads, every workspace member's Cargo.toml among them. Its edges cannot reach the e2e, capture and bench members (the tag boundaries), so a manifest edit made only there is caught by the release-PR full sweep, before anything ships, rather than by the affected tier.",
       "outputs": [

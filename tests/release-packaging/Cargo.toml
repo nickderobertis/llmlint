@@ -1,0 +1,20 @@
+# The native release-packaging journey: `scripts/release-packages.sh` driven with
+# the real compiler, maturin and pip for the host target, then the archive and
+# wheel it packs installed and run. It needs those host tools and minutes of
+# release builds, so its one test is this project's `packaging` target, never a
+# gate tier. Test-only; never published.
+[package]
+name = "llmlint-release-packaging"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "release_packaging"
+path = "release_packaging.rs"
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+toml.workspace = true

@@ -695,6 +695,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "llmlint-release-packaging"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "llmlint-release-targets"
 version = "0.0.0"
 dependencies = [

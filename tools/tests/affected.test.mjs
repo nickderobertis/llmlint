@@ -84,8 +84,13 @@ test("only an edit to the coverage driver selects its self-tests, and it re-runs
 test("an edit to a shared script or workflow selects exactly its consumers", () => {
   const script = selected("scripts/nx-base.sh");
   expect(script).toEqual(dependents("repo-tooling"));
+  // github-workflows (the macOS routing and budget proofs) has no edge: its test
+  // names every .github file as an input, and Nx counts that as touching it, so
+  // a workflow edit selects it beside ci-workflows' consumers and nothing else.
   const workflow = selected(".github/workflows/ci.yml");
-  expect(workflow).toEqual(dependents("ci-workflows"));
+  expect(workflow).toEqual([...dependents("ci-workflows"), "github-workflows"].sort());
+  for (const file of ["release-targets.toml", "pyproject.toml", "screencomp.toml"]) expect(selected(file), file).toContain("github-workflows");
+  expect(selected("src/main.rs")).not.toContain("github-workflows");
   for (const got of [script, workflow]) {
     for (const p of ["llmlint", "llmlint-mock-oneharness", "llmlint-e2e", "bench"]) expect(got).not.toContain(p);
   }

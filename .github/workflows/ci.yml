@@ -9,6 +9,11 @@ on:
   # A manual full sweep of the dispatched commit: the recovery when a release
   # finds no sweep verdict for its tree (.github/scripts/ci-gate.sh verdict).
   workflow_dispatch:
+    inputs:
+      macos_diagnostic:
+        description: Run the single Mac diagnostic lane
+        type: boolean
+        default: false
 
 # Least privilege: most jobs only need to read the repo.
 permissions:
@@ -96,11 +101,140 @@ jobs:
   # without shfmt/shellcheck/actionlint, which are platform-independent and run
   # there). The two switches are check-portable's; set for the job, they also make
   # bootstrap skip installing the Linux-only shell tools and bashcov.
+  policy:
+    runs-on: ubuntu-latest
+    outputs:
+      macosRequired: ${{ steps.classify.outputs.macosRequired }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          DIAGNOSTIC: ${{ inputs.macos_diagnostic }}
+        run: |
+          decision=$(node .github/macos-policy.mjs classify --event "$GITHUB_EVENT_PATH" --base "${BASE:-HEAD}" --head "${HEAD:-HEAD}")
+          required=$(jq -r .macosRequired <<<"$decision")
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$DIAGNOSTIC" = true ]; then
+            required=true
+          fi
+          echo "macosRequired=$required" >> "$GITHUB_OUTPUT"
+          echo "reason=$(jq -r .reason <<<"$decision")" >> "$GITHUB_OUTPUT"
+
+  # The single PR Mac lane proves cross, end-user install, and authenticated live usage sequentially.
+  macos:
+    needs: policy
+    if: needs.policy.outputs.macosRequired == 'true'
+    runs-on: macos-latest
+    env:
+      LLMLINT_COVERAGE: "off"
+      LLMLINT_SHELL_TOOLS: "off"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Choose the gate tier
+        id: tier
+        run: bash .github/scripts/ci-gate.sh tier
+      - name: Check out the release PR's head
+        if: steps.tier.outputs.head != ''
+        env:
+          HEAD_SHA: ${{ steps.tier.outputs.head }}
+        run: git checkout --detach "$HEAD_SHA"
+      # The pinned toolchain from rust-toolchain.toml, as in `gate` (same inputs).
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,nextest
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Portable gate (format, clippy + boundaries, tests uninstrumented)
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          BASE: ${{ steps.tier.outputs.base }}
+        run: |
+          if [ "$TIER" = all ]; then
+            just check-portable --all
+          else
+            NX_BASE="$BASE" just check-portable
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install (recommended end-user method)
+        run: cargo install --path . --locked
+      - name: Smoke-test the installed binary
+        run: |
+          llmlint --version
+          llmlint --help >/dev/null
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          llmlint init
+          llmlint config
+      - uses: actions/setup-node@v4
+        if: github.repository == 'nickderobertis/llmlint' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          node-version: lts/*
+      - name: Install live harnesses
+        if: github.repository == 'nickderobertis/llmlint' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        # setup-rust-toolchain exported the gate's `-D warnings` for this job; the
+        # live tier installs oneharness without it, so an upstream lint cannot fail it.
+        env:
+          RUSTFLAGS: ""
+        run: |
+          cargo install --git https://github.com/nickderobertis/oneharness --locked oneharness
+          oneharness --version
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+      - name: Live e2e against the real claude-code harness
+        # llmlint: ignore[live_tier_compiles_and_requires_credential] Preserve the original live workflow's fork omission because forks receive no auth secrets; protected cross/install contexts still require their real Mac assertions, and do not claim a live proof ran. Authenticated live runs remain hard failures on missing credentials.
+        if: github.repository == 'nickderobertis/llmlint' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_E2E_MODEL: ${{ vars.CLAUDE_E2E_MODEL }}
+        # llmlint: ignore[external_service_suite_stays_out_of_the_affected_tier] The approved scheduling contract requires the Mac cross, install and live proofs in one PR job; Linux and Windows live proofs retain their independent workflow. A failed Mac proof must fail both protected carriers.
+        run: just live-claude
+
+  # Linux carriers keep protected contexts present, including an authorized release-only omission.
+  cross-macos:
+    name: cross (macos-latest)
+    needs: [policy, gate, macos]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node .github/macos-result.mjs
+
+  install-macos:
+    name: install (macos-latest)
+    needs: [policy, gate, macos]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node .github/macos-result.mjs
+
   cross:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       LLMLINT_COVERAGE: "off"
@@ -164,7 +298,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

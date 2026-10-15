@@ -25,3 +25,20 @@ the branch protection that governance applies. A job condition is allowed on a
 contract job only when it is true on every PR (`PR_TRUE_CONDITIONS`). screencomp's
 inner `report` job name is known only for the pinned `VISUAL_DOCS_REUSABLE`, so a
 pin bump fails until that name is re-confirmed.
+
+## Mac scheduling proofs
+
+`github-workflows` must remain private: its dependencies are proof tooling, not
+product dependencies. Keep the reusable workflow fixture tied to the upstream
+pin and source hash; a pin change requires reconciling its runner and context
+contract. Never accept cached figures after a routing or proof-source edit.
+
+`macos-policy.mjs classify` is the semantic Mac routing authority. A same-repository
+`release-plz-` head with only parsed package-version and changelog changes can omit
+Mac coverage. That head is the automation identity: only writers can push a
+same-repository branch, and the PR author is never checked, because the owner
+account opens every PR here and a pinned user id would not port. Forks, a
+missing or malformed head repository, dependency edits, unreadable PRs and
+unknown events require it; known non-PR events omit it. Protected Mac contexts must report even after prerequisite failures and must
+never claim that an authorized omission executed a proof. Only the shared
+classifier may authorize an omitted Mac lane.

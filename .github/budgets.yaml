@@ -1,0 +1,21 @@
+schema_version: 1
+budgets:
+  - id: llmlint-macos-jobs-per-run
+    description: >-
+      Maximum resolved Mac job instances per workflow run, including matrices and reusable calls.
+      inner_measure_reason: one run can occupy several shared Mac slots even when the lifecycle run count stays within its bound.
+      The brief requests separate jobs/run and Mac-spending runs/change bounds; the manager approved both scheduling constraints.
+    measure: reported
+    command: [node, macos-budget.mjs, --metric, jobs-per-run, --telemetry, .telemetry/macos-policy.json]
+    unit: jobs
+    direction: max
+    threshold: 1
+  - id: llmlint-macos-runs-per-change
+    description: >-
+      Maximum Mac-spending workflow runs over the single-push automatic lifecycle, excluding explicit manual diagnostics.
+      The brief requests separate jobs/run and Mac-spending runs/change bounds; the manager approved both scheduling constraints.
+    measure: reported
+    command: [node, macos-budget.mjs, --metric, runs-per-change, --telemetry, .telemetry/macos-policy.json]
+    unit: runs
+    direction: max
+    threshold: 2

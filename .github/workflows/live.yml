@@ -6,7 +6,7 @@ name: Live e2e
 #
 # What this proves that the hermetic suite can't: the whole stack works on each
 # OS — the real binary, the oneharness subprocess, and a real harness round-trip
-# on Linux, macOS, and Windows. Harness *breadth* (codex, cursor, …) is
+# on Linux and Windows here; the PR Mac proof shares CI's single Mac lane. Harness *breadth* (codex, cursor, …) is
 # oneharness's own test surface; from llmlint's side every harness is the same
 # `--harness <id>` handed to oneharness, so one canonical harness is enough here.
 #
@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -59,7 +59,7 @@ jobs:
           node-version: lts/*
       - name: Install oneharness (runtime prerequisite, on PATH)
         run: |
-          cargo install --git https://github.com/nickderobertis/oneharness --locked
+          cargo install --git https://github.com/nickderobertis/oneharness --locked oneharness
           oneharness --version
       - name: Install the claude-code CLI
         run: |

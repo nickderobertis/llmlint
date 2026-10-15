@@ -1244,3 +1244,165 @@ mod probe {
         }
     }
 }
+
+/// Both Darwin products remain declared even though their builder now shares a runner.
+#[test]
+fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
+    let root = repo_root();
+    let doc: serde_json::Value =
+        serde_saphyr::from_str(&read(&root.join(".github/workflows/release.yml"))).unwrap();
+    let jobs = &doc["jobs"];
+    assert_eq!(jobs["darwin"]["runs-on"].as_str(), Some("macos-latest"));
+    let steps = jobs["darwin"]["steps"].as_array().unwrap();
+    // This Linux tier cannot execute Darwin/Rosetta. The native builder journey in
+    // tests/release-packaging proves the shared pack/install commands; this artifact
+    // contract reconciles both non-native targets, and the declared Mac job executes
+    // both installed products.
+    let wrapper = read(&root.join("scripts/release-darwin.sh"));
+    let invocation = wrapper
+        .lines()
+        .find(|line| line.starts_with("bash scripts/release-packages.sh"))
+        .unwrap();
+    let targets: Vec<_> = invocation
+        .split(" ||")
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .rev()
+        .take(2)
+        .collect();
+    assert_eq!(targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+    assert!(
+        steps
+            .iter()
+            .any(|s| s["with"]["targets"].as_str()
+                == Some("x86_64-apple-darwin,aarch64-apple-darwin"))
+    );
+    assert!(steps
+        .iter()
+        .any(|s| s["run"].as_str() == Some("bash scripts/release-darwin.sh dist")));
+    assert!(steps
+        .iter()
+        .any(|s| s["with"]["name"].as_str() == Some("darwin-archives")));
+    assert!(steps
+        .iter()
+        .any(|s| s["with"]["name"].as_str() == Some("wheels-darwin")));
+    assert_eq!(
+        jobs["upload-darwin"]["runs-on"].as_str(),
+        Some("ubuntu-latest")
+    );
+    assert_eq!(jobs["upload-darwin"]["needs"].as_str(), Some("darwin"));
+    assert!(jobs["publish-pypi"]["needs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n.as_str() == Some("darwin")));
+    for job in ["upload", "build-wheels"] {
+        let targets: std::collections::BTreeSet<_> = jobs[job]["strategy"]["matrix"]["include"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["target"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            targets,
+            std::collections::BTreeSet::from([
+                "x86_64-unknown-linux-gnu",
+                "aarch64-unknown-linux-gnu",
+                "x86_64-pc-windows-msvc"
+            ])
+        );
+    }
+}
+
+/// The verifier restates the builder's supported targets and archive members, so this
+/// offline drift gate holds the two scripts to one set each.
+#[test]
+fn release_verifier_accepts_exactly_what_the_builder_packs() {
+    let root = repo_root();
+    let builder = read(&root.join("scripts/release-packages.sh"));
+    let verifier = read(&root.join("scripts/release-verify.sh"));
+    let quoted = |text: &str| -> BTreeSet<String> {
+        text.split('\'')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect()
+    };
+    let arms = builder
+        .split_once("case \"$target\" in")
+        .unwrap()
+        .1
+        .split_once("*)")
+        .unwrap()
+        .0;
+    let built: BTreeSet<String> = arms
+        .lines()
+        .filter_map(|line| line.trim().split_once(')'))
+        .flat_map(|(pattern, _)| pattern.split('|').map(|t| t.trim().to_owned()))
+        .collect();
+    let accepted = verifier
+        .lines()
+        .find(|line| line.contains("require(target in ["))
+        .unwrap();
+    assert_eq!(quoted(accepted.split_once("], ").unwrap().0), built);
+    let packed: BTreeSet<String> = builder
+        .lines()
+        .find(|line| line.trim_start().starts_with("tar -czf"))
+        .unwrap()
+        .split_once("-C \"$stage\" ")
+        .unwrap()
+        .1
+        .split(" ||")
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    let members = verifier
+        .lines()
+        .find(|line| line.contains("set(t.getnames()) == {"))
+        .unwrap()
+        .split_once("set(t.getnames()) == {")
+        .unwrap()
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    assert_eq!(quoted(members), packed);
+    assert!(verifier.contains(&format!("len(members) == {}", packed.len())));
+}
+
+// The release builders run only on the Linux and macOS release runners.
+#[cfg(unix)]
+#[test]
+fn release_builder_refuses_option_shaped_output_paths() {
+    let output = std::process::Command::new("bash")
+        .args(["scripts/release-packages.sh", "-p", "x86_64-apple-darwin"])
+        .current_dir(repo_root())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("output path must not start"));
+}
+
+// The release builders run only on the Linux and macOS release runners.
+#[cfg(unix)]
+#[test]
+fn darwin_wrapper_names_its_failure_after_the_builders_diagnostic() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new("bash")
+        .arg("scripts/release-darwin.sh")
+        .arg(temp.path())
+        .current_dir(repo_root())
+        .env("GITHUB_REF_NAME", "v0.0.0-wrong")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("tag does not match"), "{stderr}");
+    assert!(
+        stderr.contains("release-darwin: Darwin packaging into"),
+        "{stderr}"
+    );
+}
