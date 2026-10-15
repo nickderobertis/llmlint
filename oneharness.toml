@@ -13,7 +13,7 @@
 # no-credit quota). A real task failure or timeout does NOT fall through (it would
 # mask a real failure). So the SAME committed config works everywhere with no edit:
 #
-#   * A contributor with Codex authenticated runs the primary — codex + gpt-5.5.
+#   * A contributor with Codex authenticated runs the primary — codex + gpt-6.1-sol.
 #   * A Claude Code web/cloud session, where codex is absent, falls through to the
 #     secondary — claude-code + opus-4.8 — the only harness authenticated there.
 #
@@ -27,7 +27,7 @@ run_mode = "fallback"
 harnesses = ["codex", "claude-code"]
 
 [harness.codex]
-model = "gpt-5.5"
+model = "gpt-6.1-sol"
 
 [harness.claude-code]
 model = "claude-opus-4-8"
