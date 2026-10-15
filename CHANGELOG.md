@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.9](https://github.com/nickderobertis/llmlint/compare/v0.4.8...v0.4.9) - 2026-10-15
+
+### Fixed
+
+- *(deps)* update rustls past RUSTSEC-2026-0346 and -0347 ([#247](https://github.com/nickderobertis/llmlint/pull/247))
+
 ## [0.4.8](https://github.com/nickderobertis/llmlint/compare/v0.4.7...v0.4.8) - 2026-10-13
 
 ### Fixed
