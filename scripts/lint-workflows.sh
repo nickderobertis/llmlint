@@ -48,15 +48,12 @@ if ! actionlint >&2; then
   exit 1
 fi
 
-# The private tooling package owns policy helpers; parsing them needs Node only,
-# not Nx or a root package install. Executable routing journeys are its test target.
-if ! command -v node >/dev/null 2>&1; then
-  echo "lint-workflows: Node is missing; install Node and run just setup before retrying" >&2
+# The workflows' policy helpers (.github/*.mjs) are the github-workflows
+# project's; its lint target owns their syntax check, so run that target here
+# rather than restating its command. Nx's report is shown only on failure.
+if ! helpers="$(bash scripts/nx run github-workflows:lint 2>&1)"; then
+  printf '%s\n' "$helpers" >&2
+  echo "lint-workflows: fix the .github helper finding above (github-workflows:lint)," >&2
+  echo "                then re-run: just lint-workflows" >&2
   exit 1
 fi
-for helper in .github/*.mjs; do
-  if ! node --check "$helper" >&2; then
-    echo "lint-workflows: fix the JavaScript syntax in $helper, then re-run: just lint-workflows" >&2
-    exit 1
-  fi
-done

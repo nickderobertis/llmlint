@@ -1939,7 +1939,11 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
 
 #[cfg(unix)]
 #[test]
-fn lint_workflows_checks_private_helper_syntax_without_node_dependencies() {
+fn lint_workflows_runs_the_github_workflows_lint_target_for_the_policy_helpers() {
+    // The .github helpers' syntax check belongs to the github-workflows project's
+    // `lint` target; the workflow lint runs that target (through scripts/nx) rather
+    // than a copy of its command. Its report stays quiet on success, and a finding
+    // reaches stderr with the next action and fails the step.
     let p = Project::new();
     for path in [
         "scripts/lint-workflows.sh",
@@ -1956,46 +1960,51 @@ fn lint_workflows_checks_private_helper_syntax_without_node_dependencies() {
             actionlint_version()
         ),
     );
-    let run = || {
-        std::process::Command::new("bash")
+    let call = p.path().join("nx-call");
+    write_exe(
+        &p.path().join("scripts/nx"),
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s ' \"$@\" > '{}'\necho 'NX report'\n\
+             if [ -n \"${{NX_FAIL:-}}\" ]; then echo '.github/policy.mjs:1 SyntaxError' >&2; exit 1; fi\n",
+            call.display()
+        ),
+    );
+    let run = |fail: bool| {
+        let mut command = std::process::Command::new("bash");
+        command
             .arg(p.path().join("scripts/lint-workflows.sh"))
             .env("HOME", p.path())
             .env(
                 "PATH",
                 format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
             )
-            .output()
-            .unwrap()
+            .env_remove("NX_FAIL");
+        if fail {
+            command.env("NX_FAIL", "1");
+        }
+        command.output().unwrap()
     };
-    p.write(".github/policy.mjs", "export const valid = true;\n");
-    let good = run();
+    let good = run(false);
     assert!(good.status.success(), "{good:?}");
-    assert!(!p.path().join("node_modules").exists());
-    p.write(".github/policy.mjs", "export const broken = ;\n");
-    let bad = run();
-    assert!(!bad.status.success());
-    assert!(String::from_utf8_lossy(&bad.stderr).contains("policy.mjs"));
-    for tool in ["bash", "dirname", "awk", "head", "sed", "cut", "grep"] {
-        let executable = std::process::Command::new("which")
-            .arg(tool)
-            .output()
-            .unwrap();
-        assert!(executable.status.success());
-        std::os::unix::fs::symlink(
-            String::from_utf8(executable.stdout).unwrap().trim(),
-            bin.join(tool),
-        )
-        .unwrap();
-    }
-    let missing = std::process::Command::new("/bin/bash")
-        .arg(p.path().join("scripts/lint-workflows.sh"))
-        .env("HOME", p.path())
-        .env("PATH", &bin)
-        .output()
-        .unwrap();
-    assert!(!missing.status.success());
+    assert!(good.stdout.is_empty() && good.stderr.is_empty(), "{good:?}");
+    assert_eq!(
+        fs::read_to_string(&call).unwrap().trim(),
+        "run github-workflows:lint"
+    );
+    fs::remove_file(&call).unwrap();
+    let bad = run(true);
+    assert_eq!(bad.status.code(), Some(1), "{bad:?}");
+    let stderr = String::from_utf8_lossy(&bad.stderr);
     assert!(
-        String::from_utf8_lossy(&missing.stderr).contains("Node is missing"),
-        "{missing:?}"
+        stderr.contains(".github/policy.mjs:1 SyntaxError"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("NX report"), "{stderr}");
+    assert!(stderr.contains("github-workflows:lint"), "{stderr}");
+    assert!(stderr.contains("re-run: just lint-workflows"), "{stderr}");
+    assert!(bad.stdout.is_empty(), "{bad:?}");
+    assert!(
+        call.exists(),
+        "the github-workflows lint target was not run"
     );
 }
