@@ -1,10 +1,10 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "pool-maintenance",
-  "//": "The budget of this repository's declared pool maintenance (onevcs.toml, the justfile's pool-maintenance recipe): budgets.yaml and the measure.sh it runs. Its one budget is labelled host, so it runs in the repo-uniform budgets-host target; measure.sh builds the workspace twice, so check and the affected run select only `-t budgets`, never budgets-host, and `just budgets-host` (which ci.yml's release-PR sweep runs) is the one recipe that reaches it. The gate tiers reach only its format, lint and test, the journeys of measure.sh over a scratch workspace. It depends on nothing: the journeys build no crate of this workspace.",
+  "//": "The budget of this repository's declared pool maintenance (onevcs.toml, the justfile's pool-maintenance recipe): budgets.yaml, the measure.sh it runs, and install-pruner.sh, which `just bootstrap` runs to install the pinned pruner. Its one budget is labelled host, so it runs in the repo-uniform budgets-host target; measure.sh builds the workspace twice, so check and the affected run select only `-t budgets`, never budgets-host, and `just budgets-host` (which ci.yml's release-PR sweep runs) is the one recipe that reaches it. The gate tiers reach only its format, lint and test; its test is offline (stand-in tools, nothing built), and the journey that drives real cargo and the real pruner is pool-maintenance-host's. It depends on nothing.",
   "projectType": "application",
   "tags": [
-    "type:bench",
+    "type:tooling",
     "coverage:shell"
   ],
   "targets": {
@@ -33,18 +33,17 @@
       "executor": "nx:run-commands",
       "cache": true,
       "options": {
-        "command": "bash tools/coverage/shcov.sh run pool-maintenance -- bun test --timeout 600000 pool-maintenance/tests"
+        "command": "bash tools/coverage/shcov.sh run pool-maintenance -- bun test pool-maintenance/tests"
       },
       "inputs": [
         "default",
         "{workspaceRoot}/justfile",
-        "{workspaceRoot}/.cargo/config.toml",
         "shellCoverage"
       ],
       "outputs": [
         "{workspaceRoot}/target/shcov/pool-maintenance.json"
       ],
-      "//": "measure.sh over a one-crate scratch workspace with the real justfile recipe, cargo and the pinned cargo-prune-superseded: a backlog cleared untimed, the alternative build removed by the timed pass and the ordinary build kept; and its refusals, before anything builds."
+      "//": "Offline journeys with stand-in tools: install-pruner.sh as just bootstrap drives it (installs the pin once, replaces an off-pin pruner, and its failures), and measure.sh's refusals before anything builds."
     },
     "budgets-host": {
       "executor": "nx:run-commands",

@@ -140,6 +140,6 @@ evidence="untimed backlog pass (evidence, not the figure): $backlog_seconds s, b
 evidence="$evidence; entries removed: $(count "$WORK/removed.txt"), all of the alternative build's $(count "$WORK/alternative.txt")"
 evidence="$evidence; ordinary entries retained: all $(count "$WORK/ordinary.txt")"
 report="$(jq -c --arg evidence "$evidence" '.detail += "; " + $evidence' "$RESULT")" \
-  || fail "cannot read the timed pass's report in $RESULT."
+  || fail "cannot read the timed pass's report in $RESULT as JSON (jq's error above); check the pruner's output above, then re-run just budgets-host."
 printf '%s\n' "$report" >"$RESULT"
 echo "measure: $(jq -r '.value' "$RESULT") s; $(jq -r '.detail' "$RESULT"); lists in $WORK" >&2

@@ -61,7 +61,8 @@ freeze-version := "0.2.2"
 # this release, which `just bootstrap` installs, over these target dirs — every
 # directory this repository's cargo builds write to, repository-relative (the
 # `target-dir` .cargo/config.toml sets). The pruner needs a newer Rust than
-# rust-toolchain.toml pins, so bootstrap builds it with `prune-superseded-rust`.
+# rust-toolchain.toml pins, so bootstrap builds it with `prune-superseded-rust`
+# (pool-maintenance/install-pruner.sh).
 prune-superseded-version := "0.1.1"
 prune-superseded-rust := "1.97.1"
 pool-maintenance-targets := "target"
@@ -91,10 +92,7 @@ bootstrap:
     bash scripts/nx --version >/dev/null
     bash tools/shell/install-shell-tools.sh
     bash tools/coverage/shcov.sh install
-    @if [ "$(cargo-prune-superseded --version 2>/dev/null)" != "cargo-prune-superseded {{prune-superseded-version}}" ]; then \
-      rustup toolchain install --profile minimal {{prune-superseded-rust}} \
-        && cargo +{{prune-superseded-rust}} install --locked cargo-prune-superseded --version {{prune-superseded-version}}; \
-    fi
+    bash pool-maintenance/install-pruner.sh {{prune-superseded-version}} {{prune-superseded-rust}}
 
 # Remove superseded cargo builds older than 2 days from every target dir, keeping
 # each unit's newest build and every build from the last 2 days (onevcs runs this
