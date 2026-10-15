@@ -213,6 +213,14 @@ test-e2e:
 test-release-targets:
     @bash scripts/nx run release-targets:network
 
+# The native release-packaging journeys (the release-packaging project's
+# `packaging`): the release builder run for the host target with the real
+# compiler, maturin and pip, and, on an Apple Silicon Mac, release.yml's `darwin`
+# job (`scripts/release-darwin.sh`, staging, upload). Outside the gate tiers;
+# CI's `macos` lane runs it. Needs the pyproject.toml build backend installed.
+test-packaging:
+    @bash scripts/nx run release-packaging:packaging
+
 # The real-oneharness tier: `tests/real-oneharness/`'s `#[ignore]`-d tests, which
 # feed the `--config` list llmlint forwards to the released oneharness's own
 # `oneharness config --format json` and assert which file's settings win. Free and

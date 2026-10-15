@@ -1409,26 +1409,22 @@ fn darwin_wrapper_names_its_failure_after_the_builders_diagnostic() {
     );
 }
 
-/// The Darwin artifact set the edited release workflow would stage and publish
-/// is exactly the Apple Silicon one. A Linux host cannot build or run a Darwin
-/// binary, so this is proved at the artifact contract: an arm64 Mach-O packed the
-/// way `scripts/release-packages.sh` packs it is accepted by the real trust
-/// boundary (`scripts/release-verify.sh`), then the darwin job's real staging step
-/// and `upload-darwin`'s real upload run over it, with only the forge (`gh`)
-/// doubled and no publication job run. The Intel target is refused by the builder
-/// and the verifier rather than silently built. The macOS release job itself
-/// builds and executes the products natively.
+/// Linux holds the Darwin release scripts and job to the arm64-only contract
+/// without building or running a Darwin binary: the builder and verifier refuse
+/// the Intel target, the job's staging step names exactly the arm64 bundle, and
+/// the macOS CI lane runs the native journey
+/// (`darwin_release_job_packs_and_ships_exactly_the_arm64_set` in
+/// tests/release-packaging) that builds, stages and uploads the real products.
 #[cfg(unix)]
 #[test]
-fn the_darwin_release_stages_and_publishes_exactly_the_arm64_artifact_set() {
+fn darwin_release_is_arm64_only_and_proved_natively_on_the_macos_lane() {
     let root = repo_root();
     let manifest: toml::Value = toml::from_str(&read(&root.join("Cargo.toml"))).unwrap();
     let version = manifest["package"]["version"].as_str().unwrap();
     let tag = format!("v{version}");
-    let doc: serde_json::Value =
+    let release: serde_json::Value =
         serde_saphyr::from_str(&read(&root.join(".github/workflows/release.yml"))).unwrap();
-    let jobs = &doc["jobs"];
-    let steps = jobs["darwin"]["steps"].as_array().unwrap();
+    let steps = release["jobs"]["darwin"]["steps"].as_array().unwrap();
     let targets: Vec<&str> = steps
         .iter()
         .filter_map(|s| s["with"]["targets"].as_str())
@@ -1436,17 +1432,17 @@ fn the_darwin_release_stages_and_publishes_exactly_the_arm64_artifact_set() {
         .collect();
     assert_eq!(targets, ["aarch64-apple-darwin"]);
     let temp = tempfile::tempdir().unwrap();
-    // Each command runs from the repository root unless it names its own directory.
-    let run = |cmd: &mut std::process::Command| cmd.output().unwrap();
 
     // The builder refuses Intel macOS before compiling anything.
     let refused_out = temp.path().join("intel");
-    let refused = run(std::process::Command::new("bash")
-        .current_dir(&root)
+    let refused = std::process::Command::new("bash")
         .arg("scripts/release-packages.sh")
         .arg(&refused_out)
         .arg("x86_64-apple-darwin")
-        .env("GITHUB_REF_NAME", &tag));
+        .current_dir(&root)
+        .env("GITHUB_REF_NAME", &tag)
+        .output()
+        .unwrap();
     assert_eq!(refused.status.code(), Some(1), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
@@ -1455,193 +1451,56 @@ fn the_darwin_release_stages_and_publishes_exactly_the_arm64_artifact_set() {
         "{stderr}"
     );
     assert!(fs::read_dir(&refused_out).unwrap().next().is_none());
-
-    // What the builder leaves in `dist` for each target: the archive, its
-    // checksum and the wheel, around one arm64 Mach-O.
-    let builder = temp.path().join("builder");
-    let dist = builder.join("dist");
-    let wheels = temp.path().join("wheels");
-    fs::create_dir_all(&dist).unwrap();
-    fs::create_dir_all(&wheels).unwrap();
-    let pack = r#"
-import io,pathlib,struct,sys,tarfile,tomllib,zipfile
-root,dist,wheels,tag,version,cpu=sys.argv[1:]
-project=tomllib.load(open(pathlib.Path(root)/'pyproject.toml','rb'))['project']
-binary=b'\xcf\xfa\xed\xfe'+struct.pack('<I',int(cpu,16))+b'\0'*56
-pathlib.Path(wheels,'llmlint').write_bytes(binary)
-dist_name=project['name'].replace('-','_')
-wheel=pathlib.Path(wheels,f'{dist_name}-{version}-py3-none-macosx_11_0_arm64.whl')
-metadata=f"Metadata-Version: 2.1\nName: {project['name']}\nVersion: {version}\nRequires-Python: {project['requires-python']}\n"+''.join(f'Requires-Dist: {d}\n' for d in project['dependencies'])
-with zipfile.ZipFile(wheel,'w') as z:
-    z.writestr(f'{dist_name}-{version}.data/scripts/llmlint',binary)
-    z.writestr(f'{dist_name}-{version}.dist-info/METADATA',metadata)
-with tarfile.open(pathlib.Path(dist,f'llmlint-{tag}-aarch64-apple-darwin.tar.gz'),'w:gz') as t:
-    for name,data,mode in [('llmlint',binary,0o755),('README.md',b'r',0o644),('LICENSE',b'l',0o644),('CHANGELOG.md',b'c',0o644)]:
-        info=tarfile.TarInfo(name); info.size=len(data); info.mode=mode; t.addfile(info,io.BytesIO(data))
-"#;
-    let packed = run(std::process::Command::new("python3")
+    // So does the verifier, before it reads any artifact.
+    let missing = temp.path().join("missing");
+    let verified = std::process::Command::new("bash")
+        .arg("scripts/release-verify.sh")
+        .args([&missing, &missing, &missing, &missing])
+        .args(["x86_64-apple-darwin", version])
         .current_dir(&root)
-        .arg("-c")
-        .arg(pack)
-        .arg(&root)
-        .arg(&dist)
-        .arg(&wheels)
-        .arg(&tag)
-        .arg(version)
-        .arg("0100000c"));
-    assert!(packed.status.success(), "{packed:?}");
-    let archive = dist.join(format!("llmlint-{tag}-aarch64-apple-darwin.tar.gz"));
-    let checksum = std::process::Command::new("shasum")
-        .args(["-a", "256"])
-        .arg(archive.file_name().unwrap())
-        .current_dir(&dist)
         .output()
         .unwrap();
-    assert!(checksum.status.success(), "{checksum:?}");
-    fs::write(
-        dist.join(format!("llmlint-{tag}-aarch64-apple-darwin.sha256")),
-        checksum.stdout,
-    )
-    .unwrap();
-    let records = temp.path().join("records");
-    fs::create_dir_all(&records).unwrap();
-    let verify = |target: &str, binary: &Path| {
-        run(std::process::Command::new("bash")
-            .current_dir(&root)
-            .arg("scripts/release-verify.sh")
-            .arg(&wheels)
-            .arg(&archive)
-            .arg(binary)
-            .arg(&records)
-            .arg(target)
-            .arg(version))
-    };
-    let accepted = verify("aarch64-apple-darwin", &wheels.join("llmlint"));
-    assert!(accepted.status.success(), "{accepted:?}");
-    let record: serde_json::Value =
-        serde_json::from_str(&read(&records.join("aarch64-apple-darwin.json"))).unwrap();
-    assert_eq!(record["target"].as_str(), Some("aarch64-apple-darwin"));
-    let wheel_name = format!("llmlint_cli-{version}-py3-none-macosx_11_0_arm64.whl");
-    assert_eq!(record["wheel"].as_str(), Some(wheel_name.as_str()));
+    assert!(!verified.status.success());
+    assert!(
+        String::from_utf8_lossy(&verified.stderr)
+            .contains("unsupported target x86_64-apple-darwin"),
+        "{verified:?}"
+    );
 
-    // The verifier refuses the Intel target, an x86_64 Mach-O and an x86_64 wheel.
-    let intel = verify("x86_64-apple-darwin", &wheels.join("llmlint"));
-    assert!(String::from_utf8_lossy(&intel.stderr).contains("unsupported target"));
-    let intel_binary = temp.path().join("intel-llmlint");
-    let mut bytes = fs::read(wheels.join("llmlint")).unwrap();
-    bytes[4..8].copy_from_slice(&0x0100_0007u32.to_le_bytes());
-    fs::write(&intel_binary, bytes).unwrap();
-    let wrong_cpu = verify("aarch64-apple-darwin", &intel_binary);
-    assert!(String::from_utf8_lossy(&wrong_cpu.stderr).contains("wrong Darwin CPU"));
-    let intel_wheel = wheels.join(format!(
-        "llmlint_cli-{version}-py3-none-macosx_10_12_x86_64.whl"
-    ));
-    fs::rename(wheels.join(&wheel_name), &intel_wheel).unwrap();
-    let wrong_tag = verify("aarch64-apple-darwin", &wheels.join("llmlint"));
-    assert!(String::from_utf8_lossy(&wrong_tag.stderr).contains("wrong Darwin wheel tag"));
-    fs::rename(&intel_wheel, dist.join(&wheel_name)).unwrap();
-
-    // The darwin job's real staging step, with the attestation action's bundle.
+    // The staging step names exactly the arm64 bundle.
+    let builder = temp.path().join("builder");
+    fs::create_dir_all(builder.join("dist")).unwrap();
     let bundle = temp.path().join("bundle.json");
     fs::write(&bundle, "fixture attestation bundle").unwrap();
     let stage = steps
         .iter()
         .find(|s| s["name"].as_str() == Some("Stage attestation bundle"))
         .unwrap();
-    let staged = run(std::process::Command::new("bash")
+    let staged = std::process::Command::new("bash")
         .args(["-euo", "pipefail", "-c", stage["run"].as_str().unwrap()])
         .current_dir(&builder)
         .env("GITHUB_REF_NAME", &tag)
-        .env("BUNDLE", &bundle));
-    assert!(staged.status.success(), "{staged:?}");
-
-    // Each upload-artifact `path` glob is `dist/*<suffix>`; collect what it takes.
-    let artifact = |name: &str| -> BTreeSet<String> {
-        let upload = steps
-            .iter()
-            .find(|s| s["with"]["name"].as_str() == Some(name))
-            .unwrap();
-        let suffixes: Vec<String> = upload["with"]["path"]
-            .as_str()
-            .unwrap()
-            .lines()
-            .map(|l| {
-                l.trim()
-                    .strip_prefix("dist/*")
-                    .unwrap_or_else(|| panic!("unexpected glob {l}"))
-                    .to_owned()
-            })
-            .collect();
-        fs::read_dir(&dist)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().into_string().unwrap())
-            .filter(|f| suffixes.iter().any(|s| f.ends_with(s.as_str())))
-            .collect()
-    };
-    let archives = artifact("darwin-archives");
-    let base = format!("llmlint-{tag}-aarch64-apple-darwin");
-    assert_eq!(
-        archives,
-        BTreeSet::from([
-            format!("{base}.tar.gz"),
-            format!("{base}.sha256"),
-            format!("{base}.sigstore.json"),
-        ])
-    );
-    // The wheels PyPI would receive from this job (publish-pypi, gated off here).
-    assert_eq!(artifact("wheels-darwin"), BTreeSet::from([wheel_name]));
-    assert_eq!(
-        jobs["publish-pypi"]["if"].as_str(),
-        Some("${{ vars.PYPI_PUBLISH == 'true' }}")
-    );
-
-    // upload-darwin's real upload, on its Linux runner, into a doubled forge.
-    let linux = temp.path().join("linux");
-    let forge = temp.path().join("forge");
-    let bin = temp.path().join("bin");
-    for dir in [linux.join("dist"), forge.clone(), bin.clone()] {
-        fs::create_dir_all(dir).unwrap();
-    }
-    for name in &archives {
-        fs::copy(dist.join(name), linux.join("dist").join(name)).unwrap();
-    }
-    let gh = bin.join("gh");
-    fs::write(
-        &gh,
-        concat!(
-            "#!/bin/sh\n",
-            "[ \"$1 $2 $3\" = \"release upload $EXPECTED_TAG\" ] || exit 9\n",
-            "shift 3\n",
-            "for a; do\n",
-            "  case \"$a\" in --repo | fixture/llmlint | --clobber) ;; *) cp \"$a\" \"$FORGE/\" || exit 8 ;; esac\n",
-            "done\n",
-        ),
-    )
-    .unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let upload = jobs["upload-darwin"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find_map(|s| s["run"].as_str())
+        .env("BUNDLE", &bundle)
+        .output()
         .unwrap();
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let uploaded = run(std::process::Command::new("bash")
-        .args(["-euo", "pipefail", "-c", upload])
-        .current_dir(&linux)
-        .env("PATH", path)
-        .env("GITHUB_REF_NAME", &tag)
-        .env("GITHUB_REPOSITORY", "fixture/llmlint")
-        .env("EXPECTED_TAG", &tag)
-        .env("FORGE", &forge));
-    assert!(uploaded.status.success(), "{uploaded:?}");
-    let published: BTreeSet<String> = fs::read_dir(&forge)
+    assert!(staged.status.success(), "{staged:?}");
+    let named: BTreeSet<String> = fs::read_dir(builder.join("dist"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
-    assert_eq!(published, archives);
-    assert!(published.iter().all(|f| !f.contains("x86_64")));
+    assert_eq!(
+        named,
+        BTreeSet::from([format!("llmlint-{tag}-aarch64-apple-darwin.sigstore.json")])
+    );
+
+    // The one macOS CI lane runs the native Darwin packaging journey.
+    let ci: serde_json::Value =
+        serde_saphyr::from_str(&read(&root.join(".github/workflows/ci.yml"))).unwrap();
+    let lane = &ci["jobs"]["macos"];
+    assert_eq!(lane["runs-on"].as_str(), Some("macos-latest"));
+    assert!(lane["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["run"].as_str() == Some("just test-packaging") && s["if"].is_null()));
 }

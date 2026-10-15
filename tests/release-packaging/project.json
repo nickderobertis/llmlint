@@ -1,14 +1,15 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "release-packaging",
-  "//": "The native release-packaging journey: scripts/release-packages.sh, scripts/release-verify.sh and scripts/install.sh driven with the real compiler, maturin and pip. Its own project because it drives real host tools for minutes, so no edit to the offline release-targets suite pays for it. Edges: llmlint is the crate it builds, repo-tooling owns the scripts it runs.",
+  "//": "The native release-packaging journeys: scripts/release-packages.sh, scripts/release-verify.sh and scripts/install.sh driven with the real compiler, maturin and pip, and on an Apple Silicon Mac release.yml's darwin job (scripts/release-darwin.sh, its staging and upload steps). Its own project because it drives real host tools for minutes, so no edit to the offline release-targets suite pays for it. Edges: llmlint is the crate it builds, repo-tooling owns the scripts it runs, ci-workflows owns the release.yml steps it runs.",
   "projectType": "application",
   "tags": [
     "type:external"
   ],
   "implicitDependencies": [
     "llmlint",
-    "repo-tooling"
+    "repo-tooling",
+    "ci-workflows"
   ],
   "targets": {
     "format": {
@@ -34,7 +35,7 @@
       "options": {
         "command": "cargo nextest run -p llmlint-release-packaging --locked"
       },
-      "//": "Outside the gate tiers: a release build, a maturin wheel and a pip install for the host target. Run with `bash scripts/nx run release-packaging:packaging`."
+      "//": "Outside the gate tiers: a release build, a maturin wheel and a pip install for the host target, plus the Darwin release job on Apple Silicon. Run with `just test-packaging`; CI's macos lane runs it."
     }
   }
 }

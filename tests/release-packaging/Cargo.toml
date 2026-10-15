@@ -1,8 +1,9 @@
-# The native release-packaging journey: `scripts/release-packages.sh` driven with
+# The native release-packaging journeys: `scripts/release-packages.sh` driven with
 # the real compiler, maturin and pip for the host target, then the archive and
-# wheel it packs installed and run. It needs those host tools and minutes of
-# release builds, so its one test is this project's `packaging` target, never a
-# gate tier. Test-only; never published.
+# wheel it packs installed and run; on an Apple Silicon Mac, release.yml's
+# `darwin` job too (`scripts/release-darwin.sh`, staging and upload). They need
+# those host tools and minutes of release builds, so they are this project's
+# `packaging` target, never a gate tier. Test-only; never published.
 [package]
 name = "llmlint-release-packaging"
 edition.workspace = true
@@ -15,6 +16,7 @@ name = "release_packaging"
 path = "release_packaging.rs"
 
 [dev-dependencies]
+serde-saphyr.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 toml.workspace = true
