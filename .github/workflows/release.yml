@@ -130,7 +130,7 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
 
   # macos-latest is Apple Silicon, so the one macOS target builds and runs natively.
-  # Intel macOS (x86_64-apple-darwin) is no longer released.
+  # Intel macOS is no longer released.
   darwin:
     needs: verdict
     runs-on: macos-latest
