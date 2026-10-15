@@ -171,7 +171,8 @@ jobs:
           echo "macosRequired=$required" >> "$GITHUB_OUTPUT"
           echo "reason=$(jq -r .reason <<<"$decision")" >> "$GITHUB_OUTPUT"
 
-  # The single PR Mac lane proves cross, end-user install, and authenticated live usage sequentially.
+  # The single PR Mac lane proves cross, native Darwin release packaging, end-user
+  # install, and authenticated live usage sequentially.
   macos:
     needs: policy
     if: needs.policy.outputs.macosRequired == 'true'
@@ -217,6 +218,22 @@ jobs:
           else
             NX_BASE="$BASE" just check-portable
           fi
+      # release.yml's darwin job, natively on this Apple Silicon runner, with
+      # publication off and only the forge doubled (tests/release-packaging).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the declared packaging backend
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import tomllib
+          with open("pyproject.toml", "rb") as manifest:
+              requirements = tomllib.load(manifest)["build-system"]["requires"]
+          subprocess.run(["python3", "-m", "pip", "install", *requirements], check=True)
+          PY
+      - name: Native release packaging (Darwin)
+        run: just test-packaging
 
       - uses: dtolnay/rust-toolchain@stable
       - name: Install (recommended end-user method)

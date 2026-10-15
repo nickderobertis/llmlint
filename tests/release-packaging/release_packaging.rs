@@ -17,6 +17,35 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }
 
+/// Run the public POSIX installer against the release assets in `assets`, with
+/// only forge downloads doubled (`curl` serves each asset from `assets` by
+/// name), then run the installed binary; a tampered checksum must be refused.
+fn install_from_forge(assets: &Path, root: &Path, version: &str) {
+    let installer = std::process::Command::new("python3").arg("-c").arg(r#"
+import os,pathlib,shutil,subprocess,sys
+assets,root,version=sys.argv[1:]
+assets=pathlib.Path(assets); tools=assets/'installer-tools'; tools.mkdir()
+for name in ['uname','mktemp','rm','mkdir','tar','gzip','awk','sha256sum','shasum','openssl','cp','chmod','mv','grep','sed','cat','dirname','basename']:
+    executable=shutil.which(name)
+    if executable: (tools/name).symlink_to(executable)
+python=sys.executable
+curl=tools/'curl'
+curl.write_text('#!'+python+'\nimport pathlib,shutil,sys\nargs=sys.argv[1:]\nname=args[-1].rsplit("/",1)[-1]\nshutil.copyfile(pathlib.Path('+repr(str(assets))+')/name,args[args.index("-o")+1])\n')
+curl.chmod(0o755)
+env={**os.environ,'PATH':str(tools),'LLMLINT_VERSION':'v'+version,'LLMLINT_INSTALL_DIR':str(assets/'public-install')}
+run=lambda:subprocess.run(['/bin/sh',str(pathlib.Path(root)/'scripts/install.sh')],env=env,capture_output=True,text=True)
+result=run(); assert result.returncode==0,(result.stdout,result.stderr)
+installed=subprocess.run([str(assets/'public-install/llmlint'),'--version'],capture_output=True,text=True)
+assert installed.returncode==0 and installed.stdout.strip()=='llmlint '+version,installed
+checksum=next(assets.glob('llmlint-v'+version+'-*.sha256')); original=checksum.read_bytes()
+checksum.write_text('0'*64+'  invalid\n')
+try:
+    refused=run(); assert refused.returncode!=0 and 'checksum' in refused.stderr.lower(),refused
+finally: checksum.write_bytes(original)
+"#).arg(assets).arg(root).arg(version).output().unwrap();
+    assert!(installer.status.success(), "{installer:?}");
+}
+
 #[test]
 fn native_release_packages_install_and_run() {
     let root = repo_root();
@@ -108,30 +137,7 @@ fn native_release_packages_install_and_run() {
         .output()
         .unwrap();
     assert!(checksum.status.success(), "{checksum:?}");
-    // Only forge downloads are doubled: run the public POSIX installer against real assets.
-    let installer = std::process::Command::new("python3").arg("-c").arg(r#"
-import os,pathlib,shutil,subprocess,sys
-assets,root,version=sys.argv[1:]
-assets=pathlib.Path(assets); tools=assets/'installer-tools'; tools.mkdir()
-for name in ['uname','mktemp','rm','mkdir','tar','gzip','awk','sha256sum','shasum','openssl','cp','chmod','mv','grep','sed','cat','dirname','basename']:
-    executable=shutil.which(name)
-    if executable: (tools/name).symlink_to(executable)
-python=sys.executable
-curl=tools/'curl'
-curl.write_text('#!'+python+'\nimport pathlib,shutil,sys\nargs=sys.argv[1:]\nname=args[-1].rsplit("/",1)[-1]\nshutil.copyfile(pathlib.Path('+repr(str(assets))+')/name,args[args.index("-o")+1])\n')
-curl.chmod(0o755)
-env={**os.environ,'PATH':str(tools),'LLMLINT_VERSION':'v'+version,'LLMLINT_INSTALL_DIR':str(assets/'public-install')}
-run=lambda:subprocess.run(['/bin/sh',str(pathlib.Path(root)/'scripts/install.sh')],env=env,capture_output=True,text=True)
-result=run(); assert result.returncode==0,(result.stdout,result.stderr)
-installed=subprocess.run([str(assets/'public-install/llmlint'),'--version'],capture_output=True,text=True)
-assert installed.returncode==0 and installed.stdout.strip()=='llmlint '+version,installed
-checksum=next(assets.glob('llmlint-v'+version+'-*.sha256')); original=checksum.read_bytes()
-checksum.write_text('0'*64+'  invalid\n')
-try:
-    refused=run(); assert refused.returncode!=0 and 'checksum' in refused.stderr.lower(),refused
-finally: checksum.write_bytes(original)
-"#).arg(temp.path()).arg(&root).arg(version).output().unwrap();
-    assert!(installer.status.success(), "{installer:?}");
+    install_from_forge(temp.path(), &root, version);
     let original_archive = fs::read(&archive).unwrap();
     for (kind, expected) in [
         ("metadata", "wrong distribution name"),
@@ -417,4 +423,261 @@ with zipfile.ZipFile(path,'w') as z:
         .unwrap();
     assert!(!failure.status.success());
     assert!(String::from_utf8_lossy(&failure.stderr).contains("tag does not match"));
+}
+
+#[cfg(unix)]
+fn names_in(dir: &Path) -> std::collections::BTreeSet<String> {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect()
+}
+
+/// release.yml's `darwin` job, natively: its build step's real wrapper
+/// (`scripts/release-darwin.sh`, and so the real compiler, maturin and pip)
+/// packs exactly the Apple Silicon archive, checksum and wheel; its staging step
+/// and `upload-darwin`'s upload carry exactly that set to the forge (`gh` and the
+/// attestation action doubled, no publication job run); the uploaded archive
+/// installs through `scripts/install.sh` and runs. The Intel target is refused,
+/// not built. Only an Apple Silicon Mac can build and run this natively, so
+/// it runs on CI's macOS lane; Linux holds the same scripts to the arm64-only
+/// contract in the release-targets suite.
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    not(all(target_os = "macos", target_arch = "aarch64")),
+    ignore = "native Darwin packaging: needs an Apple Silicon Mac (CI's `macos` lane runs it)"
+)]
+fn darwin_release_job_packs_and_ships_exactly_the_arm64_set() {
+    let root = repo_root();
+    let manifest: toml::Value = toml::from_str(&read(&root.join("Cargo.toml"))).unwrap();
+    let version = manifest["package"]["version"].as_str().unwrap();
+    let tag = format!("v{version}");
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(&read(&root.join(".github/workflows/release.yml"))).unwrap();
+    let jobs = &workflow["jobs"];
+    let steps = jobs["darwin"]["steps"].as_array().unwrap();
+    let step = |name: &str| {
+        steps
+            .iter()
+            .find(|s| s["name"].as_str() == Some(name))
+            .unwrap_or_else(|| panic!("release.yml darwin has no step {name:?}"))
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let bash = |script: &str, cwd: &Path, env: &[(&str, &Path)]| {
+        let mut cmd = std::process::Command::new("bash");
+        cmd.args(["-euo", "pipefail", "-c", script])
+            .current_dir(cwd)
+            .env("GITHUB_REF_NAME", &tag);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        cmd.output().unwrap()
+    };
+
+    // The Intel target is refused before anything is compiled.
+    let intel = temp.path().join("intel");
+    let refused = std::process::Command::new("bash")
+        .arg("scripts/release-packages.sh")
+        .arg(&intel)
+        .arg("x86_64-apple-darwin")
+        .current_dir(&root)
+        .env("GITHUB_REF_NAME", &tag)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("Intel macOS is no longer released"),
+        "{refused:?}"
+    );
+    assert!(names_in(&intel).is_empty());
+
+    // The build step, into a scratch `dist` rather than the checkout's.
+    let build = step("Build and test the Darwin package")["run"]
+        .as_str()
+        .unwrap();
+    assert_eq!(build, "bash scripts/release-darwin.sh dist");
+    let builder = temp.path().join("builder");
+    let dist = builder.join("dist");
+    let built = std::process::Command::new("bash")
+        .arg("scripts/release-darwin.sh")
+        .arg(&dist)
+        .current_dir(&root)
+        .env("GITHUB_REF_NAME", &tag)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{built:?}");
+    let base = format!("llmlint-{tag}-aarch64-apple-darwin");
+    let record: serde_json::Value =
+        serde_json::from_str(&read(&dist.join("aarch64-apple-darwin.json"))).unwrap();
+    assert_eq!(record["target"].as_str(), Some("aarch64-apple-darwin"));
+    assert_eq!(record["version"].as_str(), Some(version));
+    let wheel = record["wheel"].as_str().unwrap().to_owned();
+    let platform = wheel
+        .strip_suffix(".whl")
+        .unwrap()
+        .rsplit('-')
+        .next()
+        .unwrap();
+    assert!(
+        wheel.starts_with("llmlint_cli-")
+            && platform.starts_with("macosx_")
+            && platform.ends_with("_arm64"),
+        "{wheel}"
+    );
+    assert_eq!(
+        names_in(&dist),
+        std::collections::BTreeSet::from([
+            format!("{base}.tar.gz"),
+            format!("{base}.sha256"),
+            "aarch64-apple-darwin.json".to_owned(),
+            wheel.clone(),
+        ])
+    );
+    // The archived binary is an arm64 Mach-O (CPU_TYPE_ARM64).
+    let unpacked = temp.path().join("unpacked");
+    fs::create_dir(&unpacked).unwrap();
+    let untar = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(dist.join(format!("{base}.tar.gz")))
+        .arg("-C")
+        .arg(&unpacked)
+        .output()
+        .unwrap();
+    assert!(untar.status.success(), "{untar:?}");
+    let binary = fs::read(unpacked.join("llmlint")).unwrap();
+    assert_eq!(&binary[..4], b"\xcf\xfa\xed\xfe");
+    assert_eq!(binary[4..8], 0x0100_000cu32.to_le_bytes());
+    // The verifier refuses the same products presented as Intel ones.
+    let mut intel_binary = binary.clone();
+    intel_binary[4..8].copy_from_slice(&0x0100_0007u32.to_le_bytes());
+    let intel_path = temp.path().join("intel-llmlint");
+    fs::write(&intel_path, intel_binary).unwrap();
+    let verify = |binary: &Path, target: &str| {
+        std::process::Command::new("bash")
+            .arg("scripts/release-verify.sh")
+            .arg(&dist)
+            .arg(dist.join(format!("{base}.tar.gz")))
+            .arg(binary)
+            .arg(temp.path())
+            .arg(target)
+            .arg(version)
+            .current_dir(&root)
+            .output()
+            .unwrap()
+    };
+    for (binary, target, says) in [
+        (&intel_path, "aarch64-apple-darwin", "wrong Darwin CPU"),
+        (
+            &unpacked.join("llmlint"),
+            "x86_64-apple-darwin",
+            "unsupported target",
+        ),
+    ] {
+        let refusal = verify(binary, target);
+        assert!(!refusal.status.success(), "{target}: {refusal:?}");
+        assert!(
+            String::from_utf8_lossy(&refusal.stderr).contains(says),
+            "{refusal:?}"
+        );
+    }
+
+    // The staging step, with the attestation action's bundle doubled.
+    let bundle = temp.path().join("bundle.json");
+    fs::write(&bundle, "fixture attestation bundle").unwrap();
+    let staged = bash(
+        step("Stage attestation bundle")["run"].as_str().unwrap(),
+        &builder,
+        &[("BUNDLE", &bundle)],
+    );
+    assert!(staged.status.success(), "{staged:?}");
+    // What each upload-artifact `path` glob (`dist/*<suffix>`) takes.
+    let artifact = |name: &str| -> std::collections::BTreeSet<String> {
+        let upload = steps
+            .iter()
+            .find(|s| s["with"]["name"].as_str() == Some(name))
+            .unwrap();
+        let suffixes: Vec<String> = upload["with"]["path"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .map(|l| {
+                l.trim()
+                    .strip_prefix("dist/*")
+                    .unwrap_or_else(|| panic!("unexpected glob {l}"))
+                    .to_owned()
+            })
+            .collect();
+        names_in(&dist)
+            .into_iter()
+            .filter(|f| suffixes.iter().any(|s| f.ends_with(s.as_str())))
+            .collect()
+    };
+    let archives = artifact("darwin-archives");
+    assert_eq!(
+        archives,
+        std::collections::BTreeSet::from([
+            format!("{base}.tar.gz"),
+            format!("{base}.sha256"),
+            format!("{base}.sigstore.json"),
+        ])
+    );
+    // The wheels publish-pypi would receive from this job (not run here).
+    assert_eq!(
+        artifact("wheels-darwin"),
+        std::collections::BTreeSet::from([wheel])
+    );
+
+    // upload-darwin's upload into a doubled forge.
+    let linux = temp.path().join("linux");
+    let forge = temp.path().join("forge");
+    let bin = temp.path().join("bin");
+    for dir in [linux.join("dist"), forge.clone(), bin.clone()] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    for name in &archives {
+        fs::copy(dist.join(name), linux.join("dist").join(name)).unwrap();
+    }
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        concat!(
+            "#!/bin/sh\n",
+            "[ \"$1 $2 $3\" = \"release upload $GITHUB_REF_NAME\" ] || exit 9\n",
+            "shift 3\n",
+            "for a; do\n",
+            "  case \"$a\" in --repo | fixture/llmlint | --clobber) ;; *) cp \"$a\" \"$FORGE/\" || exit 8 ;; esac\n",
+            "done\n",
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let upload = jobs["upload-darwin"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|s| s["run"].as_str())
+        .unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin.clone())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let uploaded = std::process::Command::new("bash")
+        .args(["-euo", "pipefail", "-c", upload])
+        .current_dir(&linux)
+        .env("PATH", path)
+        .env("GITHUB_REF_NAME", &tag)
+        .env("GITHUB_REPOSITORY", "fixture/llmlint")
+        .env("FORGE", &forge)
+        .output()
+        .unwrap();
+    assert!(uploaded.status.success(), "{uploaded:?}");
+    assert_eq!(names_in(&forge), archives);
+
+    // What the forge now serves installs and runs on this Mac.
+    install_from_forge(&forge, &root, version);
 }

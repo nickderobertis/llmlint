@@ -698,6 +698,7 @@ dependencies = [
 name = "llmlint-release-packaging"
 version = "0.0.0"
 dependencies = [
+ "serde-saphyr",
  "serde_json",
  "tempfile",
  "toml",

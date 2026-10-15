@@ -113,7 +113,7 @@ test('release artifact transfers stay on the exact tagged run and wait for their
   assert.ok(steps[upload].with.path.includes('dist/*.sha256'));
   assert.ok(steps[upload].with.path.includes('dist/*.sigstore.json'));
   for(const id of ['upload-darwin','publish-pypi','publish-crate']) assert.equal(release[id]['runs-on'],'ubuntu-latest');
-  const darwin=rows.find(r=>r.job==='darwin');assert.deepEqual(darwin.targets,['x86_64-apple-darwin','aarch64-apple-darwin']);
+  const darwin=rows.find(r=>r.job==='darwin');assert.deepEqual(darwin.targets,['aarch64-apple-darwin']);assert.ok(darwin.macos);
 });
 test('matrix exclusions, include merging and filtered event routing cannot silently undercount',()=>{
   const scenario={id:'filters',eventName:'push',event:{},paths:['src/lib.rs'],branch:'main'};

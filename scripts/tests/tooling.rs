@@ -2039,3 +2039,101 @@ fn setup_refuses_to_provision_without_ruby_and_bundler_and_proceeds_with_them() 
     assert!(p.path().join(".dev/setup.stamp").exists());
 }
 // llmlint: ignore-end[e2e_not_mocked]
+
+// llmlint: ignore-block[e2e_not_mocked] the real public installer runs under the host's /bin/sh; a test cannot own the host's OS/CPU, whether the kernel is translating it, or GitHub's release server, so only `uname`, `sysctl` and the forge download (`curl`, which records the URL it was asked for) are stood in
+/// Run `scripts/install.sh` the way `curl … | sh` does, on a host whose `uname`
+/// reports `os`/`arch` and whose `sysctl.proc_translated` is `translated` (no
+/// `sysctl` at all when `None`). Returns the run and every URL the installer
+/// asked the forge for.
+#[cfg(unix)]
+fn install_sh_on(os: &str, arch: &str, translated: Option<&str>) -> (std::process::Output, String) {
+    let p = Project::new();
+    let bin = p.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for base in ["mktemp", "rm"] {
+        let real = on_path(base).unwrap_or_else(|| panic!("test host lacks {base}"));
+        std::os::unix::fs::symlink(real, bin.join(base)).unwrap();
+    }
+    write_exe(
+        &bin.join("uname"),
+        &format!("#!/bin/sh\ncase \"$1\" in -s) echo {os} ;; *) echo {arch} ;; esac\n"),
+    );
+    if let Some(value) = translated {
+        write_exe(
+            &bin.join("sysctl"),
+            &format!(
+                "#!/bin/sh\n[ \"$*\" = '-n sysctl.proc_translated' ] || exit 1\necho {value}\n"
+            ),
+        );
+    }
+    let fetched = p.path().join("fetched");
+    // The forge has no such release, so the run stops at the first download.
+    write_exe(
+        &bin.join("curl"),
+        &format!(
+            "#!/bin/sh\nfor a; do last=\"$a\"; done\necho \"$last\" >>'{}'\nexit 22\n",
+            fetched.display()
+        ),
+    );
+    let out = std::process::Command::new("/bin/sh")
+        .arg(repo_root().join("scripts/install.sh"))
+        .env_clear()
+        .env("PATH", &bin)
+        .env("HOME", p.path())
+        .env("LLMLINT_VERSION", "v9.9.9")
+        .env("LLMLINT_INSTALL_DIR", p.path().join("installed"))
+        .output()
+        .unwrap();
+    assert!(!p.path().join("installed").exists(), "{os}/{arch}: {out:?}");
+    (out, fs::read_to_string(&fetched).unwrap_or_default())
+}
+
+#[cfg(unix)]
+#[test]
+fn install_sh_refuses_intel_macos_before_fetching_anything() {
+    // Intel macOS is no longer released: an Intel Mac (whether or not it has
+    // sysctl's translation key) is told so, and nothing is downloaded.
+    for translated in [None, Some("0")] {
+        let (out, fetched) = install_sh_on("Darwin", "x86_64", translated);
+        assert_eq!(out.status.code(), Some(1), "{translated:?}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("Intel macOS (x86_64) is no longer supported"),
+            "{translated:?}: {stderr}"
+        );
+        assert!(
+            stderr.contains("cargo install llmlint --locked"),
+            "{stderr}"
+        );
+        assert!(fetched.is_empty(), "{translated:?}: fetched {fetched}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_sh_fetches_the_arm64_build_on_apple_silicon_and_every_other_platform_as_before() {
+    let base = "https://github.com/nickderobertis/llmlint/releases/download/v9.9.9";
+    for (os, arch, translated, asset) in [
+        ("Darwin", "arm64", None, "aarch64-apple-darwin.tar.gz"),
+        // A Rosetta shell on Apple Silicon reports x86_64 but is translated.
+        ("Darwin", "x86_64", Some("1"), "aarch64-apple-darwin.tar.gz"),
+        ("Linux", "x86_64", None, "x86_64-unknown-linux-gnu.tar.gz"),
+        ("Linux", "aarch64", None, "aarch64-unknown-linux-gnu.tar.gz"),
+        (
+            "MINGW64_NT-10.0",
+            "x86_64",
+            None,
+            "x86_64-pc-windows-msvc.zip",
+        ),
+    ] {
+        let (out, fetched) = install_sh_on(os, arch, translated);
+        assert_eq!(out.status.code(), Some(1), "{os}/{arch}: {out:?}");
+        let archive = format!("{base}/llmlint-v9.9.9-{asset}");
+        assert_eq!(fetched.lines().collect::<Vec<_>>(), [archive.as_str()]);
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(&format!("download failed: {archive}")),
+            "{os}/{arch}: {out:?}"
+        );
+    }
+}
+// llmlint: ignore-end[e2e_not_mocked]

@@ -1245,7 +1245,8 @@ mod probe {
     }
 }
 
-/// Both Darwin products remain declared even though their builder now shares a runner.
+/// The one Darwin product (Apple Silicon; Intel macOS is no longer released) is
+/// built on the one Mac release job and staged before Linux publication.
 #[test]
 fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
     let root = repo_root();
@@ -1254,10 +1255,10 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
     let jobs = &doc["jobs"];
     assert_eq!(jobs["darwin"]["runs-on"].as_str(), Some("macos-latest"));
     let steps = jobs["darwin"]["steps"].as_array().unwrap();
-    // This Linux tier cannot execute Darwin/Rosetta. The native builder journey in
-    // tests/release-packaging proves the shared pack/install commands; this artifact
-    // contract reconciles both non-native targets, and the declared Mac job executes
-    // both installed products.
+    // This Linux tier cannot execute Darwin. The native builder journey in
+    // tests/release-packaging proves the shared pack/install commands; the artifact
+    // contract below reconciles the non-native target, and the declared Mac job
+    // executes its installed products natively.
     let wrapper = read(&root.join("scripts/release-darwin.sh"));
     let invocation = wrapper
         .lines()
@@ -1268,16 +1269,17 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
         .next()
         .unwrap()
         .split_whitespace()
-        .rev()
-        .take(2)
+        .skip(3)
         .collect();
-    assert_eq!(targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
-    assert!(
-        steps
-            .iter()
-            .any(|s| s["with"]["targets"].as_str()
-                == Some("x86_64-apple-darwin,aarch64-apple-darwin"))
-    );
+    assert_eq!(targets, ["aarch64-apple-darwin"]);
+    assert!(steps
+        .iter()
+        .any(|s| s["with"]["targets"].as_str() == Some("aarch64-apple-darwin")));
+    // Native only: no Rosetta install, no x86_64 toolchain or translated run.
+    let job = serde_json::to_string(&jobs["darwin"]).unwrap();
+    for intel in ["rosetta", "x86_64", "arch -"] {
+        assert!(!job.to_lowercase().contains(intel), "{intel} in {job}");
+    }
     assert!(steps
         .iter()
         .any(|s| s["run"].as_str() == Some("bash scripts/release-darwin.sh dist")));
@@ -1311,6 +1313,64 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
                 "aarch64-unknown-linux-gnu",
                 "x86_64-pc-windows-msvc"
             ])
+        );
+    }
+}
+
+/// No publication reaches the release, crates.io or PyPI for any platform until the
+/// one Mac release job has succeeded: every job whose steps publish (found by what
+/// they run, so a new publishing job is held to this too) needs `darwin`, directly
+/// or through the jobs it needs.
+#[test]
+fn every_publishing_job_waits_for_the_mac_release_job() {
+    let doc: serde_json::Value =
+        serde_saphyr::from_str(&read(&repo_root().join(".github/workflows/release.yml"))).unwrap();
+    let jobs = doc["jobs"].as_object().unwrap();
+    let needs = |job: &str| -> Vec<String> {
+        match &jobs[job]["needs"] {
+            serde_json::Value::String(n) => vec![n.clone()],
+            serde_json::Value::Array(ns) => {
+                ns.iter().map(|n| n.as_str().unwrap().to_string()).collect()
+            }
+            _ => vec![],
+        }
+    };
+    let waits_for_darwin = |job: &str| -> bool {
+        let mut seen = BTreeSet::new();
+        let mut stack = needs(job);
+        while let Some(next) = stack.pop() {
+            if next == "darwin" {
+                return true;
+            }
+            if seen.insert(next.clone()) {
+                stack.extend(needs(&next));
+            }
+        }
+        false
+    };
+    let publishes = |job: &serde_json::Value| -> bool {
+        job["steps"].as_array().into_iter().flatten().any(|step| {
+            let run = step["run"].as_str().unwrap_or_default();
+            let uses = step["uses"].as_str().unwrap_or_default();
+            run.contains("gh release upload")
+                || run.contains("cargo publish")
+                || uses.starts_with("taiki-e/upload-rust-binary-action")
+                || uses.starts_with("pypa/gh-action-pypi-publish")
+        })
+    };
+    let publishing: BTreeSet<&str> = jobs
+        .iter()
+        .filter(|(_, job)| publishes(job))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(
+        publishing,
+        BTreeSet::from(["upload", "upload-darwin", "publish-crate", "publish-pypi"])
+    );
+    for job in publishing {
+        assert!(
+            waits_for_darwin(job),
+            "release.yml `{job}` publishes before `darwin` succeeds"
         );
     }
 }
@@ -1378,7 +1438,7 @@ fn release_verifier_accepts_exactly_what_the_builder_packs() {
 #[test]
 fn release_builder_refuses_option_shaped_output_paths() {
     let output = std::process::Command::new("bash")
-        .args(["scripts/release-packages.sh", "-p", "x86_64-apple-darwin"])
+        .args(["scripts/release-packages.sh", "-p", "aarch64-apple-darwin"])
         .current_dir(repo_root())
         .output()
         .unwrap();
@@ -1404,5 +1464,112 @@ fn darwin_wrapper_names_its_failure_after_the_builders_diagnostic() {
     assert!(
         stderr.contains("release-darwin: Darwin packaging into"),
         "{stderr}"
+    );
+}
+
+/// Linux holds the Darwin release scripts and job to the arm64-only contract
+/// without building or running a Darwin binary: the builder and verifier refuse
+/// the Intel target, the job's staging step names exactly the arm64 bundle, and
+/// the macOS CI lane runs the native journey
+/// (`darwin_release_job_packs_and_ships_exactly_the_arm64_set` in
+/// tests/release-packaging) that builds, stages and uploads the real products.
+#[cfg(unix)]
+#[test]
+fn darwin_release_is_arm64_only_and_proved_natively_on_the_macos_lane() {
+    let root = repo_root();
+    let manifest: toml::Value = toml::from_str(&read(&root.join("Cargo.toml"))).unwrap();
+    let version = manifest["package"]["version"].as_str().unwrap();
+    let tag = format!("v{version}");
+    let release: serde_json::Value =
+        serde_saphyr::from_str(&read(&root.join(".github/workflows/release.yml"))).unwrap();
+    let steps = release["jobs"]["darwin"]["steps"].as_array().unwrap();
+    let targets: Vec<&str> = steps
+        .iter()
+        .filter_map(|s| s["with"]["targets"].as_str())
+        .flat_map(|t| t.split(','))
+        .collect();
+    assert_eq!(targets, ["aarch64-apple-darwin"]);
+    let temp = tempfile::tempdir().unwrap();
+
+    // The builder refuses Intel macOS before compiling anything.
+    let refused_out = temp.path().join("intel");
+    let refused = std::process::Command::new("bash")
+        .arg("scripts/release-packages.sh")
+        .arg(&refused_out)
+        .arg("x86_64-apple-darwin")
+        .current_dir(&root)
+        .env("GITHUB_REF_NAME", &tag)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("unsupported target x86_64-apple-darwin")
+            && stderr.contains("Intel macOS is no longer released"),
+        "{stderr}"
+    );
+    assert!(fs::read_dir(&refused_out).unwrap().next().is_none());
+    // So does the verifier, before it reads any artifact.
+    let missing = temp.path().join("missing");
+    let verified = std::process::Command::new("bash")
+        .arg("scripts/release-verify.sh")
+        .args([&missing, &missing, &missing, &missing])
+        .args(["x86_64-apple-darwin", version])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(!verified.status.success());
+    assert!(
+        String::from_utf8_lossy(&verified.stderr)
+            .contains("unsupported target x86_64-apple-darwin"),
+        "{verified:?}"
+    );
+
+    // The staging step names exactly the arm64 bundle.
+    let builder = temp.path().join("builder");
+    fs::create_dir_all(builder.join("dist")).unwrap();
+    let bundle = temp.path().join("bundle.json");
+    fs::write(&bundle, "fixture attestation bundle").unwrap();
+    let stage = steps
+        .iter()
+        .find(|s| s["name"].as_str() == Some("Stage attestation bundle"))
+        .unwrap();
+    let staged = std::process::Command::new("bash")
+        .args(["-euo", "pipefail", "-c", stage["run"].as_str().unwrap()])
+        .current_dir(&builder)
+        .env("GITHUB_REF_NAME", &tag)
+        .env("BUNDLE", &bundle)
+        .output()
+        .unwrap();
+    assert!(staged.status.success(), "{staged:?}");
+    let named: BTreeSet<String> = fs::read_dir(builder.join("dist"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(
+        named,
+        BTreeSet::from([format!("llmlint-{tag}-aarch64-apple-darwin.sigstore.json")])
+    );
+
+    // The one macOS CI lane, and no other job, runs the native packaging journeys.
+    let ci: serde_json::Value =
+        serde_saphyr::from_str(&read(&root.join(".github/workflows/ci.yml"))).unwrap();
+    let packaging: Vec<&str> = ci["jobs"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, job)| {
+            job["steps"].as_array().is_some_and(|steps| {
+                steps
+                    .iter()
+                    .any(|s| s["run"].as_str() == Some("just test-packaging") && s["if"].is_null())
+            })
+        })
+        .map(|(id, _)| id.as_str())
+        .collect();
+    assert_eq!(packaging, ["macos"]);
+    assert_eq!(
+        ci["jobs"]["macos"]["runs-on"].as_str(),
+        Some("macos-latest")
     );
 }

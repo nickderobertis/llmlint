@@ -17,7 +17,7 @@ try:
     require(len(sys.argv) in [7, 8], 'expected wheel directory, archive, binary, output directory, target, Cargo version and optional backend Python version')
     wheel_dir, archive, binary, out, target, version = sys.argv[1:7]
     python_version = sys.argv[7] if len(sys.argv) == 8 else version
-    require(target in ['x86_64-apple-darwin', 'aarch64-apple-darwin', 'x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu'], f'unsupported target {target}')
+    require(target in ['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu'], f'unsupported target {target}')
     project = tomllib.load(open('pyproject.toml', 'rb'))['project']
     wheels = glob.glob(wheel_dir + '/*.whl')
     require(len(wheels) == 1, f'expected one wheel, found {wheels}')
@@ -58,8 +58,7 @@ try:
     compiled = pathlib.Path(binary).read_bytes()
     if target.endswith('apple-darwin'):
         require(compiled[:4] == b'\xcf\xfa\xed\xfe', 'not a Mach-O binary')
-        expected = 0x01000007 if target.startswith('x86_64') else 0x0100000c
-        require(struct.unpack('<I', compiled[4:8])[0] == expected, 'wrong Darwin CPU')
+        require(struct.unpack('<I', compiled[4:8])[0] == 0x0100000c, 'wrong Darwin CPU')
 
     else:
         require(target in ['x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu'], f'unsupported target {target}')
