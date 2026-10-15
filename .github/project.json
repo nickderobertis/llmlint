@@ -51,6 +51,14 @@
       "options": {
         "command": "bash scripts/lint-workflows.sh"
       },
+      "dependsOn": [
+        {
+          "projects": [
+            "github-workflows"
+          ],
+          "target": "lint"
+        }
+      ],
       "cache": true,
       "inputs": [
         "default",
@@ -60,7 +68,7 @@
           "runtime": "actionlint --version"
         }
       ],
-      "//": "actionlint (the justfile's actionlint-version pin) over every workflow; `just lint-workflows` runs it."
+      "//": "actionlint (the justfile's actionlint-version pin) over every workflow; `just lint-workflows` runs it. The .github policy helpers' syntax check is github-workflows:lint, reached here as a task dependency rather than an Nx run started from the script."
     },
     "test": {
       "executor": "nx:run-commands",

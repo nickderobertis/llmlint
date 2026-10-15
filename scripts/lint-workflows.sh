@@ -47,13 +47,3 @@ if ! actionlint >&2; then
   echo "                then re-run: just lint-workflows" >&2
   exit 1
 fi
-
-# The workflows' policy helpers (.github/*.mjs) are the github-workflows
-# project's; its lint target owns their syntax check, so run that target here
-# rather than restating its command. Nx's report is shown only on failure.
-if ! helpers="$(bash scripts/nx run github-workflows:lint 2>&1)"; then
-  printf '%s\n' "$helpers" >&2
-  echo "lint-workflows: fix the .github helper finding above (github-workflows:lint)," >&2
-  echo "                then re-run: just lint-workflows" >&2
-  exit 1
-fi
