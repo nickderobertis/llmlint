@@ -1373,6 +1373,8 @@ fn release_verifier_accepts_exactly_what_the_builder_packs() {
     assert!(verifier.contains(&format!("len(members) == {}", packed.len())));
 }
 
+// The release builders run only on the Linux and macOS release runners.
+#[cfg(unix)]
 #[test]
 fn release_builder_refuses_option_shaped_output_paths() {
     let output = std::process::Command::new("bash")
@@ -1384,6 +1386,8 @@ fn release_builder_refuses_option_shaped_output_paths() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("output path must not start"));
 }
 
+// The release builders run only on the Linux and macOS release runners.
+#[cfg(unix)]
 #[test]
 fn darwin_wrapper_names_its_failure_after_the_builders_diagnostic() {
     let temp = tempfile::tempdir().unwrap();
