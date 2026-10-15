@@ -114,7 +114,11 @@ jobs:
         if: needs.gate.outputs.head != ''
         env:
           HEAD_SHA: ${{ needs.gate.outputs.head }}
+        # ci-gate.sh emits only a full commit SHA; refuse anything else before
+        # git reads it as a refspec.
         run: |
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::gate's head output '$HEAD_SHA' is not a commit SHA; re-run CI on the release PR" >&2; exit 1; }
           git fetch --no-tags --depth=1 origin "$HEAD_SHA"
           git checkout --detach "$HEAD_SHA"
       - uses: actions-rust-lang/setup-rust-toolchain@v1

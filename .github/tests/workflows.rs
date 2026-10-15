@@ -325,3 +325,64 @@ fn notignored_runs_on_pull_requests_outside_the_required_contexts() {
     }
 }
 // llmlint: ignore-end[tests_mirror_real_usage]
+
+/// The pool-maintenance budget (`just budgets-host`, which builds the workspace
+/// twice) runs only after a full-sweep `gate` and on the very tree that gate
+/// swept, and no other job reaches it. A structural assertion stands in for the
+/// end-to-end proof because only GitHub runs a workflow, on a real release PR,
+/// which no test can open; the selection and the checkout are both spelled out
+/// in ci.yml, so reading them is the whole of what that run would decide.
+#[test]
+fn pool_maintenance_budget_runs_after_a_full_sweep_gate_on_its_head() {
+    let docs = workflow_docs();
+    let (_, ci) = docs
+        .iter()
+        .find(|(f, _)| f == "ci.yml")
+        .expect(".github/workflows/ci.yml exists");
+    let gate = &ci["jobs"]["gate"];
+    assert_eq!(
+        gate["outputs"]["tier"].as_str(),
+        Some("${{ steps.tier.outputs.tier }}")
+    );
+    assert_eq!(
+        gate["outputs"]["head"].as_str(),
+        Some("${{ steps.tier.outputs.head }}")
+    );
+    let job = &ci["jobs"]["pool-maintenance-budget"];
+    assert_eq!(job["needs"].as_str(), Some("gate"), "{job:?}");
+    assert_eq!(job["if"].as_str(), Some("needs.gate.outputs.tier == 'all'"));
+    let steps = job["steps"].as_array().unwrap();
+    let checkout = steps
+        .iter()
+        .position(|s| s["env"]["HEAD_SHA"].as_str().is_some())
+        .expect("pool-maintenance-budget checks out the gate's head");
+    let step = &steps[checkout];
+    assert_eq!(step["if"].as_str(), Some("needs.gate.outputs.head != ''"));
+    assert_eq!(
+        step["env"]["HEAD_SHA"].as_str(),
+        Some("${{ needs.gate.outputs.head }}")
+    );
+    let run = step["run"].as_str().unwrap();
+    let guard = run.find("^[0-9a-f]{40}$").expect("HEAD_SHA is validated");
+    let fetch = run.find("git checkout --detach \"$HEAD_SHA\"").unwrap();
+    assert!(guard < fetch, "HEAD_SHA is validated before git reads it");
+    let budget = steps
+        .iter()
+        .position(|s| s["run"].as_str() == Some("just budgets-host"))
+        .expect("pool-maintenance-budget runs just budgets-host");
+    assert!(checkout < budget, "the budget runs on the checked-out head");
+
+    for (file, doc) in &docs {
+        for (id, job) in doc["jobs"].as_object().unwrap() {
+            if file == "ci.yml" && id == "pool-maintenance-budget" {
+                continue;
+            }
+            let runs_it = job["steps"].as_array().into_iter().flatten().any(|s| {
+                s["run"]
+                    .as_str()
+                    .is_some_and(|r| r.contains("budgets-host"))
+            });
+            assert!(!runs_it, "{file} job {id} runs the host budgets");
+        }
+    }
+}
