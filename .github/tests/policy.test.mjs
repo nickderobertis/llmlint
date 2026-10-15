@@ -71,3 +71,24 @@ test('revision, version-file and TOML failures keep Mac coverage at the real CLI
     } finally {h.close();}
   }
 });
+test('the automation identity is a same-repository release-plz head, never the PR author',()=>{
+  const h=history();
+  try {
+    writeFileSync(join(h.dir,'Cargo.toml'),h.manifest.replace('version = "1.0.0"','version = "1.0.1"'));
+    writeFileSync(join(h.dir,'Cargo.lock'),h.lock.replace('version = "1.0.0"','version = "1.0.1"'));
+    writeFileSync(join(h.dir,'CHANGELOG.md'),'Released 1.0.1\n');h.git('add','.');h.git('commit','-m','release');
+    for(const user of [{login:'ordinary-contributor'},undefined,null,42,{login:''}]) {
+      const payload=event();
+      if(user===undefined) delete payload.pull_request.user; else payload.pull_request.user=user;
+      const out=invoke(h,payload);
+      assert.equal(out.isReleaseOnly,true,JSON.stringify(user));
+      assert.equal(out.macosRequired,false,JSON.stringify(user));
+    }
+    for(const edit of [p=>{p.head.repo=null;},p=>{delete p.head.repo;},p=>{delete p.head;},p=>{p.head.repo.full_name=42;},p=>{p.head.repo.full_name='other/llmlint';}]) {
+      const payload=event();edit(payload.pull_request);
+      const out=invoke(h,payload);
+      assert.equal(out.isReleaseOnly,false,edit.toString());
+      assert.equal(out.macosRequired,true,edit.toString());
+    }
+  } finally {h.close();}
+});
