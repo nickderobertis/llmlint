@@ -34,6 +34,10 @@ jobs:
   # subprocess tests run on Linux); macOS/Windows prove the artifact via `cross`.
   gate:
     runs-on: ubuntu-latest
+    # The tier and head this run chose, for pool-maintenance-budget.
+    outputs:
+      tier: ${{ steps.tier.outputs.tier }}
+      head: ${{ steps.tier.outputs.head }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +99,49 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: just check-version-bump "$BASE_SHA"
+
+  # The pool-maintenance project's budget (`just budgets-host`): one
+  # steady-state pass of the maintenance onevcs.toml declares, timed after
+  # pool-maintenance/measure.sh builds the workspace twice. Too slow for every
+  # change, so it runs only on a full sweep (the release PR, or a manual
+  # dispatch), after the gate passed on the same tree.
+  pool-maintenance-budget:
+    needs: gate
+    if: needs.gate.outputs.tier == 'all'
+    runs-on: ubuntu-latest
+    # No permissions block: it only reads the tree it measures, which the
+    # workflow's own `permissions: contents: read` already grants.
+    # bootstrap then skips the shell tools and bashcov, which this job never runs.
+    env:
+      LLMLINT_COVERAGE: "off"
+      LLMLINT_SHELL_TOOLS: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the release PR's head
+        if: needs.gate.outputs.head != ''
+        env:
+          HEAD_SHA: ${{ needs.gate.outputs.head }}
+        # ci-gate.sh emits only a full commit SHA; refuse anything else before
+        # git reads it as a refspec.
+        run: |
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::gate's head output '$HEAD_SHA' is not a commit SHA; re-run CI on the release PR" >&2; exit 1; }
+          git fetch --no-tags --depth=1 origin "$HEAD_SHA"
+          git checkout --detach "$HEAD_SHA"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+      # Bootstrap installs the pinned cargo-prune-superseded the recipe runs.
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Pool maintenance budget
+        run: just budgets-host
 
   # Prove the artifact builds and its tests pass on macOS and Windows, at the same
   # tier as `gate` (without the coverage floors, which are enforced on Linux, and

@@ -56,6 +56,17 @@ samply-version := "0.13.1"
 # separately — see https://github.com/nickderobertis/screencomp.
 freeze-version := "0.2.2"
 
+# The pool maintenance onevcs runs in this repository's idle warm-pool slots
+# (onevcs.toml names the `pool-maintenance` recipe): cargo-prune-superseded at
+# this release, which `just bootstrap` installs, over these target dirs — every
+# directory this repository's cargo builds write to, repository-relative (the
+# `target-dir` .cargo/config.toml sets). The pruner needs a newer Rust than
+# rust-toolchain.toml pins, so bootstrap builds it with `prune-superseded-rust`
+# (pool-maintenance/install-pruner.sh).
+prune-superseded-version := "0.1.1"
+prune-superseded-rust := "1.97.1"
+pool-maintenance-targets := "target"
+
 # List available recipes.
 default:
     @just --list
@@ -82,6 +93,21 @@ bootstrap:
     bun install --cwd .github --frozen-lockfile
     bash tools/shell/install-shell-tools.sh
     bash tools/coverage/shcov.sh install
+    bash pool-maintenance/install-pruner.sh {{prune-superseded-version}} {{prune-superseded-rust}}
+
+# Remove superseded cargo builds older than 2 days from every target dir, keeping
+# each unit's newest build and every build from the last 2 days (onevcs runs this
+# in idle warm-pool slots; see onevcs.toml).
+pool-maintenance:
+    @command -v cargo-prune-superseded >/dev/null || { echo "pool-maintenance: cargo-prune-superseded not found on PATH; run just bootstrap" >&2; exit 1; }
+    cargo-prune-superseded --keep-within 2d {{pool-maintenance-targets}}
+
+# Every project's host-labelled budgets (the uncached `budgets-host` targets):
+# the pool-maintenance project's pass of the recipe above, timed by
+# pool-maintenance/measure.sh, which builds the workspace twice. So `check` never
+# runs this recipe; CI runs it on the release PR's full sweep.
+budgets-host:
+    @bash scripts/nx run-many --all -t budgets-host
 
 # llmlint: ignore-block[diagnostics_error_or_absent] compiler warnings already fail these gates: their `lint` target is `cargo clippy --all-targets -- -D warnings` over every crate, which compiles and denies the same diagnostics the build and test targets would emit; forcing RUSTFLAGS here would also rebuild every artifact the cache and the cross jobs share
 # Full quality gate: format check (cargo fmt, shfmt), clippy, shellcheck and the
@@ -99,7 +125,21 @@ check *flags:
     else \
       bash scripts/nx affected --base="$tier" -t format lint lint-workflows build test doc coverage; \
     fi
+    @just budgets "$@"
     @echo "check: ok"
+
+# The onebudgetspec budgets `check` runs at its tier: every affected project's
+# `budgets` target, then the root budgets.yaml when there is one. The
+# host-labelled `budgets-host` targets are `just budgets-host`'s, never check's.
+[positional-arguments]
+budgets *flags:
+    @tier="$(bash scripts/nx-tier.sh "$@")"; \
+    if [ "$tier" = all ]; then \
+      bash scripts/nx run-many --all -t budgets; \
+    else \
+      bash scripts/nx affected --base="$tier" -t budgets; \
+    fi
+    @[ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml
 
 # The portable part of the gate, which CI's macOS/Windows `cross` jobs run:
 # cargo fmt, clippy and the boundary check, and every test unmeasured

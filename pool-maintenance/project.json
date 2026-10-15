@@ -1,0 +1,57 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "pool-maintenance",
+  "//": "The budget of this repository's declared pool maintenance (onevcs.toml, the justfile's pool-maintenance recipe): budgets.yaml, the measure.sh it runs, and install-pruner.sh, which `just bootstrap` runs to install the pinned pruner. Its one budget is labelled host, so it runs in the repo-uniform budgets-host target; measure.sh builds the workspace twice, so check and the affected run select only `-t budgets`, never budgets-host, and `just budgets-host` (which ci.yml's release-PR sweep runs) is the one recipe that reaches it. The gate tiers reach only its format, lint and test; its test is offline (stand-in tools, nothing built), and the journey that drives real cargo and the real pruner is pool-maintenance-host's. It depends on nothing.",
+  "projectType": "application",
+  "tags": [
+    "type:tooling",
+    "coverage:shell"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh format pool-maintenance/*.sh"
+      },
+      "configurations": {
+        "write": {
+          "command": "bash tools/shell/shell.sh format --write pool-maintenance/*.sh"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash tools/shell/shell.sh lint pool-maintenance/*.sh"
+      },
+      "inputs": [
+        "default",
+        "shellTools"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "bash tools/coverage/shcov.sh run pool-maintenance -- bun test pool-maintenance/tests"
+      },
+      "inputs": [
+        "default",
+        "{workspaceRoot}/justfile",
+        "{workspaceRoot}/onevcs.toml",
+        "shellCoverage"
+      ],
+      "outputs": [
+        "{workspaceRoot}/target/shcov/pool-maintenance.json"
+      ],
+      "//": "Offline journeys with stand-in tools: onevcs.toml's declared command run as onevcs runs it (the drift gate between the declaration and the recipe), install-pruner.sh as just bootstrap drives it (installs the pin once, replaces an off-pin pruner, and its failures), and measure.sh's refusals before anything builds."
+    },
+    "budgets-host": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "onebudgetspec check pool-maintenance/budgets.yaml --label host"
+      }
+    }
+  }
+}

@@ -936,6 +936,11 @@ impl GateRepo {
 #[cfg(unix)]
 const GATE_TARGETS: &str = "-t format lint lint-workflows build test doc coverage";
 
+/// The onebudgetspec target `check` runs after the gate targets, at its tier;
+/// never `budgets-host`, whose host-labelled budgets `just budgets-host` runs.
+#[cfg(unix)]
+const BUDGET_TARGETS: &str = "-t budgets";
+
 #[cfg(unix)]
 #[test]
 fn check_runs_the_affected_tier_from_the_merge_base_with_origin_main_by_default() {
@@ -944,7 +949,10 @@ fn check_runs_the_affected_tier_from_the_merge_base_with_origin_main_by_default(
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         calls,
-        vec![format!("affected --base={} {GATE_TARGETS}", repo.base)]
+        vec![
+            format!("affected --base={} {GATE_TARGETS}", repo.base),
+            format!("affected --base={} {BUDGET_TARGETS}", repo.base),
+        ]
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("merge-base with origin/main"));
 }
@@ -958,7 +966,10 @@ fn check_takes_its_base_from_a_valid_nx_base() {
         assert!(out.status.success(), "{base}: {out:?}");
         assert_eq!(
             calls,
-            vec![format!("affected --base={base} {GATE_TARGETS}")]
+            vec![
+                format!("affected --base={base} {GATE_TARGETS}"),
+                format!("affected --base={base} {BUDGET_TARGETS}"),
+            ]
         );
         assert!(String::from_utf8_lossy(&out.stderr).contains("(NX_BASE)"));
     }
@@ -992,7 +1003,13 @@ fn check_all_runs_the_full_sweep_and_a_mistyped_tier_runs_nothing() {
     let repo = GateRepo::new();
     let (out, calls) = repo.just(&["check", "--all"], Some("main..feature"));
     assert!(out.status.success(), "{out:?}");
-    assert_eq!(calls, vec![format!("run-many --all {GATE_TARGETS}")]);
+    assert_eq!(
+        calls,
+        vec![
+            format!("run-many --all {GATE_TARGETS}"),
+            format!("run-many --all {BUDGET_TARGETS}"),
+        ]
+    );
 
     let (out, calls) = repo.just(&["check", "--al"], None);
     assert_eq!(out.status.code(), Some(2), "{out:?}");
@@ -1021,6 +1038,7 @@ fn every_gate_recipe_takes_the_same_tier() {
         ("fmt-check", "-t format"),
         ("format", "-t format --configuration=write"),
         ("doc", "-t doc"),
+        ("budgets", "-t budgets"),
         (
             "check-portable",
             "-t format lint test --exclude=coverage-driver,shell-tools",
@@ -1035,6 +1053,91 @@ fn every_gate_recipe_takes_the_same_tier() {
         let (out, calls) = repo.just(&[recipe, "--all"], None);
         assert!(out.status.success(), "{recipe} --all: {out:?}");
         assert_eq!(calls, vec![format!("run-many --all {targets}")]);
+    }
+}
+
+/// Stands in `scripts/bun.sh` (the pinned bun the `budgets` recipe runs
+/// onebudgetspec through) in a [`GateRepo`]: `path` prints a stub bun that
+/// appends `bun <argv>` to the same log as the Nx stub, then exits `exit`.
+#[cfg(unix)]
+fn stand_in_bun(repo: &GateRepo, exit: u8) {
+    use std::os::unix::fs::PermissionsExt;
+    let bun = repo.p.path().join("stand-in-bun");
+    repo.p.write(
+        "stand-in-bun",
+        &format!("#!/usr/bin/env bash\nprintf 'bun %s\\n' \"$*\" >> \"$NX_CALLS\"\nexit {exit}\n"),
+    );
+    fs::set_permissions(&bun, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.p.write(
+        "scripts/bun.sh",
+        &format!(
+            "#!/usr/bin/env bash\n[ \"$1\" = path ] && echo '{}'\n",
+            bun.display()
+        ),
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn budgets_checks_a_root_budgets_yaml_after_the_project_budgets_and_fails_with_it() {
+    let repo = GateRepo::new();
+    stand_in_bun(&repo, 0);
+    // No root budgets.yaml: only the project budgets run.
+    let (out, calls) = repo.just(&["budgets"], None);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        calls,
+        vec![format!("affected --base={} {BUDGET_TARGETS}", repo.base)]
+    );
+
+    repo.p
+        .write("budgets.yaml", "schema_version: 1\nbudgets: []\n");
+    for (args, nx) in [
+        (
+            &["budgets"][..],
+            format!("affected --base={} {BUDGET_TARGETS}", repo.base),
+        ),
+        (
+            &["budgets", "--all"][..],
+            format!("run-many --all {BUDGET_TARGETS}"),
+        ),
+    ] {
+        let (out, calls) = repo.just(args, None);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        assert_eq!(
+            calls,
+            vec![nx, "bun x onebudgetspec check budgets.yaml".to_string()],
+            "{args:?}"
+        );
+    }
+
+    // A root budget over its threshold fails the recipe, and so `check`.
+    stand_in_bun(&repo, 1);
+    let (out, _) = repo.just(&["budgets"], None);
+    assert!(!out.status.success(), "{out:?}");
+    let (out, calls) = repo.just(&["check"], None);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("check: ok"),
+        "{out:?}"
+    );
+    assert_eq!(
+        calls.last().map(String::as_str),
+        Some("bun x onebudgetspec check budgets.yaml")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn budgets_host_runs_every_projects_host_budgets_whatever_the_tier() {
+    // The host-labelled budgets (pool-maintenance's builds the workspace twice)
+    // are never tiered: `just budgets-host` always runs them all, and no `check`
+    // tier reaches them (the check journeys above pin its exact Nx calls).
+    let repo = GateRepo::new();
+    for base in [None, Some("main")] {
+        let (out, calls) = repo.just(&["budgets-host"], base);
+        assert!(out.status.success(), "{base:?}: {out:?}");
+        assert_eq!(calls, vec!["run-many --all -t budgets-host"], "{base:?}");
     }
 }
 
@@ -1058,7 +1161,7 @@ fn check_portable_leaves_coverage_and_the_shell_tools_to_the_linux_gate() {
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         repo.switches(),
-        vec!["LLMLINT_COVERAGE= LLMLINT_SHELL_TOOLS="]
+        vec!["LLMLINT_COVERAGE= LLMLINT_SHELL_TOOLS="; 2]
     );
 }
 

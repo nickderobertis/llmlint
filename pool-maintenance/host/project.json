@@ -1,0 +1,31 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "pool-maintenance-host",
+  "//": "The journey of pool-maintenance/measure.sh that drives real host tools: real cargo builds of a one-crate scratch workspace and the pinned cargo-prune-superseded `just bootstrap` installs, with the real justfile recipe. Its own project so only an edit to pool-maintenance (the scripts it exercises, its one dependency) or to this project selects it, never an unrelated script or source edit; not coverage:shell, so the shell gate never pulls it in either.",
+  "projectType": "application",
+  "tags": [
+    "type:external"
+  ],
+  "implicitDependencies": [
+    "pool-maintenance"
+  ],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "bun test --timeout 600000 pool-maintenance/host"
+      },
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/justfile",
+        "{workspaceRoot}/.cargo/config.toml",
+        {
+          "runtime": "cargo-prune-superseded --version"
+        }
+      ],
+      "//": "A backlog cleared untimed, the alternative build removed by the timed pass and the ordinary build kept, over real cargo and the real pruner."
+    }
+  }
+}
