@@ -351,6 +351,10 @@ fn pool_maintenance_budget_runs_after_a_full_sweep_gate_on_its_head() {
     let job = &ci["jobs"]["pool-maintenance-budget"];
     assert_eq!(job["needs"].as_str(), Some("gate"), "{job:?}");
     assert_eq!(job["if"].as_str(), Some("needs.gate.outputs.tier == 'all'"));
+    // It only reads the tree it measures: the workflow's read-only grant, with
+    // no job-level widening.
+    assert_eq!(ci["permissions"], serde_json::json!({ "contents": "read" }));
+    assert!(job.get("permissions").is_none(), "{job:?}");
     let steps = job["steps"].as_array().unwrap();
     let checkout = steps
         .iter()

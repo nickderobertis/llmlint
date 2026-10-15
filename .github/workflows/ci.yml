@@ -104,6 +104,8 @@ jobs:
     needs: gate
     if: needs.gate.outputs.tier == 'all'
     runs-on: ubuntu-latest
+    # No permissions block: it only reads the tree it measures, which the
+    # workflow's own `permissions: contents: read` already grants.
     # bootstrap then skips the shell tools and bashcov, which this job never runs.
     env:
       LLMLINT_COVERAGE: "off"
