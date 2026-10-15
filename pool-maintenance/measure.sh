@@ -65,8 +65,8 @@ read -r -a targets <<<"$(just --evaluate pool-maintenance-targets)"
 unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR
 
 readonly WORK="${targets[0]}/pool-maintenance-measure"
-rm -rf "$WORK"
-mkdir -p "$WORK"
+{ rm -rf "$WORK" && mkdir -p "$WORK"; } \
+  || fail "cannot reset the scratch directory $WORK; check its permissions and free space (df -h), then re-run just budgets-host."
 
 # Every build entry the pruner judges, one path per line, sorted: the top-level
 # entries of deps/, .fingerprint/, build/ and incremental/ in every profile
@@ -86,6 +86,17 @@ entries() {
   done | LC_ALL=C sort
 }
 
+# entries, into the list file $1.
+list_entries() {
+  entries >"$1" || fail "cannot list the build entries under ${targets[*]} into $1; check their permissions, then re-run just budgets-host."
+}
+
+# The entries in list $2 but not $3 (comm -23), or in $3 but not $2 (comm -13,
+# $1 = -13), into the list file $4.
+compare() {
+  LC_ALL=C comm "$1" "$2" "$3" >"$4" || fail "cannot compare the entry lists $2 and $3 into $4; check $WORK, then re-run just budgets-host."
+}
+
 # The pruner's `builds removed: N` from a result file.
 builds_removed() {
   jq -r '.detail' "$1" | sed -n 's/.*builds removed: \([0-9][0-9]*\).*/\1/p'
@@ -94,40 +105,47 @@ builds_removed() {
 # (a) The ordinary build, then the backlog pass, its report kept apart from the
 # figure.
 cargo test --workspace --locked --no-run >&2 || fail "the ordinary build failed (above); fix the build, then re-run."
-ONEBUDGETSPEC_RESULT="$WORK/backlog.json" just pool-maintenance >&2
+ONEBUDGETSPEC_RESULT="$WORK/backlog.json" just pool-maintenance >&2 \
+  || fail "the untimed backlog pass (just pool-maintenance) failed (above); fix what the pruner names, then re-run just budgets-host."
 [ -s "$WORK/backlog.json" ] || fail "the backlog pass wrote no report to $WORK/backlog.json; check the pruner's output above."
-backlog_seconds="$(jq -r '.value' "$WORK/backlog.json")"
-backlog_removed="$(builds_removed "$WORK/backlog.json")"
+unreadable_backlog="cannot read the backlog pass's report in $WORK/backlog.json as JSON (jq's error above); check the pruner's output above, then re-run just budgets-host."
+backlog_seconds="$(jq -r '.value' "$WORK/backlog.json")" || fail "$unreadable_backlog"
+backlog_removed="$(builds_removed "$WORK/backlog.json")" || fail "$unreadable_backlog"
 
 # (b) The alternative build, then every entry it created backdated.
+members="$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name')" \
+  || fail "cargo metadata failed (above); fix the workspace manifest, then re-run just budgets-host."
 overrides=()
 while IFS= read -r member; do
-  overrides+=(--config "profile.dev.package.\"$member\".debug = 1")
-done < <(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name')
+  [ -z "$member" ] || overrides+=(--config "profile.dev.package.\"$member\".debug = 1")
+done <<<"$members"
 [ "${#overrides[@]}" -gt 0 ] || fail "cargo metadata listed no workspace member to rebuild."
-entries >"$WORK/before-alternative.txt"
+list_entries "$WORK/before-alternative.txt"
 cargo test --workspace --locked --no-run "${overrides[@]}" >&2 \
   || fail "the alternative build failed (above); fix the build, then re-run."
-entries >"$WORK/after-alternative.txt"
-LC_ALL=C comm -13 "$WORK/before-alternative.txt" "$WORK/after-alternative.txt" >"$WORK/alternative.txt"
+list_entries "$WORK/after-alternative.txt"
+compare -13 "$WORK/before-alternative.txt" "$WORK/after-alternative.txt" "$WORK/alternative.txt"
 [ -s "$WORK/alternative.txt" ] \
   || fail "the alternative build created no entry, so it gave no crate a new metadata hash; nothing would be superseded."
-tr '\n' '\0' <"$WORK/alternative.txt" | xargs -0 sh -c 'find "$@" -exec touch -h -t 200001010000 {} +' sh
+tr '\n' '\0' <"$WORK/alternative.txt" | xargs -0 sh -c 'find "$@" -exec touch -h -t 200001010000 {} +' sh \
+  || fail "cannot backdate the alternative build's entries (listed in $WORK/alternative.txt); check their permissions, then re-run just budgets-host."
 
 # (c) The ordinary build again, now the newest of every unit.
 cargo test --workspace --locked --no-run >&2 || fail "the ordinary build failed (above); fix the build, then re-run."
-entries >"$WORK/before-pass.txt"
-LC_ALL=C comm -23 "$WORK/before-pass.txt" "$WORK/alternative.txt" >"$WORK/ordinary.txt"
+list_entries "$WORK/before-pass.txt"
+compare -23 "$WORK/before-pass.txt" "$WORK/alternative.txt" "$WORK/ordinary.txt"
 
 # (d) The timed pass: the pruner reports the figure to onebudgetspec itself.
-just pool-maintenance >&2
+just pool-maintenance >&2 \
+  || fail "the timed pass (just pool-maintenance) failed (above); fix what the pruner names, then re-run just budgets-host."
 [ -s "$RESULT" ] || fail "the timed pass wrote no report to $RESULT; check the pruner's output above."
-entries >"$WORK/after-pass.txt"
-LC_ALL=C comm -23 "$WORK/before-pass.txt" "$WORK/after-pass.txt" >"$WORK/removed.txt"
-LC_ALL=C comm -23 "$WORK/ordinary.txt" "$WORK/after-pass.txt" >"$WORK/ordinary-lost.txt"
-LC_ALL=C comm -23 "$WORK/removed.txt" "$WORK/alternative.txt" >"$WORK/removed-not-alternative.txt"
+list_entries "$WORK/after-pass.txt"
+compare -23 "$WORK/before-pass.txt" "$WORK/after-pass.txt" "$WORK/removed.txt"
+compare -23 "$WORK/ordinary.txt" "$WORK/after-pass.txt" "$WORK/ordinary-lost.txt"
+compare -23 "$WORK/removed.txt" "$WORK/alternative.txt" "$WORK/removed-not-alternative.txt"
 
-removed="$(builds_removed "$RESULT")"
+removed="$(builds_removed "$RESULT")" \
+  || fail "cannot read the timed pass's report in $RESULT as JSON (jq's error above); check the pruner's output above, then re-run just budgets-host."
 [ "${removed:-0}" -gt 0 ] \
   || fail "the timed pass removed no build, so it measured no superseded build; see $WORK/alternative.txt."
 [ ! -s "$WORK/removed-not-alternative.txt" ] \
@@ -141,5 +159,6 @@ evidence="$evidence; entries removed: $(count "$WORK/removed.txt"), all of the a
 evidence="$evidence; ordinary entries retained: all $(count "$WORK/ordinary.txt")"
 report="$(jq -c --arg evidence "$evidence" '.detail += "; " + $evidence' "$RESULT")" \
   || fail "cannot read the timed pass's report in $RESULT as JSON (jq's error above); check the pruner's output above, then re-run just budgets-host."
-printf '%s\n' "$report" >"$RESULT"
+printf '%s\n' "$report" >"$RESULT" \
+  || fail "cannot write the report back to $RESULT; check its permissions and free space (df -h), then re-run just budgets-host."
 echo "measure: $(jq -r '.value' "$RESULT") s; $(jq -r '.detail' "$RESULT"); lists in $WORK" >&2

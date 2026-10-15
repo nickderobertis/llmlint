@@ -3,13 +3,14 @@
 // pool-maintenance recipe and pins) and .cargo/config.toml: real cargo builds,
 // real mtimes, and the pinned cargo-prune-superseded `just bootstrap` installs.
 // It drives those real host tools, so it is this project's, apart from
-// pool-maintenance's offline journeys. Windows is skipped: onevcs pool
+// pool-maintenance's offline journeys. Only a pruner whose pass fails is ever
+// stood in, behind the real builds. Windows is skipped: onevcs pool
 // maintenance runs on Unix hosts, and the script's find/touch are Unix tools.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
 const REPO = resolve(import.meta.dir, "../..");
 const unix = test.skipIf(process.platform === "win32");
@@ -112,4 +113,58 @@ unix("a backlog is cleared untimed, then the timed pass removes only the alterna
   const again = spawnSync("cargo", ["test", "--no-run", "--locked"], { cwd: dir, encoding: "utf8", env: env() });
   expect(again.status, again.stderr).toBe(0);
   expect(again.stderr).not.toContain("Compiling");
+});
+
+// A stand-in pruner at the justfile's pin whose passes run `body`, ahead of the
+// real one on PATH; returns that PATH.
+function standInPruner(body) {
+  const bin = join(dir, "stand-in");
+  mkdirSync(bin, { recursive: true });
+  const want = readFileSync(join(REPO, "justfile"), "utf8").match(/^prune-superseded-version := "([^"]+)"/m)[1];
+  const script = join(bin, "cargo-prune-superseded");
+  writeFileSync(script, `#!/bin/sh\nif [ "$1" = --version ]; then echo 'cargo-prune-superseded ${want}'; exit 0; fi\n${body}`);
+  chmodSync(script, 0o755);
+  return `${bin}${delimiter}${process.env.PATH}`;
+}
+
+unix("a scratch directory it cannot reset fails before anything builds, naming the fix", () => {
+  const work = join(dir, "target/pool-maintenance-measure");
+  mkdirSync(join(work, "old"), { recursive: true });
+  chmodSync(work, 0o555);
+  try {
+    const r = measure({ ONEBUDGETSPEC_RESULT: join(dir, "result.json") });
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain(`cannot reset the scratch directory target/pool-maintenance-measure; check its permissions`);
+    expect(existsSync(join(dir, "target/debug"))).toBe(false);
+  } finally {
+    chmodSync(work, 0o755);
+  }
+});
+
+unix("a failed backlog pass fails the measurement, naming the fix", () => {
+  const PATH = standInPruner('echo "cargo-prune-superseded: target: cannot read" >&2\nexit 1\n');
+  const r = measure({ ONEBUDGETSPEC_RESULT: join(dir, "result.json"), PATH });
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain("cargo-prune-superseded: target: cannot read");
+  expect(r.out).toContain("the untimed backlog pass (just pool-maintenance) failed (above); fix what the pruner names, then re-run just budgets-host.");
+});
+
+unix("a failed timed pass fails the measurement, naming the fix", () => {
+  // The first (backlog) pass reports as the real pruner does; the second fails.
+  const PATH = standInPruner(
+    [
+      'if [ "$ONEBUDGETSPEC_RESULT" != "$TIMED" ]; then',
+      '  echo \'{"value":0.1,"detail":"entries walked: 1; profile directories: 1; builds removed: 0; bytes freed: 0"}\' >"$ONEBUDGETSPEC_RESULT"',
+      "  exit 0",
+      "fi",
+      'echo "cargo-prune-superseded: target: cannot remove" >&2',
+      "exit 1",
+      "",
+    ].join("\n"),
+  );
+  const result = join(dir, "result.json");
+  const r = measure({ ONEBUDGETSPEC_RESULT: result, TIMED: result, PATH });
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain("cargo-prune-superseded: target: cannot remove");
+  expect(r.out).toContain("the timed pass (just pool-maintenance) failed (above); fix what the pruner names, then re-run just budgets-host.");
 });
