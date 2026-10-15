@@ -24,8 +24,7 @@
 # lists are left in target/pool-maintenance-measure/ for inspection.
 #
 # The pass builds the workspace twice, so only the pool-maintenance project's
-# maintenance-budget target (`just pool-maintenance-budget`) runs it, never
-# `check`.
+# budgets-host target (`just budgets-host`) runs it, never `check`.
 #
 # Exit status: 0 measured; 1 a step failed, or the pass removed something other
 # than (b)'s builds or nothing at all (the message says which); 2 not run by
@@ -45,7 +44,7 @@ fail() {
 }
 
 if [ -z "${ONEBUDGETSPEC_RESULT:-}" ]; then
-  echo "measure: ONEBUDGETSPEC_RESULT is not set; run it through onebudgetspec: just pool-maintenance-budget" >&2
+  echo "measure: ONEBUDGETSPEC_RESULT is not set; run it through onebudgetspec: just budgets-host" >&2
   exit 2
 fi
 readonly RESULT="$ONEBUDGETSPEC_RESULT"

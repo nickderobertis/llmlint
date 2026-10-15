@@ -103,11 +103,12 @@ pool-maintenance:
     @command -v cargo-prune-superseded >/dev/null || { echo "pool-maintenance: cargo-prune-superseded not found on PATH; run just bootstrap" >&2; exit 1; }
     cargo-prune-superseded --keep-within 2d {{pool-maintenance-targets}}
 
-# The pool-maintenance project's budget: one steady-state pass of the recipe
-# above, timed by pool-maintenance/measure.sh. It builds the workspace twice, so
-# it is outside `check`; CI runs it on the release PR's full sweep.
-pool-maintenance-budget:
-    @bash scripts/nx run pool-maintenance:maintenance-budget
+# Every project's host-labelled budgets (the uncached `budgets-host` targets):
+# the pool-maintenance project's pass of the recipe above, timed by
+# pool-maintenance/measure.sh, which builds the workspace twice. So `check` never
+# runs this recipe; CI runs it on the release PR's full sweep.
+budgets-host:
+    @bash scripts/nx run-many --all -t budgets-host
 
 # llmlint: ignore-block[diagnostics_error_or_absent] compiler warnings already fail these gates: their `lint` target is `cargo clippy --all-targets -- -D warnings` over every crate, which compiles and denies the same diagnostics the build and test targets would emit; forcing RUSTFLAGS here would also rebuild every artifact the cache and the cross jobs share
 # Full quality gate: format check (cargo fmt, shfmt), clippy, shellcheck and the
@@ -129,14 +130,15 @@ check *flags:
     @echo "check: ok"
 
 # The onebudgetspec budgets `check` runs at its tier: every affected project's
-# `budgets` and `budgets-host` targets, then the root budgets.yaml when there is one.
+# `budgets` target, then the root budgets.yaml when there is one. The
+# host-labelled `budgets-host` targets are `just budgets-host`'s, never check's.
 [positional-arguments]
 budgets *flags:
     @tier="$(bash scripts/nx-tier.sh "$@")"; \
     if [ "$tier" = all ]; then \
-      bash scripts/nx run-many --all -t budgets budgets-host; \
+      bash scripts/nx run-many --all -t budgets; \
     else \
-      bash scripts/nx affected --base="$tier" -t budgets budgets-host; \
+      bash scripts/nx affected --base="$tier" -t budgets; \
     fi
     @[ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml
 

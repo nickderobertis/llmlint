@@ -95,7 +95,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: just check-version-bump "$BASE_SHA"
 
-  # The pool-maintenance project's budget (`just pool-maintenance-budget`): one
+  # The pool-maintenance project's budget (`just budgets-host`): one
   # steady-state pass of the maintenance onevcs.toml declares, timed after
   # pool-maintenance/measure.sh builds the workspace twice. Too slow for every
   # change, so it runs only on a full sweep (the release PR, or a manual
@@ -130,7 +130,7 @@ jobs:
       - name: Bootstrap
         run: just bootstrap
       - name: Pool maintenance budget
-        run: just pool-maintenance-budget
+        run: just budgets-host
 
   # Prove the artifact builds and its tests pass on macOS and Windows, at the same
   # tier as `gate` (without the coverage floors, which are enforced on Linux, and

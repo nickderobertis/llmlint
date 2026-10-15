@@ -117,7 +117,7 @@ unix("run outside onebudgetspec it refuses before anything builds", () => {
   const r = measure();
   expect(r.code, r.out).toBe(2);
   expect(r.out).toContain("ONEBUDGETSPEC_RESULT is not set");
-  expect(r.out).toContain("just pool-maintenance-budget");
+  expect(r.out).toContain("just budgets-host");
   expect(existsSync(join(dir, "target"))).toBe(false);
 });
 

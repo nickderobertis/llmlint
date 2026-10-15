@@ -936,9 +936,10 @@ impl GateRepo {
 #[cfg(unix)]
 const GATE_TARGETS: &str = "-t format lint lint-workflows build test doc coverage";
 
-/// The onebudgetspec targets `check` runs after the gate targets, at its tier.
+/// The onebudgetspec target `check` runs after the gate targets, at its tier;
+/// never `budgets-host`, whose host-labelled budgets `just budgets-host` runs.
 #[cfg(unix)]
-const BUDGET_TARGETS: &str = "-t budgets budgets-host";
+const BUDGET_TARGETS: &str = "-t budgets";
 
 #[cfg(unix)]
 #[test]
@@ -1037,7 +1038,7 @@ fn every_gate_recipe_takes_the_same_tier() {
         ("fmt-check", "-t format"),
         ("format", "-t format --configuration=write"),
         ("doc", "-t doc"),
-        ("budgets", "-t budgets budgets-host"),
+        ("budgets", "-t budgets"),
         (
             "check-portable",
             "-t format lint test --exclude=coverage-driver,shell-tools",

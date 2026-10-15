@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "pool-maintenance",
-  "//": "The budget of this repository's declared pool maintenance (onevcs.toml, the justfile's pool-maintenance recipe): budgets.yaml and the measure.sh it runs. measure.sh builds the workspace twice, so its target has a name of its own, maintenance-budget, which neither check nor the affected run (`-t budgets budgets-host`) selects; `just pool-maintenance-budget` and ci.yml's release-PR sweep run it. The gate tiers reach only its format, lint and test, the journeys of measure.sh over a scratch workspace. It depends on nothing: the journeys build no crate of this workspace.",
+  "//": "The budget of this repository's declared pool maintenance (onevcs.toml, the justfile's pool-maintenance recipe): budgets.yaml and the measure.sh it runs. Its one budget is labelled host, so it runs in the repo-uniform budgets-host target; measure.sh builds the workspace twice, so check and the affected run select only `-t budgets`, never budgets-host, and `just budgets-host` (which ci.yml's release-PR sweep runs) is the one recipe that reaches it. The gate tiers reach only its format, lint and test, the journeys of measure.sh over a scratch workspace. It depends on nothing: the journeys build no crate of this workspace.",
   "projectType": "application",
   "tags": [
     "type:bench",
@@ -46,7 +46,7 @@
       ],
       "//": "measure.sh over a one-crate scratch workspace with the real justfile recipe, cargo and the pinned cargo-prune-superseded: a backlog cleared untimed, the alternative build removed by the timed pass and the ordinary build kept; and its refusals, before anything builds."
     },
-    "maintenance-budget": {
+    "budgets-host": {
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
