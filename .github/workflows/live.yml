@@ -59,7 +59,7 @@ jobs:
           node-version: lts/*
       - name: Install oneharness (runtime prerequisite, on PATH)
         run: |
-          cargo install --git https://github.com/nickderobertis/oneharness --locked
+          cargo install --git https://github.com/nickderobertis/oneharness --locked oneharness
           oneharness --version
       - name: Install the claude-code CLI
         run: |
