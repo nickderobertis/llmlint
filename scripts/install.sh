@@ -21,9 +21,10 @@
 # LLMLINT_RELEASE_BASE_URL, LLMLINT_CHECKSUM_BASE_URL.
 # Set GITHUB_TOKEN to lift the GitHub API rate limit when resolving "latest".
 #
-# Covers Linux and macOS (x86_64, arm64) and Windows x86_64 under a POSIX shell
-# (Git Bash / MSYS / WSL). For native Windows PowerShell or unpublished targets,
-# use `cargo install llmlint --locked`.
+# Covers Linux (x86_64, arm64), Apple Silicon macOS (arm64) and Windows x86_64
+# under a POSIX shell (Git Bash / MSYS / WSL). Intel macOS is refused: it is no
+# longer released. For native Windows PowerShell or unpublished targets, use
+# `cargo install llmlint --locked`.
 #
 # Verification. Like the tool it installs, this script never weakens silently: it
 # aborts rather than install a binary it cannot vouch for, and — crucially — it
@@ -127,6 +128,18 @@ detect_target() {
     arm64 | aarch64) arch_part="aarch64" ;;
     *) err "unsupported architecture: $arch" ;;
   esac
+
+  # The release workflow builds macOS for Apple Silicon only; Intel macOS is no
+  # longer released, so refuse before fetching an archive that does not exist.
+  # A shell running under Rosetta on Apple Silicon reports x86_64 too, but the
+  # kernel says it is translated, and the arm64 build runs natively there.
+  if [ "$os_part" = "apple-darwin" ] && [ "$arch_part" = "x86_64" ] \
+    && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = "1" ]; then
+    arch_part="aarch64"
+  fi
+  if [ "$os_part" = "apple-darwin" ] && [ "$arch_part" = "x86_64" ]; then
+    err "Intel macOS (x86_64) is no longer supported: releases ship Apple Silicon (arm64) macOS only; install from source with 'cargo install $BIN --locked'"
+  fi
 
   # The release matrix publishes Windows for x86_64 only.
   if [ "$ext" = "zip" ] && [ "$arch_part" != "x86_64" ]; then

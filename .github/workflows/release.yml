@@ -129,7 +129,8 @@ jobs:
           cp "${{ steps.attest.outputs.bundle-path }}" "$bundle"
           gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
 
-  # macos-latest is Apple Silicon; cross-compile Intel and execute it with Rosetta.
+  # macos-latest is Apple Silicon, so the one macOS target builds and runs natively.
+  # Intel macOS (x86_64-apple-darwin) is no longer released.
   darwin:
     needs: verdict
     runs-on: macos-latest
@@ -141,7 +142,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+          targets: aarch64-apple-darwin
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -154,10 +155,9 @@ jobs:
               requirements = tomllib.load(manifest)["build-system"]["requires"]
           subprocess.run(["python3", "-m", "pip", "install", *requirements], check=True)
           PY
-      - run: softwareupdate --install-rosetta --agree-to-license
-      - name: Build and test both Darwin packages
+      - name: Build and test the Darwin package
         run: bash scripts/release-darwin.sh dist
-      - name: Attest both Darwin archives
+      - name: Attest the Darwin archive
         id: attest
         uses: actions/attest-build-provenance@v2
         with:
@@ -166,9 +166,7 @@ jobs:
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          for target in x86_64-apple-darwin aarch64-apple-darwin; do
-            cp "$BUNDLE" "dist/llmlint-${GITHUB_REF_NAME}-${target}.sigstore.json"
-          done
+          cp "$BUNDLE" "dist/llmlint-${GITHUB_REF_NAME}-aarch64-apple-darwin.sigstore.json"
       - uses: actions/upload-artifact@v4
         with:
           name: darwin-archives

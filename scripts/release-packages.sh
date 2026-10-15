@@ -27,9 +27,9 @@ version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"
 for target in "$@"; do
   build_command=(maturin build --release --locked --target "$target")
   case "$target" in
-    x86_64-apple-darwin | aarch64-apple-darwin) ;;
+    aarch64-apple-darwin) ;;
     x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu) build_command+=(--compatibility linux) ;;
-    *) fail "unsupported target $target; use x86_64/aarch64-apple-darwin or x86_64/aarch64-unknown-linux-gnu" ;;
+    *) fail "unsupported target $target; use aarch64-apple-darwin or x86_64/aarch64-unknown-linux-gnu (Intel macOS is no longer released)" ;;
   esac
   wheel_dir="$(mktemp -d)" || fail 'cannot create wheel scratch directory'
   stage="$(mktemp -d)" || fail 'cannot create package staging directory'
@@ -73,17 +73,15 @@ PYVERSION
   mkdir "$stage/archive-install" || fail 'cannot create archive installation directory'
   tar -xzf "$archive" -C "$stage/archive-install" || fail "cannot install $archive"
   for binary in "$stage/archive-install/llmlint" "$stage/wheel-install/bin/llmlint"; do
-    command=("$binary")
-    if [ "$target" = x86_64-apple-darwin ]; then command=(arch -x86_64 "$binary"); fi
     # llmlint: ignore-block[changed_behavior_has_e2e] Real native success and archive-collision recovery exercise this boundary; forcing individual installed-command or cleanup failures would replace the layer under test.
-    installed="$("${command[@]}" --version)" || fail "cannot execute $binary; verify target toolchain/Rosetta installation"
+    installed="$("$binary" --version)" || fail "cannot execute $binary; verify the target toolchain installation"
     [ "$installed" = "llmlint $version" ] || fail "wrong installed version $installed; expected llmlint $version"
-    "${command[@]}" --help >"$stage/help.log" 2>&1 || {
+    "$binary" --help >"$stage/help.log" 2>&1 || {
       cat "$stage/help.log" >&2
       fail "--help failed for $binary; inspect the captured diagnostic and rebuild the target"
     }
     work="$(mktemp -d)" || fail 'cannot create smoke workspace'
-    (cd "$work" && "${command[@]}" init && "${command[@]}" config) >"$stage/smoke.log" 2>&1 || {
+    (cd "$work" && "$binary" init && "$binary" config) >"$stage/smoke.log" 2>&1 || {
       cat "$stage/smoke.log" >&2
       fail "init/config failed for $binary"
     }
