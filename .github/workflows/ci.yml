@@ -188,6 +188,10 @@ jobs:
           node-version: lts/*
       - name: Install live harnesses
         if: github.repository == 'nickderobertis/llmlint' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        # setup-rust-toolchain exported the gate's `-D warnings` for this job; the
+        # live tier installs oneharness without it, so an upstream lint cannot fail it.
+        env:
+          RUSTFLAGS: ""
         run: |
           cargo install --git https://github.com/nickderobertis/oneharness --locked oneharness
           oneharness --version
