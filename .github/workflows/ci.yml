@@ -294,22 +294,6 @@ jobs:
           else
             NX_BASE="$BASE" just check-portable
           fi
-      # release.yml's darwin job, natively on this Apple Silicon runner, with
-      # publication off and only the forge doubled (tests/release-packaging).
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install the declared packaging backend
-        run: |
-          python3 - <<'PY'
-          import subprocess
-          import tomllib
-          with open("pyproject.toml", "rb") as manifest:
-              requirements = tomllib.load(manifest)["build-system"]["requires"]
-          subprocess.run(["python3", "-m", "pip", "install", *requirements], check=True)
-          PY
-      - name: Native release packaging (Darwin)
-        run: just test-packaging
 
   # Advisory + license audit and unused-dependency check (own job: needs a
   # network advisory DB).

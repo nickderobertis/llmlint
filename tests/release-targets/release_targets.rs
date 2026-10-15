@@ -1493,14 +1493,25 @@ fn darwin_release_is_arm64_only_and_proved_natively_on_the_macos_lane() {
         BTreeSet::from([format!("llmlint-{tag}-aarch64-apple-darwin.sigstore.json")])
     );
 
-    // The one macOS CI lane runs the native Darwin packaging journey.
+    // The one macOS CI lane, and no other job, runs the native packaging journeys.
     let ci: serde_json::Value =
         serde_saphyr::from_str(&read(&root.join(".github/workflows/ci.yml"))).unwrap();
-    let lane = &ci["jobs"]["macos"];
-    assert_eq!(lane["runs-on"].as_str(), Some("macos-latest"));
-    assert!(lane["steps"]
-        .as_array()
+    let packaging: Vec<&str> = ci["jobs"]
+        .as_object()
         .unwrap()
         .iter()
-        .any(|s| s["run"].as_str() == Some("just test-packaging") && s["if"].is_null()));
+        .filter(|(_, job)| {
+            job["steps"].as_array().is_some_and(|steps| {
+                steps
+                    .iter()
+                    .any(|s| s["run"].as_str() == Some("just test-packaging") && s["if"].is_null())
+            })
+        })
+        .map(|(id, _)| id.as_str())
+        .collect();
+    assert_eq!(packaging, ["macos"]);
+    assert_eq!(
+        ci["jobs"]["macos"]["runs-on"].as_str(),
+        Some("macos-latest")
+    );
 }
