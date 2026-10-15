@@ -66,9 +66,12 @@ jobs:
           SHA: ${{ github.sha }}
         run: bash .github/scripts/ci-gate.sh verdict
 
+  # Every release-asset upload, like every registry publish below, waits for the
+  # one Mac release job: a Darwin packaging failure must leave the release with
+  # nothing published for any platform.
   upload:
     name: upload (${{ matrix.target }})
-    needs: verdict
+    needs: [verdict, darwin]
     permissions:
       contents: write
       # Keyless Sigstore signing: `id-token` mints the GitHub Actions OIDC
@@ -247,14 +250,15 @@ jobs:
           echo "sigstore-python verified ${base}.tar.gz."
 
   # crates.io publishing: runs whenever the CARGO_REGISTRY_TOKEN secret is set
-  # (see the `guard` job). Gated on the same `verdict` job as the binary upload
-  # (so a crate version never publishes without a green sweep) but it does NOT depend
-  # on `upload` — a flaky per-platform binary upload must not block the immutable
-  # crate publish, and a publish hiccup must not block the binary attachments.
+  # (see the `guard` job). Gated on the same `verdict` and `darwin` jobs as the
+  # binary upload (so a crate version never publishes without a green sweep or
+  # before the Mac release job succeeds) but it does NOT depend on `upload` — a
+  # flaky per-platform binary upload must not block the immutable crate publish,
+  # and a publish hiccup must not block the binary attachments.
   # Kept out of release-plz (publish = false there) so versioning/tagging stays
   # decoupled from the registry push.
   publish-crate:
-    needs: [guard, verdict]
+    needs: [guard, verdict, darwin]
     if: ${{ needs.guard.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     steps:

@@ -1317,6 +1317,64 @@ fn darwin_release_stages_archives_and_wheels_before_linux_publication() {
     }
 }
 
+/// No publication reaches the release, crates.io or PyPI for any platform until the
+/// one Mac release job has succeeded: every job whose steps publish (found by what
+/// they run, so a new publishing job is held to this too) needs `darwin`, directly
+/// or through the jobs it needs.
+#[test]
+fn every_publishing_job_waits_for_the_mac_release_job() {
+    let doc: serde_json::Value =
+        serde_saphyr::from_str(&read(&repo_root().join(".github/workflows/release.yml"))).unwrap();
+    let jobs = doc["jobs"].as_object().unwrap();
+    let needs = |job: &str| -> Vec<String> {
+        match &jobs[job]["needs"] {
+            serde_json::Value::String(n) => vec![n.clone()],
+            serde_json::Value::Array(ns) => {
+                ns.iter().map(|n| n.as_str().unwrap().to_string()).collect()
+            }
+            _ => vec![],
+        }
+    };
+    let waits_for_darwin = |job: &str| -> bool {
+        let mut seen = BTreeSet::new();
+        let mut stack = needs(job);
+        while let Some(next) = stack.pop() {
+            if next == "darwin" {
+                return true;
+            }
+            if seen.insert(next.clone()) {
+                stack.extend(needs(&next));
+            }
+        }
+        false
+    };
+    let publishes = |job: &serde_json::Value| -> bool {
+        job["steps"].as_array().into_iter().flatten().any(|step| {
+            let run = step["run"].as_str().unwrap_or_default();
+            let uses = step["uses"].as_str().unwrap_or_default();
+            run.contains("gh release upload")
+                || run.contains("cargo publish")
+                || uses.starts_with("taiki-e/upload-rust-binary-action")
+                || uses.starts_with("pypa/gh-action-pypi-publish")
+        })
+    };
+    let publishing: BTreeSet<&str> = jobs
+        .iter()
+        .filter(|(_, job)| publishes(job))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(
+        publishing,
+        BTreeSet::from(["upload", "upload-darwin", "publish-crate", "publish-pypi"])
+    );
+    for job in publishing {
+        assert!(
+            waits_for_darwin(job),
+            "release.yml `{job}` publishes before `darwin` succeeds"
+        );
+    }
+}
+
 /// The verifier restates the builder's supported targets and archive members, so this
 /// offline drift gate holds the two scripts to one set each.
 #[test]
