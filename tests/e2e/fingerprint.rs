@@ -235,6 +235,51 @@ fn what_decides_a_verdict_changes_the_digest() {
 }
 
 #[test]
+fn the_version_oneharness_reports_is_part_of_the_digest() {
+    let p = judge_project();
+    let floor = digest(&mut fingerprint(&p));
+    let newer = digest(fingerprint(&p).env("LLMLINT_MOCK_VERSION", "99.0.0"));
+    assert_ne!(newer, floor);
+    assert_eq!(
+        digest(fingerprint(&p).env("LLMLINT_MOCK_VERSION", "99.0.0")),
+        newer
+    );
+    // A oneharness `lint` would refuse as too old has no judge to describe.
+    let msg = failure(fingerprint(&p).env("LLMLINT_MOCK_VERSION", "0.1.0"));
+    assert!(msg.contains("too old"), "{msg}");
+}
+
+#[test]
+fn a_harness_path_under_home_is_the_same_judge_for_any_home() {
+    let p = judge_project();
+    let with_home = |home: &Path| {
+        let mut c = fingerprint(&p);
+        c.env("HOME", home).env("USERPROFILE", home).env(
+            "ONEHARNESS_SCHEMA_FILE",
+            home.join(".config").join("schema.json"),
+        );
+        digest(&mut c)
+    };
+    let one = TempDir::new().unwrap();
+    let two = TempDir::new().unwrap();
+    let first = with_home(one.path());
+    assert_eq!(
+        with_home(two.path()),
+        first,
+        "HOME's own path contributes nothing"
+    );
+    // The control: the same file outside HOME is a different setting.
+    let mut c = fingerprint(&p);
+    c.env("HOME", one.path())
+        .env("USERPROFILE", one.path())
+        .env(
+            "ONEHARNESS_SCHEMA_FILE",
+            two.path().join(".config").join("schema.json"),
+        );
+    assert_ne!(digest(&mut c), first);
+}
+
+#[test]
 fn a_plugin_resolving_to_a_newer_version_changes_the_digest() {
     // The same rule at both versions, so only the version actually fetched for
     // the `@1` range differs.

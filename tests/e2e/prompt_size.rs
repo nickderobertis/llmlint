@@ -392,6 +392,116 @@ fn a_conditional_rule_split_across_calls_casts_one_merged_vote() {
 }
 
 #[test]
+fn split_parts_stay_within_their_own_judge_s_vote() {
+    let rules =
+        "  - { name: j_rule, judges: 3, description: \"true when ok; false otherwise.\" }\n";
+    let initial: Vec<(&str, &str)> = FILES.iter().map(|f| (*f, "fn base() {}\n")).collect();
+    let p = committed_repo(rules, &initial);
+    for f in FILES {
+        let body: String = (0..200)
+            .map(|i| format!("fn changed_line_number_{i:04}() {{}}\n"))
+            .collect();
+        p.write(f, &format!("fn base() {{}}\n{body}"));
+    }
+    // Run serially, the calls arrive judge by judge, each judge's parts in turn.
+    // Judge 1 holds in every part; judge 2 fails only in its first part; judge 3
+    // fails only in its last. Grouped by judge that is one pass and two fails.
+    let ok = r#"{"holds": true}"#;
+    let fail = |m: &str| format!(r#"{{"holds": false, "violations": [{{"message": "{m}"}}]}}"#);
+    let probe = p.path().join("probe");
+    let plan = p
+        .lint()
+        .args(["--diff", "--plan-only", "--max-prompt-chars", "20000"])
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&plan.stdout).into_owned();
+    let parts: usize = plan
+        .lines()
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("split into ")
+                .and_then(|r| r.split(' ').next())
+                .and_then(|n| n.parse().ok())
+        })
+        .unwrap_or_else(|| panic!("no split in the plan:\n{plan}"));
+    assert!(parts >= 2, "{plan}");
+    let mut seq: Vec<String> = Vec::new();
+    for judge in 1..=3 {
+        for part in 1..=parts {
+            seq.push(match (judge, part) {
+                (2, 1) => fail("judge two"),
+                (3, n) if n == parts => fail("judge three"),
+                _ => ok.to_string(),
+            });
+        }
+    }
+    let spec = p.write_verdicts(&format!(r#"{{"j_rule": [{}]}}"#, seq.join(", ")));
+    let out = p
+        .lint()
+        .args(["--diff", "--format", "json", "--max-parallel", "1"])
+        .args(["--max-prompt-chars", "20000"])
+        .env("LLMLINT_MOCK_VERDICTS", &spec)
+        .env("LLMLINT_MOCK_STATE", p.path().join("state"))
+        .env("LLMLINT_MOCK_PROMPTLOG", &probe)
+        .output()
+        .unwrap();
+    assert_eq!(calls(&probe).len(), 3 * parts);
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rule = &report["rules"][0];
+    assert_eq!(rule["votes_total"], 3, "{report:#}");
+    assert_eq!(rule["votes_hold"], 1, "{report:#}");
+    assert_eq!(rule["outcome"], "fail", "{report:#}");
+    let messages: Vec<&str> = rule["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["message"].as_str().unwrap())
+        .collect();
+    assert_eq!(messages, vec!["judge two", "judge three"], "{report:#}");
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn the_nearest_config_s_bound_wins_and_an_ancestor_s_is_inherited() {
+    // The ancestor sets the bound; the config the run starts from declares the
+    // rules and files but no bound of its own.
+    let p = Project::new();
+    p.write("llmlint.yml", "max_prompt_chars: 20000\n");
+    let leaf = format!("files:\n  include: [\"src/**\"]\nrules:\n{RULES}");
+    p.write("sub/llmlint.yml", &leaf);
+    for f in FILES {
+        p.write(&format!("sub/{f}"), "fn base() {}\n");
+    }
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "baseline"]);
+    for f in FILES {
+        let body: String = (0..200)
+            .map(|i| format!("fn changed_line_number_{i:04}() {{}}\n"))
+            .collect();
+        p.write(&format!("sub/{f}"), &format!("fn base() {{}}\n{body}"));
+    }
+    let run = |name: &str| {
+        let dir = p.path().join(name);
+        p.lint()
+            .current_dir(p.path().join("sub"))
+            .arg("--diff")
+            .env("LLMLINT_MOCK_PROMPTLOG", &dir)
+            .output()
+            .unwrap();
+        calls(&dir)
+    };
+    let inherited = run("inherited");
+    assert!(inherited.len() > 1, "the ancestor's bound should split");
+    assert!(inherited.iter().all(|c| c.chars <= 20000));
+    p.write(
+        "sub/llmlint.yml",
+        &format!("max_prompt_chars: 1000000\n{leaf}"),
+    );
+    assert_eq!(run("nearest").len(), 1, "the nearer config's bound wins");
+}
+
+#[test]
 fn a_zero_bound_is_rejected() {
     let p = changed_repo("max_prompt_chars: 0\n", 1);
     p.lint()

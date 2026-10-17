@@ -85,7 +85,9 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
         .clone()
         .or_else(|| config.oneharness.bin.clone());
     let client = oneharness::Client::new(bin.as_deref());
-    let oh_version = client.version()?;
+    // The same floor `lint` enforces: a oneharness `lint` would refuse has no
+    // judge to describe.
+    let oh_version = client.check_min_version()?;
     oneharness::Client::check_layered_config_version(&oh_version, oh_files.len())?;
     let oh_config = client.resolved_config(&cwd, &oh_files)?;
 

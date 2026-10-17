@@ -646,8 +646,10 @@ resolves the oneharness the test put on PATH.
   `--oneharness-bin`/`LLMLINT_ONEHARNESS_BIN` paths to the same stand-in; a new
   digest for a changed local rule, prompt template, `--model`, the harness model
   in the discovered file, in a named file, and in either's `extends` parent, an
-  `ONEHARNESS_MODEL` override, and a `@1` plugin resolving to a newer version
-  with identical rules; the recording-only history settings of both tools change
+  `ONEHARNESS_MODEL` override, the version oneharness reports (one `lint` would
+  refuse as too old is a failure), and a `@1` plugin resolving to a newer version
+  with identical rules; a harness path under `HOME` is the same judge for any
+  `HOME`; the recording-only history settings of both tools change
   nothing; the spawn log holds only `--version` and `config`, never `run`; an
   invalid config, an unresolvable plugin, an unreadable/invalid harness config, a
   malformed `oneharness config` report (`LLMLINT_MOCK_CONFIG_REPLY`) and an absent
@@ -666,7 +668,10 @@ resolves the oneharness the test put on PATH.
   splits); a corrective re-ask that would exceed the bound is not sent (control:
   unbounded, it is) and the deterministic cleanup still decides the verdict; a
   relevance-conditional rule split across calls casts one vote, relevant when any
-  part found it so, its rationale joining the agreeing parts'; `--plan-only` shows
+  part found it so, its rationale joining the agreeing parts'; a `judges: 3` rule
+  split across calls gets exactly three votes, each judge's parts merged (a fail
+  in one part of judges 2 and 3 is two failing votes, not two of nine); an
+  ancestor config's `max_prompt_chars` is inherited and a nearer one wins; `--plan-only` shows
   the split with no harness spawn (control: the same run spawns it); a zero bound
   from the config, the flag or the env var is exit 2.
 - **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
