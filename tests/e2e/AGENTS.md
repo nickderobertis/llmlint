@@ -646,7 +646,9 @@ resolves the oneharness the test put on PATH.
   `--oneharness-bin`/`LLMLINT_ONEHARNESS_BIN` paths to the same stand-in; a new
   digest for a changed local rule, prompt template, `--model`, the harness model
   in the discovered file, in a named file, and in either's `extends` parent, an
-  `ONEHARNESS_MODEL` override, the version oneharness reports (one `lint` would
+  `ONEHARNESS_MODEL` override, `max_prompt_chars` (one bound from the config,
+  `LLMLINT_MAX_PROMPT_CHARS` or `--max-prompt-chars` is one judge; the default
+  written out equals unset), the version oneharness reports (one `lint` would
   refuse as too old is a failure), and a `@1` plugin resolving to a newer version
   with identical rules; a harness path under `HOME` is the same judge for any
   `HOME`; an include set supplied by `LLMLINT_FILES_INCLUDE` hashes the same as

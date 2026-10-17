@@ -256,7 +256,8 @@ Use the `just` recipes; do not hand-roll equivalents.
   `version-proof` target, outside the gate tiers: it builds a second llmlint, so
   the `Fingerprint version` workflow (`.github/workflows/fingerprint-version.yml`)
   runs it on pull requests and pushes to `main` that touch its inputs (the
-  workflow's `paths` are the target's Nx inputs; change them together).
+  workflow's `paths` must equal the target's Nx inputs, held by the ci-workflows
+  journey `fingerprint_version_workflow_paths_are_the_version_proof_inputs`).
 - `just test-oneharness` — the real-oneharness project's `network` target
   (installs the released oneharness from PyPI), outside the gate tiers; see
   `tests/real-oneharness/AGENTS.md`.

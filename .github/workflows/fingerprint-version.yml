@@ -6,7 +6,9 @@ name: Fingerprint version
 # version changed. That second build costs minutes, so it is no gate-tier target
 # (no `nx affected -t test` sweep selects it) and runs here instead: on every pull
 # request and push to main that touches what can change its result — the paths
-# below are its Nx inputs — and on demand. Not a required context.
+# below are exactly its Nx inputs (tests/fingerprint-version/project.json), held
+# there by ci-workflows' fingerprint_version_workflow_paths_are_the_version_proof_inputs
+# — and on demand. Not a required context.
 on:
   pull_request:
     paths:

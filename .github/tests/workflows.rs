@@ -1,6 +1,7 @@
 //! Drift gates over the committed GitHub Actions workflows: the fixed set of
 //! status-check contexts every pull request must report, the suppressions
-//! comment kept outside it, and the Performance workflow's trigger lists. GitHub
+//! comment kept outside it, and the Performance and Fingerprint version
+//! workflows' trigger lists. GitHub
 //! is the only thing that runs these files, which a test cannot reach, so the
 //! workflow files themselves are the interface under test. This is the
 //! `ci-workflows` project's `test` target (actionlint is its `lint-workflows`).
@@ -391,5 +392,55 @@ fn pool_maintenance_budget_runs_after_a_full_sweep_gate_on_its_head() {
             });
             assert!(!runs_it, "{file} job {id} runs the host budgets");
         }
+    }
+}
+
+/// The `Fingerprint version` workflow schedules the fingerprint-version project's
+/// `version-proof`, which no gate tier selects, so its `paths` filters are the
+/// only thing that runs it: each must be exactly that target's Nx inputs (plus the
+/// workflow itself). An input added to `project.json` but not here would leave a
+/// change to it unproven, and an extra path would spend a second build on nothing.
+#[test]
+fn fingerprint_version_workflow_paths_are_the_version_proof_inputs() {
+    let root = repo_root();
+    let project: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("tests/fingerprint-version/project.json")).unwrap(),
+    )
+    .unwrap();
+    let inputs = project["targets"]["version-proof"]["inputs"]
+        .as_array()
+        .expect("version-proof declares its inputs");
+    let mut expected: Vec<String> = inputs
+        .iter()
+        .map(|i| {
+            let i = i.as_str().expect("a file-pattern input");
+            let path = i
+                .replace("{projectRoot}", "tests/fingerprint-version")
+                .replace("{workspaceRoot}/", "");
+            // Nx's `dir/**/*` and the workflow's `dir/**` select the same files.
+            path.strip_suffix("/**/*")
+                .map(|dir| format!("{dir}/**"))
+                .unwrap_or(path)
+        })
+        .collect();
+    expected.push(".github/workflows/fingerprint-version.yml".to_string());
+    expected.sort();
+
+    let (_, doc) = workflow_docs()
+        .into_iter()
+        .find(|(f, _)| f == "fingerprint-version.yml")
+        .expect(".github/workflows/fingerprint-version.yml exists");
+    for event in ["pull_request", "push"] {
+        let mut paths: Vec<String> = doc["on"][event]["paths"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the {event} trigger has a paths list"))
+            .iter()
+            .map(|p| p.as_str().unwrap().to_string())
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths, expected,
+            "fingerprint-version.yml's {event} paths must be version-proof's inputs"
+        );
     }
 }

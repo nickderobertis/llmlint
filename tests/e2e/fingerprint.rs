@@ -256,6 +256,34 @@ fn a_file_filter_from_the_environment_is_the_judge_it_describes() {
 }
 
 #[test]
+fn the_prompt_size_bound_is_part_of_the_digest() {
+    let p = judge_project();
+    let default = digest(&mut fingerprint(&p));
+    // The default bound written out is the same judge as leaving it unset.
+    let cfg = fs::read_to_string(p.path().join("llmlint.yml")).unwrap();
+    p.write("llmlint.yml", &format!("max_prompt_chars: 1000000\n{cfg}"));
+    assert_eq!(digest(&mut fingerprint(&p)), default);
+    p.write("llmlint.yml", &format!("max_prompt_chars: 50000\n{cfg}"));
+    let from_config = digest(&mut fingerprint(&p));
+    assert_ne!(from_config, default, "a config bound changes it");
+    p.write("llmlint.yml", &cfg);
+    assert_eq!(
+        digest(fingerprint(&p).env("LLMLINT_MAX_PROMPT_CHARS", "50000")),
+        from_config,
+        "the same bound from the environment is the same judge"
+    );
+    assert_eq!(
+        digest(fingerprint(&p).args(["--max-prompt-chars", "50000"])),
+        from_config,
+        "and from the flag"
+    );
+    assert_ne!(
+        digest(fingerprint(&p).args(["--max-prompt-chars", "70000"])),
+        from_config
+    );
+}
+
+#[test]
 fn the_version_oneharness_reports_is_part_of_the_digest() {
     let p = judge_project();
     let floor = digest(&mut fingerprint(&p));
