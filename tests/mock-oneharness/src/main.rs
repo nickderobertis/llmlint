@@ -11,6 +11,9 @@
 //!   bool (`holds`), an object (`{holds, violations}`), or an array of specs
 //!   (one per judge call, advanced via a per-rule counter under
 //!   `LLMLINT_MOCK_STATE`). Unlisted rules default to `holds=true`.
+//! - `LLMLINT_MOCK_REPLIES=<path>` — a JSON array of `structured` values, one
+//!   per `run` call in arrival order (the last repeating), emitted verbatim as a
+//!   schema-valid reply — e.g. `{}`, or a reply naming only some rules.
 //! - `LLMLINT_MOCK_FAIL_SCHEMA=1` — emit `schema_valid=false` (validation fail).
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
@@ -135,6 +138,27 @@ fn claim_indexed(dir: &Path, prefix: &str) -> PathBuf {
             Err(_) => i += 1,
         }
     }
+}
+
+/// The `structured` value scripted by `LLMLINT_MOCK_REPLIES` for this `run`
+/// call, if any: the file holds a JSON array, and the n-th call (counted
+/// atomically under `<path>.calls`, so concurrent judges each take a distinct
+/// slot) gets element n, the last element repeating once the array runs out.
+/// Emitted verbatim as a schema-valid reply, so a test can hand llmlint a reply
+/// that answers fewer — or other — rules than the call selected.
+fn scripted_reply() -> Option<Value> {
+    let path = env::var("LLMLINT_MOCK_REPLIES").ok()?;
+    let text = fs::read_to_string(&path).ok()?;
+    let replies: Vec<Value> = serde_json::from_str(&text).ok()?;
+    let last = replies.len().checked_sub(1)?;
+    let slot = claim_indexed(&PathBuf::from(format!("{path}.calls")), "call");
+    let n: usize = slot
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("call-"))
+        .and_then(|i| i.parse().ok())
+        .unwrap_or(0);
+    Some(replies[n.min(last)].clone())
 }
 
 /// Rendezvous on `LLMLINT_MOCK_BARRIER`: register, then block until `N` peers
@@ -376,6 +400,17 @@ fn main() {
             "schema_attempts": null,
             "schema_error": null,
             "error": "mock: no structured output",
+        })
+    } else if let Some(reply) = scripted_reply() {
+        json!({
+            "harness": harness,
+            "status": "ok",
+            "exit_code": 0,
+            "structured": reply,
+            "schema_valid": true,
+            "schema_attempts": 1,
+            "schema_error": null,
+            "error": null,
         })
     } else {
         let verdicts: Map<String, Value> = env::var("LLMLINT_MOCK_VERDICTS")

@@ -20,6 +20,8 @@ use predicates::prelude::*;
 use serde_json::Value;
 use tempfile::TempDir;
 
+mod judge_reply;
+
 fn mock_path() -> PathBuf {
     cargo_bin("llmlint-mock-oneharness")
 }

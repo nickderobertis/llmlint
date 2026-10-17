@@ -439,8 +439,9 @@ pub(crate) fn run_loaded(
                 }
                 view.tick_run();
                 match result {
-                    Ok(map) => {
-                        for (name, verdict) in map {
+                    Ok(answer) => {
+                        run_errors.extend(reply_gap_errors(run, &answer.gaps));
+                        for (name, verdict) in answer.verdicts {
                             verdicts.entry(name).or_default().push(verdict);
                         }
                     }
@@ -826,6 +827,26 @@ fn judge_label(run: &JudgeRun) -> String {
     )
 }
 
+/// The errored results for a judge reply that did not answer exactly its batch:
+/// one per selected rule it left without a verdict, and one per name it answered
+/// that the call never selected (already dropped, so it counts toward nothing).
+/// Each is a run error, so the run exits 2 — a reply missing a rule can never
+/// read as that rule passing.
+fn reply_gap_errors(run: &JudgeRun, gaps: &applicability::ReplyGaps) -> Vec<String> {
+    let label = judge_label(run);
+    let missing = gaps
+        .unanswered
+        .iter()
+        .map(|name| format!("{label}: rule {name}: the judge returned no verdict for it"));
+    let stray = gaps.unselected.iter().map(|name| {
+        format!(
+            "{label}: the judge returned a verdict for rule {name}, which this judge call \
+             did not select; it is not counted"
+        )
+    });
+    missing.chain(stray).collect()
+}
+
 /// Print the oneharness debug view (exact command + raw result per judge) to
 /// stderr, keeping the parseable report on stdout. Shown at `-v`.
 fn print_traces(traces: &[(String, oneharness::RunTrace)]) {
@@ -846,6 +867,13 @@ fn print_traces(traces: &[(String, oneharness::RunTrace)]) {
     }
 }
 
+/// One judge call's cleaned reply: the verdicts for the rules it selected, and how
+/// the reply fell short of exactly that set (see [`reply_gap_errors`]).
+struct JudgeAnswer {
+    verdicts: BTreeMap<String, RuleVerdict>,
+    gaps: applicability::ReplyGaps,
+}
+
 // Each argument is a distinct piece of one judge call's context (the client, the
 // planned run, where/how long to run it, the oneharness config layers, the model,
 // tracing, and the diffs + suppressions trimming its prompt); a struct used only
@@ -861,10 +889,7 @@ fn execute(
     want_trace: bool,
     diffs: &BTreeMap<PathBuf, String>,
     suppressions: &BTreeMap<String, Suppressions>,
-) -> (
-    Option<oneharness::RunTrace>,
-    Result<BTreeMap<String, RuleVerdict>>,
-) {
+) -> (Option<oneharness::RunTrace>, Result<JudgeAnswer>) {
     let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
     // Per-file diffs for this run's files, in the same order as `files_str`. Only
     // files that actually changed appear in `diffs`, so unchanged ones are skipped
@@ -999,7 +1024,12 @@ fn execute(
             suppressions.get(file).is_some_and(|s| s.covers(name, line))
         });
     }
-    (last_trace, Ok(verdicts))
+    // Hold the reply to exactly the rules this call selected: a name it was never
+    // asked about is dropped (and reported), and a selected rule it left
+    // unanswered is reported, so neither can pass silently.
+    let selected: Vec<&str> = run.rules.iter().map(|r| r.name.as_str()).collect();
+    let gaps = applicability::hold_reply_to_batch(&selected, &mut verdicts);
+    (last_trace, Ok(JudgeAnswer { verdicts, gaps }))
 }
 
 fn emit(report: &Report, format: OutputFormat, verbosity: u8, color: ColorChoice) {

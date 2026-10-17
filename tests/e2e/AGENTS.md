@@ -639,6 +639,14 @@ resolves the oneharness the test put on PATH.
   that answered (`LLMLINT_MOCK_FALLBACK_NO_RAN`); and a whole-chain failure
   (nothing ran) errors naming every attempted harness rather than one skipped
   harness's "no structured output" (`+ LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
+- **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
+  with two selected rules — the workload at which 0.4.10 exited 0 on each of
+  these — a schema-valid reply of `{}`, one holding only one rule, one naming
+  only an unselected rule, and (`judges: 3`) a run where only the first call
+  answers each exit 2, with an `ERROR` naming every rule left without a verdict
+  (once per call that left it) and the unselected rule; the stray verdict is
+  dropped, never tallied. A reply answering both rules still exits 0 on two
+  passes and 1 on a fail. The replies are scripted with `LLMLINT_MOCK_REPLIES`.
 
 ## Unit vs e2e
 

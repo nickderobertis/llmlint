@@ -14,6 +14,10 @@ only; it never reimplements llmlint's own logic.
   `--max-parallel 1` so the sequence is deterministic.
 - `LLMLINT_MOCK_DUMP=<file>` — record the rendered `--system` prompt, to assert
   which files/rules reached the judge (globbing + template render).
+- `LLMLINT_MOCK_REPLIES=<file>` — a JSON array of `structured` values, one per
+  `run` call in arrival order (the last repeating), emitted verbatim as a
+  schema-valid reply: how a journey hands llmlint `{}` or a reply naming fewer
+  (or other) rules than the call selected.
 - `LLMLINT_MOCK_FAIL_SCHEMA` / `LLMLINT_MOCK_NO_STRUCTURED` / `LLMLINT_MOCK_GARBAGE`
   — force oneharness failure shapes.
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
