@@ -157,11 +157,22 @@ fn claim_indexed(dir: &Path, prefix: &str) -> PathBuf {
 /// slot) gets element n, the last element repeating once the array runs out.
 /// Emitted verbatim as a schema-valid reply, so a test can hand llmlint a reply
 /// that answers fewer — or other — rules than the call selected.
+/// A script that is set but unusable (unreadable, not a JSON array, empty) is a
+/// broken fixture: the mock refuses it (exit 2) rather than fall back to default
+/// verdicts a test would then read as llmlint's behavior.
 fn scripted_reply() -> Option<Value> {
     let path = env::var("LLMLINT_MOCK_REPLIES").ok()?;
-    let text = fs::read_to_string(&path).ok()?;
-    let replies: Vec<Value> = serde_json::from_str(&text).ok()?;
-    let last = replies.len().checked_sub(1)?;
+    let refuse = |why: String| -> ! {
+        eprintln!("mock: LLMLINT_MOCK_REPLIES={path}: {why}");
+        std::process::exit(2)
+    };
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| refuse(format!("unreadable: {e}")));
+    let replies: Vec<Value> = serde_json::from_str(&text)
+        .unwrap_or_else(|e| refuse(format!("not a JSON array of replies: {e}")));
+    let last = replies
+        .len()
+        .checked_sub(1)
+        .unwrap_or_else(|| refuse("an empty script answers nothing".into()));
     let slot = claim_indexed(&PathBuf::from(format!("{path}.calls")), "call");
     let n: usize = slot
         .file_name()

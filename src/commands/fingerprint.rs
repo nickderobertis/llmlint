@@ -91,8 +91,17 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
     oneharness::Client::check_layered_config_version(&oh_version, oh_files.len())?;
     let oh_config = client.resolved_config(&cwd, &oh_files)?;
 
-    // The llmlint side: the effective config with the prompt-shaping defaults
-    // made explicit, so a changed built-in default reads as a change.
+    // The llmlint side: the effective config, with each default made explicit
+    // (so a changed built-in default reads as a change, and a setting spelled
+    // out at its default is the same judge as one left unset) and each setting
+    // that has already been resolved hashed as its result rather than as how it
+    // was spelled: the plugin specs are their merged rules plus the resolved
+    // versions below, and the oneharness config layers are the one ordered list
+    // `lint` forwards — whether a layer came from the config, the env or a flag.
+    config.rationales = Some(config.rationales_default());
+    config.plugins.clear();
+    config.oneharness.config.clear();
+    let layers: Vec<String> = oh_files.iter().map(|f| files::to_slash(f)).collect();
     config.prompt_template = Some(
         config
             .prompt_template
@@ -143,7 +152,7 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
         "config": config_value,
         "scopes": scopes,
         "plugins": plugins,
-        "oneharness": { "version": oh_version, "config": oh_value },
+        "oneharness": { "version": oh_version, "layers": layers, "config": oh_value },
     });
     relativize(&mut material, &replacements(&cwd));
     let bytes = serde_json::to_vec(&canonical(material))

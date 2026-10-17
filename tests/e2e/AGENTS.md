@@ -646,7 +646,12 @@ resolves the oneharness the test put on PATH.
   `--oneharness-bin`/`LLMLINT_ONEHARNESS_BIN` paths to the same stand-in; a new
   digest for a changed local rule, prompt template, `--model`, the harness model
   in the discovered file, in a named file, and in either's `extends` parent, an
-  `ONEHARNESS_MODEL` override, `max_prompt_chars` (one bound from the config,
+  `ONEHARNESS_MODEL` override, an explicit `-c` config (the discovered one named
+  explicitly is the same judge), `--schema-max-retries` (one value from flag, env
+  or config is one judge), `--no-rationales` (`--rationales` equals the default,
+  and the flag beats a config), the order of layered harness configs (one layer
+  list from flags, config or `LLMLINT_ONEHARNESS_CONFIG` is one judge; several
+  below the layered floor are refused), `max_prompt_chars` (one bound from the config,
   `LLMLINT_MAX_PROMPT_CHARS` or `--max-prompt-chars` is one judge; the default
   written out equals unset), the version oneharness reports (one `lint` would
   refuse as too old is a failure), and a `@1` plugin resolving to a newer version

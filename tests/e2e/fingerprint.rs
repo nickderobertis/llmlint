@@ -256,6 +256,111 @@ fn a_file_filter_from_the_environment_is_the_judge_it_describes() {
 }
 
 #[test]
+fn an_explicit_config_selects_the_judge_it_describes() {
+    let p = judge_project();
+    let discovered = digest(&mut fingerprint(&p));
+    // The discovered config named explicitly is the same judge.
+    assert_eq!(
+        digest(fingerprint(&p).args(["-c", "llmlint.yml"])),
+        discovered
+    );
+    p.write(
+        "other.yml",
+        &format!("rules:\n  - {{ name: other_rule, description: \"{RULE}\" }}\n"),
+    );
+    let other = digest(fingerprint(&p).args(["-c", "other.yml"]));
+    assert_ne!(other, discovered, "another config is another judge");
+    let both = digest(fingerprint(&p).args(["-c", "llmlint.yml", "-c", "other.yml"]));
+    assert_ne!(both, discovered);
+    assert_ne!(both, other);
+}
+
+#[test]
+fn schema_retries_and_rationales_are_part_of_the_digest() {
+    let p = judge_project();
+    let cfg = fs::read_to_string(p.path().join("llmlint.yml")).unwrap();
+    let base = digest(&mut fingerprint(&p));
+
+    let retries = digest(fingerprint(&p).args(["--schema-max-retries", "4"]));
+    assert_ne!(retries, base);
+    assert_eq!(
+        digest(fingerprint(&p).env("LLMLINT_ONEHARNESS_SCHEMA_MAX_RETRIES", "4")),
+        retries,
+        "the same retry budget from the environment is the same judge"
+    );
+    p.write(
+        "llmlint.yml",
+        &format!("oneharness:\n  schema_max_retries: 4\n{cfg}"),
+    );
+    assert_eq!(digest(&mut fingerprint(&p)), retries, "and from the config");
+    p.write("llmlint.yml", &cfg);
+
+    // Rationales are on by default, so `--rationales` is the same judge and
+    // `--no-rationales` another — the same one a config turning them off is.
+    assert_eq!(digest(fingerprint(&p).arg("--rationales")), base);
+    let off = digest(fingerprint(&p).arg("--no-rationales"));
+    assert_ne!(off, base);
+    p.write("llmlint.yml", &format!("rationales: false\n{cfg}"));
+    assert_eq!(digest(&mut fingerprint(&p)), off);
+    assert_eq!(
+        digest(fingerprint(&p).arg("--rationales")),
+        base,
+        "the flag wins over the config"
+    );
+}
+
+#[test]
+fn layered_harness_configs_are_hashed_in_their_layer_order() {
+    let p = judge_project();
+    p.write("harness/a.toml", "model = \"model-a\"\n");
+    p.write("harness/b.toml", "model = \"model-b\"\n");
+    // Several `--config` layers need the layered-config floor.
+    let floor = {
+        let (major, minor, patch) = LAYERED_CONFIG_MIN_VERSION;
+        format!("{major}.{minor}.{patch}")
+    };
+    let flags = |order: [&str; 2]| {
+        let mut c = fingerprint(&p);
+        c.env("LLMLINT_MOCK_VERSION", &floor);
+        for f in order {
+            c.args(["--oneharness-config", f]);
+        }
+        digest(&mut c)
+    };
+    let a_then_b = flags(["harness/a.toml", "harness/b.toml"]);
+    let b_then_a = flags(["harness/b.toml", "harness/a.toml"]);
+    assert_ne!(a_then_b, b_then_a, "the top layer's model is the judge's");
+
+    // The same two layers from the config, then from the environment, are the
+    // same judge as the flags.
+    let cfg = fs::read_to_string(p.path().join("llmlint.yml")).unwrap();
+    p.write(
+        "llmlint.yml",
+        &format!("oneharness:\n  config: [\"harness/a.toml\", \"harness/b.toml\"]\n{cfg}"),
+    );
+    assert_eq!(
+        digest(fingerprint(&p).env("LLMLINT_MOCK_VERSION", &floor)),
+        a_then_b
+    );
+    p.write(
+        "llmlint.yml",
+        &format!("oneharness:\n  config: [\"harness/a.toml\"]\n{cfg}"),
+    );
+    assert_eq!(
+        digest(
+            fingerprint(&p)
+                .env("LLMLINT_MOCK_VERSION", &floor)
+                .env("LLMLINT_ONEHARNESS_CONFIG", "harness/b.toml")
+        ),
+        a_then_b,
+        "an env layer goes above the config's"
+    );
+    // Below the floor, several layers are refused rather than half-hashed.
+    let msg = failure(fingerprint(&p).env("LLMLINT_ONEHARNESS_CONFIG", "harness/b.toml"));
+    assert!(msg.contains(&floor), "{msg}");
+}
+
+#[test]
 fn the_prompt_size_bound_is_part_of_the_digest() {
     let p = judge_project();
     let default = digest(&mut fingerprint(&p));

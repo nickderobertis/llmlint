@@ -253,11 +253,8 @@ Use the `just` recipes; do not hand-roll equivalents.
   release-target declaration other repositories wait on; see
   `tests/release-targets/AGENTS.md`.
 - `just test-fingerprint-version` — the fingerprint-version project's
-  `version-proof` target, outside the gate tiers: it builds a second llmlint, so
-  the `Fingerprint version` workflow (`.github/workflows/fingerprint-version.yml`)
-  runs it on pull requests and pushes to `main` that touch its inputs (the
-  workflow's `paths` must equal the target's Nx inputs, held by the ci-workflows
-  journey `fingerprint_version_workflow_paths_are_the_version_proof_inputs`).
+  `version-proof`, outside the gate tiers because it builds a second llmlint; its
+  own workflow runs it. See `tests/fingerprint-version/AGENTS.md`.
 - `just test-oneharness` — the real-oneharness project's `network` target
   (installs the released oneharness from PyPI), outside the gate tiers; see
   `tests/real-oneharness/AGENTS.md`.
@@ -930,8 +927,11 @@ harness reads target files on-demand with its own tools.
   --format json`, `Client::resolved_config`) — never re-implement oneharness's
   discovery/`extends`/env resolution here. The hashed material drops every
   `source`, the binary's path and `fingerprint::RECORDING_ONLY` (manager ruling:
-  history settings of both tools only record a run), and rewrites the lint
-  directory to `.` and `HOME` to `~` at path boundaries. Anything new that can
+  history settings of both tools only record a run), hashes **effective values**
+  (defaults explicit; plugins as merged rules plus resolved versions; oneharness
+  layers as the one ordered list `lint` forwards), so the same judge spelled two
+  ways is one digest, and rewrites the lint directory to `.` and `HOME` to `~` at
+  path boundaries. Anything new that can
   change a verdict must reach this material, or a cache replays a stale verdict.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `check-version-bump`, `validate`, `lint-config`, `init`, `config` (`--sources`

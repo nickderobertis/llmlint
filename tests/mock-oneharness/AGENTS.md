@@ -26,7 +26,8 @@ only; it never reimplements llmlint's own logic.
 - `LLMLINT_MOCK_REPLIES=<file>` — a JSON array of `structured` values, one per
   `run` call in arrival order (the last repeating), emitted verbatim as a
   schema-valid reply: how a journey hands llmlint `{}` or a reply naming fewer
-  (or other) rules than the call selected.
+  (or other) rules than the call selected. A script that is set but unreadable,
+  not a JSON array, or empty is refused (exit 2), never a silent default.
 - `LLMLINT_MOCK_FAIL_SCHEMA` / `LLMLINT_MOCK_NO_STRUCTURED` / `LLMLINT_MOCK_GARBAGE`
   — force oneharness failure shapes.
 - `LLMLINT_MOCK_PROMPTLOG=<dir>` — one JSON file per `run` call with the `system`
