@@ -3,8 +3,10 @@
 //! scratch copy of this repository with only `Cargo.toml`'s package version
 //! changed print different digests for the same config, plugin, prompt template,
 //! harness configuration and stand-in oneharness — while two runs of one build
-//! agree. It compiles a second binary, so it is a project of its own (see this
-//! directory's `project.json`), not part of the e2e suite.
+//! agree. It compiles a second binary, so it is its own project's `version-proof`
+//! target (see this directory's `project.json`), outside the gate tiers and the
+//! e2e suite; `just test-fingerprint-version` and the `Fingerprint version`
+//! workflow run it.
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -1,0 +1,63 @@
+name: Fingerprint version
+
+# The fingerprint-version project's `version-proof` (`just test-fingerprint-version`):
+# proof that llmlint's own version is part of `llmlint fingerprint`, by building a
+# second llmlint from a scratch copy of the repository with only Cargo.toml's
+# version changed. That second build costs minutes, so it is no gate-tier target
+# (no `nx affected -t test` sweep selects it) and runs here instead: on every pull
+# request and push to main that touches what can change its result — the paths
+# below are its Nx inputs — and on demand. Not a required context.
+on:
+  pull_request:
+    paths:
+      - src/**
+      - assets/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/config.toml
+      - tests/mock-oneharness/**
+      - tests/fingerprint-version/**
+      - .github/workflows/fingerprint-version.yml
+  push:
+    branches: [main]
+    paths:
+      - src/**
+      - assets/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/config.toml
+      - tests/mock-oneharness/**
+      - tests/fingerprint-version/**
+      - .github/workflows/fingerprint-version.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fingerprint-version-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The channel pinned in rust-toolchain.toml, as the gate uses: the proof
+      # builds the binary contributors build.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      # The recipe runs through Nx, which bun installs from bun.lock at the
+      # .tool-versions pin.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+      - name: llmlint's version is in its fingerprint
+        run: just test-fingerprint-version

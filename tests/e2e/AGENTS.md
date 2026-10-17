@@ -660,8 +660,9 @@ resolves the oneharness the test put on PATH.
   an object, no `config_files`, or a setting that is not `{value, source}`) and an absent
   oneharness each exit non-zero with nothing on stdout. The real `oneharness
   config` shape is held by the real-oneharness tier. llmlint's own
-  version is proven by the separate `fingerprint-version` project, which builds a
-  second binary.
+  version is proven by the separate `fingerprint-version` project's
+  `version-proof` target, which builds a second binary and so runs outside the
+  gate tiers, in the `Fingerprint version` workflow (`just test-fingerprint-version`).
 - **Prompt-size-bounded batching** (`prompt_size.rs`). With every prompt logged
   (`LLMLINT_MOCK_PROMPTLOG`) and read back from its target-file list and `Scope:`
   lines: a `--diff` over the bound is judged in several calls, each at most the

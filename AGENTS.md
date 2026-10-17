@@ -79,10 +79,11 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   depends on the builds of `llmlint` and the fixture.
 - `fingerprint-version` (`type:e2e`, `tests/fingerprint-version/`) — proves
   llmlint's own version is in `llmlint fingerprint` by building a second binary
-  from a scratch copy with only `Cargo.toml`'s version changed; its own project so
-  the e2e suite never pays for that build, and its `test` inputs are only what can
-  change the result (crate sources and assets, manifest, lockfile, build config,
-  the stand-in harness, the test).
+  from a scratch copy with only `Cargo.toml`'s version changed (`version-proof`,
+  outside the gate tiers, run by its own workflow); its own project so neither the
+  e2e suite nor the affected `test` sweep pays for that build, and its inputs are
+  only what can change the result (crate sources and assets, manifest, lockfile,
+  build config, the stand-in harness, the test).
 - `release-targets` (`type:external`, `tests/release-targets/`) — the release
   declaration's offline checks (`test`) and network checks (`network`).
 - `release-packaging` (`type:external`, `tests/release-packaging/`) — the native
@@ -124,7 +125,8 @@ Every project declares the repo-uniform target names that apply to it: `format`
 (a check — cargo fmt and/or shfmt; `--configuration=write` writes), `lint`
 (clippy and/or shellcheck, or the boundary check), `lint-workflows` (actionlint),
 `build`, `test`, `doc`, and the two gates' `coverage`. A target that must never fan out into a gate tier gets a name of its own —
-`network` (release-targets, real-oneharness), `packaging` (release-packaging), `live`, `win-color`, `capture`,
+`network` (release-targets, real-oneharness), `packaging` (release-packaging),
+`version-proof` (fingerprint-version), `live`, `win-color`, `capture`,
 `bless`, `gif`, the `bench*` targets, `check-version-bump`, `supply-chain` — so
 `nx run-many -t test` can never reach it. Tags bound the edges
 (`tools/project-boundaries.json`, checked by the `workspace` project's `lint`):
@@ -250,6 +252,11 @@ Use the `just` recipes; do not hand-roll equivalents.
   half is the project's `test`. `release-targets.toml` is the canonical
   release-target declaration other repositories wait on; see
   `tests/release-targets/AGENTS.md`.
+- `just test-fingerprint-version` — the fingerprint-version project's
+  `version-proof` target, outside the gate tiers: it builds a second llmlint, so
+  the `Fingerprint version` workflow (`.github/workflows/fingerprint-version.yml`)
+  runs it on pull requests and pushes to `main` that touch its inputs (the
+  workflow's `paths` are the target's Nx inputs; change them together).
 - `just test-oneharness` — the real-oneharness project's `network` target
   (installs the released oneharness from PyPI), outside the gate tiers; see
   `tests/real-oneharness/AGENTS.md`.
