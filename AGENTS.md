@@ -77,6 +77,12 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   oneharness wire double behind `--oneharness-bin`.
 - `llmlint-e2e` (`type:e2e`, `tests/e2e/`) — the binary journeys; its `test`
   depends on the builds of `llmlint` and the fixture.
+- `fingerprint-version` (`type:e2e`, `tests/fingerprint-version/`) — proves
+  llmlint's own version is in `llmlint fingerprint` by building a second binary
+  from a scratch copy with only `Cargo.toml`'s version changed; its own project so
+  the e2e suite never pays for that build, and its `test` inputs are only what can
+  change the result (crate sources and assets, manifest, lockfile, build config,
+  the stand-in harness, the test).
 - `release-targets` (`type:external`, `tests/release-targets/`) — the release
   declaration's offline checks (`test`) and network checks (`network`).
 - `release-packaging` (`type:external`, `tests/release-packaging/`) — the native
@@ -908,7 +914,8 @@ harness reads target files on-demand with its own tools.
   arguments, as the Nx `runtime` input of their cached judged-lint target, so its
   output (one line, 64 lowercase hex, exit 0; nothing on stdout on failure) and
   what it covers are a contract — the CLI help and README state it, the e2e
-  journeys in `tests/e2e/fingerprint.rs` pin it. It resolves
+  journeys in `tests/e2e/fingerprint.rs` pin it, and `fingerprint-version`
+  (`tests/fingerprint-version/`) proves llmlint's own version is in it. It resolves
   through `lint`'s own code (`load_with_targets`, `env::apply_overrides`,
   `apply_cli_overrides`, `resolve_oneharness_config`) and asks **oneharness**
   for its resolved configuration (`oneharness config --cwd … [--config …]

@@ -1,0 +1,20 @@
+# Proves llmlint's own version is part of `llmlint fingerprint`: the workspace's
+# built `llmlint` and a second one built from a scratch copy of this repository
+# with only `Cargo.toml`'s package version changed must print different digests.
+# It compiles a second binary, so it is its own project (`project.json`), never
+# part of the e2e suite. Test-only; never published.
+[package]
+name = "llmlint-fingerprint-version"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[test]]
+name = "fingerprint_version"
+path = "fingerprint_version.rs"
+
+[dev-dependencies]
+assert_cmd.workspace = true
+llmlint.workspace = true
+tempfile.workspace = true

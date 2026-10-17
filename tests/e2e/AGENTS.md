@@ -650,7 +650,9 @@ resolves the oneharness the test put on PATH.
   with identical rules; the recording-only history settings of both tools change
   nothing; the spawn log holds only `--version` and `config`, never `run`; an
   invalid config, an unresolvable plugin, an unreadable/invalid harness config and
-  an absent oneharness each exit non-zero with nothing on stdout.
+  an absent oneharness each exit non-zero with nothing on stdout. llmlint's own
+  version is proven by the separate `fingerprint-version` project, which builds a
+  second binary.
 - **Prompt-size-bounded batching** (`prompt_size.rs`). With every prompt logged
   (`LLMLINT_MOCK_PROMPTLOG`) and read back from its target-file list and `Scope:`
   lines: a `--diff` over the bound is judged in several calls, each at most the

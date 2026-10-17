@@ -72,6 +72,7 @@ indicatif = { workspace = true, features = ["in_memory"] }
 members = [
     "tests/mock-oneharness",
     "tests/e2e",
+    "tests/fingerprint-version",
     "tests/release-targets",
     "tests/release-packaging",
     "tests/real-oneharness",
