@@ -169,7 +169,6 @@ fn what_decides_a_verdict_changes_the_digest() {
         seen.push((what, d));
     };
 
-    // A local rule.
     let cfg = fs::read_to_string(p.path().join("llmlint.yml")).unwrap();
     p.write(
         "llmlint.yml",
@@ -183,7 +182,6 @@ fn what_decides_a_verdict_changes_the_digest() {
         "restoring it restores the digest"
     );
 
-    // The prompt template.
     differs(
         "a prompt template",
         digest(fingerprint(&p).arg("--prompt-template").arg("template.md")),
@@ -197,7 +195,6 @@ fn what_decides_a_verdict_changes_the_digest() {
         digest(fingerprint(&p).arg("--prompt-template").arg("template.md")),
     );
 
-    // The model, on the command line.
     differs("--model", digest(fingerprint(&p).args(["--model", "m-1"])));
     differs(
         "another --model",
@@ -231,6 +228,30 @@ fn what_decides_a_verdict_changes_the_digest() {
     differs(
         "ONEHARNESS_MODEL",
         digest(fingerprint(&p).env("ONEHARNESS_MODEL", "env-model")),
+    );
+}
+
+#[test]
+fn a_file_filter_from_the_environment_is_the_judge_it_describes() {
+    // The include set written in the config, and the same set supplied by
+    // `LLMLINT_FILES_INCLUDE` to a config with none: one effective judge, so one
+    // digest — which holds only if the env override reaches each rule's scope.
+    let rule = format!("rules:\n  - {{ name: local_rule, description: \"{RULE}\" }}\n");
+    let in_config = Project::new();
+    in_config.write(
+        "llmlint.yml",
+        &format!("files:\n  include: [\"src/**\"]\n{rule}"),
+    );
+    let in_env = Project::new();
+    in_env.write("llmlint.yml", &rule);
+    let unfiltered = digest(&mut fingerprint(&in_env));
+    let from_env = digest(fingerprint(&in_env).env("LLMLINT_FILES_INCLUDE", "src/**"));
+    assert_ne!(from_env, unfiltered, "the include set is part of the judge");
+    assert_eq!(digest(&mut fingerprint(&in_config)), from_env);
+    // An exclude from the environment is part of it too.
+    assert_ne!(
+        digest(fingerprint(&in_env).env("LLMLINT_FILES_EXCLUDE", "src/gen/**")),
+        unfiltered
     );
 }
 

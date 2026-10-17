@@ -649,7 +649,9 @@ resolves the oneharness the test put on PATH.
   `ONEHARNESS_MODEL` override, the version oneharness reports (one `lint` would
   refuse as too old is a failure), and a `@1` plugin resolving to a newer version
   with identical rules; a harness path under `HOME` is the same judge for any
-  `HOME`; and an unset history block hashes the same as one whose recording-only
+  `HOME`; an include set supplied by `LLMLINT_FILES_INCLUDE` hashes the same as
+  the same set in the config (the env override reaches each rule's scope), and
+  `LLMLINT_FILES_EXCLUDE` changes it; and an unset history block hashes the same as one whose recording-only
   fields were all removed (the hashed JSON is key-sorted, so removal order never
   shows); the recording-only history settings of both tools change
   nothing; the spawn log holds only `--version` and `config`, never `run`; an
