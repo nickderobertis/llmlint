@@ -111,6 +111,10 @@ pub struct JudgeRun {
     pub model: Option<String>,
     pub schema_max_retries: Option<u32>,
     pub judge_index: u32,
+    /// The 1-based batch this run judges within its agent and judge index — the
+    /// [`BatchPlan::id`] it is explained under. A batch split to fit
+    /// `max_prompt_chars` keeps its id on every part.
+    pub batch_id: usize,
     /// Master template + this agent's appended prompt text (not yet rendered).
     pub template: String,
     pub files: Vec<PathBuf>,
@@ -295,6 +299,7 @@ pub fn build(
                     model: agent.model.clone(),
                     schema_max_retries: config.oneharness.schema_max_retries,
                     judge_index: j,
+                    batch_id: bi + 1,
                     template: template.clone(),
                     files: files.clone(),
                     rules: chunk
@@ -318,6 +323,8 @@ pub fn build(
                     files: files.iter().map(|p| to_slash(p)).collect(),
                     excluded_files: excluded,
                     reused_files: reused,
+                    parts: Vec::new(),
+                    oversized_files: Vec::new(),
                 });
             }
             agent_plan.judges.push(judge_plan);
@@ -458,6 +465,10 @@ pub struct PlanExplanation {
     /// The batching cost outcome: the file-load total the chosen layout pays vs the
     /// order-based baseline, and what grouping saved.
     pub optimization: Optimization,
+    /// The `max_prompt_chars` bound, recorded only when it shaped the plan (a
+    /// batch split across several judge calls, or a file over it on its own).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_prompt_chars: Option<usize>,
 }
 
 /// The counterfactual for the batching decision, in estimated tokens (unit file
@@ -512,6 +523,47 @@ pub struct BatchPlan {
     /// grouping them worthwhile (paid once instead of once per batch).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub reused_files: Vec<String>,
+    /// The judge calls this batch was split into so each prompt stays within
+    /// `max_prompt_chars`, in order. Empty when the batch fits one call.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<BatchPart>,
+    /// Files whose own prompt is over `max_prompt_chars`: never sent, each an
+    /// errored result.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub oversized_files: Vec<OversizedFile>,
+}
+
+impl BatchPlan {
+    /// How many judge calls this batch makes: one, or one per part when it was
+    /// split — none when every file was over the bound on its own.
+    pub fn calls(&self) -> usize {
+        if !self.parts.is_empty() {
+            self.parts.len()
+        } else if !self.oversized_files.is_empty() && self.oversized_files.len() == self.files.len()
+        {
+            0
+        } else {
+            1
+        }
+    }
+}
+
+/// One judge call of a batch split to fit `max_prompt_chars`: the rules that
+/// call judges, the files it carries, and its prompt size in characters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BatchPart {
+    pub rules: Vec<String>,
+    pub files: Vec<String>,
+    pub prompt_chars: usize,
+}
+
+/// A file whose prompt on its own is over `max_prompt_chars`, the size it
+/// measured, and the rules left unable to judge it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OversizedFile {
+    pub file: String,
+    pub prompt_chars: usize,
+    pub rules: Vec<String>,
 }
 
 /// A file dropped from a batch's union, and the rules whose whole-file ignore
@@ -551,7 +603,8 @@ impl PlanExplanation {
         self.agents
             .iter()
             .flat_map(|a| &a.judges)
-            .map(|j| j.batches.len())
+            .flat_map(|j| &j.batches)
+            .map(BatchPlan::calls)
             .sum()
     }
 
@@ -640,6 +693,33 @@ impl PlanExplanation {
                         out.push_str(&format!(
                             "{indent}  excluded {}: ignored (ignore-file) by {}\n",
                             x.file,
+                            x.rules.join(", ")
+                        ));
+                    }
+                    let bound = self.max_prompt_chars.unwrap_or_default();
+                    if !b.parts.is_empty() {
+                        out.push_str(&format!(
+                            "{indent}  split into {} judge calls to keep each prompt within \
+                             max_prompt_chars {bound}:\n",
+                            b.parts.len()
+                        ));
+                        for (i, part) in b.parts.iter().enumerate() {
+                            out.push_str(&format!(
+                                "{indent}    call {}: [{}] {} file(s), {} chars: {}\n",
+                                i + 1,
+                                part.rules.join(", "),
+                                part.files.len(),
+                                part.prompt_chars,
+                                part.files.join(", ")
+                            ));
+                        }
+                    }
+                    for x in &b.oversized_files {
+                        out.push_str(&format!(
+                            "{indent}  not sent {}: its prompt is {} chars, over max_prompt_chars \
+                             {bound} (errored for {})\n",
+                            x.file,
+                            x.prompt_chars,
                             x.rules.join(", ")
                         ));
                     }

@@ -20,6 +20,9 @@ only; it never reimplements llmlint's own logic.
   (or other) rules than the call selected.
 - `LLMLINT_MOCK_FAIL_SCHEMA` / `LLMLINT_MOCK_NO_STRUCTURED` / `LLMLINT_MOCK_GARBAGE`
   — force oneharness failure shapes.
+- `LLMLINT_MOCK_PROMPTLOG=<dir>` — one JSON file per `run` call with the `system`
+  prompt and user `prompt` it received, to assert every prompt's size and what it
+  carried (`DUMP` keeps only the last).
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
 - `LLMLINT_MOCK_DUMP_HISTORY_LABELS=<dir>` — record the history-label environment

@@ -739,6 +739,8 @@ mod tests {
                         files: vec!["src/lib.rs".into()],
                         excluded_files: vec![],
                         reused_files: vec![],
+                        parts: vec![],
+                        oversized_files: vec![],
                     }],
                 }],
             }],

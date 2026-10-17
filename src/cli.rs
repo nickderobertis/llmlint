@@ -147,6 +147,16 @@ pub struct LintArgs {
     #[arg(long = "no-rationales", overrides_with = "rationales", action = clap::ArgAction::SetTrue)]
     pub no_rationales: bool,
 
+    /// The most characters any one judge prompt may hold (overrides config
+    /// `max_prompt_chars`; default 1,000,000, under codex's 1,048,576-character
+    /// turn limit). A batch whose prompt — template, rules, files and their diffs
+    /// — would exceed it is split across more judge calls, every rule still
+    /// judging each of its files exactly once (`--plan-only` shows the split). A
+    /// single file whose own prompt is over it is an errored result naming the
+    /// file, its prompt size and the bound, and is never sent.
+    #[arg(long = "max-prompt-chars", value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    pub max_prompt_chars: Option<u64>,
+
     /// Only run rules assigned to this agent (`default` for unassigned rules).
     #[arg(long = "agent", value_name = "NAME")]
     pub agent: Option<String>,

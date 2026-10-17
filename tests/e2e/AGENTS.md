@@ -639,6 +639,16 @@ resolves the oneharness the test put on PATH.
   that answered (`LLMLINT_MOCK_FALLBACK_NO_RAN`); and a whole-chain failure
   (nothing ran) errors naming every attempted harness rather than one skipped
   harness's "no structured output" (`+ LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
+- **Prompt-size-bounded batching** (`prompt_size.rs`). With every prompt logged
+  (`LLMLINT_MOCK_PROMPTLOG`) and read back from its target-file list and `Scope:`
+  lines: a `--diff` over the bound is judged in several calls, each at most the
+  bound, every rule shown every file it selects exactly once, verdicts unchanged
+  from the unbounded run; a single file over the bound is an exit-2 `ERROR` naming
+  the file, its size, the bound and the remedy, and no prompt over the bound (nor
+  carrying it) reaches the harness; `--max-prompt-chars` overrides
+  `max_prompt_chars` both ways; `--plan-only` shows the split with no harness
+  spawn (control: the same run spawns it); `max_prompt_chars: 0` and
+  `--max-prompt-chars 0` are exit 2.
 - **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
   with two selected rules — the workload at which 0.4.10 exited 0 on each of
   these — a schema-valid reply of `{}`, one holding only one rule, one naming

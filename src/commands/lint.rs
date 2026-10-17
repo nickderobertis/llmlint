@@ -18,7 +18,7 @@ use crate::domain::plan::{self, JudgeRun, PlanContext, SkipReason};
 use crate::domain::report::Report;
 use crate::domain::template::{self};
 use crate::domain::verdict::{Outcome, RuleOutcome, RuleVerdict};
-use crate::domain::{applicability, attribution, diffmodel, ignore, schema, vote};
+use crate::domain::{applicability, attribution, diffmodel, ignore, promptsize, schema, vote};
 use crate::errors::{io_err, Error, Result};
 use crate::io::configfs::RuleScope;
 use crate::io::{assets, configfs, diff, env, files, history, oneharness};
@@ -304,6 +304,20 @@ pub(crate) fn run_loaded(
     // lint set is the changed subset, not the whole glob set).
     the_plan.explanation.diff_excluded_files = diff_excluded;
 
+    // Bound every judge prompt to `max_prompt_chars`: a batch whose rendered
+    // prompt is over it is split across more calls (each rule still judging each
+    // of its files once), and a file over it on its own is never sent — it is an
+    // errored result naming the file, its size and the remedy. Done before
+    // `--plan-only` so the plan shows the split.
+    let max_prompt_chars = config.max_prompt_chars();
+    let oversized = promptsize::bound(&mut the_plan, max_prompt_chars, |run| {
+        // A run whose template cannot render is kept whole, so the judge call
+        // reports the render error as it always has.
+        render_system(run, &diffs, &suppressions)
+            .map_or(0, |system| prompt_chars(&system, PROMPT_TRIGGER))
+    });
+    let prompt_errors = oversized_errors(&oversized, max_prompt_chars);
+
     // `--plan-only`: print how the runs would be batched (agents, batches, dropped
     // files) and stop — no oneharness, no model calls, no history write. The
     // batching-debug view must never cost a judge invocation.
@@ -350,8 +364,11 @@ pub(crate) fn run_loaded(
     let global_model = config.oneharness.model.as_deref();
     let max_parallel = args.max_parallel.unwrap_or(DEFAULT_MAX_PARALLEL).max(1);
 
-    let mut verdicts: BTreeMap<String, Vec<RuleVerdict>> = BTreeMap::new();
-    let mut run_errors: Vec<String> = Vec::new();
+    // Each rule's verdicts, per judge index: a batch split to fit
+    // `max_prompt_chars` answers a rule once per part, and those parts are one
+    // judge's vote (merged by `votes`).
+    let mut verdicts: BTreeMap<String, BTreeMap<u32, Vec<RuleVerdict>>> = BTreeMap::new();
+    let mut run_errors: Vec<String> = prompt_errors;
     // At `-v` we collect each oneharness invocation's exact command + raw result
     // and print them to stderr (the debug view); off by default to avoid the
     // cost of formatting the full command line on every judge.
@@ -428,6 +445,7 @@ pub(crate) fn run_loaded(
                             want_trace,
                             diffs_ref,
                             suppressions_ref,
+                            max_prompt_chars,
                         )
                     })
                 })
@@ -442,7 +460,12 @@ pub(crate) fn run_loaded(
                     Ok(answer) => {
                         run_errors.extend(reply_gap_errors(run, &answer.gaps));
                         for (name, verdict) in answer.verdicts {
-                            verdicts.entry(name).or_default().push(verdict);
+                            verdicts
+                                .entry(name)
+                                .or_default()
+                                .entry(run.judge_index)
+                                .or_default()
+                                .push(verdict);
                         }
                     }
                     Err(e) => run_errors.push(format!("{}: {}", judge_label(run), e)),
@@ -456,9 +479,10 @@ pub(crate) fn run_loaded(
                     if let Some(remaining) = remaining {
                         *remaining = remaining.saturating_sub(1);
                         if *remaining == 0 {
-                            let status = match verdicts.get(rs.name.as_str()) {
+                            let vs = verdicts.get(rs.name.as_str()).map(votes);
+                            let status = match vs {
                                 Some(vs) if !vs.is_empty() => {
-                                    live_status(&vote::tally(&rs.name, vs))
+                                    live_status(&vote::tally(&rs.name, &vs))
                                 }
                                 _ => LiveStatus::Error,
                             };
@@ -479,7 +503,7 @@ pub(crate) fn run_loaded(
 
     let mut outcomes: Vec<RuleOutcome> = verdicts
         .iter()
-        .map(|(name, vs)| vote::tally(name, vs))
+        .map(|(name, by_judge)| vote::tally(name, &votes(by_judge)))
         .collect();
     for o in &mut outcomes {
         if rationale_off.contains(&o.name) {
@@ -749,6 +773,9 @@ fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
     if args.diff_base.is_some() {
         config.diff_base = args.diff_base.clone();
     }
+    if args.max_prompt_chars.is_some() {
+        config.max_prompt_chars = args.max_prompt_chars;
+    }
     // `--exclude` layers onto the session-wide `files.exclude` denylist: the CLI
     // adds cwd-rooted globs to skip on top of whatever the config excludes. Like
     // config `files.exclude`, it always wins over includes and never re-includes a
@@ -827,6 +854,42 @@ fn judge_label(run: &JudgeRun) -> String {
     )
 }
 
+/// One vote per judge index: the verdicts a rule received from each judge's calls,
+/// its parts merged when its batch was split to fit `max_prompt_chars`.
+fn votes(by_judge: &BTreeMap<u32, Vec<RuleVerdict>>) -> Vec<RuleVerdict> {
+    by_judge
+        .values()
+        .filter_map(|parts| RuleVerdict::merge_parts(parts.clone()))
+        .collect()
+}
+
+/// The errored results for the files whose own prompt is over `max_prompt_chars`
+/// — one per agent and file (a file over the bound for several judge indices is
+/// named once, at its largest size), each naming the file, its prompt size, the
+/// bound, the rules left unable to judge it, and the remedy.
+fn oversized_errors(oversized: &[promptsize::Oversized], max: usize) -> Vec<String> {
+    let mut by_file: BTreeMap<(&str, &str), (usize, BTreeSet<&str>)> = BTreeMap::new();
+    for o in oversized {
+        let entry = by_file
+            .entry((o.agent.as_str(), o.file.file.as_str()))
+            .or_default();
+        entry.0 = entry.0.max(o.file.prompt_chars);
+        entry.1.extend(o.file.rules.iter().map(String::as_str));
+    }
+    by_file
+        .into_iter()
+        .map(|((agent, file), (chars, rules))| {
+            format!(
+                "agent {agent}: file {file}: its judge prompt is {chars} characters, over the \
+                 max_prompt_chars bound of {max}, so it was not sent and rules {} did not judge \
+                 it. Exclude the file if it is generated (files.exclude or --exclude), split the \
+                 change, or raise max_prompt_chars (--max-prompt-chars)",
+                rules.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        })
+        .collect()
+}
+
 /// The errored results for a judge reply that did not answer exactly its batch:
 /// one per selected rule it left without a verdict, and one per name it answered
 /// that the call never selected (already dropped, so it counts toward nothing).
@@ -874,22 +937,21 @@ struct JudgeAnswer {
     gaps: applicability::ReplyGaps,
 }
 
-// Each argument is a distinct piece of one judge call's context (the client, the
-// planned run, where/how long to run it, the oneharness config layers, the model,
-// tracing, and the diffs + suppressions trimming its prompt); a struct used only
-// for this one call would add a type, not clarity.
-#[allow(clippy::too_many_arguments)]
-fn execute(
-    client: &oneharness::Client,
+/// The size of one judge prompt in characters: the rendered system prompt plus
+/// the user prompt sent with it — what `max_prompt_chars` bounds.
+fn prompt_chars(system: &str, prompt: &str) -> usize {
+    system.chars().count() + prompt.chars().count()
+}
+
+/// Render one run's system prompt: the template over its rules and files, with
+/// each changed file's diff inlined (trimmed of change runs every applicable rule
+/// ignores). Shared by the prompt-size bound and the judge call, so the split is
+/// decided against exactly the prompt that is sent.
+fn render_system(
     run: &JudgeRun,
-    cwd: &Path,
-    timeout: u64,
-    oh_config: &[PathBuf],
-    global_model: Option<&str>,
-    want_trace: bool,
     diffs: &BTreeMap<PathBuf, String>,
     suppressions: &BTreeMap<String, Suppressions>,
-) -> (Option<oneharness::RunTrace>, Result<JudgeAnswer>) {
+) -> Result<String> {
     let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
     // Per-file diffs for this run's files, in the same order as `files_str`. Only
     // files that actually changed appear in `diffs`, so unchanged ones are skipped
@@ -938,7 +1000,7 @@ fn execute(
     let want_rationale = run.rules.iter().any(|r| r.rationale);
     let want_relevance = run.rules.iter().any(|r| r.relevance.is_some());
     let want_line_attribution = run.rules.iter().any(|r| r.require_line_attribution);
-    let system = match template::render(
+    template::render(
         &run.template,
         &run.rules,
         &files_str,
@@ -946,7 +1008,28 @@ fn execute(
         want_rationale,
         want_relevance,
         want_line_attribution,
-    ) {
+    )
+}
+
+// Each argument is a distinct piece of one judge call's context (the client, the
+// planned run, where/how long to run it, the oneharness config layers, the model,
+// tracing, the diffs + suppressions trimming its prompt, and the prompt-size
+// bound); a struct used only for this one call would add a type, not clarity.
+#[allow(clippy::too_many_arguments)]
+fn execute(
+    client: &oneharness::Client,
+    run: &JudgeRun,
+    cwd: &Path,
+    timeout: u64,
+    oh_config: &[PathBuf],
+    global_model: Option<&str>,
+    want_trace: bool,
+    diffs: &BTreeMap<PathBuf, String>,
+    suppressions: &BTreeMap<String, Suppressions>,
+    max_prompt_chars: usize,
+) -> (Option<oneharness::RunTrace>, Result<JudgeAnswer>) {
+    let files_str: Vec<String> = run.files.iter().map(|p| files::to_slash(p)).collect();
+    let system = match render_system(run, diffs, suppressions) {
         Ok(s) => s,
         // A render failure happens before any oneharness call, so there is no
         // command to trace.
@@ -1010,7 +1093,14 @@ fn execute(
         if problems.is_empty() || attempt >= MAX_REWORKS {
             break;
         }
-        prompt = applicability::rework_prompt(&problems, &file_rules);
+        let rework = applicability::rework_prompt(&problems, &file_rules);
+        // The rework is a prompt too: when it would push this call over the
+        // bound, skip it and let the deterministic cleanup below drop the
+        // wrong-file violations instead.
+        if prompt_chars(&system, &rework) > max_prompt_chars {
+            break;
+        }
+        prompt = rework;
         attempt += 1;
     }
 

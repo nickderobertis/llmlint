@@ -238,6 +238,11 @@ rationales: true
 # changes; an explicit `A..B` range gets git's raw two-dot behavior.
 diff_base: main
 
+# The most characters one judge prompt may hold — template, rules, files and their
+# diffs (default 1,000,000, under codex's 1,048,576-character turn limit). See
+# Batching below; `--max-prompt-chars` overrides it for one run.
+max_prompt_chars: 1000000
+
 # Pull in shared rule sets / plugins with one line each. An entry is a local
 # path or a URL (`http(s)://`, `file://`); pin a URL to a version with `@`.
 plugins:
@@ -301,6 +306,7 @@ unset.
 | `prompt_template` | `LLMLINT_PROMPT_TEMPLATE` | `--prompt-template` | path to a template file |
 | `rationales` | `LLMLINT_RATIONALES` | `--rationales` / `--no-rationales` | bool |
 | `diff_base` | `LLMLINT_DIFF_BASE` | `--diff-base` | any git revision/range |
+| `max_prompt_chars` | `LLMLINT_MAX_PROMPT_CHARS` | `--max-prompt-chars` | ≥ 1; default 1,000,000 (see [Batching](#batching)) |
 | `history.enabled` | `LLMLINT_HISTORY_ENABLED` | `--no-history` (force off) | bool; supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch |
 | `history.max_runs` | `LLMLINT_HISTORY_MAX_RUNS` | — | ≥ 1 |
 | `history.dir` | `LLMLINT_HISTORY_DIR` | — | path |
@@ -652,8 +658,22 @@ batched together, even when their harness/model/template are identical. If two
 rules interfere when judged in the same prompt, put them in separate agents (or set
 an agent's `batch_size: 1` to judge its rules one at a time).
 
+Every prompt is also **bounded in size**. `max_prompt_chars` (default 1,000,000
+characters, under codex's 1,048,576-character turn limit; `--max-prompt-chars N`
+for one run) caps what any one judge call is handed — the rendered template, its
+rules, and the files with their diffs. A batch whose prompt would be larger is
+split across more judge calls, by its files, each call carrying the rules that
+apply to its files: every rule still judges every file it selects exactly once,
+and a rule whose files span several calls gets one vote from them (it holds only
+if it holds in each). A single file whose own prompt is over the bound is never
+sent: it is an errored result (exit `2`) naming the file, its prompt size and the
+bound, with the remedy — exclude the file if it is generated, split the change, or
+raise `max_prompt_chars` — instead of the opaque "no JSON value could be
+extracted" a harness returns for an overflowing turn.
+
 Run **`llmlint lint --plan-only`** to see how a run would batch — agents, judge
-indices, each batch's rules and file union, and any files excluded as ignored —
+indices, each batch's rules and file union, any split to fit `max_prompt_chars`
+(each call's rules, files and prompt size), and any files excluded as ignored —
 without calling a model or writing history. The same plan is appended to the
 report at `-v`, included in `--format json` under `plan`, and saved with each
 history record.
@@ -1016,7 +1036,8 @@ source.
   rule rather than an error.) Every
   top-level setting also has a flag that wins over the config:
   `--rationales`/`--no-rationales`, `--model NAME`, `--schema-max-retries N`,
-  `--prompt-template PATH`, plus `--oneharness-bin`/`--oneharness-config`. Pass
+  `--prompt-template PATH`, `--max-prompt-chars N` (see [Batching](#batching)),
+  plus `--oneharness-bin`/`--oneharness-config`. Pass
   `--diff [<backend>]` to **review only the changed files**: the target set
   becomes the intersection of the changed files with your configured globs (and
   any explicit `FILES`), and each changed file's diff is added to the judge
@@ -1112,7 +1133,12 @@ source.
   `llmlint plugins --help` for its flags.
 
 Exit codes: `0` all rules hold · `1` at least one violation · `2` usage,
-configuration, or harness error (could not complete the lint).
+configuration, or harness error (could not complete the lint). A run exits `0`
+only when **every selected rule has a verdict**: each judge call's reply is held to
+the rules that call selected, so a selected rule the reply leaves unanswered is an
+errored result naming it ("the judge returned no verdict for it"), and a rule the
+reply names that the call did not select is an errored result naming it and is
+never counted as passed — with `judges: N`, each of the N calls is held to it.
 
 ## Development
 

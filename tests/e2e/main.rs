@@ -21,6 +21,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 mod judge_reply;
+mod prompt_size;
 
 fn mock_path() -> PathBuf {
     cargo_bin("llmlint-mock-oneharness")

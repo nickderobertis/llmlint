@@ -40,6 +40,9 @@
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
+//! - `LLMLINT_MOCK_PROMPTLOG=<dir>` — one JSON file per `run` call holding the
+//!   `system` prompt and the user `prompt` it received, so a test can assert
+//!   every prompt's size and contents (not only the last one, as `DUMP` keeps).
 //! - `LLMLINT_MOCK_DUMP_SCHEMA=<path>` — copy the generated `--schema` JSON so a
 //!   test can assert its shape (per-rule `name`/`rationale`/`holds` ordering).
 //! - `LLMLINT_MOCK_RUNLOG=<dir>` — record one file per invocation listing the
@@ -306,6 +309,18 @@ fn main() {
         if let Some(system) = resolve_system(&args) {
             let _ = fs::write(PathBuf::from(dump), system);
         }
+    }
+
+    // Optionally record every call's prompt — the system prompt and the user
+    // prompt sent with it — one JSON file per `run` call, so a test can assert
+    // the size of each prompt the harness received and what it carried.
+    if let Some(dir) = env::var_os("LLMLINT_MOCK_PROMPTLOG") {
+        let path = claim_indexed(&PathBuf::from(dir), "prompt");
+        let record = json!({
+            "system": resolve_system(&args).unwrap_or_default(),
+            "prompt": arg_value(&args, "--prompt").unwrap_or_default(),
+        });
+        let _ = fs::write(&path, record.to_string());
     }
 
     let schema_path = arg_value(&args, "--schema").unwrap_or_default();

@@ -497,6 +497,21 @@ harness reads target files on-demand with its own tools.
   a weightless context falls back to unit file counts, which the pure planner tests
   use). The order-based layout is costed too, only to report the `Optimization`
   counterfactual (billed + per-rule saved) in the explanation.
+- **Prompt-size bound (convention, issue #156):** `max_prompt_chars` (default
+  `DEFAULT_MAX_PROMPT_CHARS`, under codex's turn limit) caps system + user prompt
+  characters per judge call. `domain::promptsize::bound` runs after `plan::build`,
+  measuring each run with the same `render_system` the call sends, so the split is
+  decided against the real prompt: an over-bound run splits by its sorted files
+  into the longest fitting parts (doubling then bisecting), each rule narrowed to
+  its files in the part, so every rule still sees each file once per judge index.
+  A split rule's parts are **one judge's vote** (`RuleVerdict::merge_parts`, keyed
+  by judge index in `lint.rs`), never extra votes. A file over the bound alone is
+  never sent — one errored result per agent and file. The rework prompt is held to
+  the bound too (skipped, falling back to deterministic cleanup).
+- **A reply answers exactly its batch (convention):** `applicability::
+  hold_reply_to_batch` compares each reply's rule names to the call's rules: an
+  unselected name is dropped and an errored result, an unanswered selected rule is
+  an errored result. So exit 0 means every selected rule has a verdict.
 - **Plan explanation + `--plan-only` (convention):** `plan::build` returns, beside
   the runs, a `PlanExplanation` built *while deciding* (so it can never drift): per
   agent → judge index → batch, the batched rule set, the effective file union, the
@@ -677,7 +692,8 @@ harness reads target files on-demand with its own tools.
   `LLMLINT_HISTORY_ENABLED` supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch
   (honored in `history::resolve` only when the canonical var is unset);
   `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into
-  the same scheme. When a new session setting lands, add its `LLMLINT_` var here.
+  the same scheme (`max_prompt_chars` is `LLMLINT_MAX_PROMPT_CHARS`). When a new
+  session setting lands, add its `LLMLINT_` var here.
 - **oneharness configs are layered (convention, issue #210):** every resolved
   oneharness config file is forwarded as its own `--config`, lowest layer first,
   because oneharness layers repeated `--config`s (a later file overrides an

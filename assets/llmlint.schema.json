@@ -57,6 +57,15 @@
         "null"
       ]
     },
+    "max_prompt_chars": {
+      "description": "The most characters any one judge prompt may hold — the rendered\ntemplate, its rules, and the target files with their diffs (default\n1,000,000, under codex's 1,048,576-character turn limit). A batch whose\nprompt would exceed it is split across more judge calls, every rule still\njudging each of its files exactly once; a single file whose own prompt is\nover it is reported as an errored result rather than sent. The\n`--max-prompt-chars` flag overrides it.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 1
+    },
     "history": {
       "description": "Whether/how/where to log each run's full results to disk (default: on, the\nlast 100 runs, in the platform data dir). See [`HistoryCfg`].",
       "$ref": "#/$defs/HistoryCfg"
