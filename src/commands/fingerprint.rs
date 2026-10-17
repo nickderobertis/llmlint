@@ -164,7 +164,7 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
 
 /// Collapse oneharness's `{value, source}` annotations to their values: where a
 /// setting came from is a path on this host, not part of the judge.
-// llmlint: ignore[contracts_have_one_source_or_a_drift_gate] the `{value, source}` shape is the released oneharness's `config` report, which publishes no schema; `Client::resolved_config` admits only reports of this shape, and `fingerprint_reads_the_real_harness_configuration` (the real-oneharness tier, `just test-oneharness`) reconciles both against the released binary
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] the `{value, source}` shape is the released oneharness's `config` report, which publishes no schema; `Client::resolved_config` admits only reports of this shape, and `fingerprint_reads_the_real_harness_configuration` (the real-oneharness tier, `just test-oneharness`) reconciles both against the released binary
 fn without_sources(value: Value) -> Value {
     match value {
         Value::Object(map) => {
@@ -181,6 +181,7 @@ fn without_sources(value: Value) -> Value {
         other => other,
     }
 }
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 /// `value` with every object's keys in sorted order, so the bytes hashed never
 /// depend on the order a setting was inserted, merged or removed in (objects keep
