@@ -372,16 +372,10 @@ impl Client {
                 String::from_utf8_lossy(&output.stderr).trim()
             ))
         })?;
-        // The report is an object listing the files it loaded beside the
-        // settings; anything else is not a configuration this run can stand on.
-        let shaped = report
-            .get("config_files")
-            .and_then(Value::as_array)
-            .is_some_and(|files| files.iter().all(Value::is_string));
-        if !shaped {
+        if let Err(problem) = config_report_problem(&report) {
             return Err(Error::HarnessConfig(format!(
-                "`oneharness config` did not report a configuration (expected a JSON object \
-                 with a `config_files` list, got: {}); upgrade oneharness or check {}",
+                "`oneharness config` did not report a configuration ({problem}; got: {}); \
+                 upgrade oneharness or check {}",
                 truncate(&report.to_string(), 200),
                 self.bin.display()
             )));
@@ -751,6 +745,44 @@ fn fallback_chain_error(report: &Report, harness: &str) -> Error {
         chain.join(", ")
     ))
 }
+
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] the other side of this shape is the released oneharness's `config --format json` report, which publishes no schema to derive from or reconcile against offline; the reconciliation is `fingerprint_reads_the_real_harness_configuration` in the real-oneharness tier (`just test-oneharness`), which runs this exact check against the released binary, the same out-of-gate real-tool gate the mock-oneharness wire double relies on
+/// Why `report` is not a `oneharness config` report, if it is not one: it must
+/// be an object with a `config_files` list of strings, and every setting beside
+/// it a `{value, source}` leaf or a table of them (nested to any depth, e.g.
+/// `harness.<id>.model`, `history_labels.<key>`). A setting that is anything else
+/// would be hashed as a configuration nothing resolved.
+fn config_report_problem(report: &Value) -> std::result::Result<(), String> {
+    let Some(fields) = report.as_object() else {
+        return Err("expected a JSON object".into());
+    };
+    let listed = fields
+        .get("config_files")
+        .and_then(Value::as_array)
+        .is_some_and(|files| files.iter().all(Value::is_string));
+    if !listed {
+        return Err("expected a `config_files` list of paths".into());
+    }
+    fn settings(path: &str, value: &Value) -> std::result::Result<(), String> {
+        let Some(map) = value.as_object() else {
+            return Err(format!("`{path}` is not a {{value, source}} setting"));
+        };
+        let leaf = map.len() == 2 && map.contains_key("value") && map.contains_key("source");
+        if leaf {
+            return match &map["source"] {
+                Value::String(_) | Value::Null => Ok(()),
+                _ => Err(format!("`{path}.source` is not a source")),
+            };
+        }
+        map.iter()
+            .try_for_each(|(k, v)| settings(&format!("{path}.{k}"), v))
+    }
+    fields
+        .iter()
+        .filter(|(k, _)| !matches!(k.as_str(), "config_files" | "schema_version"))
+        .try_for_each(|(k, v)| settings(k, v))
+}
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 /// At most `max` characters of `s`, marked when cut.
 fn truncate(s: &str, max: usize) -> String {
@@ -1290,5 +1322,38 @@ mod tests {
         let dir2 = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir2.path().join(name)).unwrap();
         assert!(sibling_in(dir2.path()).is_none());
+    }
+
+    #[test]
+    fn a_config_report_must_list_its_files_and_annotate_every_setting() {
+        let ok = json!({
+            "schema_version": "0.11",
+            "config_files": ["/p/oneharness.toml", "environment"],
+            "model": {"value": "m", "source": "/p/oneharness.toml"},
+            "all": {"value": null, "source": null},
+            "env": {},
+            "harness": {"codex": {"model": {"value": "x", "source": "default"}, "env": {}}},
+        });
+        assert_eq!(config_report_problem(&ok), Ok(()));
+        for (bad, why) in [
+            (json!(null), "JSON object"),
+            (
+                json!({"model": {"value": "m", "source": "s"}}),
+                "config_files",
+            ),
+            (json!({"config_files": [1]}), "config_files"),
+            (json!({"config_files": [], "model": 42}), "`model`"),
+            (
+                json!({"config_files": [], "harness": {"codex": {"model": "x"}}}),
+                "`harness.codex.model`",
+            ),
+            (
+                json!({"config_files": [], "model": {"value": "m", "source": 7}}),
+                "`model.source`",
+            ),
+        ] {
+            let problem = config_report_problem(&bad).unwrap_err();
+            assert!(problem.contains(why), "{bad}: {problem}");
+        }
     }
 }

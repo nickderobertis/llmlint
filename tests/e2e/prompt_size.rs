@@ -502,6 +502,72 @@ fn the_nearest_config_s_bound_wins_and_an_ancestor_s_is_inherited() {
 }
 
 #[test]
+fn a_change_whose_every_file_is_over_the_bound_makes_no_judge_call() {
+    let p = changed_repo("", 200);
+    let spawns = p.path().join("spawns");
+    let (out, calls) = run(&p, "log", &["--max-prompt-chars", "2000"]);
+    assert!(
+        calls.is_empty(),
+        "{} prompts reached the harness",
+        calls.len()
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let errors = report["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), FILES.len(), "{report:#}");
+    for f in FILES {
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.as_str().unwrap().contains(&format!("file {f}:"))),
+            "{f}: {report:#}"
+        );
+    }
+    // The plan says the same, with no call to make.
+    let plan = p
+        .lint()
+        .args(["--diff", "--plan-only", "--max-prompt-chars", "2000"])
+        .env("LLMLINT_MOCK_SPAWNLOG", &spawns)
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&plan.stdout);
+    assert!(plan.starts_with("Plan: 0 judge call(s)"), "{plan}");
+    assert_eq!(harness_spawns(&spawns), 0);
+}
+
+#[test]
+fn a_conditional_rule_not_relevant_in_any_part_stays_not_relevant() {
+    let rules = "  - { name: c_rule, description: \"true when ok; false otherwise.\", \
+         relevance: \"the change adds a function\" }\n";
+    let initial: Vec<(&str, &str)> = FILES.iter().map(|f| (*f, "fn base() {}\n")).collect();
+    let p = committed_repo(rules, &initial);
+    for f in FILES {
+        let body: String = (0..200)
+            .map(|i| format!("fn changed_line_number_{i:04}() {{}}\n"))
+            .collect();
+        p.write(f, &format!("fn base() {{}}\n{body}"));
+    }
+    let spec = p.write_verdicts(r#"{"c_rule": {"relevant": false, "rationale": "n/a here"}}"#);
+    let log = p.path().join("log");
+    let out = p
+        .lint()
+        .args(["--diff", "--format", "json", "--max-prompt-chars", "20000"])
+        .env("LLMLINT_MOCK_VERDICTS", &spec)
+        .env("LLMLINT_MOCK_PROMPTLOG", &log)
+        .output()
+        .unwrap();
+    let parts = calls(&log).len();
+    assert!(parts >= 3, "{parts} calls");
+    assert_eq!(out.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rule = &report["rules"][0];
+    assert_eq!(rule["outcome"], "not_relevant", "{report:#}");
+    assert_eq!(rule["votes_total"], 0, "{report:#}");
+    let expected = vec!["n/a here"; parts].join(" ");
+    assert_eq!(rule["rationale"], expected.as_str(), "{report:#}");
+}
+
+#[test]
 fn a_zero_bound_is_rejected() {
     let p = changed_repo("max_prompt_chars: 0\n", 1);
     p.lint()

@@ -304,6 +304,13 @@ fn a_plugin_resolving_to_a_newer_version_changes_the_digest() {
 fn recording_only_settings_leave_the_digest_alone() {
     let p = judge_project();
     let base = digest(&mut fingerprint(&p));
+    // With no history setting at all, and with one whose fields are all left
+    // out, the digest is the same.
+    assert_eq!(
+        digest(fingerprint(&p).env_remove("LLMLINT_HISTORY_DIR")),
+        base,
+        "an unset history block and a removed one must agree"
+    );
     let elsewhere = TempDir::new().unwrap();
     for (var, value) in [
         ("ONEHARNESS_HISTORY", "true"),
@@ -416,7 +423,12 @@ fn a_malformed_harness_configuration_report_fails_with_nothing_on_stdout() {
         msg.contains("could not parse `oneharness config` output"),
         "{msg}"
     );
-    for reply in ["null", "42", r#"{"model": {"value": "m", "source": "x"}}"#] {
+    for reply in [
+        "null",
+        "42",
+        r#"{"model": {"value": "m", "source": "x"}}"#,
+        r#"{"config_files": [], "model": 42}"#,
+    ] {
         let msg = failure(fingerprint(&p).env("LLMLINT_MOCK_CONFIG_REPLY", reply));
         assert!(
             msg.contains("did not report a configuration"),

@@ -649,10 +649,13 @@ resolves the oneharness the test put on PATH.
   `ONEHARNESS_MODEL` override, the version oneharness reports (one `lint` would
   refuse as too old is a failure), and a `@1` plugin resolving to a newer version
   with identical rules; a harness path under `HOME` is the same judge for any
-  `HOME`; the recording-only history settings of both tools change
+  `HOME`; and an unset history block hashes the same as one whose recording-only
+  fields were all removed (the hashed JSON is key-sorted, so removal order never
+  shows); the recording-only history settings of both tools change
   nothing; the spawn log holds only `--version` and `config`, never `run`; an
   invalid config, an unresolvable plugin, an unreadable/invalid harness config, a
-  malformed `oneharness config` report (`LLMLINT_MOCK_CONFIG_REPLY`) and an absent
+  malformed `oneharness config` report (`LLMLINT_MOCK_CONFIG_REPLY`: not JSON, not
+  an object, no `config_files`, or a setting that is not `{value, source}`) and an absent
   oneharness each exit non-zero with nothing on stdout. The real `oneharness
   config` shape is held by the real-oneharness tier. llmlint's own
   version is proven by the separate `fingerprint-version` project, which builds a
@@ -671,7 +674,10 @@ resolves the oneharness the test put on PATH.
   part found it so, its rationale joining the agreeing parts'; a `judges: 3` rule
   split across calls gets exactly three votes, each judge's parts merged (a fail
   in one part of judges 2 and 3 is two failing votes, not two of nine); an
-  ancestor config's `max_prompt_chars` is inherited and a nearer one wins; `--plan-only` shows
+  ancestor config's `max_prompt_chars` is inherited and a nearer one wins; a
+  conditional rule not relevant in any part stays not relevant (rationales
+  joined); a change whose every file is over the bound sends no prompt, exits 2
+  with one error per file, and plans 0 judge calls; `--plan-only` shows
   the split with no harness spawn (control: the same run spawns it); a zero bound
   from the config, the flag or the env var is exit 2.
 - **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`

@@ -146,7 +146,7 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
         "oneharness": { "version": oh_version, "config": oh_value },
     });
     relativize(&mut material, &replacements(&cwd));
-    let bytes = serde_json::to_vec(&material)
+    let bytes = serde_json::to_vec(&canonical(material))
         .map_err(|e| Error::Io(format!("serializing fingerprint material: {e}")))?;
     Ok(hex(
         ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()
@@ -155,6 +155,7 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
 
 /// Collapse oneharness's `{value, source}` annotations to their values: where a
 /// setting came from is a path on this host, not part of the judge.
+// llmlint: ignore[contracts_have_one_source_or_a_drift_gate] the `{value, source}` shape is the released oneharness's `config` report, which publishes no schema; `Client::resolved_config` admits only reports of this shape, and `fingerprint_reads_the_real_harness_configuration` (the real-oneharness tier, `just test-oneharness`) reconciles both against the released binary
 fn without_sources(value: Value) -> Value {
     match value {
         Value::Object(map) => {
@@ -172,19 +173,39 @@ fn without_sources(value: Value) -> Value {
     }
 }
 
-/// Remove the value at a dotted `path` from a JSON object, if present.
-fn remove_path(value: &mut Value, path: &str) {
-    let mut keys: Vec<&str> = path.split('.').collect();
-    let Some(last) = keys.pop() else { return };
-    let mut node = value;
-    for key in keys {
-        match node.get_mut(key) {
-            Some(next) => node = next,
-            None => return,
+/// `value` with every object's keys in sorted order, so the bytes hashed never
+/// depend on the order a setting was inserted, merged or removed in (objects keep
+/// insertion order here, and removing a key reorders the rest).
+fn canonical(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let sorted: BTreeMap<String, Value> =
+                map.into_iter().map(|(k, v)| (k, canonical(v))).collect();
+            Value::Object(sorted.into_iter().collect())
         }
+        Value::Array(items) => Value::Array(items.into_iter().map(canonical).collect()),
+        other => other,
     }
-    if let Value::Object(map) = node {
-        map.remove(last);
+}
+
+/// Remove the value at a dotted `path` from a JSON object, if present.
+/// A parent object the removal leaves empty is removed too, so a setting that
+/// was never set and one whose every field was removed hash the same.
+fn remove_path(value: &mut Value, path: &str) {
+    let Value::Object(map) = value else { return };
+    match path.split_once('.') {
+        None => {
+            map.remove(path);
+        }
+        Some((head, rest)) => {
+            let Some(child) = map.get_mut(head) else {
+                return;
+            };
+            remove_path(child, rest);
+            if child.as_object().is_some_and(Map::is_empty) {
+                map.remove(head);
+            }
+        }
     }
 }
 
@@ -296,6 +317,9 @@ mod tests {
         remove_path(&mut v, "nope.deeper");
         remove_path(&mut v, "history_labels");
         assert_eq!(v, json!({"history": {"enabled": true}, "rules": []}));
+        // Emptied by the removal, the parent goes too.
+        remove_path(&mut v, "history.enabled");
+        assert_eq!(v, json!({"rules": []}));
     }
 
     #[test]
@@ -325,6 +349,14 @@ mod tests {
             );
             assert!(readme.contains(&format!("`{path}`")), "README omits {path}");
         }
+    }
+
+    #[test]
+    fn canonical_json_is_independent_of_key_order() {
+        let a = canonical(json!({"b": 1, "a": {"y": [{"q": 1, "p": 2}], "x": 0}}));
+        let b = canonical(json!({"a": {"x": 0, "y": [{"p": 2, "q": 1}]}, "b": 1}));
+        assert_eq!(a.to_string(), b.to_string());
+        assert_eq!(a.to_string(), r#"{"a":{"x":0,"y":[{"p":2,"q":1}]},"b":1}"#);
     }
 
     #[test]
