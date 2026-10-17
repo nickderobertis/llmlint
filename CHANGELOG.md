@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.11](https://github.com/nickderobertis/llmlint/compare/v0.4.10...v0.4.11) - 2026-10-17
+
+### Added
+
+- fingerprint the judge, bound its prompts, refuse incomplete replies ([#254](https://github.com/nickderobertis/llmlint/pull/254))
+
 ## [0.4.9](https://github.com/nickderobertis/llmlint/compare/v0.4.8...v0.4.9) - 2026-10-15
 
 ### Fixed
