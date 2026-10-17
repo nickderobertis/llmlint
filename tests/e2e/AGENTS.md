@@ -649,8 +649,10 @@ resolves the oneharness the test put on PATH.
   `ONEHARNESS_MODEL` override, and a `@1` plugin resolving to a newer version
   with identical rules; the recording-only history settings of both tools change
   nothing; the spawn log holds only `--version` and `config`, never `run`; an
-  invalid config, an unresolvable plugin, an unreadable/invalid harness config and
-  an absent oneharness each exit non-zero with nothing on stdout. llmlint's own
+  invalid config, an unresolvable plugin, an unreadable/invalid harness config, a
+  malformed `oneharness config` report (`LLMLINT_MOCK_CONFIG_REPLY`) and an absent
+  oneharness each exit non-zero with nothing on stdout. The real `oneharness
+  config` shape is held by the real-oneharness tier. llmlint's own
   version is proven by the separate `fingerprint-version` project, which builds a
   second binary.
 - **Prompt-size-bounded batching** (`prompt_size.rs`). With every prompt logged
@@ -660,9 +662,13 @@ resolves the oneharness the test put on PATH.
   from the unbounded run; a single file over the bound is an exit-2 `ERROR` naming
   the file, its size, the bound and the remedy, and no prompt over the bound (nor
   carrying it) reaches the harness; `--max-prompt-chars` overrides
-  `max_prompt_chars` both ways; `--plan-only` shows the split with no harness
-  spawn (control: the same run spawns it); `max_prompt_chars: 0` and
-  `--max-prompt-chars 0` are exit 2.
+  `max_prompt_chars` both ways and `LLMLINT_MAX_PROMPT_CHARS` (which itself
+  splits); a corrective re-ask that would exceed the bound is not sent (control:
+  unbounded, it is) and the deterministic cleanup still decides the verdict; a
+  relevance-conditional rule split across calls casts one vote, relevant when any
+  part found it so, its rationale joining the agreeing parts'; `--plan-only` shows
+  the split with no harness spawn (control: the same run spawns it); a zero bound
+  from the config, the flag or the env var is exit 2.
 - **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
   with two selected rules — the workload at which 0.4.10 exited 0 on each of
   these — a schema-valid reply of `{}`, one holding only one rule, one naming

@@ -3,6 +3,8 @@
 //! subcommand resolves files, `extends` chains and `ONEHARNESS_*` overrides the
 //! way `oneharness config` does).
 
+// llmlint: ignore-file[e2e_not_mocked] the stand-in oneharness is this suite's double for the oneharness subprocess, the one genuinely external boundary (AGENTS.md); the journeys drive the real freshly built llmlint binary over real config files, and the real oneharness `config` it queries is driven by the real-oneharness tier (tests/real-oneharness, `just test-oneharness`)
+
 use std::fs;
 
 use super::*;
@@ -359,6 +361,23 @@ fn an_unreadable_harness_configuration_fails_with_nothing_on_stdout() {
     p.write("oneharness.toml", "model = [unterminated\n");
     let msg = failure(&mut fingerprint(&p));
     assert!(msg.contains("oneharness.toml"), "{msg}");
+}
+
+#[test]
+fn a_malformed_harness_configuration_report_fails_with_nothing_on_stdout() {
+    let p = judge_project();
+    let msg = failure(fingerprint(&p).env("LLMLINT_MOCK_CONFIG_REPLY", "this is not json"));
+    assert!(
+        msg.contains("could not parse `oneharness config` output"),
+        "{msg}"
+    );
+    for reply in ["null", "42", r#"{"model": {"value": "m", "source": "x"}}"#] {
+        let msg = failure(fingerprint(&p).env("LLMLINT_MOCK_CONFIG_REPLY", reply));
+        assert!(
+            msg.contains("did not report a configuration"),
+            "{reply}: {msg}"
+        );
+    }
 }
 
 #[test]

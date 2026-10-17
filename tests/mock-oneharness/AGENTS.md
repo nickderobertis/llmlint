@@ -13,6 +13,8 @@ only; it never reimplements llmlint's own logic.
   `extends` chain, then every `ONEHARNESS_<FIELD>` env override, as `{value,
   source}` leaves beside `config_files`. An unreadable or invalid file exits 2.
   It is what `llmlint fingerprint` queries; it never counts as a judge call.
+  `LLMLINT_MOCK_CONFIG_REPLY=<text>` prints that text instead, to drive a
+  malformed report.
 
 - `LLMLINT_MOCK_VERDICTS=<path>` — JSON map `rule -> spec`; a spec is a bool
   (`holds`), an object (`{holds, violations}`, optionally `{relevant, rationale}`

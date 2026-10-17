@@ -23,21 +23,29 @@ use crate::domain::config::validate;
 use crate::errors::{Error, Result};
 use crate::io::{assets, configfs, env, files, oneharness};
 
+/// Whose configuration a [`RECORDING_ONLY`] setting belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Owner {
+    /// llmlint's effective config; the path is into its serialized form.
+    Llmlint,
+    /// `oneharness config`'s report; the path is a top-level field.
+    Oneharness,
+}
+
 /// Settings that only record a run and cannot change a verdict, left out of the
 /// digest so a per-run or per-host recording choice (an orchestrator's run labels,
-/// a history directory outside the checkout) never changes it. Each is
-/// `(tool, dotted path)`: llmlint's paths are into its effective config, which
-/// also covers their `LLMLINT_HISTORY_*` env overrides (`LLMLINT_NO_HISTORY` never
-/// reaches the config); oneharness's are top-level fields of `oneharness config`.
-/// The `fingerprint` help and the README name the same set.
-pub const RECORDING_ONLY: &[(&str, &str)] = &[
-    ("llmlint", "history.enabled"),
-    ("llmlint", "history.max_runs"),
-    ("llmlint", "history.dir"),
-    ("oneharness", "history"),
-    ("oneharness", "history_dir"),
-    ("oneharness", "history_pointer_file"),
-    ("oneharness", "history_labels"),
+/// a history directory outside the checkout) never changes it. llmlint's paths
+/// also cover their `LLMLINT_HISTORY_*` env overrides, which fold into the config
+/// (`LLMLINT_NO_HISTORY` never reaches it). The `fingerprint` help and the README
+/// name the same set.
+pub const RECORDING_ONLY: &[(Owner, &str)] = &[
+    (Owner::Llmlint, "history.enabled"),
+    (Owner::Llmlint, "history.max_runs"),
+    (Owner::Llmlint, "history.dir"),
+    (Owner::Oneharness, "history"),
+    (Owner::Oneharness, "history_dir"),
+    (Owner::Oneharness, "history_pointer_file"),
+    (Owner::Oneharness, "history_labels"),
 ];
 
 pub fn run(args: FingerprintArgs) -> Result<i32> {
@@ -89,7 +97,7 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
             .clone()
             .unwrap_or_else(|| assets::DEFAULT_TEMPLATE.to_string()),
     );
-    config.max_prompt_chars = Some(config.max_prompt_chars() as u64);
+    config.max_prompt_chars = std::num::NonZeroU64::new(config.max_prompt_chars() as u64);
     config.oneharness.bin = None;
     let mut config_value =
         serde_json::to_value(&config).map_err(|e| Error::Io(format!("serializing config: {e}")))?;
@@ -97,10 +105,10 @@ fn compute(args: crate::cli::LintArgs) -> Result<String> {
     if let Value::Object(map) = &mut oh_value {
         map.remove("config_files");
     }
-    for (tool, path) in RECORDING_ONLY {
-        match *tool {
-            "llmlint" => remove_path(&mut config_value, path),
-            _ => remove_path(&mut oh_value, path),
+    for (owner, path) in RECORDING_ONLY {
+        match owner {
+            Owner::Llmlint => remove_path(&mut config_value, path),
+            Owner::Oneharness => remove_path(&mut oh_value, path),
         }
     }
 

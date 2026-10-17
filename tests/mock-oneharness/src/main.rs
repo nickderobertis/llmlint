@@ -40,6 +40,8 @@
 //!   `.oneharness.toml` from `--cwd` up), each beneath its `extends` chain, then
 //!   every `ONEHARNESS_<FIELD>` override, as `{value, source}` leaves beside
 //!   `config_files`. An unreadable or invalid file exits 2 naming it.
+//!   `LLMLINT_MOCK_CONFIG_REPLY=<text>` prints that text instead (exit 0), so a
+//!   test can hand llmlint a malformed report.
 //! - `run` honors `--format` like oneharness >= 0.14.0: `json` prints the JSON
 //!   report (every branch below), while `text` or no `--format` at all prints a
 //!   human text view, and any other value is refused with exit 2.
@@ -310,6 +312,11 @@ fn load_layer(path: &Path, files: &mut Vec<String>, depth: usize) -> Result<Valu
 /// Prints what real oneharness prints — `config_files` plus a `{value, source}`
 /// leaf per setting — and returns the exit code.
 fn config_command(args: &[String]) -> i32 {
+    // A test can hand llmlint a malformed report instead.
+    if let Ok(reply) = env::var("LLMLINT_MOCK_CONFIG_REPLY") {
+        println!("{reply}");
+        return 0;
+    }
     if arg_value(args, "--format").as_deref() != Some("json") {
         eprintln!("mock: `config` answers only --format json");
         return 2;

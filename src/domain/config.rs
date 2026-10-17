@@ -7,6 +7,7 @@
 //! about a rule's quality is left to the bundled config-lint plugin.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -333,8 +334,7 @@ pub struct Config {
     /// over it is reported as an errored result rather than sent. The
     /// `--max-prompt-chars` flag overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 1))]
-    pub max_prompt_chars: Option<u64>,
+    pub max_prompt_chars: Option<NonZeroU64>,
     /// Whether/how/where to log each run's full results to disk (default: on, the
     /// last 100 runs, in the platform data dir). See [`HistoryCfg`].
     #[serde(default, skip_serializing_if = "HistoryCfg::is_empty")]
@@ -399,7 +399,7 @@ impl Config {
     /// [`DEFAULT_MAX_PROMPT_CHARS`] when unset.
     pub fn max_prompt_chars(&self) -> usize {
         self.max_prompt_chars.map_or(DEFAULT_MAX_PROMPT_CHARS, |n| {
-            usize::try_from(n).unwrap_or(usize::MAX)
+            usize::try_from(n.get()).unwrap_or(usize::MAX)
         })
     }
 
@@ -942,10 +942,6 @@ pub fn validate(config: &Config) -> Result<()> {
         if agent.batch_size == Some(0) {
             problems.push(format!("agent {:?} has batch_size: 0 (must be >= 1)", name));
         }
-    }
-
-    if config.max_prompt_chars == Some(0) {
-        problems.push("max_prompt_chars is 0 (must be >= 1)".to_string());
     }
 
     if config.history.max_runs == Some(0) {
@@ -1506,7 +1502,7 @@ mod tests {
             prompt_template: Some("t".into()),
             rationales: Some(true),
             diff_base: Some("main".into()),
-            max_prompt_chars: Some(5000),
+            max_prompt_chars: NonZeroU64::new(5000),
             history: HistoryCfg {
                 enabled: Some(true),
                 max_runs: Some(50),

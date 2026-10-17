@@ -4,6 +4,8 @@
 //! scripted (`LLMLINT_MOCK_REPLIES`) to return a schema-valid reply that answers
 //! fewer, or other, rules than the call asked about.
 
+// llmlint: ignore-file[e2e_not_mocked] the stand-in oneharness is this suite's double for the oneharness subprocess, the one genuinely external boundary (AGENTS.md); a reply that answers fewer or other rules than its call selected can only be scripted at that seam, and the journeys still drive the real freshly built llmlint binary over real git repos
+
 use std::fs;
 
 use super::*;

@@ -863,6 +863,7 @@ fn votes(by_judge: &BTreeMap<u32, Vec<RuleVerdict>>) -> Vec<RuleVerdict> {
         .collect()
 }
 
+// llmlint: ignore-block[cli_output_contract] these build per-rule errored *results* of the lint report, the same `ERROR` lines and JSON `errors` entries every existing errored judge result already is (Report::to_human / to_json, both on stdout as the report); they are not diagnostics about the process, which still go to stderr, and moving them would split one report across two streams and change every existing errored result, which this change may not do
 /// The errored results for the files whose own prompt is over `max_prompt_chars`
 /// — one per agent and file (a file over the bound for several judge indices is
 /// named once, at its largest size), each naming the file, its prompt size, the
@@ -909,6 +910,7 @@ fn reply_gap_errors(run: &JudgeRun, gaps: &applicability::ReplyGaps) -> Vec<Stri
     });
     missing.chain(stray).collect()
 }
+// llmlint: ignore-end[cli_output_contract]
 
 /// Print the oneharness debug view (exact command + raw result per judge) to
 /// stderr, keeping the parseable report on stdout. Shown at `-v`.

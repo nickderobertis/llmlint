@@ -185,8 +185,8 @@ pub struct LintArgs {
     /// judging each of its files exactly once (`--plan-only` shows the split). A
     /// single file whose own prompt is over it is an errored result naming the
     /// file, its prompt size and the bound, and is never sent.
-    #[arg(long = "max-prompt-chars", value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
-    pub max_prompt_chars: Option<u64>,
+    #[arg(long = "max-prompt-chars", value_name = "N")]
+    pub max_prompt_chars: Option<std::num::NonZeroU64>,
 
     /// Only run rules assigned to this agent (`default` for unassigned rules).
     #[arg(long = "agent", value_name = "NAME")]
@@ -419,6 +419,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The drift gate between `fingerprint`'s options and `lint`'s: every option
+    /// `fingerprint` takes must exist on `lint` and, given the same argv, project
+    /// onto exactly the `LintArgs` `lint` parses — so the digest describes the
+    /// judge that `lint` invocation runs. It enumerates `fingerprint`'s options
+    /// from clap itself, so a new one is checked the day it lands.
+    #[test]
+    fn fingerprint_options_mean_what_they_mean_for_lint() {
+        use clap::CommandFactory;
+        let cli = Cli::command();
+        let fingerprint = cli.find_subcommand("fingerprint").unwrap();
+        let mut argv: Vec<String> = Vec::new();
+        for arg in fingerprint.get_arguments() {
+            let Some(long) = arg.get_long() else { continue };
+            if long == "help" {
+                continue;
+            }
+            argv.push(format!("--{long}"));
+            if arg.get_action().takes_values() {
+                argv.push("7".into());
+            }
+        }
+        assert!(argv.len() > 10, "{argv:?}");
+        let parse = |sub: &str| {
+            Cli::try_parse_from(
+                ["llmlint", sub]
+                    .into_iter()
+                    .map(String::from)
+                    .chain(argv.iter().cloned()),
+            )
+            .unwrap_or_else(|e| panic!("`llmlint {sub}` refused {argv:?}: {e}"))
+        };
+        let Some(Command::Fingerprint(fp)) = parse("fingerprint").command else {
+            panic!("not a fingerprint command")
+        };
+        let Some(Command::Lint(lint)) = parse("lint").command else {
+            panic!("not a lint command")
+        };
+        assert_eq!(format!("{:?}", fp.into_lint_args()), format!("{lint:?}"));
     }
 
     #[test]
@@ -692,8 +732,8 @@ pub struct FingerprintArgs {
 
     /// The most characters any one judge prompt may hold (overrides config
     /// `max_prompt_chars`).
-    #[arg(long = "max-prompt-chars", value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
-    pub max_prompt_chars: Option<u64>,
+    #[arg(long = "max-prompt-chars", value_name = "N")]
+    pub max_prompt_chars: Option<std::num::NonZeroU64>,
 
     /// Directory to lint from (config discovery + the harness cwd). Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]

@@ -366,12 +366,27 @@ impl Client {
                 cwd.display()
             )));
         }
-        serde_json::from_slice(&output.stdout).map_err(|e| {
+        let report: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
             Error::HarnessConfig(format!(
                 "could not parse `oneharness config` output ({e}); stderr: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ))
-        })
+        })?;
+        // The report is an object listing the files it loaded beside the
+        // settings; anything else is not a configuration this run can stand on.
+        let shaped = report
+            .get("config_files")
+            .and_then(Value::as_array)
+            .is_some_and(|files| files.iter().all(Value::is_string));
+        if !shaped {
+            return Err(Error::HarnessConfig(format!(
+                "`oneharness config` did not report a configuration (expected a JSON object \
+                 with a `config_files` list, got: {}); upgrade oneharness or check {}",
+                truncate(&report.to_string(), 200),
+                self.bin.display()
+            )));
+        }
+        Ok(report)
     }
 
     /// Run one judge and return its per-rule verdicts. Convenience wrapper over
@@ -735,6 +750,14 @@ fn fallback_chain_error(report: &Report, harness: &str) -> Error {
         "all harnesses in the fallback chain failed for {harness}: {}",
         chain.join(", ")
     ))
+}
+
+/// At most `max` characters of `s`, marked when cut.
+fn truncate(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s.to_string(),
+    }
 }
 
 /// Render `bin` + `args` as a single shell-quoted command line for display.

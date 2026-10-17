@@ -5,6 +5,8 @@
 //! `Scope:` line — so "every rule judged every file once" is checked against what
 //! the judge was actually shown.
 
+// llmlint: ignore-file[e2e_not_mocked] the stand-in oneharness is this suite's double for the oneharness subprocess, the one genuinely external boundary (AGENTS.md); the prompt each judge call receives can only be recorded at that seam, and the journeys still drive the real freshly built llmlint binary over real git repos
+
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -292,17 +294,122 @@ fn plan_only_shows_the_split_without_calling_the_harness() {
 }
 
 #[test]
+fn the_env_var_sets_the_bound_and_the_flag_beats_it() {
+    let p = changed_repo("", 200);
+    let log = |name: &str, env: &[(&str, &str)], extra: &[&str]| {
+        let dir = p.path().join(name);
+        let mut c = p.lint();
+        c.args(["--diff"])
+            .args(extra)
+            .env("LLMLINT_MOCK_PROMPTLOG", &dir);
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.output().unwrap();
+        calls(&dir)
+    };
+    let by_env = log("env", &[("LLMLINT_MAX_PROMPT_CHARS", "20000")], &[]);
+    assert!(by_env.len() > 1, "the env bound should split");
+    assert!(by_env.iter().all(|c| c.chars <= 20000));
+    let by_flag = log(
+        "flag",
+        &[("LLMLINT_MAX_PROMPT_CHARS", "20000")],
+        &["--max-prompt-chars", "1000000"],
+    );
+    assert_eq!(by_flag.len(), 1, "the flag should win over the env var");
+}
+
+#[test]
+fn a_rework_over_the_bound_is_skipped_and_cleanup_still_decides() {
+    // `b_rule` covers only f1 and f4, but its judge pins a violation to f0: a
+    // wrong-file verdict that normally earns one corrective re-ask.
+    let p = changed_repo("", 2);
+    let spec = p.write_verdicts(
+        r#"{"a_rule": true, "b_rule": {"holds": false, "violations": [{"file": "src/f0.rs", "line": 2, "message": "wrong file"}]}}"#,
+    );
+    let run = |name: &str, extra: &[&str]| {
+        let dir = p.path().join(name);
+        let out = p
+            .lint()
+            .args(["--diff", "--format", "json"])
+            .args(extra)
+            .env("LLMLINT_MOCK_VERDICTS", &spec)
+            .env("LLMLINT_MOCK_PROMPTLOG", &dir)
+            .output()
+            .unwrap();
+        (out, calls(&dir))
+    };
+    let (unbounded, with_rework) = run("unbounded", &[]);
+    assert_eq!(with_rework.len(), 2, "the control re-asks once");
+    assert_eq!(unbounded.status.code(), Some(0));
+    // A bound the first prompt fits exactly, which the longer rework would not.
+    let first = with_rework.iter().map(|c| c.chars).min().unwrap();
+    let (bounded, calls) = run("bounded", &["--max-prompt-chars", &first.to_string()]);
+    assert_eq!(calls.len(), 1, "the over-bound rework must not be sent");
+    assert!(calls[0].chars <= first);
+    // The deterministic cleanup still drops the wrong-file violation: b passes.
+    assert_eq!(bounded.status.code(), Some(0));
+    assert_eq!(verdicts(&bounded), verdicts(&unbounded));
+}
+
+#[test]
+fn a_conditional_rule_split_across_calls_casts_one_merged_vote() {
+    let rules = "  - { name: c_rule, description: \"true when ok; false otherwise.\", \
+         relevance: \"the change adds a function\" }\n";
+    let initial: Vec<(&str, &str)> = FILES.iter().map(|f| (*f, "fn base() {}\n")).collect();
+    let p = committed_repo(rules, &initial);
+    for f in FILES {
+        let body: String = (0..200)
+            .map(|i| format!("fn changed_line_number_{i:04}() {{}}\n"))
+            .collect();
+        p.write(f, &format!("fn base() {{}}\n{body}"));
+    }
+    // The first call finds it not relevant; every later call finds it holds.
+    let verdicts = p.write_verdicts(
+        r#"{"c_rule": [{"relevant": false, "rationale": "n/a here"}, {"relevant": true, "holds": true, "rationale": "fine here"}]}"#,
+    );
+    let log = p.path().join("log");
+    let out = p
+        .lint()
+        .args(["--diff", "--format", "json", "--max-parallel", "1"])
+        .args(["--max-prompt-chars", "20000"])
+        .env("LLMLINT_MOCK_VERDICTS", &verdicts)
+        .env("LLMLINT_MOCK_STATE", p.path().join("state"))
+        .env("LLMLINT_MOCK_PROMPTLOG", &log)
+        .output()
+        .unwrap();
+    let parts = calls(&log).len();
+    assert!(parts >= 3, "{parts} calls");
+    assert_eq!(out.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rule = &report["rules"][0];
+    // Relevant because some part found it so; one judge, so one vote.
+    assert_eq!(rule["outcome"], "pass", "{report:#}");
+    assert_eq!(rule["votes_total"], 1, "{report:#}");
+    // The rationale joins the parts that agree with the merged verdict.
+    let expected = vec!["fine here"; parts - 1].join(" ");
+    assert_eq!(rule["rationale"], expected.as_str(), "{report:#}");
+}
+
+#[test]
 fn a_zero_bound_is_rejected() {
     let p = changed_repo("max_prompt_chars: 0\n", 1);
     p.lint()
         .arg("--diff")
         .assert()
         .code(2)
-        .stderr(predicate::str::contains(
-            "max_prompt_chars is 0 (must be >= 1)",
-        ));
+        .stderr(predicate::str::contains("max_prompt_chars"));
     p.lint()
         .args(["--diff", "--max-prompt-chars", "0"])
         .assert()
-        .code(2);
+        .code(2)
+        .stderr(predicate::str::contains("--max-prompt-chars"));
+    let clean = changed_repo("", 1);
+    clean
+        .lint()
+        .arg("--diff")
+        .env("LLMLINT_MAX_PROMPT_CHARS", "0")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("LLMLINT_MAX_PROMPT_CHARS"));
 }

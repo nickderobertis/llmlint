@@ -161,7 +161,9 @@ fn apply_from(
         note(prov, "diff_base", "LLMLINT_DIFF_BASE");
     }
     if let Some(v) = get("LLMLINT_MAX_PROMPT_CHARS") {
-        config.max_prompt_chars = Some(parse_int("LLMLINT_MAX_PROMPT_CHARS", &v, 1)?);
+        // `parse_int` enforces the minimum of 1, so the value is never zero.
+        config.max_prompt_chars =
+            std::num::NonZeroU64::new(parse_int("LLMLINT_MAX_PROMPT_CHARS", &v, 1)?);
         note(prov, "max_prompt_chars", "LLMLINT_MAX_PROMPT_CHARS");
     }
     if let Some(v) = get("LLMLINT_HISTORY_ENABLED") {
@@ -318,7 +320,7 @@ mod tests {
         assert_eq!(config.oneharness.bin.as_deref(), Some("/opt/oneharness"));
         assert_eq!(config.rationales, Some(false));
         assert_eq!(config.diff_base.as_deref(), Some("main"));
-        assert_eq!(config.max_prompt_chars, Some(250_000));
+        assert_eq!(config.max_prompt_chars, std::num::NonZeroU64::new(250_000));
         assert_eq!(config.history.enabled, Some(false));
         assert_eq!(config.history.max_runs, Some(7));
         assert_eq!(config.history.dir.as_deref(), Some("/tmp/h"));
