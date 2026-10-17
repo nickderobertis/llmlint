@@ -7,6 +7,15 @@ only; it never reimplements llmlint's own logic.
 
 ## Fixture control (env vars read by the mock)
 
+- `config [--cwd DIR] [--config PATH]... --format json` answers like real
+  `oneharness config`: the named files (else `$ONEHARNESS_CONFIG` under the
+  nearest `oneharness.toml`/`.oneharness.toml` from `--cwd` up), each beneath its
+  `extends` chain, then every `ONEHARNESS_<FIELD>` env override, as `{value,
+  source}` leaves beside `config_files`. An unreadable or invalid file exits 2.
+  It is what `llmlint fingerprint` queries; it never counts as a judge call.
+  `LLMLINT_MOCK_CONFIG_REPLY=<text>` prints that text instead, to drive a
+  malformed report.
+
 - `LLMLINT_MOCK_VERDICTS=<path>` — JSON map `rule -> spec`; a spec is a bool
   (`holds`), an object (`{holds, violations}`, optionally `{relevant, rationale}`
   for a relevance-gated rule), or an array of specs (one per judge call).
@@ -14,8 +23,16 @@ only; it never reimplements llmlint's own logic.
   `--max-parallel 1` so the sequence is deterministic.
 - `LLMLINT_MOCK_DUMP=<file>` — record the rendered `--system` prompt, to assert
   which files/rules reached the judge (globbing + template render).
+- `LLMLINT_MOCK_REPLIES=<file>` — a JSON array of `structured` values, one per
+  `run` call in arrival order (the last repeating), emitted verbatim as a
+  schema-valid reply: how a journey hands llmlint `{}` or a reply naming fewer
+  (or other) rules than the call selected. A script that is set but unreadable,
+  not a JSON array, or empty is refused (exit 2), never a silent default.
 - `LLMLINT_MOCK_FAIL_SCHEMA` / `LLMLINT_MOCK_NO_STRUCTURED` / `LLMLINT_MOCK_GARBAGE`
   — force oneharness failure shapes.
+- `LLMLINT_MOCK_PROMPTLOG=<dir>` — one JSON file per `run` call with the `system`
+  prompt and user `prompt` it received, to assert every prompt's size and what it
+  carried (`DUMP` keeps only the last).
 - `LLMLINT_MOCK_DUMP_ARGS=<file>` — record the raw `run` arg vector, to assert
   which flags llmlint passed (e.g. `--harness` omitted when an agent leaves it unset).
 - `LLMLINT_MOCK_DUMP_HISTORY_LABELS=<dir>` — record the history-label environment

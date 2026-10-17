@@ -11,6 +11,9 @@
 //!   bool (`holds`), an object (`{holds, violations}`), or an array of specs
 //!   (one per judge call, advanced via a per-rule counter under
 //!   `LLMLINT_MOCK_STATE`). Unlisted rules default to `holds=true`.
+//! - `LLMLINT_MOCK_REPLIES=<path>` — a JSON array of `structured` values, one
+//!   per `run` call in arrival order (the last repeating), emitted verbatim as a
+//!   schema-valid reply — e.g. `{}`, or a reply naming only some rules.
 //! - `LLMLINT_MOCK_FAIL_SCHEMA=1` — emit `schema_valid=false` (validation fail).
 //! - `LLMLINT_MOCK_NO_STRUCTURED=1` — emit `structured=null` + a non-ok status
 //!   (the shape oneharness returns on a timeout / nonzero run).
@@ -31,12 +34,23 @@
 //!   `results` entry that produced structured output.
 //! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
 //!   (default: llmlint's `MIN_VERSION`), so a test can drive the minimum-version gate.
+//! - `config [--cwd DIR] [--config PATH]... --format json` — the effective
+//!   layered configuration, shaped like real `oneharness config`: the named files
+//!   (else `$ONEHARNESS_CONFIG` under the nearest `oneharness.toml` /
+//!   `.oneharness.toml` from `--cwd` up), each beneath its `extends` chain, then
+//!   every `ONEHARNESS_<FIELD>` override, as `{value, source}` leaves beside
+//!   `config_files`. An unreadable or invalid file exits 2 naming it.
+//!   `LLMLINT_MOCK_CONFIG_REPLY=<text>` prints that text instead (exit 0), so a
+//!   test can hand llmlint a malformed report.
 //! - `run` honors `--format` like oneharness >= 0.14.0: `json` prints the JSON
 //!   report (every branch below), while `text` or no `--format` at all prints a
 //!   human text view, and any other value is refused with exit 2.
 //! - `LLMLINT_MOCK_GARBAGE=1` — print non-JSON to stdout (unparseable output).
 //! - `LLMLINT_MOCK_DUMP_ARGS=<path>` — record the full `run` arg vector (one arg
 //!   per line) so a test can assert which flags llmlint did/did not pass.
+//! - `LLMLINT_MOCK_PROMPTLOG=<dir>` — one JSON file per `run` call holding the
+//!   `system` prompt and the user `prompt` it received, so a test can assert
+//!   every prompt's size and contents (not only the last one, as `DUMP` keeps).
 //! - `LLMLINT_MOCK_DUMP_SCHEMA=<path>` — copy the generated `--schema` JSON so a
 //!   test can assert its shape (per-rule `name`/`rationale`/`holds` ordering).
 //! - `LLMLINT_MOCK_RUNLOG=<dir>` — record one file per invocation listing the
@@ -137,6 +151,38 @@ fn claim_indexed(dir: &Path, prefix: &str) -> PathBuf {
     }
 }
 
+/// The `structured` value scripted by `LLMLINT_MOCK_REPLIES` for this `run`
+/// call, if any: the file holds a JSON array, and the n-th call (counted
+/// atomically under `<path>.calls`, so concurrent judges each take a distinct
+/// slot) gets element n, the last element repeating once the array runs out.
+/// Emitted verbatim as a schema-valid reply, so a test can hand llmlint a reply
+/// that answers fewer — or other — rules than the call selected.
+/// A script that is set but unusable (unreadable, not a JSON array, empty) is a
+/// broken fixture: the mock refuses it (exit 2) rather than fall back to default
+/// verdicts a test would then read as llmlint's behavior.
+fn scripted_reply() -> Option<Value> {
+    let path = env::var("LLMLINT_MOCK_REPLIES").ok()?;
+    let refuse = |why: String| -> ! {
+        eprintln!("mock: LLMLINT_MOCK_REPLIES={path}: {why}");
+        std::process::exit(2)
+    };
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| refuse(format!("unreadable: {e}")));
+    let replies: Vec<Value> = serde_json::from_str(&text)
+        .unwrap_or_else(|e| refuse(format!("not a JSON array of replies: {e}")));
+    let last = replies
+        .len()
+        .checked_sub(1)
+        .unwrap_or_else(|| refuse("an empty script answers nothing".into()));
+    let slot = claim_indexed(&PathBuf::from(format!("{path}.calls")), "call");
+    let n: usize = slot
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("call-"))
+        .and_then(|i| i.parse().ok())
+        .unwrap_or(0);
+    Some(replies[n.min(last)].clone())
+}
+
 /// Rendezvous on `LLMLINT_MOCK_BARRIER`: register, then block until `N` peers
 /// are present (concurrency proof) or the timeout elapses. Returns `false` on
 /// timeout so the caller can fail like a judge that couldn't complete.
@@ -193,6 +239,171 @@ fn emit_no_structured(harness: &str) {
     );
 }
 
+/// Every value of a repeatable `key` flag, in order.
+fn arg_values(args: &[String], key: &str) -> Vec<String> {
+    args.windows(2)
+        .filter(|w| w[0] == key)
+        .map(|w| w[1].clone())
+        .collect()
+}
+
+/// A TOML value as oneharness's `{value, source}` leaves: tables recurse, and
+/// every other value becomes a leaf naming the file it came from.
+fn annotate(value: toml::Value, source: &str) -> Value {
+    match value {
+        toml::Value::Table(table) => Value::Object(
+            table
+                .into_iter()
+                .map(|(k, v)| (k, annotate(v, source)))
+                .collect(),
+        ),
+        other => json!({
+            "value": serde_json::to_value(other).unwrap_or(Value::Null),
+            "source": source,
+        }),
+    }
+}
+
+/// True for a `{value, source}` leaf (as opposed to a table of settings).
+fn is_leaf(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|m| m.len() == 2 && m.contains_key("value") && m.contains_key("source"))
+}
+
+/// Layer `over` onto `base`: tables merge key by key, and a leaf replaces.
+fn merge_into(base: &mut Value, over: Value) {
+    match (base, over) {
+        (Value::Object(b), Value::Object(o)) if !is_leaf(&Value::Object(o.clone())) => {
+            for (k, v) in o {
+                match b.get_mut(&k) {
+                    Some(existing) if !is_leaf(existing) && !is_leaf(&v) => merge_into(existing, v),
+                    _ => {
+                        b.insert(k, v);
+                    }
+                }
+            }
+        }
+        (b, o) => *b = o,
+    }
+}
+
+/// Load one config file beneath its `extends` chain (a parent path relative to
+/// the file's directory), recording each file read. `Err` is the message
+/// oneharness would refuse with.
+fn load_layer(path: &Path, files: &mut Vec<String>, depth: usize) -> Result<Value, String> {
+    if depth > 32 {
+        return Err(format!("`extends` chain too deep at {}", path.display()));
+    }
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("reading config {}: {e}", path.display()))?;
+    let mut table: toml::Table =
+        toml::from_str(&text).map_err(|e| format!("parsing config {}: {e}", path.display()))?;
+    let source = fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string();
+    let mut merged = Value::Object(Map::new());
+    if let Some(parent) = table.remove("extends") {
+        let parent = parent
+            .as_str()
+            .ok_or_else(|| format!("`extends` in {} is not a path", path.display()))?;
+        let parent = path.parent().unwrap_or(Path::new(".")).join(parent);
+        merged = load_layer(&parent, files, depth + 1)?;
+    }
+    files.push(source.clone());
+    merge_into(&mut merged, annotate(toml::Value::Table(table), &source));
+    Ok(merged)
+}
+
+/// `config [--cwd DIR] [--config PATH]... --format json`: the named files (each
+/// beneath its `extends` chain) or, with none named, `$ONEHARNESS_CONFIG` under
+/// the nearest `oneharness.toml`/`.oneharness.toml` from `--cwd` up, then every
+/// `ONEHARNESS_<FIELD>` override (`ONEHARNESS_HISTORY_LABELS` as `k=v` labels).
+/// Prints what real oneharness prints — `config_files` plus a `{value, source}`
+/// leaf per setting — and returns the exit code.
+fn config_command(args: &[String]) -> i32 {
+    // A test can hand llmlint a malformed report instead.
+    if let Ok(reply) = env::var("LLMLINT_MOCK_CONFIG_REPLY") {
+        println!("{reply}");
+        return 0;
+    }
+    if arg_value(args, "--format").as_deref() != Some("json") {
+        eprintln!("mock: `config` answers only --format json");
+        return 2;
+    }
+    let cwd = arg_value(args, "--cwd")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| env::current_dir().unwrap());
+    let mut paths: Vec<PathBuf> = arg_values(args, "--config")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    if paths.is_empty() {
+        if let Some(user) = env::var_os("ONEHARNESS_CONFIG").filter(|v| !v.is_empty()) {
+            paths.push(PathBuf::from(user));
+        }
+        if let Some(project) = cwd.ancestors().find_map(|dir| {
+            ["oneharness.toml", ".oneharness.toml"]
+                .iter()
+                .map(|name| dir.join(name))
+                .find(|p| p.is_file())
+        }) {
+            paths.push(project);
+        }
+    }
+    let mut files = Vec::new();
+    let mut merged = Value::Object(Map::new());
+    for path in &paths {
+        match load_layer(path, &mut files, 0) {
+            Ok(layer) => merge_into(&mut merged, layer),
+            Err(message) => {
+                eprintln!("error: {message}");
+                return 2;
+            }
+        }
+    }
+    let mut from_env = false;
+    for (key, value) in env::vars() {
+        let Some(field) = key.strip_prefix("ONEHARNESS_") else {
+            continue;
+        };
+        if matches!(field, "CONFIG" | "NO_CONFIG") || value.is_empty() {
+            continue;
+        }
+        from_env = true;
+        let field = field.to_lowercase();
+        let leaf = if field == "history_labels" {
+            Value::Object(
+                value
+                    .split(',')
+                    .filter_map(|kv| kv.split_once('='))
+                    .map(|(k, v)| {
+                        (
+                            k.trim().to_string(),
+                            json!({"value": v.trim(), "source": "environment"}),
+                        )
+                    })
+                    .collect(),
+            )
+        } else {
+            json!({"value": value, "source": "environment"})
+        };
+        merge_into(&mut merged, json!({ field: leaf }));
+    }
+    if from_env {
+        files.push("environment".into());
+    }
+    let mut report = Map::new();
+    report.insert("schema_version".into(), json!("mock"));
+    report.insert("config_files".into(), json!(files));
+    if let Value::Object(fields) = merged {
+        report.extend(fields);
+    }
+    println!("{}", serde_json::to_string(&Value::Object(report)).unwrap());
+    0
+}
+
 fn next_count(rule: &str) -> usize {
     let Some(dir) = env::var_os("LLMLINT_MOCK_STATE") else {
         return 0;
@@ -234,6 +445,12 @@ fn main() {
         });
         println!("oneharness {version} (mock)");
         return;
+    }
+
+    // `oneharness config`: the effective layered configuration, as `llmlint
+    // fingerprint` queries it. Never a judge call.
+    if args.get(1).map(String::as_str) == Some("config") {
+        std::process::exit(config_command(&args));
     }
 
     let harness = arg_value(&args, "--harness").unwrap_or_else(|| "claude-code".into());
@@ -282,6 +499,18 @@ fn main() {
         if let Some(system) = resolve_system(&args) {
             let _ = fs::write(PathBuf::from(dump), system);
         }
+    }
+
+    // Optionally record every call's prompt — the system prompt and the user
+    // prompt sent with it — one JSON file per `run` call, so a test can assert
+    // the size of each prompt the harness received and what it carried.
+    if let Some(dir) = env::var_os("LLMLINT_MOCK_PROMPTLOG") {
+        let path = claim_indexed(&PathBuf::from(dir), "prompt");
+        let record = json!({
+            "system": resolve_system(&args).unwrap_or_default(),
+            "prompt": arg_value(&args, "--prompt").unwrap_or_default(),
+        });
+        let _ = fs::write(&path, record.to_string());
     }
 
     let schema_path = arg_value(&args, "--schema").unwrap_or_default();
@@ -376,6 +605,17 @@ fn main() {
             "schema_attempts": null,
             "schema_error": null,
             "error": "mock: no structured output",
+        })
+    } else if let Some(reply) = scripted_reply() {
+        json!({
+            "harness": harness,
+            "status": "ok",
+            "exit_code": 0,
+            "structured": reply,
+            "schema_valid": true,
+            "schema_attempts": 1,
+            "schema_error": null,
+            "error": null,
         })
     } else {
         let verdicts: Map<String, Value> = env::var("LLMLINT_MOCK_VERDICTS")

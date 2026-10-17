@@ -14,6 +14,7 @@ pub mod diffmodel;
 pub mod ignore;
 pub mod labels;
 pub mod plan;
+pub mod promptsize;
 pub mod report;
 pub mod schema;
 pub mod template;

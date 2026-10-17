@@ -59,6 +59,48 @@ impl RuleVerdict {
     pub fn is_relevant(&self) -> bool {
         self.relevant != Some(false)
     }
+
+    /// Combine one judge's verdicts for a rule whose files were split across
+    /// several calls (to fit `max_prompt_chars`) into that judge's one vote: the
+    /// rule is relevant when any part found it so, holds only when every relevant
+    /// part holds, and carries every relevant part's violations. The rationale
+    /// joins those of the parts that agree with the combined verdict. A single
+    /// part is returned unchanged; `None` for no parts.
+    pub fn merge_parts(mut parts: Vec<RuleVerdict>) -> Option<RuleVerdict> {
+        if parts.len() <= 1 {
+            return parts.pop();
+        }
+        let relevant = if parts.iter().all(|p| p.relevant.is_none()) {
+            None
+        } else {
+            Some(parts.iter().any(RuleVerdict::is_relevant))
+        };
+        let judged: Vec<&RuleVerdict> = parts.iter().filter(|p| p.is_relevant()).collect();
+        let holds = !judged.is_empty() && judged.iter().all(|p| p.holds);
+        let violations = judged
+            .iter()
+            .flat_map(|p| p.violations.iter().cloned())
+            .collect();
+        let agrees = |p: &&RuleVerdict| {
+            if relevant == Some(false) {
+                !p.is_relevant()
+            } else {
+                p.is_relevant() && p.holds == holds
+            }
+        };
+        let rationales: Vec<&str> = parts
+            .iter()
+            .filter(agrees)
+            .filter_map(|p| p.rationale.as_deref().map(str::trim))
+            .filter(|r| !r.is_empty())
+            .collect();
+        Some(RuleVerdict {
+            relevant,
+            holds,
+            violations,
+            rationale: (!rationales.is_empty()).then(|| rationales.join(" ")),
+        })
+    }
 }
 
 /// Final state of a rule after aggregating all of its judges' verdicts.
@@ -159,5 +201,64 @@ impl RuleOutcome {
             judges: Vec::new(),
             violations: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn part(relevant: Option<bool>, holds: bool, why: &str) -> RuleVerdict {
+        RuleVerdict {
+            relevant,
+            holds,
+            violations: if holds {
+                vec![]
+            } else {
+                vec![Violation {
+                    message: Some(why.into()),
+                    ..Default::default()
+                }]
+            },
+            rationale: Some(why.into()),
+        }
+    }
+
+    #[test]
+    fn one_part_is_returned_unchanged_and_none_is_none() {
+        let p = part(None, false, "x");
+        assert_eq!(RuleVerdict::merge_parts(vec![p.clone()]), Some(p));
+        assert_eq!(RuleVerdict::merge_parts(vec![]), None);
+    }
+
+    #[test]
+    fn parts_hold_only_when_every_part_holds() {
+        let pass =
+            RuleVerdict::merge_parts(vec![part(None, true, "a"), part(None, true, "b")]).unwrap();
+        assert!(pass.holds);
+        assert_eq!(pass.rationale.as_deref(), Some("a b"));
+        let fail =
+            RuleVerdict::merge_parts(vec![part(None, true, "a"), part(None, false, "b")]).unwrap();
+        assert!(!fail.holds);
+        assert_eq!(fail.violations.len(), 1);
+        assert_eq!(fail.rationale.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn a_rule_is_relevant_when_any_part_finds_it_so() {
+        let m = RuleVerdict::merge_parts(vec![
+            part(Some(false), false, "n/a"),
+            part(Some(true), true, "ok"),
+        ])
+        .unwrap();
+        assert_eq!(m.relevant, Some(true));
+        assert!(m.holds);
+        let none = RuleVerdict::merge_parts(vec![
+            part(Some(false), false, "n/a"),
+            part(Some(false), false, "n/a2"),
+        ])
+        .unwrap();
+        assert_eq!(none.relevant, Some(false));
+        assert_eq!(none.rationale.as_deref(), Some("n/a n/a2"));
     }
 }

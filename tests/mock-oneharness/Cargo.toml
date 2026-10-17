@@ -19,3 +19,4 @@ test = false
 [dependencies]
 llmlint.workspace = true
 serde_json.workspace = true
+toml.workspace = true

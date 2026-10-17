@@ -88,6 +88,11 @@ pub enum Error {
     #[error("oneharness run failed: {0}")]
     Oneharness(String),
 
+    /// The oneharness configuration a judge would run under could not be read
+    /// or resolved (`llmlint fingerprint`).
+    #[error("harness configuration: {0}")]
+    HarnessConfig(String),
+
     #[error(
         "harness {harness} deferred a tool call instead of executing it, so it \
          produced no verdict.\n{detail}\n\

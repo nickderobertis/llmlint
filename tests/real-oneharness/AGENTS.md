@@ -15,7 +15,11 @@ files, and that the resolved `mode` is the highest layer's, attributed to it:
 the later of two configured files; a repository config over its plugin's; the
 nearest of nested llmlint configs (with a path configured at both levels);
 `LLMLINT_ONEHARNESS_CONFIG` over the config files; and a `--oneharness-config`
-flag over both. The tests are `#[ignore]`-d; run without the recipe's
+flag over both. `fingerprint_reads_the_real_harness_configuration` holds `llmlint
+fingerprint` to the real `oneharness config` report (the shape the hermetic
+double assumes): one digest across two checkouts, a new one when the model moves
+in a discovered or named file's `extends` parent or through `ONEHARNESS_MODEL`,
+and none for the recording-only history labels. The tests are `#[ignore]`-d; run without the recipe's
 `LLMLINT_REAL_ONEHARNESS` they fail rather than skip. The one non-ignored test,
 `the_tier_pins_the_multi_file_floor`, holds the pin to the constant in every run.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

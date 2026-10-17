@@ -89,6 +89,37 @@ pub enum Command {
     /// to exist. `llmlint plugins clear` empties the cache so the next run
     /// refetches. Deterministic: no model, oneharness, or network call.
     Plugins(PluginsArgs),
+    /// Print one stable SHA-256 digest of everything that decides a `lint`
+    /// verdict, as exactly one line of 64 lowercase hex characters — the cache
+    /// key for a judged-lint result (e.g. an Nx `runtime` input), so a verdict is
+    /// replayed only for the judge that produced it. Run with the same options
+    /// and environment as a `lint` invocation, it describes the judge that
+    /// invocation would run, and makes no model call.
+    ///
+    /// The digest covers llmlint's own version; the effective merged
+    /// configuration, every remote plugin as the version actually fetched (so a
+    /// range pin like `@1` resolving to a newer version changes it); the prompt
+    /// template in force; and the oneharness configuration the judge would run
+    /// under — the files `oneharness.config` and `--oneharness-config` name, or
+    /// oneharness's own discovered configuration, every `extends` parent, and the
+    /// `ONEHARNESS_*` environment overrides, as `oneharness config` resolves them
+    /// — with the version the oneharness binary reports.
+    ///
+    /// It holds nothing checkout-specific: paths inside the lint directory are
+    /// taken relative to it, and the oneharness binary's path,
+    /// `LLMLINT_ONEHARNESS_BIN`, `HOME`, and the plugin cache's location and
+    /// confirmation times contribute nothing, so the same judge in two worktrees
+    /// prints the same digest. Recording-only settings, which cannot change a
+    /// verdict, are left out too: llmlint's `history.enabled`,
+    /// `history.max_runs` and `history.dir` (and `LLMLINT_HISTORY_*`,
+    /// `LLMLINT_NO_HISTORY`), and oneharness's `history`, `history_dir`,
+    /// `history_pointer_file` and `history_labels`.
+    ///
+    /// On failure (a config that does not parse or validate, a plugin that
+    /// cannot be resolved, a harness configuration that cannot be read or
+    /// resolved, a oneharness that cannot report its version) it prints nothing
+    /// on stdout, names the cause on stderr, and exits non-zero.
+    Fingerprint(FingerprintArgs),
 }
 
 #[derive(Args, Debug, Default)]
@@ -146,6 +177,16 @@ pub struct LintArgs {
     /// still wins). The inverse of `--rationales`.
     #[arg(long = "no-rationales", overrides_with = "rationales", action = clap::ArgAction::SetTrue)]
     pub no_rationales: bool,
+
+    /// The most characters any one judge prompt may hold (overrides config
+    /// `max_prompt_chars`; default 1,000,000, under codex's 1,048,576-character
+    /// turn limit). A batch whose prompt — template, rules, files and their diffs
+    /// — would exceed it is split across more judge calls, every rule still
+    /// judging each of its files exactly once (`--plan-only` shows the split). A
+    /// single file whose own prompt is over it is an errored result naming the
+    /// file, its prompt size and the bound, and is never sent.
+    #[arg(long = "max-prompt-chars", value_name = "N")]
+    pub max_prompt_chars: Option<std::num::NonZeroU64>,
 
     /// Only run rules assigned to this agent (`default` for unassigned rules).
     #[arg(long = "agent", value_name = "NAME")]
@@ -380,6 +421,46 @@ mod tests {
         }
     }
 
+    /// The drift gate between `fingerprint`'s options and `lint`'s: every option
+    /// `fingerprint` takes must exist on `lint` and, given the same argv, project
+    /// onto exactly the `LintArgs` `lint` parses — so the digest describes the
+    /// judge that `lint` invocation runs. It enumerates `fingerprint`'s options
+    /// from clap itself, so a new one is checked the day it lands.
+    #[test]
+    fn fingerprint_options_mean_what_they_mean_for_lint() {
+        use clap::CommandFactory;
+        let cli = Cli::command();
+        let fingerprint = cli.find_subcommand("fingerprint").unwrap();
+        let mut argv: Vec<String> = Vec::new();
+        for arg in fingerprint.get_arguments() {
+            let Some(long) = arg.get_long() else { continue };
+            if long == "help" {
+                continue;
+            }
+            argv.push(format!("--{long}"));
+            if arg.get_action().takes_values() {
+                argv.push("7".into());
+            }
+        }
+        assert!(argv.len() > 10, "{argv:?}");
+        let parse = |sub: &str| {
+            Cli::try_parse_from(
+                ["llmlint", sub]
+                    .into_iter()
+                    .map(String::from)
+                    .chain(argv.iter().cloned()),
+            )
+            .unwrap_or_else(|e| panic!("`llmlint {sub}` refused {argv:?}: {e}"))
+        };
+        let Some(Command::Fingerprint(fp)) = parse("fingerprint").command else {
+            panic!("not a fingerprint command")
+        };
+        let Some(Command::Lint(lint)) = parse("lint").command else {
+            panic!("not a lint command")
+        };
+        assert_eq!(format!("{:?}", fp.into_lint_args()), format!("{lint:?}"));
+    }
+
     #[test]
     fn progress_auto_requires_an_interactive_human() {
         // Interactive terminal, not CI, not an agent, color available: on.
@@ -605,6 +686,75 @@ impl LintConfigArgs {
             diff: self.diff,
             diff_base: self.diff_base,
             no_history: self.no_history,
+            ..Default::default()
+        }
+    }
+}
+
+/// The `lint` options that select or change the judge, with the same meaning and
+/// precedence they have for `lint` (see [`FingerprintArgs::into_lint_args`]).
+#[derive(Args, Debug, Default)]
+pub struct FingerprintArgs {
+    /// llmlint config file(s); repeatable. Replaces nested upward discovery.
+    #[arg(long = "config", short = 'c', value_name = "PATH")]
+    pub config: Vec<PathBuf>,
+
+    /// oneharness config file to forward via `--config` (repeatable; layered
+    /// above the configured ones, later flags overriding earlier).
+    #[arg(long = "oneharness-config", value_name = "PATH")]
+    pub oneharness_config: Vec<PathBuf>,
+
+    /// Override the oneharness binary (else `$LLMLINT_ONEHARNESS_BIN`, PATH, or
+    /// a `oneharness` beside the llmlint executable). Its path is not hashed.
+    #[arg(long = "oneharness-bin", value_name = "PATH")]
+    pub oneharness_bin: Option<String>,
+
+    /// Default judge model (overrides config `oneharness.model`).
+    #[arg(long = "model", value_name = "NAME")]
+    pub model: Option<String>,
+
+    /// Override the master prompt template with this file's contents.
+    #[arg(long = "prompt-template", value_name = "PATH")]
+    pub prompt_template: Option<PathBuf>,
+
+    /// Schema-validation re-prompt budget (overrides config
+    /// `oneharness.schema_max_retries`).
+    #[arg(long = "schema-max-retries", value_name = "N")]
+    pub schema_max_retries: Option<u32>,
+
+    /// Require a `rationale` for every rule's verdict (overrides config).
+    #[arg(long = "rationales", overrides_with = "no_rationales", action = clap::ArgAction::SetTrue)]
+    pub rationales: bool,
+
+    /// Disable rationales (overrides config). The inverse of `--rationales`.
+    #[arg(long = "no-rationales", overrides_with = "rationales", action = clap::ArgAction::SetTrue)]
+    pub no_rationales: bool,
+
+    /// The most characters any one judge prompt may hold (overrides config
+    /// `max_prompt_chars`).
+    #[arg(long = "max-prompt-chars", value_name = "N")]
+    pub max_prompt_chars: Option<std::num::NonZeroU64>,
+
+    /// Directory to lint from (config discovery + the harness cwd). Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+}
+
+impl FingerprintArgs {
+    /// Project onto [`LintArgs`], so every option resolves through the very code
+    /// `lint` uses and so means exactly what it means there.
+    pub fn into_lint_args(self) -> LintArgs {
+        LintArgs {
+            config: self.config,
+            oneharness_config: self.oneharness_config,
+            oneharness_bin: self.oneharness_bin,
+            model: self.model,
+            prompt_template: self.prompt_template,
+            schema_max_retries: self.schema_max_retries,
+            rationales: self.rationales,
+            no_rationales: self.no_rationales,
+            max_prompt_chars: self.max_prompt_chars,
+            cwd: self.cwd,
             ..Default::default()
         }
     }

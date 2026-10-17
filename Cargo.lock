@@ -629,6 +629,7 @@ dependencies = [
  "ignore",
  "indicatif",
  "minijinja",
+ "ring",
  "schemars",
  "serde",
  "serde-saphyr",
@@ -670,6 +671,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "llmlint-fingerprint-version"
+version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "llmlint",
+ "tempfile",
+]
+
+[[package]]
 name = "llmlint-live"
 version = "0.0.0"
 dependencies = [
@@ -682,6 +692,7 @@ version = "0.0.0"
 dependencies = [
  "llmlint",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

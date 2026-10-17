@@ -290,6 +290,101 @@ fn the_flag_wins_over_env_and_config() {
     );
 }
 
+/// A judge project for `llmlint fingerprint`: a discovered `oneharness.toml`
+/// whose model comes from an `extends` parent, and a named config that also
+/// `extends` it.
+fn fingerprint_project() -> Project {
+    let p = Project::new();
+    p.write("src/lib.rs", "// code\n");
+    p.write(
+        "llmlint.yml",
+        &format!(
+            "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+             - {{ name: oh_rule, description: \"{RULE}\" }}\n"
+        ),
+    );
+    p.write(
+        "oneharness.toml",
+        "extends = \"harness/base.toml\"\nmode = \"read-only\"\n",
+    );
+    p.write("harness/base.toml", "model = \"base-model\"\n");
+    p.write(
+        "harness/named.toml",
+        "extends = \"base.toml\"\nmode = \"plan\"\n",
+    );
+    p
+}
+
+/// `llmlint fingerprint` in `p` against the real oneharness, held to the output
+/// contract (exit 0, one line of 64 lowercase hex).
+fn fingerprint(p: &Project, extra: &[&str], env: &[(&str, &str)]) -> String {
+    let mut cmd = Command::cargo_bin("llmlint").unwrap();
+    clear_steering_env(&mut cmd);
+    cmd.current_dir(p.path())
+        .env("LLMLINT_HISTORY_DIR", p.path().join(".llmlint-history"))
+        .arg("fingerprint")
+        .arg("--oneharness-bin")
+        .arg(real_oneharness())
+        .args(extra);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.assert().success().get_output().stdout.clone();
+    let out = String::from_utf8(out).unwrap();
+    let digest = out.strip_suffix('\n').expect("one line").to_string();
+    assert_eq!(digest.len(), 64, "{out:?}");
+    assert!(digest
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    digest
+}
+
+/// The released oneharness's own `config` report — with its absolute `source`
+/// paths, `extends` chains and environment overrides — is what `fingerprint`
+/// hashes, so this is where the shape the hermetic double assumes is held to
+/// the real tool: the digest is path-free across two checkouts, follows the
+/// model through an `extends` parent (discovered and named), follows an
+/// `ONEHARNESS_*` override, and ignores the recording-only history labels.
+#[test]
+#[ignore = "needs the released oneharness; run via `just test-oneharness`"]
+fn fingerprint_reads_the_real_harness_configuration() {
+    let a = fingerprint_project();
+    let b = fingerprint_project();
+    let base = fingerprint(&a, &[], &[]);
+    assert_eq!(
+        fingerprint(&b, &[], &[]),
+        base,
+        "another checkout must agree"
+    );
+    assert_eq!(
+        fingerprint(
+            &a,
+            &[],
+            &[("ONEHARNESS_HISTORY_LABELS", "onepipeline.attempt=2")]
+        ),
+        base,
+        "history labels only record a run"
+    );
+    let env_model = fingerprint(&a, &[], &[("ONEHARNESS_MODEL", "env-model")]);
+    assert_ne!(env_model, base, "an ONEHARNESS_MODEL override is the judge");
+
+    let named = fingerprint(&a, &["--oneharness-config", "harness/named.toml"], &[]);
+    assert_ne!(named, base);
+    assert_eq!(
+        fingerprint(&b, &["--oneharness-config", "harness/named.toml"], &[]),
+        named
+    );
+
+    a.write("harness/base.toml", "model = \"other-model\"\n");
+    let moved = fingerprint(&a, &[], &[]);
+    assert_ne!(moved, base, "the discovered file's extends parent's model");
+    assert_ne!(
+        fingerprint(&a, &["--oneharness-config", "harness/named.toml"], &[]),
+        named,
+        "the named file's extends parent's model"
+    );
+}
+
 /// `install-oneharness.sh` turns the pin into a directory it deletes and
 /// rebuilds, so a pin that is not a plain release version — a path, a range, a
 /// word — is refused before anything is created or fetched. Offline: the script

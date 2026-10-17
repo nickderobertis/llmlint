@@ -77,6 +77,13 @@ one beside its `Cargo.toml`, all members of one Cargo workspace with one
   oneharness wire double behind `--oneharness-bin`.
 - `llmlint-e2e` (`type:e2e`, `tests/e2e/`) — the binary journeys; its `test`
   depends on the builds of `llmlint` and the fixture.
+- `fingerprint-version` (`type:e2e`, `tests/fingerprint-version/`) — proves
+  llmlint's own version is in `llmlint fingerprint` by building a second binary
+  from a scratch copy with only `Cargo.toml`'s version changed (`version-proof`,
+  outside the gate tiers, run by its own workflow); its own project so neither the
+  e2e suite nor the affected `test` sweep pays for that build, and its inputs are
+  only what can change the result (crate sources and assets, manifest, lockfile,
+  build config, the stand-in harness, the test).
 - `release-targets` (`type:external`, `tests/release-targets/`) — the release
   declaration's offline checks (`test`) and network checks (`network`).
 - `release-packaging` (`type:external`, `tests/release-packaging/`) — the native
@@ -118,7 +125,8 @@ Every project declares the repo-uniform target names that apply to it: `format`
 (a check — cargo fmt and/or shfmt; `--configuration=write` writes), `lint`
 (clippy and/or shellcheck, or the boundary check), `lint-workflows` (actionlint),
 `build`, `test`, `doc`, and the two gates' `coverage`. A target that must never fan out into a gate tier gets a name of its own —
-`network` (release-targets, real-oneharness), `packaging` (release-packaging), `live`, `win-color`, `capture`,
+`network` (release-targets, real-oneharness), `packaging` (release-packaging),
+`version-proof` (fingerprint-version), `live`, `win-color`, `capture`,
 `bless`, `gif`, the `bench*` targets, `check-version-bump`, `supply-chain` — so
 `nx run-many -t test` can never reach it. Tags bound the edges
 (`tools/project-boundaries.json`, checked by the `workspace` project's `lint`):
@@ -244,6 +252,9 @@ Use the `just` recipes; do not hand-roll equivalents.
   half is the project's `test`. `release-targets.toml` is the canonical
   release-target declaration other repositories wait on; see
   `tests/release-targets/AGENTS.md`.
+- `just test-fingerprint-version` — the fingerprint-version project's
+  `version-proof`, outside the gate tiers because it builds a second llmlint; its
+  own workflow runs it. See `tests/fingerprint-version/AGENTS.md`.
 - `just test-oneharness` — the real-oneharness project's `network` target
   (installs the released oneharness from PyPI), outside the gate tiers; see
   `tests/real-oneharness/AGENTS.md`.
@@ -497,6 +508,21 @@ harness reads target files on-demand with its own tools.
   a weightless context falls back to unit file counts, which the pure planner tests
   use). The order-based layout is costed too, only to report the `Optimization`
   counterfactual (billed + per-rule saved) in the explanation.
+- **Prompt-size bound (convention, issue #156):** `max_prompt_chars` (default
+  `DEFAULT_MAX_PROMPT_CHARS`, under codex's turn limit) caps system + user prompt
+  characters per judge call. `domain::promptsize::bound` runs after `plan::build`,
+  measuring each run with the same `render_system` the call sends, so the split is
+  decided against the real prompt: an over-bound run splits by its sorted files
+  into the longest fitting parts (doubling then bisecting), each rule narrowed to
+  its files in the part, so every rule still sees each file once per judge index.
+  A split rule's parts are **one judge's vote** (`RuleVerdict::merge_parts`, keyed
+  by judge index in `lint.rs`), never extra votes. A file over the bound alone is
+  never sent — one errored result per agent and file. The rework prompt is held to
+  the bound too (skipped, falling back to deterministic cleanup).
+- **A reply answers exactly its batch (convention):** `applicability::
+  hold_reply_to_batch` compares each reply's rule names to the call's rules: an
+  unselected name is dropped and an errored result, an unanswered selected rule is
+  an errored result. So exit 0 means every selected rule has a verdict.
 - **Plan explanation + `--plan-only` (convention):** `plan::build` returns, beside
   the runs, a `PlanExplanation` built *while deciding* (so it can never drift): per
   agent → judge index → batch, the batched rule set, the effective file union, the
@@ -677,7 +703,8 @@ harness reads target files on-demand with its own tools.
   `LLMLINT_HISTORY_ENABLED` supersedes the legacy `LLMLINT_NO_HISTORY=1` off-switch
   (honored in `history::resolve` only when the canonical var is unset);
   `LLMLINT_HISTORY_DIR` and `LLMLINT_ONEHARNESS_BIN` keep working, now folded into
-  the same scheme. When a new session setting lands, add its `LLMLINT_` var here.
+  the same scheme (`max_prompt_chars` is `LLMLINT_MAX_PROMPT_CHARS`). When a new
+  session setting lands, add its `LLMLINT_` var here.
 - **oneharness configs are layered (convention, issue #210):** every resolved
   oneharness config file is forwarded as its own `--config`, lowest layer first,
   because oneharness layers repeated `--config`s (a later file overrides an
@@ -888,11 +915,29 @@ harness reads target files on-demand with its own tools.
   dependency. A previous-layout file (named for a *pin*, no metadata) is
   invisible. Keep the diagnosis path working — `llmlint plugins` / `plugins clear`
   and the resolved versions named in the unknown-rule ignore error.
+- **`llmlint fingerprint` (contract):** five repositories name it, with no
+  arguments, as the Nx `runtime` input of their cached judged-lint target, so its
+  output (one line, 64 lowercase hex, exit 0; nothing on stdout on failure) and
+  what it covers are a contract — the CLI help and README state it, the e2e
+  journeys in `tests/e2e/fingerprint.rs` pin it, and `fingerprint-version`
+  (`tests/fingerprint-version/`) proves llmlint's own version is in it. It resolves
+  through `lint`'s own code (`load_with_targets`, `env::apply_overrides`,
+  `apply_cli_overrides`, `resolve_oneharness_config`) and asks **oneharness**
+  for its resolved configuration (`oneharness config --cwd … [--config …]
+  --format json`, `Client::resolved_config`) — never re-implement oneharness's
+  discovery/`extends`/env resolution here. The hashed material drops every
+  `source`, the binary's path and `fingerprint::RECORDING_ONLY` (manager ruling:
+  history settings of both tools only record a run), hashes **effective values**
+  (defaults explicit; plugins as merged rules plus resolved versions; oneharness
+  layers as the one ordered list `lint` forwards), so the same judge spelled two
+  ways is one digest, and rewrites the lint directory to `.` and `HOME` to `~` at
+  path boundaries. Anything new that can
+  change a verdict must reach this material, or a cache replays a stale verdict.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `check-version-bump`, `validate`, `lint-config`, `init`, `config` (`--sources`
   adds per-item provenance), `where` (locate one config item's source), `doctor`,
   `history` (inspect logged run results), `plugins` (report / clear the plugin
-  cache). `commands/ignores.rs` holds the ignore-directive resolution + scan
+  cache), `fingerprint` (the judge's cache key). `commands/ignores.rs` holds the ignore-directive resolution + scan
   shared by `lint`, `check-ignores`, and `lint-config`.
 - **Deterministic (model-free) checks + `validate`:** llmlint's static checks —
   config structure (`domain::config::validate`, at load), inline `llmlint: ignore`

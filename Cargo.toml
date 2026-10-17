@@ -51,6 +51,7 @@ wait-timeout.workspace = true
 tempfile.workspace = true
 ureq.workspace = true
 schemars.workspace = true
+ring.workspace = true
 
 [dev-dependencies]
 # Enable indicatif's `in_memory` feature in test builds only: it provides
@@ -71,6 +72,7 @@ indicatif = { workspace = true, features = ["in_memory"] }
 members = [
     "tests/mock-oneharness",
     "tests/e2e",
+    "tests/fingerprint-version",
     "tests/release-targets",
     "tests/release-packaging",
     "tests/real-oneharness",
@@ -133,6 +135,10 @@ ureq = { version = "3", default-features = false, features = ["rustls", "rustls-
 # from the `Config` model, so the schema referenced by `llmlint init` can never
 # drift from the Rust types. Default features only (derive + std); emits 2020-12.
 schemars = "1"
+# SHA-256 for `llmlint fingerprint`'s digest. Already in the tree as rustls's
+# crypto provider (via ureq), so naming it adds no new `cargo deny` surface; only
+# its `digest` module is used.
+ring = "0.17"
 assert_cmd = "2"
 predicates = "3"
 # Statistical micro-benchmarks of the pure engine (the `llmlint-bench` member). Default

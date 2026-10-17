@@ -266,6 +266,54 @@ pub fn rework_prompt(problems: &[ScopeProblem], file_rules: &[FileRules]) -> Str
     out
 }
 
+/// How a judge's reply fell short of the rules its call selected: the selected
+/// rules it left without a verdict, and the names it answered that the call never
+/// asked about. Both empty means the reply answers exactly its batch.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReplyGaps {
+    /// Rules the call selected that the reply holds no verdict for.
+    pub unanswered: Vec<String>,
+    /// Rule names the reply answered that the call did not select.
+    pub unselected: Vec<String>,
+}
+
+impl ReplyGaps {
+    pub fn is_empty(&self) -> bool {
+        self.unanswered.is_empty() && self.unselected.is_empty()
+    }
+}
+
+/// Hold a judge's reply to the rules its call selected. A verdict for a name the
+/// call did not select is removed from `verdicts` — it was never asked for, so it
+/// must never count toward any rule's outcome — and reported in
+/// [`ReplyGaps::unselected`]; each selected rule the reply leaves unanswered is
+/// reported in [`ReplyGaps::unanswered`]. The caller turns both into errored
+/// results, so a reply that answers less than (or other than) its batch can never
+/// read as a clean run.
+pub fn hold_reply_to_batch(
+    selected: &[&str],
+    verdicts: &mut BTreeMap<String, RuleVerdict>,
+) -> ReplyGaps {
+    let wanted: BTreeSet<&str> = selected.iter().copied().collect();
+    let unselected: Vec<String> = verdicts
+        .keys()
+        .filter(|name| !wanted.contains(name.as_str()))
+        .cloned()
+        .collect();
+    for name in &unselected {
+        verdicts.remove(name);
+    }
+    let unanswered = wanted
+        .into_iter()
+        .filter(|name| !verdicts.contains_key(*name))
+        .map(str::to_string)
+        .collect();
+    ReplyGaps {
+        unanswered,
+        unselected,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,5 +500,36 @@ mod tests {
             "prompt:\n{p}"
         );
         assert!(p.contains("only the JSON object"));
+    }
+
+    fn answered(names: &[&str]) -> BTreeMap<String, RuleVerdict> {
+        names
+            .iter()
+            .map(|n| (n.to_string(), RuleVerdict::default()))
+            .collect()
+    }
+
+    #[test]
+    fn a_reply_answering_exactly_its_batch_has_no_gaps() {
+        let mut v = answered(&["a", "b"]);
+        assert!(hold_reply_to_batch(&["a", "b"], &mut v).is_empty());
+        assert_eq!(v.len(), 2);
+    }
+
+    #[test]
+    fn an_empty_reply_leaves_every_selected_rule_unanswered() {
+        let mut v = answered(&[]);
+        let gaps = hold_reply_to_batch(&["b", "a"], &mut v);
+        assert_eq!(gaps.unanswered, vec!["a", "b"]);
+        assert!(gaps.unselected.is_empty());
+    }
+
+    #[test]
+    fn an_unselected_name_is_removed_and_reported() {
+        let mut v = answered(&["a", "stray"]);
+        let gaps = hold_reply_to_batch(&["a", "b"], &mut v);
+        assert_eq!(gaps.unanswered, vec!["b"]);
+        assert_eq!(gaps.unselected, vec!["stray"]);
+        assert_eq!(v.keys().collect::<Vec<_>>(), vec!["a"]);
     }
 }

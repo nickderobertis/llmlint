@@ -639,6 +639,65 @@ resolves the oneharness the test put on PATH.
   that answered (`LLMLINT_MOCK_FALLBACK_NO_RAN`); and a whole-chain failure
   (nothing ran) errors naming every attempted harness rather than one skipped
   harness's "no structured output" (`+ LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
+- **`llmlint fingerprint`** (`fingerprint.rs`), against real config files and the
+  stand-in's `config` subcommand: one digest (64 lowercase hex + newline, exit 0)
+  for two copies of a project at different paths — also with `--cwd` and an
+  `ONEHARNESS_*` path inside each checkout given absolutely — and for two
+  `--oneharness-bin`/`LLMLINT_ONEHARNESS_BIN` paths to the same stand-in; a new
+  digest for a changed local rule, prompt template, `--model`, the harness model
+  in the discovered file, in a named file, and in either's `extends` parent, an
+  `ONEHARNESS_MODEL` override, an explicit `-c` config (the discovered one named
+  explicitly is the same judge), `--schema-max-retries` (one value from flag, env
+  or config is one judge), `--no-rationales` (`--rationales` equals the default,
+  and the flag beats a config), the order of layered harness configs (one layer
+  list from flags, config or `LLMLINT_ONEHARNESS_CONFIG` is one judge; several
+  below the layered floor are refused), `max_prompt_chars` (one bound from the config,
+  `LLMLINT_MAX_PROMPT_CHARS` or `--max-prompt-chars` is one judge; the default
+  written out equals unset), the version oneharness reports (one `lint` would
+  refuse as too old is a failure), and a `@1` plugin resolving to a newer version
+  with identical rules; a harness path under `HOME` is the same judge for any
+  `HOME`; an include set supplied by `LLMLINT_FILES_INCLUDE` hashes the same as
+  the same set in the config (the env override reaches each rule's scope), and
+  `LLMLINT_FILES_EXCLUDE` changes it; and an unset history block hashes the same as one whose recording-only
+  fields were all removed (the hashed JSON is key-sorted, so removal order never
+  shows); the recording-only history settings of both tools change
+  nothing; the spawn log holds only `--version` and `config`, never `run`; an
+  invalid config, an unresolvable plugin, an unreadable/invalid harness config, a
+  malformed `oneharness config` report (`LLMLINT_MOCK_CONFIG_REPLY`: not JSON, not
+  an object, no `config_files`, or a setting that is not `{value, source}`) and an absent
+  oneharness each exit non-zero with nothing on stdout. The real `oneharness
+  config` shape is held by the real-oneharness tier. llmlint's own
+  version is proven by the separate `fingerprint-version` project's
+  `version-proof` target, which builds a second binary and so runs outside the
+  gate tiers, in the `Fingerprint version` workflow (`just test-fingerprint-version`).
+- **Prompt-size-bounded batching** (`prompt_size.rs`). With every prompt logged
+  (`LLMLINT_MOCK_PROMPTLOG`) and read back from its target-file list and `Scope:`
+  lines: a `--diff` over the bound is judged in several calls, each at most the
+  bound, every rule shown every file it selects exactly once, verdicts unchanged
+  from the unbounded run; a single file over the bound is an exit-2 `ERROR` naming
+  the file, its size, the bound and the remedy, and no prompt over the bound (nor
+  carrying it) reaches the harness; `--max-prompt-chars` overrides
+  `max_prompt_chars` both ways and `LLMLINT_MAX_PROMPT_CHARS` (which itself
+  splits); a corrective re-ask that would exceed the bound is not sent (control:
+  unbounded, it is) and the deterministic cleanup still decides the verdict; a
+  relevance-conditional rule split across calls casts one vote, relevant when any
+  part found it so, its rationale joining the agreeing parts'; a `judges: 3` rule
+  split across calls gets exactly three votes, each judge's parts merged (a fail
+  in one part of judges 2 and 3 is two failing votes, not two of nine); an
+  ancestor config's `max_prompt_chars` is inherited and a nearer one wins; a
+  conditional rule not relevant in any part stays not relevant (rationales
+  joined); a change whose every file is over the bound sends no prompt, exits 2
+  with one error per file, and plans 0 judge calls; `--plan-only` shows
+  the split with no harness spawn (control: the same run spawns it); a zero bound
+  from the config, the flag or the env var is exit 2.
+- **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
+  with two selected rules — the workload at which 0.4.10 exited 0 on each of
+  these — a schema-valid reply of `{}`, one holding only one rule, one naming
+  only an unselected rule, and (`judges: 3`) a run where only the first call
+  answers each exit 2, with an `ERROR` naming every rule left without a verdict
+  (once per call that left it) and the unselected rule; the stray verdict is
+  dropped, never tallied. A reply answering both rules still exits 0 on two
+  passes and 1 on a fail. The replies are scripted with `LLMLINT_MOCK_REPLIES`.
 
 ## Unit vs e2e
 

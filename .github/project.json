@@ -80,6 +80,7 @@
         "default",
         "{workspaceRoot}/AGENTS.md",
         "{workspaceRoot}/screencomp.toml",
+        "{workspaceRoot}/tests/fingerprint-version/project.json",
         {
           "runtime": "jq --version"
         },

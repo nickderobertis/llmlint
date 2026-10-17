@@ -7,6 +7,7 @@
 //! about a rule's quality is left to the bundled config-lint plugin.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -325,6 +326,15 @@ pub struct Config {
     /// (working-tree) base; the `--diff-base` flag overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_base: Option<String>,
+    /// The most characters any one judge prompt may hold — the rendered
+    /// template, its rules, and the target files with their diffs (default
+    /// 1,000,000, under codex's 1,048,576-character turn limit). A batch whose
+    /// prompt would exceed it is split across more judge calls, every rule still
+    /// judging each of its files exactly once; a single file whose own prompt is
+    /// over it is reported as an errored result rather than sent. The
+    /// `--max-prompt-chars` flag overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_prompt_chars: Option<NonZeroU64>,
     /// Whether/how/where to log each run's full results to disk (default: on, the
     /// last 100 runs, in the platform data dir). See [`HistoryCfg`].
     #[serde(default, skip_serializing_if = "HistoryCfg::is_empty")]
@@ -366,6 +376,7 @@ impl Config {
         self.oneharness.merge_under(other.oneharness);
         self.rationales = self.rationales.or(other.rationales);
         self.diff_base = self.diff_base.take().or(other.diff_base);
+        self.max_prompt_chars = self.max_prompt_chars.or(other.max_prompt_chars);
         self.history.merge_under(other.history);
         for (name, agent) in other.agents {
             self.agents.entry(name).or_insert(agent);
@@ -382,6 +393,14 @@ impl Config {
     /// `rationales` value, or `true` when unset.
     pub fn rationales_default(&self) -> bool {
         self.rationales.unwrap_or(true)
+    }
+
+    /// The prompt-size bound after merging: the config's `max_prompt_chars`, or
+    /// [`DEFAULT_MAX_PROMPT_CHARS`] when unset.
+    pub fn max_prompt_chars(&self) -> usize {
+        self.max_prompt_chars.map_or(DEFAULT_MAX_PROMPT_CHARS, |n| {
+            usize::try_from(n.get()).unwrap_or(usize::MAX)
+        })
     }
 
     /// Whether results logging is on after merging: the config's `history.enabled`
@@ -424,6 +443,11 @@ pub struct Provenance {
     pub rules: BTreeMap<String, RuleProvenance>,
 }
 
+/// The default `max_prompt_chars`: the most characters one judge prompt may
+/// hold. It sits under codex's 1,048,576-character turn limit, leaving room for
+/// what the harness itself adds to the turn.
+pub const DEFAULT_MAX_PROMPT_CHARS: usize = 1_000_000;
+
 /// Top-level setting keys that carry provenance, mirroring the config/JSON
 /// shape (the `oneharness.*` block is flattened). The single source of truth for
 /// which paths [`resolve_source`] treats as a setting, and kept in sync with the
@@ -440,6 +464,7 @@ pub const SETTING_KEYS: &[&str] = &[
     "oneharness.schema_max_retries",
     "rationales",
     "diff_base",
+    "max_prompt_chars",
     "history.enabled",
     "history.max_runs",
     "history.dir",
@@ -539,6 +564,7 @@ impl ProvenanceBuilder {
             ),
             ("rationales", cfg.rationales.is_some()),
             ("diff_base", cfg.diff_base.is_some()),
+            ("max_prompt_chars", cfg.max_prompt_chars.is_some()),
             ("history.enabled", cfg.history.enabled.is_some()),
             ("history.max_runs", cfg.history.max_runs.is_some()),
             ("history.dir", cfg.history.dir.is_some()),
@@ -1476,6 +1502,7 @@ mod tests {
             prompt_template: Some("t".into()),
             rationales: Some(true),
             diff_base: Some("main".into()),
+            max_prompt_chars: NonZeroU64::new(5000),
             history: HistoryCfg {
                 enabled: Some(true),
                 max_runs: Some(50),

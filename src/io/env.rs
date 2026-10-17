@@ -46,6 +46,7 @@ pub const ENV_SETTINGS: &[(&str, &str)] = &[
     ("prompt_template", "LLMLINT_PROMPT_TEMPLATE"),
     ("rationales", "LLMLINT_RATIONALES"),
     ("diff_base", "LLMLINT_DIFF_BASE"),
+    ("max_prompt_chars", "LLMLINT_MAX_PROMPT_CHARS"),
     ("history.enabled", "LLMLINT_HISTORY_ENABLED"),
     ("history.max_runs", "LLMLINT_HISTORY_MAX_RUNS"),
     ("history.dir", "LLMLINT_HISTORY_DIR"),
@@ -158,6 +159,12 @@ fn apply_from(
     if let Some(v) = get("LLMLINT_DIFF_BASE") {
         config.diff_base = Some(v);
         note(prov, "diff_base", "LLMLINT_DIFF_BASE");
+    }
+    if let Some(v) = get("LLMLINT_MAX_PROMPT_CHARS") {
+        // `parse_int` enforces the minimum of 1, so the value is never zero.
+        config.max_prompt_chars =
+            std::num::NonZeroU64::new(parse_int("LLMLINT_MAX_PROMPT_CHARS", &v, 1)?);
+        note(prov, "max_prompt_chars", "LLMLINT_MAX_PROMPT_CHARS");
     }
     if let Some(v) = get("LLMLINT_HISTORY_ENABLED") {
         config.history.enabled = Some(parse_bool("LLMLINT_HISTORY_ENABLED", &v)?);
@@ -299,6 +306,7 @@ mod tests {
                 ("LLMLINT_ONEHARNESS_BIN", "/opt/oneharness"),
                 ("LLMLINT_RATIONALES", "no"),
                 ("LLMLINT_DIFF_BASE", "main"),
+                ("LLMLINT_MAX_PROMPT_CHARS", "250000"),
                 ("LLMLINT_HISTORY_ENABLED", "false"),
                 ("LLMLINT_HISTORY_MAX_RUNS", "7"),
                 ("LLMLINT_HISTORY_DIR", "/tmp/h"),
@@ -312,9 +320,14 @@ mod tests {
         assert_eq!(config.oneharness.bin.as_deref(), Some("/opt/oneharness"));
         assert_eq!(config.rationales, Some(false));
         assert_eq!(config.diff_base.as_deref(), Some("main"));
+        assert_eq!(config.max_prompt_chars, std::num::NonZeroU64::new(250_000));
         assert_eq!(config.history.enabled, Some(false));
         assert_eq!(config.history.max_runs, Some(7));
         assert_eq!(config.history.dir.as_deref(), Some("/tmp/h"));
+        assert_eq!(
+            prov.settings["max_prompt_chars"],
+            "env:LLMLINT_MAX_PROMPT_CHARS"
+        );
 
         assert_eq!(
             prov.settings["oneharness.model"],
@@ -486,6 +499,12 @@ mod tests {
             }
             other => panic!("expected Error::Env, got {other:?}"),
         }
+        // So must the prompt-size bound.
+        let err = apply(&mut config, &mut prov, &[("LLMLINT_MAX_PROMPT_CHARS", "0")]).unwrap_err();
+        assert!(
+            matches!(&err, Error::Env { var, .. } if var == "LLMLINT_MAX_PROMPT_CHARS"),
+            "got {err:?}"
+        );
     }
 
     #[test]

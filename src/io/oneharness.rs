@@ -320,6 +320,69 @@ impl Client {
         }
     }
 
+    /// The configuration oneharness would resolve for a judge run from `cwd`
+    /// with `configs` forwarded as layered `--config`s: `oneharness config --cwd
+    /// <cwd> [--config <file>]... --format json`, the effective layered config
+    /// (discovered or named files, each `extends` chain, and the `ONEHARNESS_*`
+    /// environment overrides) as `{value, source}` per field. Spawned with the
+    /// same history-label environment a judge run gets, so it reports exactly what
+    /// that run would see. llmlint never resolves oneharness's configuration
+    /// itself; a refusal (an unreadable or invalid file) is oneharness's own
+    /// message.
+    pub fn resolved_config(&self, cwd: &Path, configs: &[PathBuf]) -> Result<Value> {
+        let mut args: Vec<OsString> = vec![
+            "config".into(),
+            "--cwd".into(),
+            cwd.as_os_str().to_os_string(),
+            "--format".into(),
+            "json".into(),
+        ];
+        for c in configs {
+            args.push("--config".into());
+            args.push(c.as_os_str().to_os_string());
+        }
+        let output = match Command::new(&self.bin)
+            .args(&args)
+            .env(
+                HISTORY_LABELS_ENV,
+                llmlint_history_labels(std::env::var(HISTORY_LABELS_ENV).ok()),
+            )
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::OneharnessNotFound(self.bin.display().to_string()))
+            }
+            Err(e) => return Err(io_err("running oneharness config", e)),
+        };
+        if !output.status.success() {
+            return Err(Error::HarnessConfig(format!(
+                "`{}` could not resolve it (exit {:?}): {}; fix the oneharness config it \
+                 names, or check the files oneharness discovers from {}",
+                render_command(&self.bin, &args),
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).trim(),
+                cwd.display()
+            )));
+        }
+        let report: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+            Error::HarnessConfig(format!(
+                "could not parse `oneharness config` output ({e}); stderr: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        })?;
+        if let Err(problem) = config_report_problem(&report) {
+            return Err(Error::HarnessConfig(format!(
+                "`oneharness config` did not report a configuration ({problem}; got: {}); \
+                 upgrade oneharness or check {}",
+                truncate(&report.to_string(), 200),
+                self.bin.display()
+            )));
+        }
+        Ok(report)
+    }
+
     /// Run one judge and return its per-rule verdicts. Convenience wrapper over
     /// [`Client::run_with_trace`] that discards the debug trace.
     pub fn run(&self, req: &RunRequest) -> Result<BTreeMap<String, RuleVerdict>> {
@@ -681,6 +744,52 @@ fn fallback_chain_error(report: &Report, harness: &str) -> Error {
         "all harnesses in the fallback chain failed for {harness}: {}",
         chain.join(", ")
     ))
+}
+
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] the other side of this shape is the released oneharness's `config --format json` report, which publishes no schema to derive from or reconcile against offline; the reconciliation is `fingerprint_reads_the_real_harness_configuration` in the real-oneharness tier (`just test-oneharness`), which runs this exact check against the released binary, the same out-of-gate real-tool gate the mock-oneharness wire double relies on
+/// Why `report` is not a `oneharness config` report, if it is not one: it must
+/// be an object with a `config_files` list of strings, and every setting beside
+/// it a `{value, source}` leaf or a table of them (nested to any depth, e.g.
+/// `harness.<id>.model`, `history_labels.<key>`). A setting that is anything else
+/// would be hashed as a configuration nothing resolved.
+fn config_report_problem(report: &Value) -> std::result::Result<(), String> {
+    let Some(fields) = report.as_object() else {
+        return Err("expected a JSON object".into());
+    };
+    let listed = fields
+        .get("config_files")
+        .and_then(Value::as_array)
+        .is_some_and(|files| files.iter().all(Value::is_string));
+    if !listed {
+        return Err("expected a `config_files` list of paths".into());
+    }
+    fn settings(path: &str, value: &Value) -> std::result::Result<(), String> {
+        let Some(map) = value.as_object() else {
+            return Err(format!("`{path}` is not a {{value, source}} setting"));
+        };
+        let leaf = map.len() == 2 && map.contains_key("value") && map.contains_key("source");
+        if leaf {
+            return match &map["source"] {
+                Value::String(_) | Value::Null => Ok(()),
+                _ => Err(format!("`{path}.source` is not a source")),
+            };
+        }
+        map.iter()
+            .try_for_each(|(k, v)| settings(&format!("{path}.{k}"), v))
+    }
+    fields
+        .iter()
+        .filter(|(k, _)| !matches!(k.as_str(), "config_files" | "schema_version"))
+        .try_for_each(|(k, v)| settings(k, v))
+}
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
+
+/// At most `max` characters of `s`, marked when cut.
+fn truncate(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s.to_string(),
+    }
 }
 
 /// Render `bin` + `args` as a single shell-quoted command line for display.
@@ -1213,5 +1322,38 @@ mod tests {
         let dir2 = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir2.path().join(name)).unwrap();
         assert!(sibling_in(dir2.path()).is_none());
+    }
+
+    #[test]
+    fn a_config_report_must_list_its_files_and_annotate_every_setting() {
+        let ok = json!({
+            "schema_version": "0.11",
+            "config_files": ["/p/oneharness.toml", "environment"],
+            "model": {"value": "m", "source": "/p/oneharness.toml"},
+            "all": {"value": null, "source": null},
+            "env": {},
+            "harness": {"codex": {"model": {"value": "x", "source": "default"}, "env": {}}},
+        });
+        assert_eq!(config_report_problem(&ok), Ok(()));
+        for (bad, why) in [
+            (json!(null), "JSON object"),
+            (
+                json!({"model": {"value": "m", "source": "s"}}),
+                "config_files",
+            ),
+            (json!({"config_files": [1]}), "config_files"),
+            (json!({"config_files": [], "model": 42}), "`model`"),
+            (
+                json!({"config_files": [], "harness": {"codex": {"model": "x"}}}),
+                "`harness.codex.model`",
+            ),
+            (
+                json!({"config_files": [], "model": {"value": "m", "source": 7}}),
+                "`model.source`",
+            ),
+        ] {
+            let problem = config_report_problem(&bad).unwrap_err();
+            assert!(problem.contains(why), "{bad}: {problem}");
+        }
     }
 }

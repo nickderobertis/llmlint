@@ -253,6 +253,13 @@ test-e2e:
 test-release-targets:
     @bash scripts/nx run release-targets:network
 
+# Prove llmlint's own version is in `llmlint fingerprint` (the fingerprint-version
+# project's `version-proof`): builds a second llmlint from a scratch copy with only
+# Cargo.toml's version changed. Outside the gate tiers; the Fingerprint version
+# workflow runs it.
+test-fingerprint-version:
+    @bash scripts/nx run fingerprint-version:version-proof
+
 # The native release-packaging journeys (the release-packaging project's
 # `packaging`): the release builder run for the host target with the real
 # compiler, maturin and pip, and, on an Apple Silicon Mac, release.yml's `darwin`

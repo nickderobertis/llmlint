@@ -1,0 +1,54 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "fingerprint-version",
+  "//": "Proves llmlint's own version is part of `llmlint fingerprint` through the real CLI: the workspace's built llmlint and a second build from a scratch copy of this repository with only Cargo.toml's package version changed print different digests, while one build agrees with itself. Its own project, and its own `version-proof` target outside the gate tiers, because it compiles a second llmlint (into target/fingerprint-version): neither the e2e suite nor the affected `test` sweep pays for that build; its own workflow runs it instead. Edges: llmlint is the crate it builds and runs, llmlint-mock-oneharness the stand-in harness it runs against.",
+  "projectType": "application",
+  "tags": [
+    "type:e2e"
+  ],
+  "implicitDependencies": [
+    "llmlint",
+    "llmlint-mock-oneharness"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p llmlint-fingerprint-version -- --check"
+      },
+      "configurations": {
+        "write": {
+          "command": "cargo fmt -p llmlint-fingerprint-version"
+        }
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p llmlint-fingerprint-version --all-targets --locked -- -D warnings"
+      }
+    },
+    "version-proof": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "llmlint:build",
+        "llmlint-mock-oneharness:build"
+      ],
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*",
+        "{workspaceRoot}/src/**/*",
+        "{workspaceRoot}/assets/**/*",
+        "{workspaceRoot}/Cargo.toml",
+        "{workspaceRoot}/Cargo.lock",
+        "{workspaceRoot}/rust-toolchain.toml",
+        "{workspaceRoot}/.cargo/config.toml",
+        "{workspaceRoot}/tests/mock-oneharness/**/*"
+      ],
+      "options": {
+        "command": "cargo test -p llmlint-fingerprint-version --locked"
+      },
+      "//": "Outside the gate tiers: it compiles a second llmlint, so no `nx affected -t test` / `run-many -t test` sweep may select it. Run with `just test-fingerprint-version`; the Fingerprint version workflow (.github/workflows/fingerprint-version.yml) runs it on every pull request and push to main that touches these inputs. Its inputs are everything that can change its result and nothing else: the crate's sources and the assets it embeds, the manifest and lockfile, the build configuration, the stand-in harness, and this test. A repo-root edit outside them (README, justfile) replays it from the cache."
+    }
+  }
+}
