@@ -639,6 +639,18 @@ resolves the oneharness the test put on PATH.
   that answered (`LLMLINT_MOCK_FALLBACK_NO_RAN`); and a whole-chain failure
   (nothing ran) errors naming every attempted harness rather than one skipped
   harness's "no structured output" (`+ LLMLINT_MOCK_NO_STRUCTURED`, exit 2).
+- **`llmlint fingerprint`** (`fingerprint.rs`), against real config files and the
+  stand-in's `config` subcommand: one digest (64 lowercase hex + newline, exit 0)
+  for two copies of a project at different paths — also with `--cwd` and an
+  `ONEHARNESS_*` path inside each checkout given absolutely — and for two
+  `--oneharness-bin`/`LLMLINT_ONEHARNESS_BIN` paths to the same stand-in; a new
+  digest for a changed local rule, prompt template, `--model`, the harness model
+  in the discovered file, in a named file, and in either's `extends` parent, an
+  `ONEHARNESS_MODEL` override, and a `@1` plugin resolving to a newer version
+  with identical rules; the recording-only history settings of both tools change
+  nothing; the spawn log holds only `--version` and `config`, never `run`; an
+  invalid config, an unresolvable plugin, an unreadable/invalid harness config and
+  an absent oneharness each exit non-zero with nothing on stdout.
 - **Prompt-size-bounded batching** (`prompt_size.rs`). With every prompt logged
   (`LLMLINT_MOCK_PROMPTLOG`) and read back from its target-file list and `Scope:`
   lines: a `--diff` over the bound is judged in several calls, each at most the

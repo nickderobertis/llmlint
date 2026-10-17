@@ -904,11 +904,25 @@ harness reads target files on-demand with its own tools.
   dependency. A previous-layout file (named for a *pin*, no metadata) is
   invisible. Keep the diagnosis path working — `llmlint plugins` / `plugins clear`
   and the resolved versions named in the unknown-rule ignore error.
+- **`llmlint fingerprint` (contract):** five repositories name it, with no
+  arguments, as the Nx `runtime` input of their cached judged-lint target, so its
+  output (one line, 64 lowercase hex, exit 0; nothing on stdout on failure) and
+  what it covers are a contract — the CLI help and README state it, the e2e
+  journeys in `tests/e2e/fingerprint.rs` pin it. It resolves
+  through `lint`'s own code (`load_with_targets`, `env::apply_overrides`,
+  `apply_cli_overrides`, `resolve_oneharness_config`) and asks **oneharness**
+  for its resolved configuration (`oneharness config --cwd … [--config …]
+  --format json`, `Client::resolved_config`) — never re-implement oneharness's
+  discovery/`extends`/env resolution here. The hashed material drops every
+  `source`, the binary's path and `fingerprint::RECORDING_ONLY` (manager ruling:
+  history settings of both tools only record a run), and rewrites the lint
+  directory to `.` and `HOME` to `~` at path boundaries. Anything new that can
+  change a verdict must reach this material, or a cache replays a stale verdict.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `check-version-bump`, `validate`, `lint-config`, `init`, `config` (`--sources`
   adds per-item provenance), `where` (locate one config item's source), `doctor`,
   `history` (inspect logged run results), `plugins` (report / clear the plugin
-  cache). `commands/ignores.rs` holds the ignore-directive resolution + scan
+  cache), `fingerprint` (the judge's cache key). `commands/ignores.rs` holds the ignore-directive resolution + scan
   shared by `lint`, `check-ignores`, and `lint-config`.
 - **Deterministic (model-free) checks + `validate`:** llmlint's static checks —
   config structure (`domain::config::validate`, at load), inline `llmlint: ignore`

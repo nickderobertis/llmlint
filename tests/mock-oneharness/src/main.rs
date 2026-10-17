@@ -34,6 +34,12 @@
 //!   `results` entry that produced structured output.
 //! - `LLMLINT_MOCK_VERSION=<v>` — the version string reported by `--version`
 //!   (default: llmlint's `MIN_VERSION`), so a test can drive the minimum-version gate.
+//! - `config [--cwd DIR] [--config PATH]... --format json` — the effective
+//!   layered configuration, shaped like real `oneharness config`: the named files
+//!   (else `$ONEHARNESS_CONFIG` under the nearest `oneharness.toml` /
+//!   `.oneharness.toml` from `--cwd` up), each beneath its `extends` chain, then
+//!   every `ONEHARNESS_<FIELD>` override, as `{value, source}` leaves beside
+//!   `config_files`. An unreadable or invalid file exits 2 naming it.
 //! - `run` honors `--format` like oneharness >= 0.14.0: `json` prints the JSON
 //!   report (every branch below), while `text` or no `--format` at all prints a
 //!   human text view, and any other value is refused with exit 2.
@@ -220,6 +226,166 @@ fn emit_no_structured(harness: &str) {
     );
 }
 
+/// Every value of a repeatable `key` flag, in order.
+fn arg_values(args: &[String], key: &str) -> Vec<String> {
+    args.windows(2)
+        .filter(|w| w[0] == key)
+        .map(|w| w[1].clone())
+        .collect()
+}
+
+/// A TOML value as oneharness's `{value, source}` leaves: tables recurse, and
+/// every other value becomes a leaf naming the file it came from.
+fn annotate(value: toml::Value, source: &str) -> Value {
+    match value {
+        toml::Value::Table(table) => Value::Object(
+            table
+                .into_iter()
+                .map(|(k, v)| (k, annotate(v, source)))
+                .collect(),
+        ),
+        other => json!({
+            "value": serde_json::to_value(other).unwrap_or(Value::Null),
+            "source": source,
+        }),
+    }
+}
+
+/// True for a `{value, source}` leaf (as opposed to a table of settings).
+fn is_leaf(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|m| m.len() == 2 && m.contains_key("value") && m.contains_key("source"))
+}
+
+/// Layer `over` onto `base`: tables merge key by key, and a leaf replaces.
+fn merge_into(base: &mut Value, over: Value) {
+    match (base, over) {
+        (Value::Object(b), Value::Object(o)) if !is_leaf(&Value::Object(o.clone())) => {
+            for (k, v) in o {
+                match b.get_mut(&k) {
+                    Some(existing) if !is_leaf(existing) && !is_leaf(&v) => merge_into(existing, v),
+                    _ => {
+                        b.insert(k, v);
+                    }
+                }
+            }
+        }
+        (b, o) => *b = o,
+    }
+}
+
+/// Load one config file beneath its `extends` chain (a parent path relative to
+/// the file's directory), recording each file read. `Err` is the message
+/// oneharness would refuse with.
+fn load_layer(path: &Path, files: &mut Vec<String>, depth: usize) -> Result<Value, String> {
+    if depth > 32 {
+        return Err(format!("`extends` chain too deep at {}", path.display()));
+    }
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("reading config {}: {e}", path.display()))?;
+    let mut table: toml::Table =
+        toml::from_str(&text).map_err(|e| format!("parsing config {}: {e}", path.display()))?;
+    let source = fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string();
+    let mut merged = Value::Object(Map::new());
+    if let Some(parent) = table.remove("extends") {
+        let parent = parent
+            .as_str()
+            .ok_or_else(|| format!("`extends` in {} is not a path", path.display()))?;
+        let parent = path.parent().unwrap_or(Path::new(".")).join(parent);
+        merged = load_layer(&parent, files, depth + 1)?;
+    }
+    files.push(source.clone());
+    merge_into(&mut merged, annotate(toml::Value::Table(table), &source));
+    Ok(merged)
+}
+
+/// `config [--cwd DIR] [--config PATH]... --format json`: the named files (each
+/// beneath its `extends` chain) or, with none named, `$ONEHARNESS_CONFIG` under
+/// the nearest `oneharness.toml`/`.oneharness.toml` from `--cwd` up, then every
+/// `ONEHARNESS_<FIELD>` override (`ONEHARNESS_HISTORY_LABELS` as `k=v` labels).
+/// Prints what real oneharness prints — `config_files` plus a `{value, source}`
+/// leaf per setting — and returns the exit code.
+fn config_command(args: &[String]) -> i32 {
+    if arg_value(args, "--format").as_deref() != Some("json") {
+        eprintln!("mock: `config` answers only --format json");
+        return 2;
+    }
+    let cwd = arg_value(args, "--cwd")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| env::current_dir().unwrap());
+    let mut paths: Vec<PathBuf> = arg_values(args, "--config")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    if paths.is_empty() {
+        if let Some(user) = env::var_os("ONEHARNESS_CONFIG").filter(|v| !v.is_empty()) {
+            paths.push(PathBuf::from(user));
+        }
+        if let Some(project) = cwd.ancestors().find_map(|dir| {
+            ["oneharness.toml", ".oneharness.toml"]
+                .iter()
+                .map(|name| dir.join(name))
+                .find(|p| p.is_file())
+        }) {
+            paths.push(project);
+        }
+    }
+    let mut files = Vec::new();
+    let mut merged = Value::Object(Map::new());
+    for path in &paths {
+        match load_layer(path, &mut files, 0) {
+            Ok(layer) => merge_into(&mut merged, layer),
+            Err(message) => {
+                eprintln!("error: {message}");
+                return 2;
+            }
+        }
+    }
+    let mut from_env = false;
+    for (key, value) in env::vars() {
+        let Some(field) = key.strip_prefix("ONEHARNESS_") else {
+            continue;
+        };
+        if matches!(field, "CONFIG" | "NO_CONFIG") || value.is_empty() {
+            continue;
+        }
+        from_env = true;
+        let field = field.to_lowercase();
+        let leaf = if field == "history_labels" {
+            Value::Object(
+                value
+                    .split(',')
+                    .filter_map(|kv| kv.split_once('='))
+                    .map(|(k, v)| {
+                        (
+                            k.trim().to_string(),
+                            json!({"value": v.trim(), "source": "environment"}),
+                        )
+                    })
+                    .collect(),
+            )
+        } else {
+            json!({"value": value, "source": "environment"})
+        };
+        merge_into(&mut merged, json!({ field: leaf }));
+    }
+    if from_env {
+        files.push("environment".into());
+    }
+    let mut report = Map::new();
+    report.insert("schema_version".into(), json!("mock"));
+    report.insert("config_files".into(), json!(files));
+    if let Value::Object(fields) = merged {
+        report.extend(fields);
+    }
+    println!("{}", serde_json::to_string(&Value::Object(report)).unwrap());
+    0
+}
+
 fn next_count(rule: &str) -> usize {
     let Some(dir) = env::var_os("LLMLINT_MOCK_STATE") else {
         return 0;
@@ -261,6 +427,12 @@ fn main() {
         });
         println!("oneharness {version} (mock)");
         return;
+    }
+
+    // `oneharness config`: the effective layered configuration, as `llmlint
+    // fingerprint` queries it. Never a judge call.
+    if args.get(1).map(String::as_str) == Some("config") {
+        std::process::exit(config_command(&args));
     }
 
     let harness = arg_value(&args, "--harness").unwrap_or_else(|| "claude-code".into());

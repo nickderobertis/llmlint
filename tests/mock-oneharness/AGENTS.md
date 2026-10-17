@@ -7,6 +7,13 @@ only; it never reimplements llmlint's own logic.
 
 ## Fixture control (env vars read by the mock)
 
+- `config [--cwd DIR] [--config PATH]... --format json` answers like real
+  `oneharness config`: the named files (else `$ONEHARNESS_CONFIG` under the
+  nearest `oneharness.toml`/`.oneharness.toml` from `--cwd` up), each beneath its
+  `extends` chain, then every `ONEHARNESS_<FIELD>` env override, as `{value,
+  source}` leaves beside `config_files`. An unreadable or invalid file exits 2.
+  It is what `llmlint fingerprint` queries; it never counts as a judge call.
+
 - `LLMLINT_MOCK_VERDICTS=<path>` — JSON map `rule -> spec`; a spec is a bool
   (`holds`), an object (`{holds, violations}`, optionally `{relevant, rationale}`
   for a relevance-gated rule), or an array of specs (one per judge call).

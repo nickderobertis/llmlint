@@ -4,6 +4,7 @@
 pub mod check_ignores;
 pub mod config;
 pub mod doctor;
+pub mod fingerprint;
 pub mod history;
 pub mod ignores;
 pub mod init;
@@ -31,6 +32,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Doctor(args)) => doctor::run(args),
         Some(Command::History(args)) => history::run(args),
         Some(Command::Plugins(args)) => plugins::run(args),
+        Some(Command::Fingerprint(args)) => fingerprint::run(args),
         None => lint::run(cli.lint),
     }
 }

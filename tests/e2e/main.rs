@@ -20,6 +20,7 @@ use predicates::prelude::*;
 use serde_json::Value;
 use tempfile::TempDir;
 
+mod fingerprint;
 mod judge_reply;
 mod prompt_size;
 

@@ -629,6 +629,7 @@ dependencies = [
  "ignore",
  "indicatif",
  "minijinja",
+ "ring",
  "schemars",
  "serde",
  "serde-saphyr",
@@ -682,6 +683,7 @@ version = "0.0.0"
 dependencies = [
  "llmlint",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

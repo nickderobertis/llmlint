@@ -320,6 +320,60 @@ impl Client {
         }
     }
 
+    /// The configuration oneharness would resolve for a judge run from `cwd`
+    /// with `configs` forwarded as layered `--config`s: `oneharness config --cwd
+    /// <cwd> [--config <file>]... --format json`, the effective layered config
+    /// (discovered or named files, each `extends` chain, and the `ONEHARNESS_*`
+    /// environment overrides) as `{value, source}` per field. Spawned with the
+    /// same history-label environment a judge run gets, so it reports exactly what
+    /// that run would see. llmlint never resolves oneharness's configuration
+    /// itself; a refusal (an unreadable or invalid file) is oneharness's own
+    /// message.
+    pub fn resolved_config(&self, cwd: &Path, configs: &[PathBuf]) -> Result<Value> {
+        let mut args: Vec<OsString> = vec![
+            "config".into(),
+            "--cwd".into(),
+            cwd.as_os_str().to_os_string(),
+            "--format".into(),
+            "json".into(),
+        ];
+        for c in configs {
+            args.push("--config".into());
+            args.push(c.as_os_str().to_os_string());
+        }
+        let output = match Command::new(&self.bin)
+            .args(&args)
+            .env(
+                HISTORY_LABELS_ENV,
+                llmlint_history_labels(std::env::var(HISTORY_LABELS_ENV).ok()),
+            )
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::OneharnessNotFound(self.bin.display().to_string()))
+            }
+            Err(e) => return Err(io_err("running oneharness config", e)),
+        };
+        if !output.status.success() {
+            return Err(Error::HarnessConfig(format!(
+                "`{}` could not resolve it (exit {:?}): {}; fix the oneharness config it \
+                 names, or check the files oneharness discovers from {}",
+                render_command(&self.bin, &args),
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).trim(),
+                cwd.display()
+            )));
+        }
+        serde_json::from_slice(&output.stdout).map_err(|e| {
+            Error::HarnessConfig(format!(
+                "could not parse `oneharness config` output ({e}); stderr: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        })
+    }
+
     /// Run one judge and return its per-rule verdicts. Convenience wrapper over
     /// [`Client::run_with_trace`] that discards the debug trace.
     pub fn run(&self, req: &RunRequest) -> Result<BTreeMap<String, RuleVerdict>> {

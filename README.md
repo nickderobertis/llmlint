@@ -1126,6 +1126,45 @@ source.
   repeatable) drill into part of a run; `--path` prints just the record's file
   path; `--format json` emits the raw record (or a JSON array when listing);
   `--dir`/`--cwd`/`--limit` tune where and how much.
+- `llmlint fingerprint` — print one stable digest of everything that decides a
+  `lint` verdict: exactly one line on stdout, 64 lowercase hex characters (a
+  SHA-256) and a newline, exit `0`. It is the cache key for a judged-lint result —
+  e.g. the Nx `runtime` input of a cached lint target, run from the workspace
+  root — so a verdict is replayed only for the judge that produced it, and from
+  any worktree. It takes the `lint` options that select or change the judge, with
+  the same meaning and precedence: `-c/--config`, `--oneharness-config`,
+  `--oneharness-bin`, `--model`, `--prompt-template`, `--schema-max-retries`,
+  `--rationales`/`--no-rationales`, `--max-prompt-chars` and `--cwd`; run with the
+  same options and environment as a `lint`, it describes the judge that `lint`
+  would run. It makes **no model call** — it only asks oneharness for its version
+  and its resolved configuration (`oneharness config`).
+
+  The digest covers llmlint's own version; the effective merged configuration
+  (after `LLMLINT_*` and flag overrides), with every remote plugin as the version
+  actually fetched — so a range pin such as `@1` resolving to a newer version
+  changes it; the prompt template in force; and the oneharness configuration the
+  judge would run under — the files `oneharness.config` and `--oneharness-config`
+  name (or oneharness's own discovered configuration), every `extends` parent,
+  and the `ONEHARNESS_*` environment overrides oneharness applies — together with
+  the version the oneharness binary reports. A changed model anywhere in that
+  harness configuration, directly or through an `extends` parent, changes it.
+
+  It holds **nothing checkout-specific**: paths inside the lint directory are
+  hashed relative to it, and the oneharness binary's path,
+  `LLMLINT_ONEHARNESS_BIN`'s path, `HOME`, the plugin cache's location and its
+  confirmation timestamps contribute nothing — the same judge in two worktrees at
+  different absolute paths prints the same digest. **Recording-only settings**,
+  which record a run but cannot change its verdict, are left out as well:
+  llmlint's `history.enabled`, `history.max_runs` and `history.dir` (with
+  `LLMLINT_HISTORY_ENABLED`, `LLMLINT_HISTORY_MAX_RUNS`, `LLMLINT_HISTORY_DIR` and
+  `LLMLINT_NO_HISTORY`), and oneharness's `history`, `history_dir`,
+  `history_pointer_file` and `history_labels` — so an orchestrator's per-attempt
+  run labels never turn a replay into a miss.
+
+  On failure — a config that does not parse or validate, a plugin that cannot be
+  resolved, a harness configuration that cannot be read or resolved, a oneharness
+  that cannot report its version — it prints **nothing on stdout**, names the
+  cause and the next step on stderr, and exits `2`.
 - `llmlint plugins` — report the [plugin cache](#plugins-shared-rule-sets), one
   line per cached entry, so a plugin resolving to an unexpected version is visible
   rather than inferred; `llmlint plugins clear` empties it so the next run

@@ -755,7 +755,7 @@ fn select_rules<'a>(config: &'a Config, args: &LintArgs) -> Vec<&'a Rule> {
 /// `--timeout`, `--oneharness-config`, and the file/agent/rule selectors are
 /// resolved at their use sites (they fold in env/discovery too) and are not
 /// overlaid here.
-fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
+pub(crate) fn apply_cli_overrides(config: &mut Config, args: &LintArgs) -> Result<()> {
     if let Some(path) = &args.prompt_template {
         let text = std::fs::read_to_string(path)
             .map_err(|e| io_err(format!("reading prompt template {}", path.display()), e))?;
@@ -807,7 +807,7 @@ fn restrict_to_changed(
 /// `LLMLINT_ONEHARNESS_CONFIG`'s paths already appended by the env layer), then
 /// the `--oneharness-config` flags in order — the command line is the top layer,
 /// so it comes last and oneharness lets it win.
-fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Vec<PathBuf> {
+pub(crate) fn resolve_oneharness_config(args: &LintArgs, config: &Config) -> Vec<PathBuf> {
     config
         .oneharness
         .config
