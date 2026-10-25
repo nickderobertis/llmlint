@@ -682,7 +682,11 @@ resolves the oneharness the test put on PATH.
   when one part fails; a single hunk over the bound is cut at lines, every part
   re-headered so each added row and each trimmed ignore-block run sits on its
   true file line, and the JSON plan gives each part's `diff_part` (none on the
-  unsplit call beside it); a file one of whose diff lines cannot fit beside the
+  unsplit call beside it), and `llmlint history` reads that run back as a
+  schema-version-2 record keeping every part (an unsplit run's record has no
+  version stamp and no part); a part ending on a hunk the bound cannot hold is
+  filled with that hunk's first lines, and a file with no final newline keeps
+  each `\ No newline` marker under its line; a file one of whose diff lines cannot fit beside the
   prompt's overhead is an exit-2 `ERROR` naming the file, its size, the bound and
   the remedy, and no prompt over the bound (nor carrying it) reaches the harness; `--max-prompt-chars` overrides
   `max_prompt_chars` both ways and `LLMLINT_MAX_PROMPT_CHARS` (which itself

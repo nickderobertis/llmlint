@@ -943,3 +943,93 @@ fn a_hunk_over_the_bound_is_cut_at_lines_keeping_true_line_numbers_and_ignores()
     assert!(record.get("schema_version").is_none(), "{record:#}");
     assert!(!record.to_string().contains("diff_part"), "{record:#}");
 }
+
+#[test]
+fn a_part_is_filled_from_an_oversized_next_hunk_and_keeps_no_newline_markers() {
+    // A small hunk, then a hunk far over the bound running to the end of a file
+    // with no final newline: the first part carries the small hunk whole and
+    // fills the rest with the big hunk's first lines, and each `\ No newline`
+    // marker stays under the line it qualifies.
+    const N: usize = 1_500;
+    let rows = |rewritten: bool| -> String {
+        let body: Vec<String> = (0..N)
+            .map(|i| {
+                let changed = rewritten && (i == 2 || (i >= 200 && i % 2 == 1) || i == N - 1);
+                let cell = if changed { "regenerated" } else { "original" };
+                format!("| row {i:04} | {cell} cell value |")
+            })
+            .collect();
+        body.join("\n")
+    };
+    let p = committed_repo(TABLE_RULE, &[("src/tail.md", &rows(false))]);
+    p.write("src/tail.md", &rows(true));
+    let whole = git_out(p.path(), &["diff", "HEAD", "--", "src/tail.md"]);
+    assert_eq!(whole.matches("\n@@").count(), 2, "two hunks:\n{whole}");
+    assert_eq!(whole.matches("\\ No newline at end of file").count(), 2);
+    let bound = 20_000;
+    let log = p.path().join("log");
+    let out = p
+        .lint()
+        .args(["--diff", "--format", "json"])
+        .args(["--max-prompt-chars", &bound.to_string()])
+        .env("LLMLINT_MOCK_PROMPTLOG", &log)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+
+    let parts = table_parts(&log);
+    assert!(parts.len() >= 3, "{} parts", parts.len());
+    let mut added: Vec<String> = Vec::new();
+    let mut markers = 0;
+    for part in &parts {
+        assert!(part.chars <= bound, "a {}-char prompt", part.chars);
+        let mut prev = "";
+        for l in part.hunks.lines() {
+            if l.starts_with('\\') {
+                // A marker never opens a part or a hunk.
+                assert!(
+                    prev.starts_with('+') || prev.starts_with('-'),
+                    "{l} after {prev}"
+                );
+                markers += 1;
+            } else if let Some(row) = l.strip_prefix('+') {
+                added.push(row.to_string());
+            }
+            prev = l;
+        }
+    }
+    assert_eq!(markers, 2);
+    // Every added row, once and in file order.
+    let expected: Vec<String> = whole
+        .lines()
+        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .map(|l| l[1..].to_string())
+        .collect();
+    assert_eq!(added, expected);
+    // The first part is the small hunk whole, then the big hunk's first lines
+    // under a header recomputed for them.
+    let first = &parts[0].hunks;
+    let headers: Vec<&str> = first.lines().filter(|l| l.starts_with("@@")).collect();
+    assert_eq!(headers.len(), 2, "{first}");
+    assert!(
+        whole.contains(&format!("{}\n", headers[0])),
+        "{}",
+        headers[0]
+    );
+    assert!(
+        !whole.contains(&format!("{}\n", headers[1])),
+        "{}",
+        headers[1]
+    );
+    // The last part ends at the file's last line and its marker.
+    let last = &parts.last().unwrap().hunks;
+    assert!(
+        last.ends_with(&format!(
+            "+| row {:04} | regenerated cell value |\n\\ No newline at end of file\n",
+            N - 1
+        )),
+        "{last}"
+    );
+}
