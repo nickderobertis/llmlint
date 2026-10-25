@@ -1246,6 +1246,29 @@ fn a_rule_failing_in_one_part_of_an_oversized_file_fails_it_without_diff() {
     assert_eq!(violations[0]["line"], line);
 }
 
+/// Without `--diff` a file holding one line too long to fit any part beside
+/// the prompt's overhead cannot be split at a line boundary, so it is refused by
+/// name and never sent, and a small file beside it is still judged.
+#[test]
+fn a_content_line_too_long_for_any_part_is_refused_by_name_without_diff() {
+    let long = format!("short\n{}\nshort\n", "x".repeat(TABLE_BOUND + 1));
+    let p = committed_repo(
+        TABLE_RULE,
+        &[("src/long.md", &long), ("src/small.md", "tiny\n")],
+    );
+    let (code, report) = run_whole(&p, "log", r#"{"t_rule": true}"#, &[]);
+    assert_eq!(code, Some(2), "{report:#}");
+    let errors = report["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1, "{report:#}");
+    let error = errors[0].as_str().unwrap();
+    assert!(error.contains("file src/long.md:"), "{error}");
+    assert!(error.contains("not sent"), "{error}");
+    let (parts, whole) = lines_parts(&p.path().join("log"));
+    assert!(parts.is_empty(), "no part of the file was sent");
+    assert_eq!(whole.len(), 1);
+    assert_eq!(whole[0].files, vec!["src/small.md".to_string()]);
+}
+
 /// Without `--diff` a file's prompt is over the bound only on its fixed
 /// overhead (the rules and guidance), which no split of its lines can shrink,
 /// so it is refused by name and never sent.

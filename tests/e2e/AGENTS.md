@@ -707,8 +707,10 @@ resolves the oneharness the test put on PATH.
   numbered lines, packed so no two adjacent parts fit one call, every line once,
   the same ranges on a rerun and named in `--plan-only`, while the small file is
   one call by name; every part passing passes it as one vote, and failing in
-  exactly one part fails it with that part's violation; a bound its prompt's
-  overhead alone exceeds refuses it by name, with no call.
+  exactly one part fails it with that part's violation; a file holding one line
+  too long for any part is an exit-2 error naming it, no call carrying it, its
+  small sibling still judged; a bound its prompt's overhead alone exceeds
+  refuses it by name, with no call.
 - **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
   with two selected rules — the workload at which 0.4.10 exited 0 on each of
   these — a schema-valid reply of `{}`, one holding only one rule, one naming
