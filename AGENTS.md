@@ -517,7 +517,15 @@ harness reads target files on-demand with its own tools.
   its files in the part, so every rule still sees each file once per judge index.
   A split rule's parts are **one judge's vote** (`RuleVerdict::merge_parts`, keyed
   by judge index in `lint.rs`), never extra votes. A file over the bound alone is
-  never sent — one errored result per agent and file. The rework prompt is held to
+  judged in parts of its diff (`domain::diffsplit`): cut between hunks, and inside
+  a hunk (re-headered, so line numbers stay true) only when that hunk alone does
+  not fit, packed greedily; each part is a one-file run carrying a `DiffPart`
+  that `render_system` shows (and trims) in place of the whole diff. Parts are
+  packed against the widest part number, so renumbering never grows a prompt.
+  Only a file whose single diff line cannot fit beside the overhead is never
+  sent — one errored result per agent and file. The parts are a pure function of
+  the diff, rules and bound, all already in `llmlint fingerprint`'s material, so
+  the fingerprint needs no new input. The rework prompt is held to
   the bound too (skipped, falling back to deterministic cleanup).
 - **A reply answers exactly its batch (convention):** `applicability::
   hold_reply_to_batch` compares each reply's rule names to the call's rules: an

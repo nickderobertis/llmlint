@@ -203,12 +203,15 @@ fn a_diff_over_the_bound_is_split_and_every_rule_still_judges_every_file_once() 
 }
 
 #[test]
-fn a_single_file_over_the_bound_is_an_error_and_is_never_sent() {
+fn a_file_whose_one_diff_line_cannot_fit_is_an_error_and_is_never_sent() {
+    // Splitting stops at a line: a single changed line longer than the bound
+    // leaves no part that could carry it, so the file is refused, never dropped.
     let p = changed_repo("", 2);
-    let big: String = (0..400)
-        .map(|i| format!("fn a_much_larger_change_{i:04}() {{}}\n"))
-        .collect();
-    p.write("src/f3.rs", &format!("fn base() {{}}\n{big}"));
+    let line: String = "x".repeat(12_000);
+    p.write(
+        "src/f3.rs",
+        &format!("fn base() {{}}\nconst HUGE: &str = \"{line}\";\n"),
+    );
     let bound = 8_000;
     let (out, calls) = run(&p, "log", &["--max-prompt-chars", &bound.to_string()]);
     assert_eq!(out.status.code(), Some(2));
@@ -243,6 +246,181 @@ fn a_single_file_over_the_bound_is_an_error_and_is_never_sent() {
     }
     let judged: Vec<String> = coverage(&calls).into_keys().map(|(_, f)| f).collect();
     assert!(judged.contains(&"src/f5.rs".to_string()));
+}
+
+/// A table of `ROWS` rows, every tenth of which a regeneration rewrites: one
+/// small hunk per rewritten row, the shape of a large generated file whose
+/// whole diff is over the bound.
+const ROWS: usize = 3_000;
+const TABLE_RULE: &str = "  - { name: t_rule, description: \"true when ok; false otherwise.\" }\n";
+
+fn table(rewritten: bool) -> String {
+    (0..ROWS)
+        .map(|i| {
+            let cell = if rewritten && i % 10 == 5 {
+                "regenerated"
+            } else {
+                "original"
+            };
+            format!("| row {i:04} | {cell} |\n")
+        })
+        .collect()
+}
+
+/// A repo whose one table file was rewritten in `ROWS / 10` places.
+fn regenerated_table() -> Project {
+    let p = committed_repo(TABLE_RULE, &[("src/table.md", &table(false))]);
+    p.write("src/table.md", &table(true));
+    p
+}
+
+/// One judge call over a part of the table's diff: its part number, how many
+/// parts there were, its size, and the hunks it carried (the diff block from its
+/// first `@@` line).
+struct TablePart {
+    index: usize,
+    of: usize,
+    chars: usize,
+    hunks: String,
+    files: Vec<String>,
+}
+
+fn table_parts(log: &Path) -> Vec<TablePart> {
+    let mut parts: Vec<TablePart> = fs::read_dir(log)
+        .unwrap()
+        .map(|e| {
+            let record: Value =
+                serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap();
+            let call = parse_call(&record);
+            let system = record["system"].as_str().unwrap();
+            let note = system
+                .split("This is part ")
+                .nth(1)
+                .unwrap_or_else(|| panic!("no part note:\n{system}"));
+            let (index, rest) = note.split_once(" of ").unwrap();
+            let of = rest.split(' ').next().unwrap();
+            let diff = system.split("```diff\n").nth(1).unwrap();
+            let diff = diff.split("```").next().unwrap();
+            // The diff's own text, without the blank line closing the fence.
+            let hunks = format!("{}\n", diff[diff.find("@@").unwrap()..].trim_end());
+            TablePart {
+                index: index.parse().unwrap(),
+                of: of.parse().unwrap(),
+                chars: call.chars,
+                hunks,
+                files: call.files,
+            }
+        })
+        .collect();
+    parts.sort_by_key(|p| p.index);
+    parts
+}
+
+const TABLE_BOUND: usize = 20_000;
+
+#[test]
+fn an_oversized_diff_is_judged_in_parts_each_within_the_bound() {
+    let p = regenerated_table();
+    let log = p.path().join("log");
+    let out = p
+        .lint()
+        .args(["--diff", "--format", "json"])
+        .args(["--max-prompt-chars", &TABLE_BOUND.to_string()])
+        .env("LLMLINT_MOCK_PROMPTLOG", &log)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+    let parts = table_parts(&log);
+    assert!(parts.len() >= 3, "{} parts", parts.len());
+    let whole = git_out(p.path(), &["diff", "HEAD", "--", "src/table.md"]);
+    let whole_hunks = &whole[whole.find("@@").unwrap()..];
+    assert!(
+        whole_hunks.len() > TABLE_BOUND,
+        "the diff alone is over the bound"
+    );
+    for (i, part) in parts.iter().enumerate() {
+        assert_eq!((part.index, part.of), (i + 1, parts.len()));
+        assert_eq!(part.files, vec!["src/table.md".to_string()]);
+        assert!(part.chars <= TABLE_BOUND, "a {}-char prompt", part.chars);
+        // Cut only between hunks: every header is one of the whole diff's.
+        for header in part.hunks.lines().filter(|l| l.starts_with("@@")) {
+            assert!(whole_hunks.contains(&format!("{header}\n")), "{header}");
+        }
+        // Packed: the next part's hunks would not have fit beside this one's.
+        if let Some(next) = parts.get(i + 1) {
+            assert!(
+                part.chars + next.hunks.chars().count() > TABLE_BOUND,
+                "parts {} and {} would fit one prompt",
+                part.index,
+                next.index
+            );
+        }
+    }
+    // Every hunk of the change was judged, once and in order.
+    let judged: String = parts.iter().map(|p| p.hunks.as_str()).collect();
+    assert_eq!(judged, format!("{}\n", whole_hunks.trim_end()));
+    // The parts are one judge's vote: the file passes when every part does.
+    let rule = &report["rules"][0];
+    assert_eq!(rule["outcome"], "pass", "{report:#}");
+    assert_eq!(rule["votes_total"], 1, "{report:#}");
+
+    // The plan names each call's part, and the same input splits the same way.
+    let plan = p
+        .lint()
+        .args(["--diff", "--plan-only"])
+        .args(["--max-prompt-chars", &TABLE_BOUND.to_string()])
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&plan.stdout);
+    let n = parts.len();
+    assert!(
+        plan.contains(&format!("src/table.md (diff part {n} of {n})")),
+        "{plan}"
+    );
+    let again = p.path().join("again");
+    p.lint()
+        .args(["--diff", "--max-prompt-chars", &TABLE_BOUND.to_string()])
+        .env("LLMLINT_MOCK_PROMPTLOG", &again)
+        .output()
+        .unwrap();
+    let again: Vec<String> = table_parts(&again).into_iter().map(|p| p.hunks).collect();
+    let first: Vec<String> = parts.into_iter().map(|p| p.hunks).collect();
+    assert_eq!(again, first);
+}
+
+#[test]
+fn a_rule_failing_in_one_part_of_an_oversized_file_fails_the_file() {
+    let p = regenerated_table();
+    // Serially, the parts arrive in order: the rule fails in the second alone.
+    let spec = p.write_verdicts(
+        r#"{"t_rule": [true, {"holds": false, "violations": [{"file": "src/table.md", "line": 106, "message": "bad cell"}]}, true]}"#,
+    );
+    let log = p.path().join("log");
+    let out = p
+        .lint()
+        .args(["--diff", "--format", "json", "--max-parallel", "1"])
+        .args(["--max-prompt-chars", &TABLE_BOUND.to_string()])
+        .env("LLMLINT_MOCK_VERDICTS", &spec)
+        .env("LLMLINT_MOCK_STATE", p.path().join("state"))
+        .env("LLMLINT_MOCK_PROMPTLOG", &log)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(table_parts(&log).len() >= 3);
+    assert_eq!(out.status.code(), Some(1), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+    let rule = &report["rules"][0];
+    assert_eq!(rule["outcome"], "fail", "{report:#}");
+    assert_eq!(rule["votes_total"], 1, "{report:#}");
+    let messages: Vec<&str> = rule["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["message"].as_str().unwrap())
+        .collect();
+    assert_eq!(messages, vec!["bad cell"], "{report:#}");
 }
 
 #[test]

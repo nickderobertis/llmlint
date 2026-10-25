@@ -674,9 +674,14 @@ resolves the oneharness the test put on PATH.
   (`LLMLINT_MOCK_PROMPTLOG`) and read back from its target-file list and `Scope:`
   lines: a `--diff` over the bound is judged in several calls, each at most the
   bound, every rule shown every file it selects exactly once, verdicts unchanged
-  from the unbounded run; a single file over the bound is an exit-2 `ERROR` naming
-  the file, its size, the bound and the remedy, and no prompt over the bound (nor
-  carrying it) reaches the harness; `--max-prompt-chars` overrides
+  from the unbounded run; a file whose diff alone is over the bound (a table with
+  hundreds of small hunks) is judged in parts, each within the bound, cut only
+  between hunks, packed so no two adjacent parts would fit one prompt, every hunk
+  judged once and in order, the same parts on a rerun and named in the plan — it
+  passes when every part passes and fails, with exactly that part's violation,
+  when one part fails; a file one of whose diff lines cannot fit beside the
+  prompt's overhead is an exit-2 `ERROR` naming the file, its size, the bound and
+  the remedy, and no prompt over the bound (nor carrying it) reaches the harness; `--max-prompt-chars` overrides
   `max_prompt_chars` both ways and `LLMLINT_MAX_PROMPT_CHARS` (which itself
   splits); a corrective re-ask that would exceed the bound is not sent (control:
   unbounded, it is) and the deterministic cleanup still decides the verdict; a

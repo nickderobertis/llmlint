@@ -46,6 +46,18 @@ pub struct FileDiff {
     pub file: String,
     /// The unified diff text for that file.
     pub diff: String,
+    /// Set when `diff` is one part of a file's diff that was too large for one
+    /// judge prompt, the other parts being judged in calls of their own; omitted
+    /// otherwise, so a template rendering a whole diff is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub part: Option<PartOf>,
+}
+
+/// Which part, of how many, a diff split across judge calls is (1-based).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PartOf {
+    pub index: usize,
+    pub of: usize,
 }
 
 /// One target file as the prompt presents it: its applicability (which rules to
@@ -58,6 +70,8 @@ struct FileEntry<'a> {
     rules: &'a [String],
     #[serde(skip_serializing_if = "Option::is_none")]
     diff: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    part: Option<PartOf>,
 }
 
 /// A rule plus its compact, computed scope presentation. Flattening preserves
@@ -140,6 +154,10 @@ pub fn render(
                 .iter()
                 .find(|d| d.file == fr.file)
                 .map(|d| d.diff.as_str()),
+            part: diffs
+                .iter()
+                .find(|d| d.file == fr.file)
+                .and_then(|d| d.part),
         })
         .collect();
     let mut env = minijinja::Environment::new();
@@ -223,6 +241,7 @@ mod tests {
         let diffs = vec![FileDiff {
             file: "src/a.rs".into(),
             diff: "@@ -1 +1 @@\n-old\n+new\n".into(),
+            part: None,
         }];
         let on = render(
             tmpl,
@@ -248,6 +267,7 @@ mod tests {
         let diffs = vec![FileDiff {
             file: "src/a.rs".into(),
             diff: "@@ -1 +1 @@\n+new\n".into(),
+            part: None,
         }];
         let out = render(
             tmpl,
@@ -379,6 +399,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_default_template_names_a_diff_part_only_for_a_split_diff() {
+        let diff = |part| {
+            vec![FileDiff {
+                file: "src/a.rs".into(),
+                diff: "@@ -1 +1 @@\n-old\n+new\n".into(),
+                part,
+            }]
+        };
+        let render_with = |diffs: &[FileDiff]| {
+            render(
+                crate::io::assets::DEFAULT_TEMPLATE,
+                &rules(),
+                &["src/a.rs".into()],
+                diffs,
+                false,
+                false,
+                false,
+            )
+            .unwrap()
+        };
+        let whole = render_with(&diff(None));
+        assert!(!whole.contains("of this file's diff"), "{whole}");
+        assert!(
+            whole.contains("- src/a.rs\n\n```diff\n@@ -1 +1 @@\n"),
+            "{whole}"
+        );
+        let part = render_with(&diff(Some(PartOf { index: 2, of: 3 })));
+        assert!(
+            part.contains("- src/a.rs\n\nThis is part 2 of 3 of this file's diff"),
+            "{part}"
+        );
+        assert!(
+            part.contains("in their own calls.\n\n```diff\n@@ -1 +1 @@\n"),
+            "{part}"
+        );
     }
 
     #[test]

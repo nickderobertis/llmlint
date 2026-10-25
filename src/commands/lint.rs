@@ -306,11 +306,13 @@ pub(crate) fn run_loaded(
 
     // Bound every judge prompt to `max_prompt_chars`: a batch whose rendered
     // prompt is over it is split across more calls (each rule still judging each
-    // of its files once), and a file over it on its own is never sent — it is an
-    // errored result naming the file, its size and the remedy. Done before
-    // `--plan-only` so the plan shows the split.
+    // of its files once), and a file over it on its own is judged in parts of its
+    // diff, split at hunk or line boundaries. A file that still cannot fit (one
+    // diff line beside the prompt's overhead is over the bound) is never sent —
+    // it is an errored result naming the file, its size and the remedy. Done
+    // before `--plan-only` so the plan shows the split.
     let max_prompt_chars = config.max_prompt_chars();
-    let oversized = promptsize::bound(&mut the_plan, max_prompt_chars, |run| {
+    let oversized = promptsize::bound(&mut the_plan, max_prompt_chars, &diffs, |run| {
         // A run whose template cannot render is kept whole, so the judge call
         // reports the render error as it always has.
         render_system(run, &diffs, &suppressions)
@@ -962,11 +964,16 @@ fn render_system(
     // ignored (line/block directives) for *every* rule that still applies to the
     // file is replaced with an honest one-line marker (`diffmodel`), so the prompt
     // never carries — nor pays tokens for — changes no applicable rule will judge.
+    // A run carrying one part of its one file's diff shows that part in place of
+    // the whole diff; the part is a valid diff, so it is trimmed the same way.
     let file_diffs: Vec<template::FileDiff> = run
         .files
         .iter()
         .filter_map(|p| {
-            let diff = diffs.get(p)?;
+            let (diff, part) = match &run.diff_part {
+                Some(dp) => (&dp.diff, Some(dp.part)),
+                None => (diffs.get(p)?, None),
+            };
             let slash = files::to_slash(p);
             // Rules in this batch that still apply to this file (its effective
             // scope). A change run is omittable only if ignored for all of them.
@@ -994,6 +1001,7 @@ fn render_system(
             Some(template::FileDiff {
                 file: slash,
                 diff: model.render_filtered(omit),
+                part,
             })
         })
         .collect();
