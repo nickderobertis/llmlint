@@ -1033,3 +1033,74 @@ fn a_part_is_filled_from_an_oversized_next_hunk_and_keeps_no_newline_markers() {
         "{last}"
     );
 }
+
+/// Without `--diff` a prompt names its target files and the judge reads them
+/// with its own tools, so a file's content never counts toward the bound: a
+/// file far larger than `max_prompt_chars` is one call, and its verdict is the
+/// judge's for the whole file — the rule passing passes it, failing fails it.
+#[test]
+fn a_file_larger_than_the_bound_is_judged_whole_without_diff() {
+    let p = committed_repo(TABLE_RULE, &[("src/table.md", &table(true))]);
+    let content = fs::read_to_string(p.path().join("src/table.md")).unwrap();
+    assert!(
+        content.len() > 3 * TABLE_BOUND,
+        "the file is over the bound"
+    );
+    for (verdict, outcome, code) in [
+        ("true", "pass", 0),
+        (
+            r#"{"holds": false, "violations": [{"file": "src/table.md", "line": 106, "message": "bad cell"}]}"#,
+            "fail",
+            1,
+        ),
+    ] {
+        let log = p.path().join(format!("log-{outcome}"));
+        let spec = p.write_verdicts(&format!(r#"{{"t_rule": {verdict}}}"#));
+        let out = p
+            .lint()
+            .args(["--format", "json"])
+            .args(["--max-prompt-chars", &TABLE_BOUND.to_string()])
+            .env("LLMLINT_MOCK_VERDICTS", &spec)
+            .env("LLMLINT_MOCK_PROMPTLOG", &log)
+            .output()
+            .unwrap();
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(code), "{report:#}");
+        assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+        let calls = calls(&log);
+        assert_eq!(calls.len(), 1, "one call judges the whole file");
+        assert_eq!(calls[0].files, vec!["src/table.md".to_string()]);
+        assert!(
+            calls[0].chars <= TABLE_BOUND,
+            "a {}-char prompt",
+            calls[0].chars
+        );
+        assert!(calls[0].chars < content.len(), "the content is not inlined");
+        let rule = &report["rules"][0];
+        assert_eq!(rule["outcome"], outcome, "{report:#}");
+        assert_eq!(rule["votes_total"], 1, "{report:#}");
+    }
+}
+
+/// Without `--diff` a file's prompt is over the bound only on its fixed
+/// overhead (the rules and guidance), which no split of its lines can shrink,
+/// so it is refused by name and never sent.
+#[test]
+fn a_file_over_the_bound_on_overhead_alone_is_refused_without_diff() {
+    let p = committed_repo(TABLE_RULE, &[("src/table.md", &table(true))]);
+    let log = p.path().join("log");
+    let out = p
+        .lint()
+        .args(["--format", "json", "--max-prompt-chars", "500"])
+        .env("LLMLINT_MOCK_PROMPTLOG", &log)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{report:#}");
+    assert!(calls(&log).is_empty(), "nothing reached the harness");
+    let errors = report["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1, "{report:#}");
+    let error = errors[0].as_str().unwrap();
+    assert!(error.contains("file src/table.md:"), "{error}");
+    assert!(error.contains("not sent"), "{error}");
+}
