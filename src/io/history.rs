@@ -266,12 +266,13 @@ pub struct Record {
 impl Record {
     /// The record's schema version: its `schema_version`, or 1 for a record that
     /// has none (every record before version 2, and every version-2-era record
-    /// with no split diff).
-    pub fn schema_version(&self) -> u64 {
-        self.value
-            .get("schema_version")
-            .and_then(Value::as_u64)
-            .unwrap_or(1)
+    /// with no split file). A stored record is external input, so a key holding
+    /// anything but a whole non-negative number is `None`, never read as 1.
+    pub fn schema_version(&self) -> Option<u64> {
+        match self.value.get("schema_version") {
+            None => Some(1),
+            Some(v) => v.as_u64(),
+        }
     }
 
     /// The run's caller-supplied labels; an unlabelled record (no `labels` key)
@@ -607,8 +608,8 @@ mod tests {
 
         // Read back: the version, each diff part, and no part on the whole file.
         let back = load(dir.path(), id).unwrap();
-        assert_eq!(back.schema_version(), RECORD_SCHEMA_VERSION);
-        assert_eq!(back.schema_version(), 2);
+        assert_eq!(back.schema_version(), Some(RECORD_SCHEMA_VERSION));
+        assert_eq!(back.schema_version(), Some(2));
         let parts = back.value["plan"]["agents"][0]["judges"][0]["batches"][0]["parts"]
             .as_array()
             .unwrap()
@@ -638,7 +639,7 @@ mod tests {
         let path = write_record(dir.path(), id, &rec, 10).unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), GOLDEN_SPLIT_CONTENT);
         let back = load(dir.path(), id).unwrap();
-        assert_eq!(back.schema_version(), 2);
+        assert_eq!(back.schema_version(), Some(2));
         let parts = back.value["plan"]["agents"][0]["judges"][0]["batches"][0]["parts"]
             .as_array()
             .unwrap()
@@ -682,10 +683,20 @@ mod tests {
         ] {
             std::fs::write(dir.path().join(format!("{id}.json")), golden).unwrap();
             let record = load(dir.path(), id).unwrap();
-            assert_eq!(record.schema_version(), 1);
+            assert_eq!(record.schema_version(), Some(1));
             assert_eq!(record.value["rules"][0]["name"], "r");
         }
         assert_eq!(all(dir.path()).unwrap().len(), 2);
+
+        // A malformed version is not mistaken for version 1.
+        for bad in [json!("2"), json!(-1), json!(2.5), Value::Null] {
+            let record = Record {
+                id: "id".into(),
+                path: PathBuf::from("id.json"),
+                value: json!({ "schema_version": bad }),
+            };
+            assert_eq!(record.schema_version(), None, "{bad}");
+        }
     }
 
     #[test]

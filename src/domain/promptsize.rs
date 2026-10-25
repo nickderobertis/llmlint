@@ -63,21 +63,40 @@ pub fn bound(
     let mut oversized = Vec::new();
     for run in std::mem::take(&mut plan.runs) {
         let whole = measure(&run);
-        let by_content = over_on_content(&run, whole, max, diffs, contents, &mut measure);
-        if whole <= max && by_content.is_empty() {
+        // Each file whose content would take the judge over the bound is pulled
+        // out of the run into parts of its lines, or refused when a line cannot
+        // fit. A template that does not inline a part's lines (a custom one
+        // without `file_rules[i].content`) packs it into one part: it stays
+        // named in its run, judged as before.
+        let mut pulled: Vec<PathBuf> = Vec::new();
+        let mut content_parts = Vec::new();
+        let mut too_big = Vec::new();
+        for (alone, chars) in over_on_content(&run, whole, max, diffs, contents, &mut measure) {
+            let file = &alone.files[0];
+            match split_content(&alone, &contents[file], max, &mut measure) {
+                Some(more) if more.len() == 1 => continue,
+                Some(more) => content_parts.extend(more),
+                None => too_big.push(OversizedFile {
+                    file: to_slash(file),
+                    prompt_chars: chars,
+                    rules: alone.rules.iter().map(|r| r.name.clone()).collect(),
+                }),
+            }
+            pulled.push(file.clone());
+        }
+        if whole <= max && pulled.is_empty() {
             runs.push(run);
             continue;
         }
         let mut parts = Vec::new();
-        let mut too_big = Vec::new();
         let rest: Vec<PathBuf> = run
             .files
             .iter()
-            .filter(|f| !by_content.iter().any(|(big, _)| &big.files[0] == *f))
+            .filter(|f| !pulled.contains(f))
             .cloned()
             .collect();
         if !rest.is_empty() {
-            let (rest, chars) = if by_content.is_empty() {
+            let (rest, chars) = if pulled.is_empty() {
                 (run.clone(), whole)
             } else {
                 let rest = restrict(&run, &rest);
@@ -92,17 +111,7 @@ pub fn bound(
                 too_big.extend(refused);
             }
         }
-        for (alone, chars) in by_content {
-            let content = &contents[&alone.files[0]];
-            match split_content(&alone, content, max, &mut measure) {
-                Some(more) => parts.extend(more),
-                None => too_big.push(OversizedFile {
-                    file: to_slash(&alone.files[0]),
-                    prompt_chars: chars,
-                    rules: alone.rules.iter().map(|r| r.name.clone()).collect(),
-                }),
-            }
-        }
+        parts.extend(content_parts);
         if let Some(batch) = batch_plan(plan, &run) {
             batch.parts = if parts.len() > 1 {
                 parts
@@ -780,5 +789,21 @@ mod tests {
         assert_eq!(p.runs.len(), 1);
         assert_eq!(p.runs[0].files, vec![PathBuf::from("small.rs")]);
         assert!(p.runs.iter().all(|r| r.content_part.is_none()));
+    }
+
+    #[test]
+    fn a_template_that_does_not_inline_content_leaves_the_file_in_its_run() {
+        let (mut p, sizes) = plan(&[("big.rs", 0), ("small.rs", 20)]);
+        let contents = BTreeMap::from([(PathBuf::from("big.rs"), big_content(40))]);
+        // Every run measures as if its content part were not rendered.
+        let over = bound(&mut p, 120, &BTreeMap::new(), &contents, measure(&sizes));
+        assert!(over.is_empty());
+        assert_eq!(p.runs.len(), 1);
+        assert_eq!(p.runs[0].content_part, None);
+        assert_eq!(
+            p.runs[0].files,
+            vec![PathBuf::from("big.rs"), PathBuf::from("small.rs")]
+        );
+        assert_eq!(p.explanation.max_prompt_chars, None);
     }
 }

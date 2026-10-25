@@ -1216,6 +1216,82 @@ fn an_oversized_file_is_judged_in_parts_of_its_lines_without_diff() {
         ranges(&lines_parts(&p.path().join("again")).0),
         ranges(&parts)
     );
+
+    // The JSON plan names each call's line range after the small file's whole
+    // call, and the persisted record, read back through `llmlint history`, is
+    // schema version 2 and keeps them.
+    let batch = &report["plan"]["agents"][0]["judges"][0]["batches"][0];
+    let planned = batch["parts"].as_array().unwrap();
+    assert_eq!(planned.len(), n + 1, "{batch:#}");
+    assert_eq!(planned[0]["files"], serde_json::json!(["src/small.md"]));
+    assert!(planned[0].get("content_part").is_none(), "{batch:#}");
+    for (part, logged) in planned[1..].iter().zip(&parts) {
+        assert_eq!(part["files"], serde_json::json!(["src/table.md"]));
+        assert_eq!(
+            part["content_part"],
+            serde_json::json!({
+                "index": logged.index,
+                "of": n,
+                "start_line": logged.start_line,
+                "end_line": logged.end_line,
+            }),
+            "{batch:#}"
+        );
+        assert!(part.get("diff_part").is_none(), "{batch:#}");
+    }
+    fs::remove_dir_all(p.history_dir()).unwrap();
+    run_whole(&p, "recorded", r#"{"t_rule": true}"#, &[]);
+    let out = p
+        .bare()
+        .args(["history", "latest", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let record: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(record["schema_version"], 2, "{record:#}");
+    assert_eq!(
+        record["plan"]["agents"][0]["judges"][0]["batches"][0]["parts"],
+        batch["parts"]
+    );
+}
+
+/// A custom `prompt_template` that does not render a part's lines
+/// (`file_rules[i].content`) cannot judge a file in parts of its content, so
+/// the file stays named in its run and is judged as before: one call carrying
+/// both files, nothing inlined.
+#[test]
+fn a_template_without_content_judges_an_oversized_file_by_name_as_before() {
+    let p = big_table();
+    p.write(
+        "names.md",
+        "Judge:\n{% for fr in file_rules %}- {{ fr.file }}\n{% endfor %}",
+    );
+    let (code, report) = run_whole(
+        &p,
+        "log",
+        r#"{"t_rule": true}"#,
+        &["--prompt-template", "names.md"],
+    );
+    assert_eq!(code, Some(0), "{report:#}");
+    let systems: Vec<String> = fs::read_dir(p.path().join("log"))
+        .unwrap()
+        .map(|e| {
+            let record: Value =
+                serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap();
+            record["system"].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(systems.len(), 1, "{systems:?}");
+    assert!(systems[0].contains("- src/small.md\n"), "{}", systems[0]);
+    assert!(systems[0].contains("- src/table.md\n"), "{}", systems[0]);
+    assert!(!systems[0].contains("| row "), "nothing is inlined");
+    let batch = &report["plan"]["agents"][0]["judges"][0]["batches"][0];
+    assert!(batch.get("parts").is_none(), "no split: {batch:#}");
+    assert_eq!(report["rules"][0]["outcome"], "pass", "{report:#}");
 }
 
 /// A rule failing in exactly one part of an oversized file fails the file, with
