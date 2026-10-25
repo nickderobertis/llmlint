@@ -100,6 +100,13 @@ fn header_start(next: usize, count: usize) -> usize {
     }
 }
 
+/// Where a part may end: only between hunks, or between any two lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Boundary {
+    Hunk,
+    Line,
+}
+
 /// A position in the diff: a hunk index and a unit index within it. Positions
 /// order hunk-major; `(h, hunk_len)` and `(h + 1, 0)` name the same boundary, and
 /// the API only ever produces the latter.
@@ -215,16 +222,14 @@ impl SplitDiff {
         out
     }
 
-    /// Every unit boundary strictly after `from` up to and including `to`, hunk
-    /// boundaries only when `hunks_only`, in order.
-    fn ends(&self, from: Pos, to: Pos, hunks_only: bool) -> Vec<Pos> {
+    /// Every `boundary` strictly after `from` up to and including `to`, in order.
+    fn ends(&self, from: Pos, to: Pos, boundary: Boundary) -> Vec<Pos> {
         let mut out = Vec::new();
         let mut pos = from;
         while pos < to {
-            pos = if hunks_only {
-                self.hunk_end(pos)
-            } else {
-                self.normalize((pos.0, pos.1 + 1))
+            pos = match boundary {
+                Boundary::Hunk => self.hunk_end(pos),
+                Boundary::Line => self.normalize((pos.0, pos.1 + 1)),
             };
             out.push(pos.min(to));
         }
@@ -293,7 +298,7 @@ pub fn pack(
     let mut parts = Vec::new();
     let mut from = (0, 0);
     while from < end {
-        let hunk_ends = diff.ends(from, end, true);
+        let hunk_ends = diff.ends(from, end, Boundary::Hunk);
         let (to, chars) = match longest(from, &hunk_ends, &mut fits) {
             Some((to, chars)) if to == end => (to, chars),
             Some((to, chars)) => {
@@ -304,7 +309,7 @@ pub fn pack(
                 if fits(to, next).is_some() || !diff.cuttable(to) {
                     (to, chars)
                 } else {
-                    let lines = diff.ends(to, next, false);
+                    let lines = diff.ends(to, next, Boundary::Line);
                     match longest(from, &lines, &mut fits) {
                         Some((cut, more)) if cut < next => (cut, more),
                         _ => (to, chars),
@@ -312,7 +317,7 @@ pub fn pack(
                 }
             }
             None if diff.cuttable(from) => {
-                let lines = diff.ends(from, diff.hunk_end(from), false);
+                let lines = diff.ends(from, diff.hunk_end(from), Boundary::Line);
                 longest(from, &lines, &mut fits)?
             }
             None => return None,

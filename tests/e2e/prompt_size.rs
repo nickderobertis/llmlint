@@ -767,3 +767,144 @@ fn a_zero_bound_is_rejected() {
         .code(2)
         .stderr(predicate::str::contains("LLMLINT_MAX_PROMPT_CHARS"));
 }
+
+#[test]
+fn a_hunk_over_the_bound_is_cut_at_lines_keeping_true_line_numbers_and_ignores() {
+    // Every other row rewritten: one hunk far over the bound, its single-line
+    // change runs separated by context. Rows 1000-1099 sit in an ignore block
+    // for the rule, so their runs are trimmed from whichever part carries them —
+    // which only lands on the right lines if each cut part is re-headered with
+    // the file's true line numbers.
+    const N: usize = 2_000;
+    let row = |i: usize, cell: &str| format!("| row {i:04} | {cell} cell value |\n");
+    let rows = |rewritten: bool| -> String {
+        (0..N)
+            .map(|i| {
+                let mut out = String::new();
+                if i == 1_000 {
+                    out.push_str(&format!(
+                        "<!-- llmlint: {}[t_rule] generated rows -->\n",
+                        "ignore-block"
+                    ));
+                }
+                out.push_str(&row(
+                    i,
+                    if rewritten && i % 2 == 1 {
+                        "regenerated"
+                    } else {
+                        "original"
+                    },
+                ));
+                if i == 1_099 {
+                    out.push_str(&format!("<!-- llmlint: {}[t_rule] -->\n", "ignore-end"));
+                }
+                out
+            })
+            .collect()
+    };
+    let p = committed_repo(
+        TABLE_RULE,
+        &[("src/block.md", &rows(false)), ("src/small.md", "a\n")],
+    );
+    p.write("src/block.md", &rows(true));
+    p.write("src/small.md", "b\n");
+    let whole = git_out(p.path(), &["diff", "HEAD", "--", "src/block.md"]);
+    assert_eq!(whole.matches("\n@@").count(), 1, "one hunk:\n{whole}");
+    let bound = 30_000;
+    let log = p.path().join("log");
+    let out = p
+        .lint()
+        .args(["--diff", "--format", "json", "--max-parallel", "1"])
+        .args(["--max-prompt-chars", &bound.to_string()])
+        .env("LLMLINT_MOCK_PROMPTLOG", &log)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+
+    // The new file's line for each row, to check every part's numbering against.
+    let line_of: BTreeMap<String, usize> = rows(true)
+        .lines()
+        .enumerate()
+        .map(|(n, l)| (l.to_string(), n + 1))
+        .collect();
+    let records: Vec<Value> = fs::read_dir(&log)
+        .unwrap()
+        .map(|e| serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap())
+        .collect();
+    let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut omitted: Vec<usize> = Vec::new();
+    let mut parts = 0;
+    for record in &records {
+        let call = parse_call(record);
+        assert!(call.chars <= bound, "a {}-char prompt", call.chars);
+        if call.files != vec!["src/block.md".to_string()] {
+            continue;
+        }
+        parts += 1;
+        let system = record["system"].as_str().unwrap();
+        let diff = system.split("```diff\n").nth(1).unwrap();
+        let diff = diff.split("```").next().unwrap();
+        let mut new_line = 0;
+        for l in diff.lines() {
+            if let Some(header) = l.strip_prefix("@@ ") {
+                new_line = header
+                    .split('+')
+                    .nth(1)
+                    .and_then(|r| r.split(',').next())
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+            } else if let Some(text) = l.strip_prefix('+') {
+                if text.starts_with("++") {
+                    continue;
+                }
+                // Each added row is numbered with its true line in the file.
+                assert_eq!(line_of[text], new_line, "{text}");
+                *seen.entry(new_line).or_default() += 1;
+                new_line += 1;
+            } else if let Some(marker) = l.strip_prefix("[llmlint: 1 changed line ") {
+                // A trimmed run stands in for its one added line, at that line.
+                let at: usize = marker.split(' ').next().unwrap().parse().unwrap();
+                assert_eq!(at, new_line, "{l}");
+                omitted.push(at);
+                new_line += 1;
+            } else if l.starts_with(' ') {
+                new_line += 1;
+            }
+        }
+    }
+    assert!(parts >= 3, "{parts} parts");
+    // Every rewritten row outside the ignore block was shown exactly once; every
+    // one inside it was trimmed, each at its own line.
+    let rewritten = |lo: usize, hi: usize| -> Vec<usize> {
+        (lo..hi)
+            .filter(|i| i % 2 == 1)
+            .map(|i| line_of[row(i, "regenerated").trim_end()])
+            .collect()
+    };
+    let mut shown = rewritten(0, 1_000);
+    shown.extend(rewritten(1_100, N));
+    assert_eq!(seen.keys().copied().collect::<Vec<_>>(), shown);
+    assert!(seen.values().all(|n| *n == 1));
+    omitted.sort_unstable();
+    assert_eq!(omitted, rewritten(1_000, 1_100));
+
+    // The JSON plan names each diff part and leaves the whole small file's
+    // call without one.
+    let batch = &report["plan"]["agents"][0]["judges"][0]["batches"][0];
+    let planned = batch["parts"].as_array().unwrap();
+    assert_eq!(planned.len(), parts + 1, "{batch:#}");
+    for (i, part) in planned[..parts].iter().enumerate() {
+        assert_eq!(part["files"], serde_json::json!(["src/block.md"]));
+        assert_eq!(
+            part["diff_part"],
+            serde_json::json!({"index": i + 1, "of": parts}),
+            "{batch:#}"
+        );
+    }
+    let small = &planned[parts];
+    assert_eq!(small["files"], serde_json::json!(["src/small.md"]));
+    assert!(small.get("diff_part").is_none(), "{batch:#}");
+}
