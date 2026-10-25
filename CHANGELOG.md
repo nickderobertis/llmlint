@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.12](https://github.com/nickderobertis/llmlint/compare/v0.4.11...v0.4.12) - 2026-10-25
+
+### Added
+
+- judge a file whose prompt exceeds max_prompt_chars in parts instead of refusing it ([#261](https://github.com/nickderobertis/llmlint/pull/261))
+
 ## [0.4.11](https://github.com/nickderobertis/llmlint/compare/v0.4.10...v0.4.11) - 2026-10-17
 
 ### Added
