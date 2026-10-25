@@ -14,6 +14,7 @@ pub mod diffmodel;
 pub mod diffsplit;
 pub mod ignore;
 pub mod labels;
+pub mod linesplit;
 pub mod plan;
 pub mod promptsize;
 pub mod report;

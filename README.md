@@ -672,13 +672,17 @@ over the bound) into the fewest consecutive parts that each fit, every part
 carrying the file's header, true line numbers, and a note telling the judge which
 part it is. The parts are one vote: the file fails a rule when any part fails it
 and passes when every part passes. The same file, rules and bound always split the
-same way. Only a file that cannot fit even one diff line beside the prompt's fixed
-overhead is never sent: it is an errored result (exit `2`) naming the file, its
-prompt size and the bound, with the remedy — exclude the file if it is generated,
-split the change, or raise `max_prompt_chars` — instead of the opaque "no JSON
-value could be extracted" a harness returns for an overflowing turn. (Without
-`--diff` a prompt carries file paths, not contents — the judge reads files with
-its own tools — so a file's size never puts its prompt over the bound.)
+same way. Without `--diff` a prompt carries file paths, not contents — the judge
+reads each file whole with its own tools — so a file whose content beside its
+prompt would be over the bound is judged in parts of its content instead: each
+part inlines the longest run of the file's lines that fits, every line prefixed
+with its real line number, and the judge reviews only those lines. A file that
+fits is still named, not inlined. Only a file that cannot fit even one diff or
+content line beside the prompt's fixed overhead is never sent: it is an errored
+result (exit `2`) naming the file, its prompt size and the bound, with the
+remedy — exclude the file if it is generated, split the change, or raise
+`max_prompt_chars` — instead of the opaque "no JSON value could be extracted" a
+harness returns for an overflowing turn.
 
 Run **`llmlint lint --plan-only`** to see how a run would batch — agents, judge
 indices, each batch's rules and file union, any split to fit `max_prompt_chars`

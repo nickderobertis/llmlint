@@ -1034,52 +1034,216 @@ fn a_part_is_filled_from_an_oversized_next_hunk_and_keeps_no_newline_markers() {
     );
 }
 
-/// Without `--diff` a prompt names its target files and the judge reads them
-/// with its own tools, so a file's content never counts toward the bound: a
-/// file far larger than `max_prompt_chars` is one call, and its verdict is the
-/// judge's for the whole file — the rule passing passes it, failing fails it.
-#[test]
-fn a_file_larger_than_the_bound_is_judged_whole_without_diff() {
-    let p = committed_repo(TABLE_RULE, &[("src/table.md", &table(true))]);
+/// One judge call over a part of a file's content (no `--diff`): its part
+/// number, how many parts there were, its size, the file's line range it
+/// carried, and those lines with their line-number prefixes removed.
+struct LinesPart {
+    index: usize,
+    of: usize,
+    chars: usize,
+    start_line: usize,
+    end_line: usize,
+    lines: Vec<String>,
+    files: Vec<String>,
+}
+
+/// Every logged call that carried a part of a file's content, in part order,
+/// and how many calls carried none.
+fn lines_parts(log: &Path) -> (Vec<LinesPart>, Vec<Call>) {
+    let mut parts = Vec::new();
+    let mut whole = Vec::new();
+    for e in fs::read_dir(log).unwrap() {
+        let record: Value =
+            serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap();
+        let call = parse_call(&record);
+        let system = record["system"].as_str().unwrap();
+        let Some(note) = system.split("This is part ").nth(1) else {
+            whole.push(call);
+            continue;
+        };
+        let (index, rest) = note.split_once(" of ").unwrap();
+        let of = rest.split(' ').next().unwrap();
+        let range = system
+            .split("Its lines ")
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap();
+        let (start_line, end_line) = range.split_once('-').unwrap();
+        let block = system
+            .split("their own calls.\n\n```\n")
+            .nth(1)
+            .unwrap()
+            .split("\n```\n")
+            .next()
+            .unwrap();
+        let lines = block
+            .lines()
+            .map(|l| l.trim_start().split_once("  ").unwrap().1.to_string())
+            .collect();
+        parts.push(LinesPart {
+            index: index.parse().unwrap(),
+            of: of.parse().unwrap(),
+            chars: call.chars,
+            start_line: start_line.parse().unwrap(),
+            end_line: end_line.parse().unwrap(),
+            lines,
+            files: call.files,
+        });
+    }
+    parts.sort_by_key(|p| p.index);
+    (parts, whole)
+}
+
+/// A committed table over three times the bound, beside a small file: without
+/// `--diff` the judge would read the table whole, so it is judged in parts.
+fn big_table() -> Project {
+    let p = committed_repo(
+        TABLE_RULE,
+        &[("src/table.md", &table(true)), ("src/small.md", "tiny\n")],
+    );
     let content = fs::read_to_string(p.path().join("src/table.md")).unwrap();
     assert!(
         content.len() > 3 * TABLE_BOUND,
         "the file is over the bound"
     );
-    for (verdict, outcome, code) in [
-        ("true", "pass", 0),
-        (
-            r#"{"holds": false, "violations": [{"file": "src/table.md", "line": 106, "message": "bad cell"}]}"#,
-            "fail",
-            1,
-        ),
-    ] {
-        let log = p.path().join(format!("log-{outcome}"));
-        let spec = p.write_verdicts(&format!(r#"{{"t_rule": {verdict}}}"#));
-        let out = p
-            .lint()
-            .args(["--format", "json"])
-            .args(["--max-prompt-chars", &TABLE_BOUND.to_string()])
-            .env("LLMLINT_MOCK_VERDICTS", &spec)
-            .env("LLMLINT_MOCK_PROMPTLOG", &log)
-            .output()
-            .unwrap();
-        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(out.status.code(), Some(code), "{report:#}");
-        assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
-        let calls = calls(&log);
-        assert_eq!(calls.len(), 1, "one call judges the whole file");
-        assert_eq!(calls[0].files, vec!["src/table.md".to_string()]);
-        assert!(
-            calls[0].chars <= TABLE_BOUND,
-            "a {}-char prompt",
-            calls[0].chars
+    p
+}
+
+/// Run `lint --format json` over `p` without `--diff`, every prompt logged
+/// under `log`, returning the exit code and the report.
+fn run_whole(p: &Project, log: &str, verdicts: &str, extra: &[&str]) -> (Option<i32>, Value) {
+    let spec = p.write_verdicts(verdicts);
+    let out = p
+        .lint()
+        .args([
+            "--format",
+            "json",
+            "--max-prompt-chars",
+            &TABLE_BOUND.to_string(),
+        ])
+        .args(extra)
+        .env("LLMLINT_MOCK_VERDICTS", &spec)
+        .env("LLMLINT_MOCK_STATE", p.path().join(format!("{log}-state")))
+        .env("LLMLINT_MOCK_PROMPTLOG", p.path().join(log))
+        .output()
+        .unwrap();
+    (
+        out.status.code(),
+        serde_json::from_slice(&out.stdout).unwrap(),
+    )
+}
+
+/// Without `--diff` the judge reads a target file whole, so a file whose content
+/// would take it over `max_prompt_chars` is judged in parts of its lines: more
+/// than one call, none over the bound, each inlining a consecutive run of the
+/// file's real lines numbered as the file numbers them, packed so no two
+/// adjacent parts would fit one call — and the file passes when every part does.
+/// A file that fits is judged as before, by name, with nothing inlined.
+#[test]
+fn an_oversized_file_is_judged_in_parts_of_its_lines_without_diff() {
+    let p = big_table();
+    let (code, report) = run_whole(&p, "log", r#"{"t_rule": true}"#, &[]);
+    assert_eq!(code, Some(0), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+    let (parts, whole) = lines_parts(&p.path().join("log"));
+    assert!(parts.len() > 1, "{} parts", parts.len());
+    let content = fs::read_to_string(p.path().join("src/table.md")).unwrap();
+    let file_lines: Vec<&str> = content.lines().collect();
+    let mut next = 1;
+    for (i, part) in parts.iter().enumerate() {
+        assert_eq!((part.index, part.of), (i + 1, parts.len()));
+        assert_eq!(part.files, vec!["src/table.md".to_string()]);
+        assert!(part.chars <= TABLE_BOUND, "a {}-char prompt", part.chars);
+        assert_eq!(part.start_line, next, "parts are consecutive");
+        assert_eq!(
+            part.lines,
+            file_lines[part.start_line - 1..part.end_line].to_vec(),
+            "part {} shows the file's own lines {}-{}",
+            part.index,
+            part.start_line,
+            part.end_line
         );
-        assert!(calls[0].chars < content.len(), "the content is not inlined");
-        let rule = &report["rules"][0];
-        assert_eq!(rule["outcome"], outcome, "{report:#}");
-        assert_eq!(rule["votes_total"], 1, "{report:#}");
+        // Packed: one more line would have taken this part over the bound.
+        if i + 1 < parts.len() {
+            let more = format!("\n{}  {}", part.end_line + 1, file_lines[part.end_line]);
+            assert!(
+                part.chars + more.chars().count() > TABLE_BOUND,
+                "part {} could have taken line {}",
+                part.index,
+                part.end_line + 1
+            );
+        }
+        next = part.end_line + 1;
     }
+    assert_eq!(next, file_lines.len() + 1, "every line is judged once");
+    // The small file is one call by name, its content not inlined.
+    assert_eq!(whole.len(), 1);
+    assert_eq!(whole[0].files, vec!["src/small.md".to_string()]);
+    assert!(whole[0].chars <= TABLE_BOUND);
+    // The parts are one judge's vote: every part passing passes the file.
+    let rule = &report["rules"][0];
+    assert_eq!(rule["outcome"], "pass", "{report:#}");
+    assert_eq!(rule["votes_total"], 1, "{report:#}");
+
+    // The plan names each call's line range, and the same input splits the
+    // same way.
+    let plan = p
+        .lint()
+        .args([
+            "--plan-only",
+            "--max-prompt-chars",
+            &TABLE_BOUND.to_string(),
+        ])
+        .output()
+        .unwrap();
+    let plan = String::from_utf8_lossy(&plan.stdout);
+    let n = parts.len();
+    let last = &parts[n - 1];
+    assert!(
+        plan.contains(&format!(
+            "src/table.md (lines {}-{}, part {n} of {n})",
+            last.start_line, last.end_line
+        )),
+        "{plan}"
+    );
+    run_whole(&p, "again", r#"{"t_rule": true}"#, &[]);
+    let ranges = |parts: &[LinesPart]| -> Vec<(usize, usize)> {
+        parts.iter().map(|p| (p.start_line, p.end_line)).collect()
+    };
+    assert_eq!(
+        ranges(&lines_parts(&p.path().join("again")).0),
+        ranges(&parts)
+    );
+}
+
+/// A rule failing in exactly one part of an oversized file fails the file, with
+/// that part's violation, as one judge's vote.
+#[test]
+fn a_rule_failing_in_one_part_of_an_oversized_file_fails_it_without_diff() {
+    let p = big_table();
+    run_whole(&p, "probe", r#"{"t_rule": true}"#, &[]);
+    let (parts, _) = lines_parts(&p.path().join("probe"));
+    assert!(parts.len() >= 3, "{} parts", parts.len());
+    // Serially the small file's call comes first, then the parts in order: the
+    // rule fails in the table's second part alone, citing a line it carried.
+    let line = parts[1].start_line + 1;
+    let verdicts = format!(
+        r#"{{"t_rule": [true, true, {{"holds": false, "violations": [{{"file": "src/table.md", "line": {line}, "message": "bad cell"}}]}}, true]}}"#
+    );
+    let (code, report) = run_whole(&p, "log", &verdicts, &["--max-parallel", "1"]);
+    assert_eq!(code, Some(1), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+    let (logged, _) = lines_parts(&p.path().join("log"));
+    assert_eq!(logged.len(), parts.len());
+    let rule = &report["rules"][0];
+    assert_eq!(rule["outcome"], "fail", "{report:#}");
+    assert_eq!(rule["votes_total"], 1, "{report:#}");
+    let violations = rule["violations"].as_array().unwrap();
+    assert_eq!(violations.len(), 1, "{report:#}");
+    assert_eq!(violations[0]["message"], "bad cell");
+    assert_eq!(violations[0]["line"], line);
 }
 
 /// Without `--diff` a file's prompt is over the bound only on its fixed

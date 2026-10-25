@@ -702,9 +702,13 @@ resolves the oneharness the test put on PATH.
   with one error per file, and plans 0 judge calls; `--plan-only` shows
   the split with no harness spawn (control: the same run spawns it); a zero bound
   from the config, the flag or the env var is exit 2. Without `--diff` a file
-  over three times the bound is one call within it (contents are never inlined),
-  passing or failing as its one verdict does; a bound its prompt's overhead alone
-  exceeds refuses it by name, with no call.
+  over three times the bound beside a small one is judged in several calls of its
+  lines, none over the bound, each inlining a consecutive run of the file's real
+  numbered lines, packed so no two adjacent parts fit one call, every line once,
+  the same ranges on a rerun and named in `--plan-only`, while the small file is
+  one call by name; every part passing passes it as one vote, and failing in
+  exactly one part fails it with that part's violation; a bound its prompt's
+  overhead alone exceeds refuses it by name, with no call.
 - **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
   with two selected rules — the workload at which 0.4.10 exited 0 on each of
   these — a schema-valid reply of `{}`, one holding only one rule, one naming

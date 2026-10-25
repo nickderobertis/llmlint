@@ -13,9 +13,15 @@
 //! ([`crate::domain::diffsplit`]) into the fewest consecutive parts that each
 //! fit, every part a run of its own over that one file carrying the
 //! [`DiffPart`] it shows, so each rule's parts are folded into one judge's vote
-//! like any other split. Only a file that cannot fit even one diff line beside
-//! the prompt's fixed overhead (or has no diff to split, its prompt being over
-//! the bound on overhead alone) is never sent; it is returned as an
+//! like any other split. Without `--diff` the judge reads a file with its own
+//! tools, so its content is not in the prompt but lands in the judge's context
+//! beside it: a file whose content and one-file prompt together are over the
+//! bound is taken out of its run and judged in parts of its content instead,
+//! split at line boundaries ([`crate::domain::linesplit`]), each part inlining
+//! its lines in a run of its own carrying the [`ContentPart`] it shows — so the
+//! parts fold the same way. Only a file that cannot fit even one diff or content
+//! line beside the prompt's fixed overhead (or has neither to split, its prompt
+//! being over the bound on overhead alone) is never sent; it is returned as an
 //! [`OversizedFile`] for the caller to report.
 //!
 //! Pure: the prompt size is measured by a caller-supplied function (rendering the
@@ -25,8 +31,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::domain::diffsplit::{self, SplitDiff};
-use crate::domain::plan::{BatchPart, DiffPart, JudgeRun, OversizedFile, Plan};
-use crate::domain::template::PartOf;
+use crate::domain::linesplit::{self, SplitContent};
+use crate::domain::plan::{BatchPart, ContentPart, DiffPart, JudgeRun, OversizedFile, Plan};
+use crate::domain::template::{LinesPart, PartOf};
 use crate::domain::to_slash;
 
 /// A file over the bound on its own, with the run it was planned into, for the
@@ -41,22 +48,61 @@ pub struct Oversized {
 /// Split every run of `plan` whose prompt, as `measure` sizes it in characters,
 /// is over `max`, and record each split (and each file that could not be sent)
 /// on the plan's explanation. `diffs` holds each changed file's diff, which a
-/// file over the bound on its own is split by. Returns the files that could not
-/// be sent.
+/// file over the bound on its own is split by; `contents` holds the text of each
+/// file judged by its whole content (no diff), which such a file is split by
+/// when its content would take the judge over the bound. Returns the files that
+/// could not be sent.
 pub fn bound(
     plan: &mut Plan,
     max: usize,
     diffs: &BTreeMap<PathBuf, String>,
+    contents: &BTreeMap<PathBuf, String>,
     mut measure: impl FnMut(&JudgeRun) -> usize,
 ) -> Vec<Oversized> {
     let mut runs = Vec::with_capacity(plan.runs.len());
     let mut oversized = Vec::new();
     for run in std::mem::take(&mut plan.runs) {
-        if measure(&run) <= max {
+        let whole = measure(&run);
+        let by_content = over_on_content(&run, whole, max, diffs, contents, &mut measure);
+        if whole <= max && by_content.is_empty() {
             runs.push(run);
             continue;
         }
-        let (parts, too_big) = split(&run, max, diffs, &mut measure);
+        let mut parts = Vec::new();
+        let mut too_big = Vec::new();
+        let rest: Vec<PathBuf> = run
+            .files
+            .iter()
+            .filter(|f| !by_content.iter().any(|(big, _)| &big.files[0] == *f))
+            .cloned()
+            .collect();
+        if !rest.is_empty() {
+            let (rest, chars) = if by_content.is_empty() {
+                (run.clone(), whole)
+            } else {
+                let rest = restrict(&run, &rest);
+                let chars = measure(&rest);
+                (rest, chars)
+            };
+            if chars <= max {
+                parts.push((rest, chars));
+            } else {
+                let (more, refused) = split(&rest, max, diffs, &mut measure);
+                parts.extend(more);
+                too_big.extend(refused);
+            }
+        }
+        for (alone, chars) in by_content {
+            let content = &contents[&alone.files[0]];
+            match split_content(&alone, content, max, &mut measure) {
+                Some(more) => parts.extend(more),
+                None => too_big.push(OversizedFile {
+                    file: to_slash(&alone.files[0]),
+                    prompt_chars: chars,
+                    rules: alone.rules.iter().map(|r| r.name.clone()).collect(),
+                }),
+            }
+        }
         if let Some(batch) = batch_plan(plan, &run) {
             batch.parts = if parts.len() > 1 {
                 parts
@@ -66,6 +112,7 @@ pub fn bound(
                         files: part.files.iter().map(|f| to_slash(f)).collect(),
                         prompt_chars: *chars,
                         diff_part: part.diff_part.as_ref().map(|d| d.part),
+                        content_part: part.content_part.as_ref().map(|c| c.part),
                     })
                     .collect()
             } else {
@@ -100,6 +147,94 @@ fn batch_plan<'a>(
         .batches
         .iter_mut()
         .find(|b| b.id == run.batch_id)
+}
+
+/// The one-file runs, with the size each would put in the judge's context, of
+/// the files in `run` judged by their whole content (no diff) whose one-file
+/// prompt plus that content is over `max`. `whole` is `run`'s own prompt size: a
+/// file's one-file prompt is never longer than the run's, so a file whose content
+/// fits beside the whole run's prompt is not measured on its own.
+fn over_on_content(
+    run: &JudgeRun,
+    whole: usize,
+    max: usize,
+    diffs: &BTreeMap<PathBuf, String>,
+    contents: &BTreeMap<PathBuf, String>,
+    measure: &mut impl FnMut(&JudgeRun) -> usize,
+) -> Vec<(JudgeRun, usize)> {
+    let mut out = Vec::new();
+    for file in &run.files {
+        if diffs.contains_key(file) {
+            continue;
+        }
+        let Some(content) = contents.get(file) else {
+            continue;
+        };
+        let chars = content.chars().count();
+        if whole + chars <= max {
+            continue;
+        }
+        let alone = restrict(run, std::slice::from_ref(file));
+        let total = measure(&alone) + chars;
+        if total > max {
+            out.push((alone, total));
+        }
+    }
+    out
+}
+
+/// Split the one-file run `alone`, whose content would take the judge over
+/// `max`, into runs that each inline one run of the file's lines and fit, with
+/// each one's measured size; `None` when the content cannot be split to fit.
+fn split_content(
+    alone: &JudgeRun,
+    content: &str,
+    max: usize,
+    measure: &mut impl FnMut(&JudgeRun) -> usize,
+) -> Option<Vec<(JudgeRun, usize)>> {
+    let with = |part: LinesPart, text: &str| JudgeRun {
+        content_part: Some(ContentPart {
+            part,
+            text: text.to_string(),
+        }),
+        ..alone.clone()
+    };
+    let parsed = SplitContent::parse(content);
+    // As for a diff: pack against the widest part numbers there could be (no
+    // more parts than lines), so the final prompt is never longer than measured.
+    let widest = content.lines().count().max(1);
+    let packed = linesplit::pack(&parsed, max, |start_line, end_line, text| {
+        measure(&with(
+            LinesPart {
+                index: widest,
+                of: widest,
+                start_line,
+                end_line,
+            },
+            text,
+        ))
+    })?;
+    if packed.is_empty() {
+        return None;
+    }
+    let of = packed.len();
+    Some(
+        packed
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let part = LinesPart {
+                    index: i + 1,
+                    of,
+                    start_line: p.start_line,
+                    end_line: p.end_line,
+                };
+                let run = with(part, &p.text);
+                let chars = measure(&run);
+                (run, chars)
+            })
+            .collect(),
+    )
 }
 
 /// Split one over-bound run into parts that each fit, with each part's measured
@@ -274,6 +409,7 @@ mod tests {
             files: names.iter().map(PathBuf::from).collect(),
             rules: vec![spec("a", &names), spec("b", &names[..1])],
             diff_part: None,
+            content_part: None,
         };
         let mut p = Plan::default();
         p.runs.push(run);
@@ -309,7 +445,13 @@ mod tests {
     #[test]
     fn a_run_that_fits_is_left_whole() {
         let (mut p, sizes) = plan(&[("a.rs", 30), ("b.rs", 30)]);
-        let over = bound(&mut p, 100, &BTreeMap::new(), measure(&sizes));
+        let over = bound(
+            &mut p,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            measure(&sizes),
+        );
         assert!(over.is_empty());
         assert_eq!(p.runs.len(), 1);
         assert_eq!(p.explanation.max_prompt_chars, None);
@@ -321,7 +463,13 @@ mod tests {
         let files: Vec<(String, usize)> = (0..9).map(|i| (format!("f{i}.rs"), 30)).collect();
         let refs: Vec<(&str, usize)> = files.iter().map(|(f, n)| (f.as_str(), *n)).collect();
         let (mut p, sizes) = plan(&refs);
-        let over = bound(&mut p, 100, &BTreeMap::new(), measure(&sizes));
+        let over = bound(
+            &mut p,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            measure(&sizes),
+        );
         assert!(over.is_empty());
         // Three 30-char files fit with the 10-char boilerplate; four do not.
         assert_eq!(p.runs.len(), 3);
@@ -359,7 +507,13 @@ mod tests {
     #[test]
     fn a_file_over_the_bound_with_no_diff_to_split_is_never_sent() {
         let (mut p, sizes) = plan(&[("big.rs", 500), ("small.rs", 20)]);
-        let over = bound(&mut p, 100, &BTreeMap::new(), measure(&sizes));
+        let over = bound(
+            &mut p,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            measure(&sizes),
+        );
         assert_eq!(over.len(), 1);
         assert_eq!(over[0].file.file, "big.rs");
         assert_eq!(over[0].file.prompt_chars, 510);
@@ -376,7 +530,13 @@ mod tests {
     #[test]
     fn a_batch_of_only_oversized_files_makes_no_call() {
         let (mut p, sizes) = plan(&[("big.rs", 500)]);
-        let over = bound(&mut p, 100, &BTreeMap::new(), measure(&sizes));
+        let over = bound(
+            &mut p,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            measure(&sizes),
+        );
         assert_eq!(over.len(), 1);
         assert!(p.runs.is_empty());
         assert_eq!(p.explanation.total_runs(), 0);
@@ -420,7 +580,13 @@ mod tests {
         let (mut p, sizes) = plan(&[("big.rs", 0), ("small.rs", 20)]);
         let diffs = BTreeMap::from([(PathBuf::from("big.rs"), big_diff(20))]);
         let max = 120;
-        let over = bound(&mut p, max, &diffs, measure_diffs(&sizes, &diffs));
+        let over = bound(
+            &mut p,
+            max,
+            &diffs,
+            &BTreeMap::new(),
+            measure_diffs(&sizes, &diffs),
+        );
         assert!(over.is_empty(), "{over:?}");
         let (parted, whole): (Vec<&JudgeRun>, Vec<&JudgeRun>) =
             p.runs.iter().partition(|r| r.diff_part.is_some());
@@ -458,7 +624,13 @@ mod tests {
             .contains("big.rs (diff part 7 of 7)"));
         // And the same input always splits the same way.
         let (mut again, _) = plan(&[("big.rs", 0), ("small.rs", 20)]);
-        bound(&mut again, max, &diffs, measure_diffs(&sizes, &diffs));
+        bound(
+            &mut again,
+            max,
+            &diffs,
+            &BTreeMap::new(),
+            measure_diffs(&sizes, &diffs),
+        );
         let diffs_of = |p: &Plan| -> Vec<Option<DiffPart>> {
             p.runs.iter().map(|r| r.diff_part.clone()).collect()
         };
@@ -470,12 +642,143 @@ mod tests {
         let (mut p, sizes) = plan(&[("big.rs", 0), ("small.rs", 20)]);
         let diff = format!("{PREAMBLE}@@ -1,1 +1,2 @@\n-a\n+{}\n+b\n", "x".repeat(200));
         let diffs = BTreeMap::from([(PathBuf::from("big.rs"), diff.clone())]);
-        let over = bound(&mut p, 120, &diffs, measure_diffs(&sizes, &diffs));
+        let over = bound(
+            &mut p,
+            120,
+            &diffs,
+            &BTreeMap::new(),
+            measure_diffs(&sizes, &diffs),
+        );
         assert_eq!(over.len(), 1);
         assert_eq!(over[0].file.file, "big.rs");
         assert_eq!(over[0].file.prompt_chars, 10 + diff.len());
         assert_eq!(p.runs.len(), 1);
         assert!(p.runs.iter().all(|r| r.diff_part.is_none()));
         assert_eq!(p.runs[0].files, vec![PathBuf::from("small.rs")]);
+    }
+
+    /// `big.rs`'s content: `n` lines `line NN`.
+    fn big_content(n: usize) -> String {
+        (1..=n).map(|i| format!("line {i:02}\n")).collect()
+    }
+
+    /// A prompt is 10 chars of boilerplate plus each named file's size, or the
+    /// lines one part of a file's content inlines.
+    fn measure_contents(
+        sizes: &std::collections::BTreeMap<String, usize>,
+    ) -> impl FnMut(&JudgeRun) -> usize + '_ {
+        |run| match &run.content_part {
+            Some(part) => 10 + part.text.chars().count(),
+            None => 10 + run.files.iter().map(|f| sizes[&to_slash(f)]).sum::<usize>(),
+        }
+    }
+
+    #[test]
+    fn a_file_whose_content_is_over_the_bound_is_judged_in_parts_of_its_lines() {
+        let (mut p, sizes) = plan(&[("big.rs", 0), ("small.rs", 20)]);
+        let content = big_content(40);
+        let contents = BTreeMap::from([(PathBuf::from("big.rs"), content.clone())]);
+        let max = 120;
+        let over = bound(
+            &mut p,
+            max,
+            &BTreeMap::new(),
+            &contents,
+            measure_contents(&sizes),
+        );
+        assert!(over.is_empty(), "{over:?}");
+        let (parted, whole): (Vec<&JudgeRun>, Vec<&JudgeRun>) =
+            p.runs.iter().partition(|r| r.content_part.is_some());
+        // small.rs is still judged whole, with no content inlined.
+        assert_eq!(whole.len(), 1);
+        assert_eq!(whole[0].files, vec![PathBuf::from("small.rs")]);
+        assert!(parted.len() > 1);
+        let of = parted.len();
+        let mut next = 1;
+        for (i, run) in parted.iter().enumerate() {
+            let part = run.content_part.as_ref().unwrap();
+            assert_eq!((part.part.index, part.part.of), (i + 1, of));
+            assert_eq!(part.part.start_line, next, "parts are consecutive");
+            assert!(measure_contents(&sizes)(run) <= max);
+            assert_eq!(run.files, vec![PathBuf::from("big.rs")]);
+            let names: Vec<&str> = run.rules.iter().map(|r| r.name.as_str()).collect();
+            assert_eq!(
+                names,
+                vec!["a", "b"],
+                "both rules judge big.rs in every part"
+            );
+            // Adjacent parts could not be merged: one more line is over the bound.
+            if i + 1 < of {
+                assert!(10 + part.text.chars().count() + "\n40  line 40".len() > max);
+            }
+            next = part.part.end_line + 1;
+        }
+        assert_eq!(next, 41, "every line is judged once");
+        let batch = &p.explanation.agents[0].judges[0].batches[0];
+        assert_eq!(batch.parts.len(), of + 1);
+        assert_eq!(
+            batch.parts[0].content_part, None,
+            "small.rs's call comes first"
+        );
+        assert_eq!(
+            batch.parts[1]
+                .content_part
+                .map(|c| (c.index, c.of, c.start_line)),
+            Some((1, of, 1))
+        );
+        let human = p.explanation.to_human();
+        assert!(human.contains("big.rs (lines 1-"), "{human}");
+        assert!(human.contains(&format!("part {of} of {of})")), "{human}");
+        // The same input always splits the same way.
+        let (mut again, _) = plan(&[("big.rs", 0), ("small.rs", 20)]);
+        bound(
+            &mut again,
+            max,
+            &BTreeMap::new(),
+            &contents,
+            measure_contents(&sizes),
+        );
+        assert_eq!(again.runs.len(), p.runs.len());
+        for (a, b) in again.runs.iter().zip(&p.runs) {
+            assert_eq!(a.content_part, b.content_part);
+        }
+    }
+
+    #[test]
+    fn a_file_whose_content_fits_beside_its_run_leaves_the_run_whole() {
+        let (mut p, sizes) = plan(&[("big.rs", 0), ("small.rs", 20)]);
+        let contents = BTreeMap::from([(PathBuf::from("big.rs"), big_content(5))]);
+        let over = bound(
+            &mut p,
+            120,
+            &BTreeMap::new(),
+            &contents,
+            measure_contents(&sizes),
+        );
+        assert!(over.is_empty());
+        assert_eq!(p.runs.len(), 1);
+        assert_eq!(p.runs[0].content_part, None);
+        assert_eq!(p.explanation.max_prompt_chars, None);
+    }
+
+    #[test]
+    fn a_content_line_too_big_for_any_part_still_refuses_the_file() {
+        let (mut p, sizes) = plan(&[("big.rs", 0), ("small.rs", 20)]);
+        let content = format!("short\n{}\nshort\n", "x".repeat(200));
+        let contents = BTreeMap::from([(PathBuf::from("big.rs"), content.clone())]);
+        let over = bound(
+            &mut p,
+            120,
+            &BTreeMap::new(),
+            &contents,
+            measure_contents(&sizes),
+        );
+        assert_eq!(over.len(), 1);
+        assert_eq!(over[0].file.file, "big.rs");
+        assert_eq!(over[0].file.prompt_chars, 10 + content.len());
+        assert_eq!(over[0].file.rules, vec!["a", "b"]);
+        assert_eq!(p.runs.len(), 1);
+        assert_eq!(p.runs[0].files, vec![PathBuf::from("small.rs")]);
+        assert!(p.runs.iter().all(|r| r.content_part.is_none()));
     }
 }

@@ -239,12 +239,13 @@ impl SplitDiff {
 
 /// The longest prefix of `ends` whose part from `from` fits, with its size, or
 /// `None` when not even the first does: doubling then bisecting, so a part costs
-/// a logarithmic number of measurements rather than one per unit.
-fn longest(
-    from: Pos,
-    ends: &[Pos],
-    fits: &mut impl FnMut(Pos, Pos) -> Option<usize>,
-) -> Option<(Pos, usize)> {
+/// a logarithmic number of measurements rather than one per unit. Shared with
+/// [`crate::domain::linesplit`], whose positions are line numbers.
+pub(crate) fn longest<P: Copy>(
+    from: P,
+    ends: &[P],
+    fits: &mut impl FnMut(P, P) -> Option<usize>,
+) -> Option<(P, usize)> {
     let first = fits(from, *ends.first()?)?;
     let mut best = (0, first);
     let mut over = ends.len();

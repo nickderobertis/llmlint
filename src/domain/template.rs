@@ -60,6 +60,30 @@ pub struct PartOf {
     pub of: usize,
 }
 
+/// Which part, of how many, a file's content split across judge calls is
+/// (1-based), and the 1-based inclusive range of the file's lines it carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct LinesPart {
+    pub index: usize,
+    pub of: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+/// One run of a target file's lines, inlined when the file's whole content is
+/// too large to judge in one prompt, the other runs being judged in calls of
+/// their own. Without `--diff` the judge otherwise reads a file with its tools.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileContent {
+    /// The file path (forward-slash form), matching its entry in `files`.
+    pub file: String,
+    /// Which part this is, and the 1-based inclusive line range it carries.
+    pub part: LinesPart,
+    /// Those lines, each prefixed with its line number, without a trailing
+    /// newline.
+    pub text: String,
+}
+
 /// One target file as the prompt presents it: its applicability (which rules to
 /// evaluate against it) and, when `--diff` surfaced a change, its unified `diff`
 /// inlined so the judge sees a changed file's rules and diff together.
@@ -72,6 +96,8 @@ struct FileEntry<'a> {
     diff: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     part: Option<PartOf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<&'a FileContent>,
 }
 
 /// A rule plus its compact, computed scope presentation. Flattening preserves
@@ -125,6 +151,33 @@ pub fn render(
     relevance: bool,
     line_attribution: bool,
 ) -> Result<String> {
+    render_with_content(
+        template,
+        rules,
+        files,
+        diffs,
+        &[],
+        rationales,
+        relevance,
+        line_attribution,
+    )
+}
+
+/// [`render`], with `content` holding the run of lines inlined for each file
+/// judged in parts of its content (exposed per file as `file_rules[i].content`).
+// Each argument is one distinct block of the template context; a struct used
+// only to call this would restate the context, not clarify it.
+#[allow(clippy::too_many_arguments)]
+pub fn render_with_content(
+    template: &str,
+    rules: &[RuleSpec],
+    files: &[String],
+    diffs: &[FileDiff],
+    content: &[FileContent],
+    rationales: bool,
+    relevance: bool,
+    line_attribution: bool,
+) -> Result<String> {
     let rule_entries: Vec<RuleEntry> = rules
         .iter()
         .map(|rule| {
@@ -158,6 +211,7 @@ pub fn render(
                 .iter()
                 .find(|d| d.file == fr.file)
                 .and_then(|d| d.part),
+            content: content.iter().find(|c| c.file == fr.file),
         })
         .collect();
     let mut env = minijinja::Environment::new();
@@ -435,6 +489,57 @@ mod tests {
         );
         assert!(
             part.contains("in their own calls.\n\n```diff\n@@ -1 +1 @@\n"),
+            "{part}"
+        );
+    }
+
+    #[test]
+    fn the_default_template_inlines_a_content_part_only_for_a_split_file() {
+        let files = ["src/a.rs".to_string(), "src/b.rs".to_string()];
+        let render_with = |template: &str, content: &[FileContent]| {
+            render_with_content(
+                template,
+                &rules(),
+                &files,
+                &[],
+                content,
+                false,
+                false,
+                false,
+            )
+            .unwrap()
+        };
+        let template = crate::io::assets::DEFAULT_TEMPLATE;
+        // With no content part, the prompt is exactly the one the template
+        // rendered before it could inline content.
+        let open = template.find("{% if fr.content %}").unwrap();
+        let close = open + template[open..].find("{% endif %}").unwrap();
+        let before = format!("{}{}", &template[..open], &template[close + 11..]);
+        let whole = render_with(template, &[]);
+        assert_eq!(whole, render_with(&before, &[]));
+        assert!(!whole.contains("of this file:"), "{whole}");
+        let part = render_with(
+            template,
+            &[FileContent {
+                file: "src/a.rs".into(),
+                part: LinesPart {
+                    index: 2,
+                    of: 3,
+                    start_line: 9,
+                    end_line: 10,
+                },
+                text: " 9  fn a() {}\n10  fn b() {}".into(),
+            }],
+        );
+        assert!(
+            part.contains("- src/a.rs\n\nThis is part 2 of 3 of this file: the whole"),
+            "{part}"
+        );
+        assert!(part.contains("Its lines 9-10 are shown below"), "{part}");
+        assert!(
+            part.contains(
+                "their own calls.\n\n```\n 9  fn a() {}\n10  fn b() {}\n```\n- src/b.rs\n"
+            ),
             "{part}"
         );
     }

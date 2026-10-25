@@ -261,7 +261,11 @@ pub(crate) fn run_loaded(
     // content-size proxy (stable and always available); it can be refined to the
     // diff size under `--diff` later.
     let mut suppressions: BTreeMap<String, Suppressions> = BTreeMap::new();
+    // Without `--diff` the judge reads each file whole, so its text is also kept
+    // for the prompt-size bound, which judges a file too large for that in parts
+    // of its content.
     let mut file_tokens: BTreeMap<String, usize> = BTreeMap::new();
+    let mut contents: BTreeMap<PathBuf, String> = BTreeMap::new();
     for rel in &targets {
         if let Some(text) = files::read_text(&cwd, rel)? {
             let slash = files::to_slash(rel);
@@ -270,6 +274,9 @@ pub(crate) fn run_loaded(
                 suppressions.insert(slash.clone(), s);
             }
             file_tokens.insert(slash, (text.len() / 4).max(1));
+            if args.diff.is_none() {
+                contents.insert(rel.clone(), text);
+            }
         }
     }
 
@@ -307,12 +314,14 @@ pub(crate) fn run_loaded(
     // Bound every judge prompt to `max_prompt_chars`: a batch whose rendered
     // prompt is over it is split across more calls (each rule still judging each
     // of its files once), and a file over it on its own is judged in parts of its
-    // diff, split at hunk or line boundaries. A file that still cannot fit (one
-    // diff line beside the prompt's overhead is over the bound) is never sent —
+    // diff, split at hunk or line boundaries. Without `--diff`, a file whose
+    // content would take the judge over it is judged in parts of its content,
+    // split at line boundaries. A file that still cannot fit (one diff or content
+    // line beside the prompt's overhead is over the bound) is never sent —
     // it is an errored result naming the file, its size and the remedy. Done
     // before `--plan-only` so the plan shows the split.
     let max_prompt_chars = config.max_prompt_chars();
-    let oversized = promptsize::bound(&mut the_plan, max_prompt_chars, &diffs, |run| {
+    let oversized = promptsize::bound(&mut the_plan, max_prompt_chars, &diffs, &contents, |run| {
         // A run whose template cannot render is kept whole, so the judge call
         // reports the render error as it always has.
         render_system(run, &diffs, &suppressions)
@@ -1010,11 +1019,23 @@ fn render_system(
     let want_rationale = run.rules.iter().any(|r| r.rationale);
     let want_relevance = run.rules.iter().any(|r| r.relevance.is_some());
     let want_line_attribution = run.rules.iter().any(|r| r.require_line_attribution);
-    template::render(
+    // A run carrying one part of its one file's content inlines those lines.
+    let content: Vec<template::FileContent> = run
+        .content_part
+        .iter()
+        .zip(&files_str)
+        .map(|(cp, file)| template::FileContent {
+            file: file.clone(),
+            part: cp.part,
+            text: cp.text.clone(),
+        })
+        .collect();
+    template::render_with_content(
         &run.template,
         &run.rules,
         &files_str,
         &file_diffs,
+        &content,
         want_rationale,
         want_relevance,
         want_line_attribution,
