@@ -172,6 +172,17 @@ fn civil(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     (year, m as u32, d as u32, h as u32, mi as u32, s as u32)
 }
 
+/// The history record's schema version. A record with no `schema_version` key is
+/// version 1: every record written before split diffs, and every record since
+/// that carries none. Version 2 adds `diff_part` (`{index, of}`) to the plan's
+/// batch parts, naming the part of a file's diff a judge call carried when that
+/// diff was split to fit `max_prompt_chars`. It is stamped only on a record that
+/// carries one, so every other record keeps its version-1 bytes (the run-label
+/// contract needs an unlabelled record unchanged; see
+/// `tests/fixtures/history_record/README.md`), and a reader treats a missing key
+/// as 1 ([`Record::schema_version`]).
+pub const RECORD_SCHEMA_VERSION: u64 = 2;
+
 /// Assemble the full run record: the run metadata followed by the pure report
 /// JSON (`summary`/`rules`/`errors`), so the persisted record carries every field
 /// the report exposes and can never drift from it. `config_files` is the ordered
@@ -195,6 +206,9 @@ pub fn build_record(
 ) -> Value {
     let report_json = report.to_json();
     let mut obj = Map::new();
+    if report.plan.as_ref().is_some_and(|p| p.has_diff_parts()) {
+        obj.insert("schema_version".into(), json!(RECORD_SCHEMA_VERSION));
+    }
     obj.insert("id".into(), json!(id));
     obj.insert("timestamp".into(), json!(timestamp));
     obj.insert("llmlint_version".into(), json!(env!("CARGO_PKG_VERSION")));
@@ -254,6 +268,16 @@ pub struct Record {
 }
 
 impl Record {
+    /// The record's schema version: its `schema_version`, or 1 for a record that
+    /// has none (every record before version 2, and every version-2-era record
+    /// with no split diff).
+    pub fn schema_version(&self) -> u64 {
+        self.value
+            .get("schema_version")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+    }
+
     /// The run's caller-supplied labels; an unlabelled record (no `labels` key)
     /// reads as none. A stored record is external input, so each pair is held to
     /// the label grammar again ([`Labels::from_stored`]) and a non-string or
@@ -434,6 +458,7 @@ mod tests {
     const GOLDEN_UNLABELLED: &str =
         include_str!("../../tests/fixtures/history_record/unlabelled.json");
     const GOLDEN_LABELLED: &str = include_str!("../../tests/fixtures/history_record/labelled.json");
+    const GOLDEN_SPLIT: &str = include_str!("../../tests/fixtures/history_record/split.json");
 
     /// Render a record exactly as [`write_record`] writes it, with the build's
     /// own version swapped for a placeholder so a release bump doesn't churn the
@@ -474,6 +499,128 @@ mod tests {
         let labels =
             crate::domain::labels::resolve(None, &["turn=3".into(), "session=abc".into()]).unwrap();
         assert_eq!(persisted(&labels), GOLDEN_LABELLED);
+    }
+
+    /// A failing run whose one batch was split: `big.md`'s diff in two parts,
+    /// then `small.md` whole — the version-2 record shape.
+    fn split_report() -> Report {
+        use crate::domain::plan::{AgentPlan, BatchPart, BatchPlan, JudgePlan, PlanExplanation};
+        use crate::domain::template::PartOf;
+        use crate::domain::verdict::{Outcome, RuleOutcome};
+        let part = |files: &[&str], chars, diff_part| BatchPart {
+            rules: vec!["r".into()],
+            files: files.iter().map(|f| f.to_string()).collect(),
+            prompt_chars: chars,
+            diff_part,
+        };
+        let plan = PlanExplanation {
+            agents: vec![AgentPlan {
+                agent: "default".into(),
+                batch_size: 20,
+                model: None,
+                harness: None,
+                judges: vec![JudgePlan {
+                    judge_index: 1,
+                    batches: vec![BatchPlan {
+                        id: 1,
+                        rules: vec!["r".into()],
+                        files: vec!["big.md".into(), "small.md".into()],
+                        excluded_files: vec![],
+                        reused_files: vec![],
+                        parts: vec![
+                            part(&["big.md"], 990, Some(PartOf { index: 1, of: 2 })),
+                            part(&["big.md"], 410, Some(PartOf { index: 2, of: 2 })),
+                            part(&["small.md"], 120, None),
+                        ],
+                        oversized_files: vec![],
+                    }],
+                }],
+            }],
+            linted_files: vec!["big.md".into(), "small.md".into()],
+            max_prompt_chars: Some(1000),
+            ..Default::default()
+        };
+        Report::new(
+            vec![RuleOutcome {
+                name: "r".into(),
+                rationale: None,
+                outcome: Outcome::Fail,
+                votes_total: 1,
+                votes_hold: 0,
+                judges: vec![],
+                violations: vec![],
+            }],
+            vec![],
+        )
+        .with_plan(plan)
+    }
+
+    #[test]
+    fn a_split_record_is_schema_version_2_and_its_diff_parts_round_trip() {
+        let dir = tempdir().unwrap();
+        let id = "20260704T153000Z-1a2b3";
+        let mut rec = build_record(
+            id,
+            "2026-07-04T15:30:00Z",
+            "lint",
+            Path::new("/proj"),
+            1,
+            &["llmlint.yml".to_string()],
+            &Labels::default(),
+            &split_report(),
+        );
+        rec["llmlint_version"] = json!("<version>");
+        let path = write_record(dir.path(), id, &rec, 10).unwrap();
+        // Written byte for byte as the golden pins it.
+        assert_eq!(std::fs::read_to_string(path).unwrap(), GOLDEN_SPLIT);
+
+        // Read back: the version, each diff part, and no part on the whole file.
+        let back = load(dir.path(), id).unwrap();
+        assert_eq!(back.schema_version(), RECORD_SCHEMA_VERSION);
+        assert_eq!(back.schema_version(), 2);
+        let parts = back.value["plan"]["agents"][0]["judges"][0]["batches"][0]["parts"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(parts[0]["diff_part"], json!({"index": 1, "of": 2}));
+        assert_eq!(parts[1]["diff_part"], json!({"index": 2, "of": 2}));
+        assert_eq!(parts[1]["files"], json!(["big.md"]));
+        assert!(parts[2].get("diff_part").is_none(), "{:#}", parts[2]);
+        assert_eq!(back.value, rec);
+    }
+
+    #[test]
+    fn a_record_with_no_split_stays_version_1_and_old_records_still_read() {
+        // A plan with parts but none of a diff: no version stamp, no diff_part.
+        let mut report = split_report();
+        for part in &mut report.plan.as_mut().unwrap().agents[0].judges[0].batches[0].parts {
+            part.diff_part = None;
+        }
+        let rec = build_record(
+            "id",
+            "2026-07-04T15:30:00Z",
+            "lint",
+            Path::new("/proj"),
+            1,
+            &[],
+            &Labels::default(),
+            &report,
+        );
+        assert!(rec.get("schema_version").is_none());
+        assert!(!rec.to_string().contains("diff_part"));
+
+        // Records written before version 2 (the v1 goldens) load and read as 1.
+        let dir = tempdir().unwrap();
+        for (id, golden) in [
+            ("20260101T000000Z-00001", GOLDEN_UNLABELLED),
+            ("20260102T000000Z-00002", GOLDEN_LABELLED),
+        ] {
+            std::fs::write(dir.path().join(format!("{id}.json")), golden).unwrap();
+            let record = load(dir.path(), id).unwrap();
+            assert_eq!(record.schema_version(), 1);
+            assert_eq!(record.value["rules"][0]["name"], "r");
+        }
+        assert_eq!(all(dir.path()).unwrap().len(), 2);
     }
 
     #[test]

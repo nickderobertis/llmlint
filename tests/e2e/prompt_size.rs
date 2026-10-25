@@ -907,4 +907,39 @@ fn a_hunk_over_the_bound_is_cut_at_lines_keeping_true_line_numbers_and_ignores()
     let small = &planned[parts];
     assert_eq!(small["files"], serde_json::json!(["src/small.md"]));
     assert!(small.get("diff_part").is_none(), "{batch:#}");
+
+    // The persisted record, read back through `llmlint history`, is schema
+    // version 2 and keeps every part's metadata.
+    let latest = || -> Value {
+        let out = p
+            .bare()
+            .args(["history", "latest", "--format", "json"])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let record = latest();
+    assert_eq!(record["schema_version"], 2, "{record:#}");
+    assert_eq!(
+        record["plan"]["agents"][0]["judges"][0]["batches"][0]["parts"],
+        batch["parts"]
+    );
+
+    // A run that fits one call writes a version-1 record: no stamp, no part.
+    // (Cleared first: two runs in one second need not sort by run order.)
+    fs::remove_dir_all(p.history_dir()).unwrap();
+    let whole = p
+        .lint()
+        .args(["--diff", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(whole.status.code(), Some(0));
+    let record = latest();
+    assert!(record.get("schema_version").is_none(), "{record:#}");
+    assert!(!record.to_string().contains("diff_part"), "{record:#}");
 }

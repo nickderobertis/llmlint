@@ -616,6 +616,17 @@ impl PlanExplanation {
         self.agents.is_empty() && self.skipped.is_empty()
     }
 
+    /// True when some judge call carries one part of a file's diff — the content
+    /// that makes a persisted history record schema version 2.
+    pub fn has_diff_parts(&self) -> bool {
+        self.agents
+            .iter()
+            .flat_map(|a| &a.judges)
+            .flat_map(|j| &j.batches)
+            .flat_map(|b| &b.parts)
+            .any(|p| p.diff_part.is_some())
+    }
+
     /// The total number of judge calls the plan will make.
     pub fn total_runs(&self) -> usize {
         self.agents

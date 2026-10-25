@@ -983,8 +983,9 @@ harness reads target files on-demand with its own tools.
   "Labelling runs" section, which callers (onejudge) parse against — so change it
   deliberately, never as a side effect. The persisted record is pinned by the
   goldens in `tests/fixtures/history_record/` (its README says why `labels` is an
-  optional additive field rather than a version bump); change the shape and the
-  goldens move in the same commit. The e2e harness points
+  optional additive field, and why `RECORD_SCHEMA_VERSION` 2 is stamped only on a
+  record holding a split diff's `diff_part`); change the shape, bump the version
+  and move the goldens in the same commit. The e2e harness points
   `LLMLINT_HISTORY_DIR` at a per-project temp dir so runs never touch the real data
   dir.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled
