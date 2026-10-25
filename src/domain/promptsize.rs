@@ -353,27 +353,27 @@ fn split_file(
 /// Pack a file's parts with `pack`, which measures each part under its own
 /// number and an assumed part count `of`, so every part's measured size is its
 /// real prompt's and each part is the longest that truly fits. The count is only
-/// known once packed, and a prompt depends on it only through its digits: start
-/// from the most parts there could be (`widest`, one per line), then re-pack
-/// under the count the last packing produced until its digits stop changing.
-/// Should that not settle, the packing under `widest` is kept — its parts are
-/// never larger than measured, just not always as full as they could be.
-fn settle<T>(widest: usize, mut pack: impl FnMut(usize) -> Option<Vec<T>>) -> Option<Vec<T>> {
-    let widest = widest.max(1);
-    let first = pack(widest)?;
+/// known once packed, and a prompt depends on it only through its digits: pack
+/// under the fewest digits first (the least overhead a part can carry) and keep
+/// the first packing whose own count needs no more digits than it was measured
+/// under — then no part is ever larger than measured, and a file is refused only
+/// when no count's overhead leaves room for its lines. `most` bounds the count
+/// (one part per line). Never assume the widest count up front: its larger
+/// overhead can make a line look over the bound when the real, smaller count's
+/// parts fit.
+fn settle<T>(most: usize, mut pack: impl FnMut(usize) -> Option<Vec<T>>) -> Option<Vec<T>> {
     let digits = |n: usize| n.to_string().len();
-    let mut of = first.len();
-    if digits(of) == digits(widest) {
-        return Some(first);
-    }
-    for _ in 0..3 {
-        let Some(parts) = pack(of) else { break };
-        if digits(parts.len()) == digits(of) {
+    let most = most.max(1);
+    let mut of = 1;
+    loop {
+        // A packing that fails under the fewest digits fails under more too.
+        let parts = pack(of)?;
+        if digits(parts.len()) <= digits(of) || of >= most {
             return Some(parts);
         }
-        of = parts.len();
+        // The smallest count with as many digits as this packing's needs.
+        of = (10usize.pow(digits(parts.len()) as u32 - 1)).min(most);
     }
-    Some(first)
 }
 
 /// The run narrowed to `files`: each rule keeps only its files among them, and a
@@ -684,6 +684,41 @@ mod tests {
         assert_eq!(p.runs[0].files, vec![PathBuf::from("small.rs")]);
     }
 
+    /// A diff line that fits beside the overhead of the real part count is
+    /// judged in parts, even though the overhead of one part per line (four
+    /// times the count's digits here, as a template naming it four times would
+    /// carry) would leave it no room.
+    #[test]
+    fn a_diff_line_that_fits_under_the_real_part_count_is_judged_in_parts() {
+        let (mut p, _) = plan(&[("big.rs", 0)]);
+        let hunk = |i: usize, text: &str| format!("@@ -{i},1 +{i},1 @@\n-o\n+{text}\n");
+        let first = format!("{PREAMBLE}{}", hunk(1, &"x".repeat(60)));
+        let mut diff = first.clone();
+        diff.push_str(&hunk(2, &"y".repeat(60)));
+        for i in 3..8 {
+            diff.push_str(&hunk(i, "z"));
+        }
+        assert!(
+            diff.lines().count() >= 10,
+            "one part per line needs two digits"
+        );
+        let diffs = BTreeMap::from([(PathBuf::from("big.rs"), diff.clone())]);
+        let size = |run: &JudgeRun| match &run.diff_part {
+            Some(part) => 10 + part.diff.len() + 4 * part.part.of.to_string().len(),
+            None => 10 + diffs[&run.files[0]].len(),
+        };
+        // The first hunk alone, under a one-digit count, exactly fills a part.
+        let max = 10 + first.len() + 4;
+        let over = bound(&mut p, max, &diffs, &BTreeMap::new(), size);
+        assert!(over.is_empty(), "{over:?}");
+        let parts: Vec<&DiffPart> = p.runs.iter().filter_map(|r| r.diff_part.as_ref()).collect();
+        assert!(parts.len() > 1 && parts.len() < 10, "{parts:?}");
+        assert_eq!(parts[0].diff, first);
+        for run in &p.runs {
+            assert!(size(run) <= max);
+        }
+    }
+
     /// `big.rs`'s content: `n` lines `line NN`.
     fn big_content(n: usize) -> String {
         (1..=n).map(|i| format!("line {i:02}\n")).collect()
@@ -809,31 +844,41 @@ mod tests {
         assert!(p.runs.iter().all(|r| r.content_part.is_none()));
     }
 
-    /// `settle`'s fallbacks are proved here, not end to end: a real file
-    /// reaches them only when its part count sits exactly on a digit boundary
-    /// that flips with each re-pack (or a re-pack under fewer digits fails,
-    /// which a prompt that only shrinks with fewer digits cannot do), so no
-    /// stable CLI input exercises them. The convergent path is end to end:
-    /// `prompt_size.rs`'s packing checks fail without it.
+    /// `settle`'s re-pack across a digit boundary is proved here, not end to
+    /// end: a real file reaches it only when its part count sits exactly where
+    /// one more digit of overhead tips it past ten, a hundred, ... parts, which
+    /// no stable CLI input pins. The fewest-digits-first path is end to end:
+    /// `a_line_that_fits_under_the_real_part_count_is_judged_in_parts`.
     #[test]
-    fn settle_repacks_under_its_own_count_and_keeps_the_widest_if_it_cannot() {
+    fn settle_packs_under_the_fewest_digits_its_own_count_allows() {
         let digits = |n: usize| n.to_string().len();
-        // One-digit part numbers leave room for fewer parts than four-digit ones.
+        // Two parts fit under a one-digit count: one packing, never refused
+        // for the overhead a thousand parts would carry.
         let mut seen = Vec::new();
         let parts = settle(1000, |of| {
             seen.push(of);
-            Some(vec![(); if digits(of) == 1 { 5 } else { 6 }])
-        })
-        .unwrap();
-        assert_eq!(parts.len(), 5);
-        assert_eq!(seen, vec![1000, 6]);
-        // A count whose digits flip each packing never settles: the widest
-        // packing, never under-measured, is kept.
-        let parts = settle(100, |of| {
-            Some(vec![(); if digits(of) == 1 { 10 } else { 9 }])
+            (digits(of) == 1).then(|| vec![(); 2])
         });
-        assert_eq!(parts.unwrap().len(), 9);
-        // A file whose lines cannot fit is refused.
+        assert_eq!(parts.unwrap().len(), 2);
+        assert_eq!(seen, vec![1]);
+        // Twelve parts under one digit need two: re-packed under the smallest
+        // two-digit count, whose wider overhead takes one part more.
+        let mut seen = Vec::new();
+        let parts = settle(1000, |of| {
+            seen.push(of);
+            Some(vec![(); if digits(of) == 1 { 12 } else { 13 }])
+        });
+        assert_eq!(parts.unwrap().len(), 13);
+        assert_eq!(seen, vec![1, 10]);
+        // The count never exceeds one part per line.
+        let mut seen = Vec::new();
+        let parts = settle(15, |of| {
+            seen.push(of);
+            Some(vec![(); 15])
+        });
+        assert_eq!(parts.unwrap().len(), 15);
+        assert_eq!(seen, vec![1, 10]);
+        // A file whose lines cannot fit under the fewest digits is refused.
         assert!(settle(10, |_| None::<Vec<()>>).is_none());
     }
 }

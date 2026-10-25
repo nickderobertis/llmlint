@@ -1394,3 +1394,59 @@ fn a_file_over_the_bound_on_overhead_alone_is_refused_without_diff() {
     assert!(error.contains("file src/table.md:"), "{error}");
     assert!(error.contains("not sent"), "{error}");
 }
+
+/// A file is refused for size only when no split fits: each part is measured
+/// under the part count actually produced, never the widest one could be. Here
+/// a twelve-line file's first line exactly fills a prompt that says "part 1 of
+/// 3"; assuming one part per line ("part 1 of 12") would add a digit and make
+/// that line look over the bound, refusing a file whose real parts fit.
+#[test]
+fn a_line_that_fits_under_the_real_part_count_is_judged_in_parts() {
+    let long = |c: &str| c.repeat(8_000);
+    let content = format!("{}\n{}\n{}", long("a"), long("b"), "s\n".repeat(10));
+    let p = committed_repo(TABLE_RULE, &[("src/wide.md", &content)]);
+    let judge = |log: &str, bound: usize| {
+        let spec = p.write_verdicts(r#"{"t_rule": true}"#);
+        let out = p
+            .lint()
+            .args(["--format", "json", "--max-prompt-chars", &bound.to_string()])
+            .env("LLMLINT_MOCK_VERDICTS", &spec)
+            .env("LLMLINT_MOCK_STATE", p.path().join(format!("{log}-state")))
+            .env("LLMLINT_MOCK_PROMPTLOG", p.path().join(log))
+            .output()
+            .unwrap();
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        (
+            out.status.code(),
+            report,
+            lines_parts(&p.path().join(log)).0,
+        )
+    };
+    // Probe: a bound the two long lines cannot share puts the first alone.
+    let (code, report, probe) = judge("probe", 14_000);
+    assert_eq!(code, Some(0), "{report:#}");
+    assert_eq!((probe[0].start_line, probe[0].end_line), (1, 1));
+    assert!(probe.len() < 10, "the real count has one digit");
+    let tight = probe[0].chars;
+
+    // Bounded at exactly that prompt's size, the file is still judged in parts.
+    let (code, report, parts) = judge("tight", tight);
+    assert_eq!(code, Some(0), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+    assert!(parts.len() > 1 && parts.len() < 10, "{} parts", parts.len());
+    assert_eq!((parts[0].start_line, parts[0].end_line), (1, 1));
+    assert_eq!(
+        parts[0].chars, tight,
+        "the first part exactly fills the bound"
+    );
+    let mut next = 1;
+    for (i, part) in parts.iter().enumerate() {
+        assert_eq!((part.index, part.of), (i + 1, parts.len()));
+        assert!(part.chars <= tight, "a {}-char prompt", part.chars);
+        assert_eq!(part.start_line, next, "parts are consecutive");
+        next = part.end_line + 1;
+    }
+    assert_eq!(next, 13, "every line is judged once");
+    assert_eq!(report["rules"][0]["outcome"], "pass", "{report:#}");
+    assert_eq!(report["rules"][0]["votes_total"], 1, "{report:#}");
+}
