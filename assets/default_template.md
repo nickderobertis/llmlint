@@ -102,7 +102,12 @@ carried over unchanged is context, not the subject of the review. Only the hunk
 lines are the change; a rename without hunks has no changed lines to review.
 
 {% for fr in file_rules %}- {{ fr.file }}
-{% if fr.diff %}
+{% if fr.part %}
+This is part {{ fr.part.index }} of {{ fr.part.of }} of this file's diff: the whole
+diff is too large for one review, so each part is reviewed in a call of its own.
+Review only the changed lines shown here; the other parts' changes are judged
+in their own calls.
+{% endif %}{% if fr.diff %}
 ```diff
 {{ fr.diff }}
 ```

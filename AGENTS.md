@@ -517,8 +517,17 @@ harness reads target files on-demand with its own tools.
   its files in the part, so every rule still sees each file once per judge index.
   A split rule's parts are **one judge's vote** (`RuleVerdict::merge_parts`, keyed
   by judge index in `lint.rs`), never extra votes. A file over the bound alone is
-  never sent — one errored result per agent and file. The rework prompt is held to
-  the bound too (skipped, falling back to deterministic cleanup).
+  judged in parts of its diff (`domain::diffsplit`) or, without `--diff`, of its
+  content (`domain::linesplit` — the judge would read it whole, so its content
+  counts; `lint.rs` appends each part's section to any template's output, so a
+  custom template cannot drop it); a file that fits keeps its prompt unchanged.
+  Each part is sized under its own number and the settled part count
+  (`promptsize::settle`), so it is the longest that truly fits. Only a file whose single
+  diff or content line cannot fit beside the overhead is never sent — one
+  errored result per agent and file. The parts are a pure function of the input
+  file, rules, template and bound, so anything new that can change a split must
+  reach `llmlint fingerprint`'s material too. The rework prompt is
+  held to the bound too (skipped, falling back to deterministic cleanup).
 - **A reply answers exactly its batch (convention):** `applicability::
   hold_reply_to_batch` compares each reply's rule names to the call's rules: an
   unselected name is dropped and an errored result, an unanswered selected rule is
@@ -979,8 +988,9 @@ harness reads target files on-demand with its own tools.
   "Labelling runs" section, which callers (onejudge) parse against — so change it
   deliberately, never as a side effect. The persisted record is pinned by the
   goldens in `tests/fixtures/history_record/` (its README says why `labels` is an
-  optional additive field rather than a version bump); change the shape and the
-  goldens move in the same commit. The e2e harness points
+  optional additive field, and why `RECORD_SCHEMA_VERSION` 2 is stamped only on a
+  record holding a split diff's `diff_part`); change the shape, bump the version
+  and move the goldens in the same commit. The e2e harness points
   `LLMLINT_HISTORY_DIR` at a per-project temp dir so runs never touch the real data
   dir.
 - **config-lint (`assets/config_lint.yml`) is llmlint's own dogfood** — a bundled

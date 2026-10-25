@@ -435,7 +435,7 @@ These variables are in scope when a template renders:
 | --- | --- | --- |
 | `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
 | `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), `.rationale` (whether this rule wants a justification), `.relevance` (the relevance condition string, or unset for an always-evaluated rule), `.require_line_attribution` (whether every violation must cite a `file` + `line`), and `.files` (the subset of `files` this rule applies to). |
-| `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), and `.diff` (that file's unified diff (which may be a rename diff), present only under `--diff` when the file changed). The default template's "Target files" section is built from this. |
+| `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), `.diff` (that file's unified diff (which may be a rename diff), present only under `--diff` when the file changed), and `.part` (`{index, of}`, present only when `.diff` is one part of a diff split to fit `max_prompt_chars`). A file judged in parts of its content (without `--diff`) needs nothing from the template: llmlint appends each part's lines and the instruction to judge only them to whatever the template renders. The default template's "Target files" section is built from this. |
 | `diffs` | list of objects | Per-file changed-line diffs — one entry per *changed* file, present only under `--diff` (empty otherwise). Each has `.file` (matching its entry in `files`) and `.diff` (the unified diff text, which may be a rename diff). Under `--diff` `files` is itself narrowed to the changed files, so there is one diff per target. The default template inlines these per file via `file_rules`; kept separately for custom templates. |
 | `rationales` | bool | True when any rule in this batch wants a rationale — gate the rationale guidance on it. |
 | `relevance` | bool | True when any rule in this batch carries a relevance condition — gate the relevance guidance on it. |
@@ -665,11 +665,26 @@ rules, and the files with their diffs. A batch whose prompt would be larger is
 split across more judge calls, by its files, each call carrying the rules that
 apply to its files: every rule still judges every file it selects exactly once,
 and a rule whose files span several calls gets one vote from them (it holds only
-if it holds in each). A single file whose own prompt is over the bound is never
-sent: it is an errored result (exit `2`) naming the file, its prompt size and the
-bound, with the remedy — exclude the file if it is generated, split the change, or
-raise `max_prompt_chars` — instead of the opaque "no JSON value could be
-extracted" a harness returns for an overflowing turn.
+if it holds in each). A single file whose own prompt is over the bound — a large
+regenerated file under `--diff` — is judged **in parts**: its diff is split at hunk
+boundaries (and inside a hunk, at line boundaries, only when that hunk alone is
+over the bound) into the fewest consecutive parts that each fit, every part
+carrying the file's header, true line numbers, and a note telling the judge which
+part it is. The parts are one vote: the file fails a rule when any part fails it
+and passes when every part passes. The same file, rules and bound always split the
+same way. Without `--diff` a prompt carries file paths, not contents — the judge
+reads each file whole with its own tools — so a file whose content beside its
+prompt would be over the bound is judged in parts of its content instead: each
+part inlines the longest run of the file's lines that fits, every line prefixed
+with its real line number, and the judge reviews only those lines. llmlint
+appends that part and its instructions to the prompt itself, so it reaches the
+judge whatever `prompt_template` renders. A file that
+fits is still named, not inlined. Only a file that cannot fit even one diff or
+content line beside the prompt's fixed overhead is never sent: it is an errored
+result (exit `2`) naming the file, its prompt size and the bound, with the
+remedy — exclude the file if it is generated, split the change, or raise
+`max_prompt_chars` — instead of the opaque "no JSON value could be extracted" a
+harness returns for an overflowing turn.
 
 Run **`llmlint lint --plan-only`** to see how a run would batch — agents, judge
 indices, each batch's rules and file union, any split to fit `max_prompt_chars`

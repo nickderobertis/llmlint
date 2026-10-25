@@ -29,7 +29,7 @@ use serde::Serialize;
 use crate::domain::config::Config;
 use crate::domain::cost;
 use crate::domain::ignore::Suppressions;
-use crate::domain::template::RuleSpec;
+use crate::domain::template::{LinesPart, PartOf, RuleSpec};
 use crate::domain::to_slash;
 
 /// A rule with its agent and target files resolved (globbing done by `io`).
@@ -119,6 +119,33 @@ pub struct JudgeRun {
     pub template: String,
     pub files: Vec<PathBuf>,
     pub rules: Vec<RuleSpec>,
+    /// Set when this run carries one part of its one file's diff, that file's
+    /// whole diff being too large for one prompt within `max_prompt_chars`.
+    /// `None` for every run the planner makes; only the prompt-size bound sets it.
+    pub diff_part: Option<DiffPart>,
+    /// Set when this run carries one run of its one file's lines, that file's
+    /// content being too large to judge whole within `max_prompt_chars` (no
+    /// `--diff`). `None` for every run the planner makes; only the prompt-size
+    /// bound sets it.
+    pub content_part: Option<ContentPart>,
+}
+
+/// One part of a file's diff, split at hunk or line boundaries so each part's
+/// prompt fits `max_prompt_chars`: which part it is, and its diff text (the
+/// file's preamble plus the hunks or hunk lines this part carries).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffPart {
+    pub part: PartOf,
+    pub diff: String,
+}
+
+/// One part of a file's content, split at line boundaries so each part's prompt
+/// fits `max_prompt_chars`: which part it is, its 1-based inclusive line range,
+/// and those lines as the prompt shows them, each prefixed with its line number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentPart {
+    pub part: LinesPart,
+    pub text: String,
 }
 
 /// Why a rule was not planned into any judge run — surfaced distinctly so the
@@ -316,6 +343,8 @@ pub fn build(
                             files: e.effective.iter().map(|p| to_slash(p)).collect(),
                         })
                         .collect(),
+                    diff_part: None,
+                    content_part: None,
                 });
                 judge_plan.batches.push(BatchPlan {
                     id: bi + 1,
@@ -555,6 +584,14 @@ pub struct BatchPart {
     pub rules: Vec<String>,
     pub files: Vec<String>,
     pub prompt_chars: usize,
+    /// Which part of its one file's diff this call carries, when that file's
+    /// diff was split to fit; omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_part: Option<PartOf>,
+    /// Which part of its one file's content this call carries, and that part's
+    /// line range, when that file's content was split to fit; omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_part: Option<LinesPart>,
 }
 
 /// A file whose prompt on its own is over `max_prompt_chars`, the size it
@@ -596,6 +633,17 @@ impl PlanExplanation {
     /// entirely for a zero-rule run.
     pub fn is_empty(&self) -> bool {
         self.agents.is_empty() && self.skipped.is_empty()
+    }
+
+    /// True when some judge call carries one part of a file's diff or content —
+    /// what makes a persisted history record schema version 2.
+    pub fn has_file_parts(&self) -> bool {
+        self.agents
+            .iter()
+            .flat_map(|a| &a.judges)
+            .flat_map(|j| &j.batches)
+            .flat_map(|b| &b.parts)
+            .any(|p| p.diff_part.is_some() || p.content_part.is_some())
     }
 
     /// The total number of judge calls the plan will make.
@@ -705,12 +753,19 @@ impl PlanExplanation {
                         ));
                         for (i, part) in b.parts.iter().enumerate() {
                             out.push_str(&format!(
-                                "{indent}    call {}: [{}] {} file(s), {} chars: {}\n",
+                                "{indent}    call {}: [{}] {} file(s), {} chars: {}{}\n",
                                 i + 1,
                                 part.rules.join(", "),
                                 part.files.len(),
                                 part.prompt_chars,
-                                part.files.join(", ")
+                                part.files.join(", "),
+                                part.diff_part
+                                    .map(|p| format!(" (diff part {} of {})", p.index, p.of))
+                                    .or(part.content_part.map(|p| format!(
+                                        " (lines {}-{}, part {} of {})",
+                                        p.start_line, p.end_line, p.index, p.of
+                                    )))
+                                    .unwrap_or_default()
                             ));
                         }
                     }

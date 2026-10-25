@@ -674,9 +674,21 @@ resolves the oneharness the test put on PATH.
   (`LLMLINT_MOCK_PROMPTLOG`) and read back from its target-file list and `Scope:`
   lines: a `--diff` over the bound is judged in several calls, each at most the
   bound, every rule shown every file it selects exactly once, verdicts unchanged
-  from the unbounded run; a single file over the bound is an exit-2 `ERROR` naming
-  the file, its size, the bound and the remedy, and no prompt over the bound (nor
-  carrying it) reaches the harness; `--max-prompt-chars` overrides
+  from the unbounded run; a file whose diff alone is over the bound (a table with
+  hundreds of small hunks) is judged in parts, each within the bound, cut only
+  between hunks, packed so no two adjacent parts would fit one prompt, every hunk
+  judged once and in order, the same parts on a rerun and named in the plan — it
+  passes when every part passes and fails, with exactly that part's violation,
+  when one part fails; a single hunk over the bound is cut at lines, every part
+  re-headered so each added row and each trimmed ignore-block run sits on its
+  true file line, and the JSON plan gives each part's `diff_part` (none on the
+  unsplit call beside it), and `llmlint history` reads that run back as a
+  schema-version-2 record keeping every part (an unsplit run's record has no
+  version stamp and no part); a part ending on a hunk the bound cannot hold is
+  filled with that hunk's first lines, and a file with no final newline keeps
+  each `\ No newline` marker under its line; a file one of whose diff lines cannot fit beside the
+  prompt's overhead is an exit-2 `ERROR` naming the file, its size, the bound and
+  the remedy, and no prompt over the bound (nor carrying it) reaches the harness; `--max-prompt-chars` overrides
   `max_prompt_chars` both ways and `LLMLINT_MAX_PROMPT_CHARS` (which itself
   splits); a corrective re-ask that would exceed the bound is not sent (control:
   unbounded, it is) and the deterministic cleanup still decides the verdict; a
@@ -689,7 +701,20 @@ resolves the oneharness the test put on PATH.
   joined); a change whose every file is over the bound sends no prompt, exits 2
   with one error per file, and plans 0 judge calls; `--plan-only` shows
   the split with no harness spawn (control: the same run spawns it); a zero bound
-  from the config, the flag or the env var is exit 2.
+  from the config, the flag or the env var is exit 2. Without `--diff` a file
+  over three times the bound beside a small one is judged in several calls of its
+  lines, none over the bound, each inlining a consecutive run of the file's real
+  numbered lines, packed so no two adjacent parts fit one call, every line once,
+  the same ranges on a rerun and named in `--plan-only`, while the small file is
+  one call by name, and the JSON plan and the version-2 history record name
+  each call's line range; a custom template that only names its files still
+  sends several bounded prompts covering every line once (llmlint appends each
+  part's lines), and failing in one of its parts fails the file as one vote;
+  every part passing passes it as one vote, and failing in
+  exactly one part fails it with that part's violation; a file holding one line
+  too long for any part is an exit-2 error naming it, no call carrying it, its
+  small sibling still judged; a bound its prompt's overhead alone exceeds
+  refuses it by name, with no call.
 - **A judge reply answers exactly its batch** (`judge_reply.rs`). Under `--diff`
   with two selected rules — the workload at which 0.4.10 exited 0 on each of
   these — a schema-valid reply of `{}`, one holding only one rule, one naming

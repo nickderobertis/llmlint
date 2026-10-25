@@ -1,0 +1,109 @@
+{
+  "schema_version": 2,
+  "id": "20260704T153000Z-1a2b3",
+  "timestamp": "2026-07-04T15:30:00Z",
+  "llmlint_version": "<version>",
+  "command": "lint",
+  "cwd": "/proj",
+  "exit_code": 1,
+  "config_files": [
+    "llmlint.yml"
+  ],
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "skipped": 0,
+    "ignored": 0,
+    "not_relevant": 0,
+    "errored": 0
+  },
+  "rules": [
+    {
+      "name": "r",
+      "outcome": "fail",
+      "votes_total": 1,
+      "votes_hold": 0
+    }
+  ],
+  "errors": [],
+  "plan": {
+    "agents": [
+      {
+        "agent": "default",
+        "batch_size": 20,
+        "judges": [
+          {
+            "judge_index": 1,
+            "batches": [
+              {
+                "id": 1,
+                "rules": [
+                  "r"
+                ],
+                "files": [
+                  "big.md",
+                  "small.md"
+                ],
+                "parts": [
+                  {
+                    "rules": [
+                      "r"
+                    ],
+                    "files": [
+                      "big.md"
+                    ],
+                    "prompt_chars": 990,
+                    "content_part": {
+                      "index": 1,
+                      "of": 2,
+                      "start_line": 1,
+                      "end_line": 120
+                    }
+                  },
+                  {
+                    "rules": [
+                      "r"
+                    ],
+                    "files": [
+                      "big.md"
+                    ],
+                    "prompt_chars": 410,
+                    "content_part": {
+                      "index": 2,
+                      "of": 2,
+                      "start_line": 121,
+                      "end_line": 170
+                    }
+                  },
+                  {
+                    "rules": [
+                      "r"
+                    ],
+                    "files": [
+                      "small.md"
+                    ],
+                    "prompt_chars": 120
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "linted_files": [
+      "big.md",
+      "small.md"
+    ],
+    "optimization": {
+      "billed_tokens": 0,
+      "baseline_billed_tokens": 0,
+      "saved_billed_tokens": 0,
+      "per_rule_tokens": 0,
+      "baseline_per_rule_tokens": 0,
+      "saved_per_rule_tokens": 0
+    },
+    "max_prompt_chars": 1000
+  }
+}
