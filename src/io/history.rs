@@ -173,15 +173,10 @@ fn civil(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
 }
 
 /// The history record's schema version. A record with no `schema_version` key is
-/// version 1: every record written before split diffs, and every record since
-/// that carries none. Version 2 adds `diff_part` (`{index, of}`) to the plan's
-/// batch parts, naming the part of a file's diff a judge call carried when that
-/// diff was split to fit `max_prompt_chars`, and `content_part` (`{index, of,
-/// start_line, end_line}`), naming the run of a file's lines one carried when its
-/// content was. It is stamped only on a record that carries one, so every other record keeps its version-1 bytes (the run-label
-/// contract needs an unlabelled record unchanged; see
-/// `tests/fixtures/history_record/README.md`), and a reader treats a missing key
-/// as 1 ([`Record::schema_version`]).
+/// version 1. Version 2 adds the plan batch parts' `diff_part` and
+/// `content_part`, and is stamped only on a record that carries one (see
+/// `tests/fixtures/history_record/README.md`); a reader treats a missing key as
+/// 1 ([`Record::schema_version`]).
 pub const RECORD_SCHEMA_VERSION: u64 = 2;
 
 /// Assemble the full run record: the run metadata followed by the pure report
