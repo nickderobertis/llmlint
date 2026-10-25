@@ -435,7 +435,7 @@ These variables are in scope when a template renders:
 | --- | --- | --- |
 | `files` | list of strings | The target file paths for this run — relative to the working directory, always forward-slashed (so a Windows run reads the same as Linux/macOS). |
 | `rules` | list of objects | The rules in this batch. Each has `.name` (the identifier, also the JSON key in the structured output), `.description` (the invariant to judge), `.rationale` (whether this rule wants a justification), `.relevance` (the relevance condition string, or unset for an always-evaluated rule), `.require_line_attribution` (whether every violation must cite a `file` + `line`), and `.files` (the subset of `files` this rule applies to). |
-| `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), `.diff` (that file's unified diff (which may be a rename diff), present only under `--diff` when the file changed), `.part` (`{index, of}`, present only when `.diff` is one part of a diff split to fit `max_prompt_chars`), and `.content` (present only for a file judged in parts of its content without `--diff`: `.part` is `{index, of, start_line, end_line}` and `.text` those lines, each prefixed with its line number). A template that does not render `.content` judges such a file by name, whole, as before. The default template's "Target files" section is built from this. |
+| `file_rules` | list of objects | Per-file applicability — one entry per target file, in the same order as `files`. Each has `.file` (the path), `.mode` (`"include"` or `"exclude"`), `.rules` (the rule names to apply or, when `mode == "exclude"`, to skip — whichever list is shorter), `.diff` (that file's unified diff (which may be a rename diff), present only under `--diff` when the file changed), and `.part` (`{index, of}`, present only when `.diff` is one part of a diff split to fit `max_prompt_chars`). A file judged in parts of its content (without `--diff`) needs nothing from the template: llmlint appends each part's lines and the instruction to judge only them to whatever the template renders. The default template's "Target files" section is built from this. |
 | `diffs` | list of objects | Per-file changed-line diffs — one entry per *changed* file, present only under `--diff` (empty otherwise). Each has `.file` (matching its entry in `files`) and `.diff` (the unified diff text, which may be a rename diff). Under `--diff` `files` is itself narrowed to the changed files, so there is one diff per target. The default template inlines these per file via `file_rules`; kept separately for custom templates. |
 | `rationales` | bool | True when any rule in this batch wants a rationale — gate the rationale guidance on it. |
 | `relevance` | bool | True when any rule in this batch carries a relevance condition — gate the relevance guidance on it. |
@@ -676,7 +676,9 @@ same way. Without `--diff` a prompt carries file paths, not contents — the jud
 reads each file whole with its own tools — so a file whose content beside its
 prompt would be over the bound is judged in parts of its content instead: each
 part inlines the longest run of the file's lines that fits, every line prefixed
-with its real line number, and the judge reviews only those lines. A file that
+with its real line number, and the judge reviews only those lines. llmlint
+appends that part and its instructions to the prompt itself, so it reaches the
+judge whatever `prompt_template` renders. A file that
 fits is still named, not inlined. Only a file that cannot fit even one diff or
 content line beside the prompt's fixed overhead is never sent: it is an errored
 result (exit `2`) naming the file, its prompt size and the bound, with the

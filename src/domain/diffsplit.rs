@@ -283,22 +283,23 @@ pub struct Part {
 }
 
 /// Split `diff` into consecutive parts whose prompts, as `measure` sizes the
-/// rendered part diff, are each at most `max`. Returns `None` when some single
+/// rendered part diff under its 1-based part number, are each at most `max`. Returns `None` when some single
 /// line does not fit even alone (or a hunk that cannot be cut does not), so the
 /// caller refuses the file rather than drop part of it.
 pub fn pack(
     diff: &SplitDiff,
     max: usize,
-    mut measure: impl FnMut(&str) -> usize,
+    mut measure: impl FnMut(usize, &str) -> usize,
 ) -> Option<Vec<Part>> {
-    let mut fits = |from: Pos, to: Pos| {
-        let chars = measure(&diff.render(from, to));
-        (chars <= max).then_some(chars)
-    };
     let end = diff.end();
-    let mut parts = Vec::new();
+    let mut parts: Vec<Part> = Vec::new();
     let mut from = (0, 0);
     while from < end {
+        let index = parts.len() + 1;
+        let mut fits = |from: Pos, to: Pos| {
+            let chars = measure(index, &diff.render(from, to));
+            (chars <= max).then_some(chars)
+        };
         let hunk_ends = diff.ends(from, end, Boundary::Hunk);
         let (to, chars) = match longest(from, &hunk_ends, &mut fits) {
             Some((to, chars)) if to == end => (to, chars),
@@ -369,7 +370,7 @@ mod tests {
         let raw = many_hunks(200);
         let d = SplitDiff::parse(&raw);
         let max = 2_000;
-        let parts = pack(&d, max, size).unwrap();
+        let parts = pack(&d, max, |_, d| size(d)).unwrap();
         assert!(parts.len() > 2, "{} parts", parts.len());
         let mut body = String::new();
         for (i, part) in parts.iter().enumerate() {
@@ -401,7 +402,7 @@ mod tests {
         raw.push_str("-gone\n ctx b\n\\ No newline at end of file\n");
         let d = SplitDiff::parse(&raw);
         let max = 600;
-        let parts = pack(&d, max, size).unwrap();
+        let parts = pack(&d, max, |_, d| size(d)).unwrap();
         assert!(parts.len() >= 3, "{} parts", parts.len());
         let mut body = Vec::new();
         for (i, part) in parts.iter().enumerate() {
@@ -472,7 +473,7 @@ mod tests {
         }
         let d = SplitDiff::parse(&raw);
         let whole_second = size(&d.render((1, 0), d.end()));
-        let parts = pack(&d, whole_second, size).unwrap();
+        let parts = pack(&d, whole_second, |_, d| size(d)).unwrap();
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].to, (1, 0));
     }
@@ -483,7 +484,7 @@ mod tests {
             "{PREAMBLE}@@ -1,1 +1,2 @@\n-a\n+{}\n+b\n",
             "x".repeat(1_000)
         );
-        assert_eq!(pack(&SplitDiff::parse(&raw), 600, size), None);
+        assert_eq!(pack(&SplitDiff::parse(&raw), 600, |_, d| size(d)), None);
     }
 
     #[test]
@@ -492,12 +493,15 @@ mod tests {
         for i in 0..40 {
             raw.push_str(&format!("+line {i:02}\n"));
         }
-        assert_eq!(pack(&SplitDiff::parse(&raw), 400, size), None);
+        assert_eq!(pack(&SplitDiff::parse(&raw), 400, |_, d| size(d)), None);
     }
 
     #[test]
     fn the_split_is_deterministic() {
         let d = SplitDiff::parse(&many_hunks(300));
-        assert_eq!(pack(&d, 3_000, size), pack(&d, 3_000, size));
+        assert_eq!(
+            pack(&d, 3_000, |_, d| size(d)),
+            pack(&d, 3_000, |_, d| size(d))
+        );
     }
 }

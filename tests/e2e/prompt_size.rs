@@ -1047,32 +1047,28 @@ struct LinesPart {
     files: Vec<String>,
 }
 
-/// Every logged call that carried a part of a file's content, in part order,
-/// and how many calls carried none.
-fn lines_parts(log: &Path) -> (Vec<LinesPart>, Vec<Call>) {
+/// Every logged call that carried a part of a file's content, in part order —
+/// read from the section llmlint appends to such a prompt whatever the
+/// template — and the records of the calls that carried none.
+fn lines_parts(log: &Path) -> (Vec<LinesPart>, Vec<Value>) {
     let mut parts = Vec::new();
     let mut whole = Vec::new();
     for e in fs::read_dir(log).unwrap() {
         let record: Value =
             serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap();
-        let call = parse_call(&record);
         let system = record["system"].as_str().unwrap();
-        let Some(note) = system.split("This is part ").nth(1) else {
-            whole.push(call);
+        let Some(section) = system.split("\n## Part of ").nth(1) else {
+            whole.push(record);
             continue;
         };
+        let file = section.split(" under review\n").next().unwrap().to_string();
+        let note = section.split("This is part ").nth(1).unwrap();
         let (index, rest) = note.split_once(" of ").unwrap();
-        let of = rest.split(' ').next().unwrap();
-        let range = system
-            .split("Its lines ")
-            .nth(1)
-            .unwrap()
-            .split(' ')
-            .next()
-            .unwrap();
-        let (start_line, end_line) = range.split_once('-').unwrap();
-        let block = system
-            .split("their own calls.\n\n```\n")
+        let (of, rest) = rest.split_once(": lines ").unwrap();
+        let (start_line, rest) = rest.split_once('-').unwrap();
+        let end_line = rest.split(' ').next().unwrap();
+        let block = section
+            .split("\n\n```\n")
             .nth(1)
             .unwrap()
             .split("\n```\n")
@@ -1082,14 +1078,15 @@ fn lines_parts(log: &Path) -> (Vec<LinesPart>, Vec<Call>) {
             .lines()
             .map(|l| l.trim_start().split_once("  ").unwrap().1.to_string())
             .collect();
+        let chars = system.chars().count() + record["prompt"].as_str().unwrap().chars().count();
         parts.push(LinesPart {
             index: index.parse().unwrap(),
             of: of.parse().unwrap(),
-            chars: call.chars,
+            chars,
             start_line: start_line.parse().unwrap(),
             end_line: end_line.parse().unwrap(),
             lines,
-            files: call.files,
+            files: vec![file],
         });
     }
     parts.sort_by_key(|p| p.index);
@@ -1180,8 +1177,9 @@ fn an_oversized_file_is_judged_in_parts_of_its_lines_without_diff() {
     assert_eq!(next, file_lines.len() + 1, "every line is judged once");
     // The small file is one call by name, its content not inlined.
     assert_eq!(whole.len(), 1);
-    assert_eq!(whole[0].files, vec!["src/small.md".to_string()]);
-    assert!(whole[0].chars <= TABLE_BOUND);
+    let small = parse_call(&whole[0]);
+    assert_eq!(small.files, vec!["src/small.md".to_string()]);
+    assert!(small.chars <= TABLE_BOUND);
     // The parts are one judge's vote: every part passing passes the file.
     let rule = &report["rules"][0];
     assert_eq!(rule["outcome"], "pass", "{report:#}");
@@ -1259,39 +1257,65 @@ fn an_oversized_file_is_judged_in_parts_of_its_lines_without_diff() {
     );
 }
 
-/// A custom `prompt_template` that does not render a part's lines
-/// (`file_rules[i].content`) cannot judge a file in parts of its content, so
-/// the file stays named in its run and is judged as before: one call carrying
-/// both files, nothing inlined.
+/// A custom `prompt_template` that only names its files still has an oversized
+/// file judged in parts: llmlint appends each part's lines and scope to
+/// whatever the template renders, so every prompt stays within the bound, the
+/// parts cover every line once, and a rule failing in exactly one part fails the
+/// file as one vote.
 #[test]
-fn a_template_without_content_judges_an_oversized_file_by_name_as_before() {
+fn a_custom_template_still_judges_an_oversized_file_in_bounded_parts() {
     let p = big_table();
     p.write(
         "names.md",
         "Judge:\n{% for fr in file_rules %}- {{ fr.file }}\n{% endfor %}",
     );
-    let (code, report) = run_whole(
-        &p,
-        "log",
-        r#"{"t_rule": true}"#,
-        &["--prompt-template", "names.md"],
-    );
+    let template = ["--prompt-template", "names.md", "--max-parallel", "1"];
+    let content = fs::read_to_string(p.path().join("src/table.md")).unwrap();
+    let file_lines: Vec<&str> = content.lines().collect();
+
+    // Every part passing: several bounded prompts covering every line once.
+    let (code, report) = run_whole(&p, "pass", r#"{"t_rule": true}"#, &template);
     assert_eq!(code, Some(0), "{report:#}");
-    let systems: Vec<String> = fs::read_dir(p.path().join("log"))
-        .unwrap()
-        .map(|e| {
-            let record: Value =
-                serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap();
-            record["system"].as_str().unwrap().to_string()
-        })
-        .collect();
-    assert_eq!(systems.len(), 1, "{systems:?}");
-    assert!(systems[0].contains("- src/small.md\n"), "{}", systems[0]);
-    assert!(systems[0].contains("- src/table.md\n"), "{}", systems[0]);
-    assert!(!systems[0].contains("| row "), "nothing is inlined");
-    let batch = &report["plan"]["agents"][0]["judges"][0]["batches"][0];
-    assert!(batch.get("parts").is_none(), "no split: {batch:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+    let (parts, whole) = lines_parts(&p.path().join("pass"));
+    assert!(parts.len() >= 3, "{} parts", parts.len());
+    let mut next = 1;
+    for (i, part) in parts.iter().enumerate() {
+        assert_eq!((part.index, part.of), (i + 1, parts.len()));
+        assert_eq!(part.files, vec!["src/table.md".to_string()]);
+        assert!(part.chars <= TABLE_BOUND, "a {}-char prompt", part.chars);
+        assert_eq!(part.start_line, next, "parts are consecutive");
+        assert_eq!(
+            part.lines,
+            file_lines[part.start_line - 1..part.end_line].to_vec()
+        );
+        next = part.end_line + 1;
+    }
+    assert_eq!(next, file_lines.len() + 1, "every line is judged once");
+    // The small file is one call naming only it, nothing appended.
+    assert_eq!(whole.len(), 1);
+    let small = whole[0]["system"].as_str().unwrap();
+    assert_eq!(small, "Judge:\n- src/small.md\n");
     assert_eq!(report["rules"][0]["outcome"], "pass", "{report:#}");
+    assert_eq!(report["rules"][0]["votes_total"], 1, "{report:#}");
+
+    // Failing in the table's second part alone (serially the small file's
+    // call comes first) fails the file with that part's violation.
+    let line = parts[1].start_line + 1;
+    let verdicts = format!(
+        r#"{{"t_rule": [true, true, {{"holds": false, "violations": [{{"file": "src/table.md", "line": {line}, "message": "bad cell"}}]}}, true]}}"#
+    );
+    let (code, report) = run_whole(&p, "fail", &verdicts, &template);
+    assert_eq!(code, Some(1), "{report:#}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report:#}");
+    assert_eq!(lines_parts(&p.path().join("fail")).0.len(), parts.len());
+    let rule = &report["rules"][0];
+    assert_eq!(rule["outcome"], "fail", "{report:#}");
+    assert_eq!(rule["votes_total"], 1, "{report:#}");
+    let violations = rule["violations"].as_array().unwrap();
+    assert_eq!(violations.len(), 1, "{report:#}");
+    assert_eq!(violations[0]["message"], "bad cell");
+    assert_eq!(violations[0]["line"], line);
 }
 
 /// A rule failing in exactly one part of an oversized file fails the file, with
@@ -1342,7 +1366,10 @@ fn a_content_line_too_long_for_any_part_is_refused_by_name_without_diff() {
     let (parts, whole) = lines_parts(&p.path().join("log"));
     assert!(parts.is_empty(), "no part of the file was sent");
     assert_eq!(whole.len(), 1);
-    assert_eq!(whole[0].files, vec!["src/small.md".to_string()]);
+    assert_eq!(
+        parse_call(&whole[0]).files,
+        vec!["src/small.md".to_string()]
+    );
 }
 
 /// Without `--diff` a file's prompt is over the bound only on its fixed

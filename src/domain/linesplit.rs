@@ -59,24 +59,26 @@ pub struct Part {
 }
 
 /// Split `content` into consecutive runs of lines whose prompts, as `measure`
-/// sizes a part from its 1-based inclusive line range and rendered text, are
+/// sizes a part from its 1-based part number, inclusive line range and
+/// rendered text, are
 /// each at most `max`. Returns `None` when some single line does not fit even
 /// alone, so the caller refuses the file rather than drop part of it, and an
 /// empty list for content with no lines.
 pub fn pack(
     content: &SplitContent,
     max: usize,
-    mut measure: impl FnMut(usize, usize, &str) -> usize,
+    mut measure: impl FnMut(usize, usize, usize, &str) -> usize,
 ) -> Option<Vec<Part>> {
-    let mut fits = |from: usize, to: usize| {
-        let chars = measure(from + 1, to, &content.render(from, to));
-        (chars <= max).then_some(chars)
-    };
     let n = content.lines.len();
     let ends: Vec<usize> = (1..=n).collect();
-    let mut parts = Vec::new();
+    let mut parts: Vec<Part> = Vec::new();
     let mut from = 0;
     while from < n {
+        let index = parts.len() + 1;
+        let mut fits = |from: usize, to: usize| {
+            let chars = measure(index, from + 1, to, &content.render(from, to));
+            (chars <= max).then_some(chars)
+        };
         let (to, chars) = longest(from, &ends[from..], &mut fits)?;
         parts.push(Part {
             start_line: from + 1,
@@ -99,7 +101,7 @@ mod tests {
     }
 
     /// A prompt is 50 chars of overhead plus the part's text.
-    fn size(_: usize, _: usize, text: &str) -> usize {
+    fn size(_: usize, _: usize, _: usize, text: &str) -> usize {
         50 + text.chars().count()
     }
 
@@ -122,12 +124,12 @@ mod tests {
         for (i, part) in parts.iter().enumerate() {
             assert_eq!(part.start_line, next, "parts are consecutive");
             assert!(part.chars <= max);
-            assert_eq!(part.chars, size(0, 0, &part.text));
+            assert_eq!(part.chars, size(1, 0, 0, &part.text));
             // Each part is the longest that fits: one more line would not.
             if i + 1 < parts.len() {
                 let longer = split.render(part.start_line - 1, part.end_line + 1);
                 assert!(
-                    size(0, 0, &longer) > max,
+                    size(1, 0, 0, &longer) > max,
                     "part {i} could take another line"
                 );
             }
@@ -163,12 +165,15 @@ mod tests {
         let content = rows(30);
         let split = SplitContent::parse(&content);
         let mut seen = Vec::new();
-        let parts = pack(&split, 120, |a, b, text| {
-            seen.push((a, b));
-            size(a, b, text)
+        let parts = pack(&split, 120, |i, a, b, text| {
+            seen.push((i, a, b));
+            size(i, a, b, text)
         })
         .unwrap();
-        assert!(seen.iter().all(|&(a, b)| a >= 1 && b >= a && b <= 30));
+        assert!(seen.iter().all(|&(_, a, b)| a >= 1 && b >= a && b <= 30));
+        // Each measurement names the part it sizes, in order.
+        let max_index = seen.iter().map(|&(i, ..)| i).max().unwrap();
+        assert_eq!(max_index, parts.len());
         assert_eq!(parts.last().unwrap().end_line, 30);
     }
 }

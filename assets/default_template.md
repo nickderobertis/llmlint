@@ -111,17 +111,6 @@ in their own calls.
 ```diff
 {{ fr.diff }}
 ```
-{% endif %}{% if fr.content %}
-This is part {{ fr.content.part.index }} of {{ fr.content.part.of }} of this file: the whole
-file is too large for one review, so each part is reviewed in a call of its own.
-Its lines {{ fr.content.part.start_line }}-{{ fr.content.part.end_line }} are shown below, each
-prefixed with its line number. Review only these lines, citing those line
-numbers, and do not read the rest of the file; the other parts are judged in
-their own calls.
-
-```
-{{ fr.content.text }}
-```
 {% endif %}{% endfor %}
 ## Rules to evaluate
 

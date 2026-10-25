@@ -65,16 +65,13 @@ pub fn bound(
         let whole = measure(&run);
         // Each file whose content would take the judge over the bound is pulled
         // out of the run into parts of its lines, or refused when a line cannot
-        // fit. A template that does not inline a part's lines (a custom one
-        // without `file_rules[i].content`) packs it into one part: it stays
-        // named in its run, judged as before.
+        // fit.
         let mut pulled: Vec<PathBuf> = Vec::new();
         let mut content_parts = Vec::new();
         let mut too_big = Vec::new();
         for (alone, chars) in over_on_content(&run, whole, max, diffs, contents, &mut measure) {
             let file = &alone.files[0];
             match split_content(&alone, &contents[file], max, &mut measure) {
-                Some(more) if more.len() == 1 => continue,
                 Some(more) => content_parts.extend(more),
                 None => too_big.push(OversizedFile {
                     file: to_slash(file),
@@ -209,19 +206,18 @@ fn split_content(
         ..alone.clone()
     };
     let parsed = SplitContent::parse(content);
-    // As for a diff: pack against the widest part numbers there could be (no
-    // more parts than lines), so the final prompt is never longer than measured.
-    let widest = content.lines().count().max(1);
-    let packed = linesplit::pack(&parsed, max, |start_line, end_line, text| {
-        measure(&with(
-            LinesPart {
-                index: widest,
-                of: widest,
-                start_line,
-                end_line,
-            },
-            text,
-        ))
+    let packed = settle(content.lines().count(), |of| {
+        linesplit::pack(&parsed, max, |index, start_line, end_line, text| {
+            measure(&with(
+                LinesPart {
+                    index,
+                    of,
+                    start_line,
+                    end_line,
+                },
+                text,
+            ))
+        })
     })?;
     if packed.is_empty() {
         return None;
@@ -332,15 +328,11 @@ fn split_file(
         ..alone.clone()
     };
     let parsed = SplitDiff::parse(diff);
-    // The part numbers are only known once packed, so pack against the widest
-    // they could be (no more parts than diff lines): the final prompt is never
-    // longer than the one measured.
-    let widest = diff.lines().count().max(1);
-    let widest = PartOf {
-        index: widest,
-        of: widest,
-    };
-    let packed = diffsplit::pack(&parsed, max, |text| measure(&with(widest, text)))?;
+    let packed = settle(diff.lines().count(), |of| {
+        diffsplit::pack(&parsed, max, |index, text| {
+            measure(&with(PartOf { index, of }, text))
+        })
+    })?;
     if packed.is_empty() {
         return None;
     }
@@ -356,6 +348,32 @@ fn split_file(
             })
             .collect(),
     )
+}
+
+/// Pack a file's parts with `pack`, which measures each part under its own
+/// number and an assumed part count `of`, so every part's measured size is its
+/// real prompt's and each part is the longest that truly fits. The count is only
+/// known once packed, and a prompt depends on it only through its digits: start
+/// from the most parts there could be (`widest`, one per line), then re-pack
+/// under the count the last packing produced until its digits stop changing.
+/// Should that not settle, the packing under `widest` is kept — its parts are
+/// never larger than measured, just not always as full as they could be.
+fn settle<T>(widest: usize, mut pack: impl FnMut(usize) -> Option<Vec<T>>) -> Option<Vec<T>> {
+    let widest = widest.max(1);
+    let first = pack(widest)?;
+    let digits = |n: usize| n.to_string().len();
+    let mut of = first.len();
+    if digits(of) == digits(widest) {
+        return Some(first);
+    }
+    for _ in 0..3 {
+        let Some(parts) = pack(of) else { break };
+        if digits(parts.len()) == digits(of) {
+            return Some(parts);
+        }
+        of = parts.len();
+    }
+    Some(first)
 }
 
 /// The run narrowed to `files`: each rule keeps only its files among them, and a
@@ -792,18 +810,24 @@ mod tests {
     }
 
     #[test]
-    fn a_template_that_does_not_inline_content_leaves_the_file_in_its_run() {
-        let (mut p, sizes) = plan(&[("big.rs", 0), ("small.rs", 20)]);
-        let contents = BTreeMap::from([(PathBuf::from("big.rs"), big_content(40))]);
-        // Every run measures as if its content part were not rendered.
-        let over = bound(&mut p, 120, &BTreeMap::new(), &contents, measure(&sizes));
-        assert!(over.is_empty());
-        assert_eq!(p.runs.len(), 1);
-        assert_eq!(p.runs[0].content_part, None);
-        assert_eq!(
-            p.runs[0].files,
-            vec![PathBuf::from("big.rs"), PathBuf::from("small.rs")]
-        );
-        assert_eq!(p.explanation.max_prompt_chars, None);
+    fn settle_repacks_under_its_own_count_and_keeps_the_widest_if_it_cannot() {
+        let digits = |n: usize| n.to_string().len();
+        // One-digit part numbers leave room for fewer parts than four-digit ones.
+        let mut seen = Vec::new();
+        let parts = settle(1000, |of| {
+            seen.push(of);
+            Some(vec![(); if digits(of) == 1 { 5 } else { 6 }])
+        })
+        .unwrap();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(seen, vec![1000, 6]);
+        // A count whose digits flip each packing never settles: the widest
+        // packing, never under-measured, is kept.
+        let parts = settle(100, |of| {
+            Some(vec![(); if digits(of) == 1 { 10 } else { 9 }])
+        });
+        assert_eq!(parts.unwrap().len(), 9);
+        // A file whose lines cannot fit is refused.
+        assert!(settle(10, |_| None::<Vec<()>>).is_none());
     }
 }

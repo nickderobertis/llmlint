@@ -519,7 +519,10 @@ harness reads target files on-demand with its own tools.
   by judge index in `lint.rs`), never extra votes. A file over the bound alone is
   judged in parts of its diff (`domain::diffsplit`) or, without `--diff`, of its
   content (`domain::linesplit` — the judge would read it whole, so its content
-  counts); a file that fits keeps its prompt unchanged. Only a file whose single
+  counts; `lint.rs` appends each part's section to any template's output, so a
+  custom template cannot drop it); a file that fits keeps its prompt unchanged.
+  Each part is sized under its own number and the settled part count
+  (`promptsize::settle`), so it is the longest that truly fits. Only a file whose single
   diff or content line cannot fit beside the overhead is never sent — one
   errored result per agent and file. The parts are a pure function of the input
   file, rules, template and bound, so anything new that can change a split must

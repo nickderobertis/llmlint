@@ -1019,27 +1019,21 @@ fn render_system(
     let want_rationale = run.rules.iter().any(|r| r.rationale);
     let want_relevance = run.rules.iter().any(|r| r.relevance.is_some());
     let want_line_attribution = run.rules.iter().any(|r| r.require_line_attribution);
-    // A run carrying one part of its one file's content inlines those lines.
-    let content: Vec<template::FileContent> = run
-        .content_part
-        .iter()
-        .zip(&files_str)
-        .map(|(cp, file)| template::FileContent {
-            file: file.clone(),
-            part: cp.part,
-            text: cp.text.clone(),
-        })
-        .collect();
-    template::render_with_content(
+    let system = template::render(
         &run.template,
         &run.rules,
         &files_str,
         &file_diffs,
-        &content,
         want_rationale,
         want_relevance,
         want_line_attribution,
-    )
+    )?;
+    // A run carrying one part of its one file's content gets that part's lines
+    // and scope from llmlint itself, whatever the template renders.
+    Ok(match (&run.content_part, files_str.first()) {
+        (Some(cp), Some(file)) => system + &template::content_part_section(file, cp.part, &cp.text),
+        _ => system,
+    })
 }
 
 // Each argument is a distinct piece of one judge call's context (the client, the

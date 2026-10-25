@@ -707,9 +707,10 @@ resolves the oneharness the test put on PATH.
   numbered lines, packed so no two adjacent parts fit one call, every line once,
   the same ranges on a rerun and named in `--plan-only`, while the small file is
   one call by name, and the JSON plan and the version-2 history record name
-  each call's line range; a custom template that does not render
-  `file_rules[i].content` judges it by name in one call with its sibling, as
-  before; every part passing passes it as one vote, and failing in
+  each call's line range; a custom template that only names its files still
+  sends several bounded prompts covering every line once (llmlint appends each
+  part's lines), and failing in one of its parts fails the file as one vote;
+  every part passing passes it as one vote, and failing in
   exactly one part fails it with that part's violation; a file holding one line
   too long for any part is an exit-2 error naming it, no call carrying it, its
   small sibling still judged; a bound its prompt's overhead alone exceeds
