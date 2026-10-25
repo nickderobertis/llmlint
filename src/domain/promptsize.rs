@@ -809,6 +809,12 @@ mod tests {
         assert!(p.runs.iter().all(|r| r.content_part.is_none()));
     }
 
+    /// `settle`'s fallbacks are proved here, not end to end: a real file
+    /// reaches them only when its part count sits exactly on a digit boundary
+    /// that flips with each re-pack (or a re-pack under fewer digits fails,
+    /// which a prompt that only shrinks with fewer digits cannot do), so no
+    /// stable CLI input exercises them. The convergent path is end to end:
+    /// `prompt_size.rs`'s packing checks fail without it.
     #[test]
     fn settle_repacks_under_its_own_count_and_keeps_the_widest_if_it_cannot() {
         let digits = |n: usize| n.to_string().len();
