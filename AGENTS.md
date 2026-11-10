@@ -944,7 +944,9 @@ harness reads target files on-demand with its own tools.
   change a verdict must reach this material, or a cache replays a stale verdict.
 - **`src/commands/`** wires domain + io for `lint` (default), `check-ignores`,
   `check-version-bump`, `validate`, `lint-config`, `init`, `config` (`--sources`
-  adds per-item provenance), `where` (locate one config item's source), `doctor`,
+  adds per-item provenance), `where` (locate one config item's source), `rules`
+  (the rules that would judge some paths, through `lint`'s own selection;
+  its JSON is `domain::rule_listing::RulesDocument`), `doctor`,
   `history` (inspect logged run results), `plugins` (report / clear the plugin
   cache), `fingerprint` (the judge's cache key). `commands/ignores.rs` holds the ignore-directive resolution + scan
   shared by `lint`, `check-ignores`, and `lint-config`.
