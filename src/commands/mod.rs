@@ -12,6 +12,7 @@ pub mod lint;
 pub mod lint_config;
 pub mod plugins;
 pub mod progress;
+pub mod rules;
 pub mod validate;
 pub mod version_bump;
 pub mod where_;
@@ -29,6 +30,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Init(args)) => init::run(args),
         Some(Command::Config(args)) => config::run(args),
         Some(Command::Where(args)) => where_::run(args),
+        Some(Command::Rules(args)) => rules::run(args),
         Some(Command::Doctor(args)) => doctor::run(args),
         Some(Command::History(args)) => history::run(args),
         Some(Command::Plugins(args)) => plugins::run(args),

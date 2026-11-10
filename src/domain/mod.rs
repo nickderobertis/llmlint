@@ -18,6 +18,7 @@ pub mod linesplit;
 pub mod plan;
 pub mod promptsize;
 pub mod report;
+pub mod rule_listing;
 pub mod schema;
 pub mod template;
 pub mod verdict;

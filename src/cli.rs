@@ -70,6 +70,15 @@ pub enum Command {
     /// `rules.<name>`, or `rules.<name>.<field>`; prints the source and nothing
     /// else, for scripting. The broad view is `config --sources`.
     Where(WhereArgs),
+    /// Print the rules that would judge the given paths — before anything is
+    /// written. `--files` takes paths that need not exist, matched as `lint`
+    /// matches named files (config `files`, `--exclude`, each rule's own `files`,
+    /// nested configs and plugins resolved as `lint` resolves them); `--diff`
+    /// takes the changed paths `lint --diff` would judge. Each matched rule is
+    /// listed with its description and judging agent, and each of those agents
+    /// once with its framing; a rule switched off with `relevance: false` never
+    /// appears. Starts no harness and makes no model call.
+    Rules(RulesArgs),
     /// Check that oneharness is installed and reachable. With `--probe`, also
     /// make a real (billed) harness call that confirms the harness *executes*
     /// tools inline rather than deferring them to a controller — the
@@ -795,6 +804,48 @@ pub struct WhereArgs {
     /// Directory to resolve config discovery from. Default: cwd.
     #[arg(long = "cwd", value_name = "DIR")]
     pub cwd: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+#[command(group(clap::ArgGroup::new("target").required(true).args(["files", "diff"])))]
+pub struct RulesArgs {
+    /// Paths to list the rules for (relative to the working directory, or
+    /// absolute); they need not exist. Matched as path strings exactly as `lint`
+    /// matches files named on its command line.
+    #[arg(long = "files", value_name = "PATH", num_args = 1..)]
+    pub files: Vec<PathBuf>,
+
+    /// List the rules for the changed paths `lint --diff` would judge against
+    /// BASE (a git revision or `A..B` range; default: the config's `diff_base`,
+    /// else `HEAD`). Deleted paths contribute no rule.
+    #[arg(long = "diff", value_name = "BASE", num_args = 0..=1)]
+    pub diff: Option<Option<String>>,
+
+    /// Glob(s) to exclude, added to the config's `files.exclude`; repeatable.
+    #[arg(long = "exclude", value_name = "GLOB")]
+    pub exclude: Vec<String>,
+
+    /// llmlint config file(s); repeatable. Replaces nested upward discovery.
+    #[arg(long = "config", short = 'c', value_name = "PATH")]
+    pub config: Vec<PathBuf>,
+
+    /// Output format. Default: `markdown` on a terminal, `json` otherwise.
+    #[arg(long = "format", value_enum)]
+    pub format: Option<RulesFormat>,
+
+    /// Directory to resolve config discovery and paths from. Default: cwd.
+    #[arg(long = "cwd", value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+}
+
+/// How `llmlint rules` prints its document.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RulesFormat {
+    /// The `RulesDocument` JSON (`schema_version` 1).
+    Json,
+    /// A Markdown section: one subsection per agent with its framing, then each
+    /// of its rules as a heading with its description.
+    Markdown,
 }
 
 #[derive(Args, Debug, Default)]

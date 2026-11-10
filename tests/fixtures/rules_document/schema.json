@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RulesDocument",
+  "description": "The rules that would judge a set of paths.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "description": "The version of this document's shape.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "paths": {
+      "description": "The paths asked about (relative to the working directory, forward\nslashes): the named paths, or under `--diff` the changed paths a\n`lint --diff` would judge.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "agents": {
+      "description": "Each agent that judges at least one listed rule, once, in the order its\nfirst rule appears.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentEntry"
+      }
+    },
+    "rules": {
+      "description": "The rules whose scoping matches at least one path, in config order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RuleEntry"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "paths",
+    "agents",
+    "rules"
+  ],
+  "$defs": {
+    "AgentEntry": {
+      "description": "An agent that judges at least one listed rule.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The agent's name (`default` for rules that name none).",
+          "type": "string"
+        },
+        "framing": {
+          "description": "The reviewer context the agent's prompt gives it (its `prompt_template`),\nempty when it sets none.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "framing"
+      ]
+    },
+    "RuleEntry": {
+      "description": "A rule that would judge at least one of the paths.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The rule's name.",
+          "type": "string"
+        },
+        "description": {
+          "description": "The invariant the judge evaluates.",
+          "type": "string"
+        },
+        "agent": {
+          "description": "The agent that judges it (an entry in `agents`).",
+          "type": "string"
+        },
+        "paths": {
+          "description": "The paths this rule's scoping matches, a subset of the document's `paths`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "agent",
+        "paths"
+      ]
+    }
+  }
+}
