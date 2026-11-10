@@ -10,7 +10,7 @@
 //! once written), `relevance: false` rules left out as `lint` never judges them,
 //! and a whole-file `ignore-file` honored for a path that exists. `--diff` takes
 //! the targets `lint --diff` keeps — the glob walk narrowed by the same
-//! [`lint::target_diffs`] and [`lint::is_changed`] — so a deleted path adds no
+//! `lint::target_diffs` and `lint::is_changed` — so a deleted path adds no
 //! rule. No harness is resolved or spawned and no model is called.
 
 use std::collections::{BTreeMap, BTreeSet};
