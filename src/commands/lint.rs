@@ -175,30 +175,7 @@ pub(crate) fn run_loaded(
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
-            diff::provider(backend, config.diff_base.clone()).diffs_with_renames(
-                &cwd,
-                &all,
-                &|old, new| {
-                    for rule in &selected {
-                        let fallback = RuleScope {
-                            dir: cwd.clone(),
-                            files: config.files.clone(),
-                        };
-                        let scope = scopes.get(&rule.name).unwrap_or(&fallback);
-                        let paths = ignores::resolve_files(
-                            &cwd,
-                            rule,
-                            &[old.to_path_buf(), new.to_path_buf()],
-                            scope,
-                            &config.files.exclude,
-                        )?;
-                        if paths.iter().any(|p| p == new) && !paths.iter().any(|p| p == old) {
-                            return Ok(false);
-                        }
-                    }
-                    Ok(true)
-                },
-            )?
+            target_diffs(backend, &config, &cwd, &selected, &scopes, &all)?
         }
         None => BTreeMap::new(),
     };
@@ -808,9 +785,48 @@ fn restrict_to_changed(
     cwd: &Path,
 ) {
     for rule in resolved.iter_mut() {
-        rule.files
-            .retain(|f| diffs.contains_key(f) && cwd.join(f).exists());
+        rule.files.retain(|f| is_changed(diffs, cwd, f));
     }
+}
+
+/// Each of `all` (the glob-resolved targets) that changed against the effective
+/// `diff_base`, with its unified diff. A rename is kept only when no selected
+/// rule judges its new path without its old one. Shared with `llmlint rules
+/// --diff`, so the paths it lists are exactly the ones a `lint --diff` judges.
+pub(crate) fn target_diffs(
+    backend: diff::DiffBackend,
+    config: &Config,
+    cwd: &Path,
+    selected: &[&Rule],
+    scopes: &BTreeMap<String, RuleScope>,
+    all: &[PathBuf],
+) -> Result<BTreeMap<PathBuf, String>> {
+    diff::provider(backend, config.diff_base.clone()).diffs_with_renames(cwd, all, &|old, new| {
+        for rule in selected {
+            let fallback = RuleScope {
+                dir: cwd.to_path_buf(),
+                files: config.files.clone(),
+            };
+            let scope = scopes.get(&rule.name).unwrap_or(&fallback);
+            let paths = ignores::resolve_files(
+                cwd,
+                rule,
+                &[old.to_path_buf(), new.to_path_buf()],
+                scope,
+                &config.files.exclude,
+            )?;
+            if paths.iter().any(|p| p == new) && !paths.iter().any(|p| p == old) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    })
+}
+
+/// Whether a target `file` is kept under `--diff`: it changed against the base
+/// (has an entry in `diffs`) and still exists on disk to be read.
+pub(crate) fn is_changed(diffs: &BTreeMap<PathBuf, String>, cwd: &Path, file: &Path) -> bool {
+    diffs.contains_key(file) && cwd.join(file).exists()
 }
 
 /// The oneharness config files to forward, lowest layer first: the merged

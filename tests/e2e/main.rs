@@ -23,6 +23,7 @@ use tempfile::TempDir;
 mod fingerprint;
 mod judge_reply;
 mod prompt_size;
+mod rules;
 
 fn mock_path() -> PathBuf {
     cargo_bin("llmlint-mock-oneharness")

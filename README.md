@@ -1027,6 +1027,59 @@ A rule with no cross-file override has no `fields` entry; settings and agents ar
 each kept whole from the nearest-root config that set them, so they have a single
 source.
 
+### Listing the rules that judge some paths
+
+`llmlint rules` answers "which rules will judge these paths?" before anything is
+written, so an agent can read the bar its work will meet instead of learning it
+at review:
+
+```console
+$ llmlint rules --files src/api/handler.rs docs/new-guide.md   # paths need not exist
+$ llmlint rules --diff main                                    # what this branch changed
+$ llmlint rules --files src/api/handler.rs --format markdown   # a section a task can carry
+```
+
+`--files PATH...` takes paths that **need not exist**: each is matched as a path
+string, relative to the working directory, exactly as `lint` matches a file named
+on its command line — against the top-level `files.include`/`files.exclude` (and
+`--exclude GLOB`, repeatable), each rule's own `files`, with nested configs and
+plugins resolved as `lint` resolves them (a subtree config loads only when a
+named path lies under it). Like `lint`, a named file is not hidden by
+`.gitignore`, and a whole-file `ignore-file` directive in a file that exists
+drops the rule it names for that file. `--diff [BASE]` takes the changed paths
+`lint --diff` would judge against `BASE` (any git revision or `A..B` range;
+default: the config's `diff_base`, else `HEAD`) — a deleted path contributes no
+rule. `-c/--config` and `--cwd` work as for `lint`. A rule switched off with
+`relevance: false` never appears. The command starts no harness, makes no model
+call, and needs no oneharness configuration.
+
+It prints only the rules whose scoping matches at least one path, each as a
+minimal definition, and each agent that judges a printed rule once, with its
+framing (the agent's `prompt_template`, empty when it sets none). `--format json`
+is the default when stdout is not a terminal; `--format markdown` (the terminal
+default) renders the same set as a section: a `##` heading, one `###` subsection
+per agent with its framing, then each of its rules as a `####` heading with its
+description and the paths it judges (headings inside a framing or description are
+demoted below it). The JSON is declared once as `RulesDocument`
+(`src/domain/rule_listing.rs`), whose schema is committed at
+`tests/fixtures/rules_document/schema.json`:
+
+```jsonc
+{
+  "schema_version": 1,
+  "paths": ["docs/new-guide.md", "src/api/handler.rs"],  // the paths asked about
+  "agents": [{ "name": "security", "framing": "You review as a security engineer." }],
+  "rules": [                                               // config order
+    {
+      "name": "no_inline_sql",
+      "description": "Queries go through the repository layer; …",
+      "agent": "security",
+      "paths": ["src/api/handler.rs"]                      // the paths it judges
+    }
+  ]
+}
+```
+
 ## Commands & exit codes
 
 - `llmlint [FILES...]` — lint (the default). `--format human|json`, `--agent`,
@@ -1132,6 +1185,11 @@ source.
   (`oneharness.model`, `version`), `agents.<name>`, `rules.<name>`, or a rule
   field `rules.<name>.<field>`. See
   [Finding where something is defined](#finding-where-something-is-defined).
+- `llmlint rules (--files PATH... | --diff [BASE])` — print the rules that would
+  judge those paths (which need not exist yet), each with its description and
+  judging agent, and each of those agents once with its framing, as JSON or
+  (`--format markdown`) a section a task can carry. No harness, no model call. See
+  [Listing the rules that judge some paths](#listing-the-rules-that-judge-some-paths).
 - `llmlint doctor` — check that oneharness is installed and reachable.
 
   ![llmlint doctor reporting the resolved oneharness version](docs/screenshots/doctor.svg)

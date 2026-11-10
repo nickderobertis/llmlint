@@ -9,7 +9,7 @@
 // llmlint: ignore-file[shell_test_tiers_stay_split] this project holds only the coverage drivers, which exist to drive bashcov and cargo-llvm-cov; the suite runs the locked bashcov offline over a scratch repository, so its offline and host-tool tiers are the same thing, and only an edit to a driver (or the shell coverage pins) selects it
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -155,7 +155,9 @@ test("without sha256sum a run hashes with shasum, still counting a copy, and wit
       continue;
     }
     for (const n of names) {
-      if (n === "sha256sum" || n === "shasum" || existsSync(join(bin, n))) continue;
+      // lstat, not existsSync: a host PATH entry may itself be a dangling symlink
+      // (seen on ubuntu runners), which existsSync reports absent once linked.
+      if (n === "sha256sum" || n === "shasum" || lstatSync(join(bin, n), { throwIfNoEntry: false })) continue;
       symlinkSync(join(d, n), join(bin, n));
     }
   }

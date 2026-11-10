@@ -451,6 +451,35 @@ resolves the oneharness the test put on PATH.
   and an unrecognized path shows the accepted forms — plus the shared load
   preflight (no config found, a structurally invalid config) surfaces through
   `where`'s own entry point.
+- `llmlint rules` (`rules.rs`) lists the rules that would judge some paths,
+  before they exist. Over a fixture with an unscoped rule, a one-directory rule,
+  a rule whose own exclude glob narrows it, a switched-off rule, a local-plugin
+  rule, a session `files.exclude` and two framed agents (plus one no match uses),
+  `--files` over paths that do not exist lists exactly the matching rules with
+  name, description, agent and per-rule paths, each judging agent once with its
+  framing; an excluded-only path adds no rule; `--format markdown` renders the
+  same set. Parity with `lint` is asserted against the prompts the mock harness
+  recorded: a named gitignored file, and a root + nested-config tree (root
+  `files.include`/`exclude`, nested rules added and switched off, one by
+  override) run from the root and from the subdirectory — then the same paths
+  deleted list the same rules. `--diff <base>` over a commit that adds, changes
+  and deletes files equals `--files` over the added and changed paths. It runs
+  with an empty `PATH` and no harness config and spawns nothing; the printed JSON
+  is checked key-for-key against the schema `RulesDocument` derives and
+  round-trips through it. Also: `--cwd` and `-c` (which drops the nested
+  config and its override); `LLMLINT_FILES_INCLUDE` narrowing only
+  session-scoped rules, and `LLMLINT_FILES_EXCLUDE` plus repeated `--exclude`;
+  the `--diff` base from the flag > `LLMLINT_DIFF_BASE` > config `diff_base` >
+  `HEAD`, an `A..B` range, and a rename listing only its new path; a whole-file
+  `ignore-file` dropping only the rule it names (matching `lint`); Markdown with
+  and without framing, headings in a framing or description demoted, backtick
+  and tilde fences left alone (one kind never closing the other), and no match; JSON by
+  default when piped and Markdown on a terminal (Linux, under `script`).
+  Failure: neither `--files` nor `--diff` (or both), an unresolvable diff
+  base, an invalid config (a rule naming an undeclared agent), a malformed
+  `LLMLINT_*` override, and a malformed ignore directive in a named file (a
+  reason-less `ignore-file`, refused with `lint`'s own diagnosis rather than
+  honored), exit 2.
 - Source tracking × nested discovery (the intersection): over a tree with an
   ancestor, the run cwd, and a subtree config, `config --sources` and `where`
   trace every rule to its own file (a subtree rule to the subtree config), settings
