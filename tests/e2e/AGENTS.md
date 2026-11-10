@@ -475,8 +475,11 @@ resolves the oneharness the test put on PATH.
   and without framing, headings in a framing or description demoted, backtick
   and tilde fences left alone (one kind never closing the other), and no match; JSON by
   default when piped and Markdown on a terminal (Linux, under `script`).
-  Failure: neither `--files` nor `--diff` (or both), and an unresolvable diff
-  base, exit 2.
+  Failure: neither `--files` nor `--diff` (or both), an unresolvable diff
+  base, an invalid config (a rule naming an undeclared agent), a malformed
+  `LLMLINT_*` override, and a malformed ignore directive in a named file (a
+  reason-less `ignore-file`, refused with `lint`'s own diagnosis rather than
+  honored), exit 2.
 - Source tracking × nested discovery (the intersection): over a tree with an
   ancestor, the run cwd, and a subtree config, `config --sources` and `where`
   trace every rule to its own file (a subtree rule to the subtree config), settings
