@@ -466,8 +466,16 @@ resolves the oneharness the test put on PATH.
   and deletes files equals `--files` over the added and changed paths. It runs
   with an empty `PATH` and no harness config and spawns nothing; the printed JSON
   is checked key-for-key against the schema `RulesDocument` derives and
-  round-trips through it. Failure: neither `--files` nor `--diff` (or both) is
-  exit 2.
+  round-trips through it. Also: `--cwd` and `-c` (which drops the nested
+  config and its override); `LLMLINT_FILES_INCLUDE` narrowing only
+  session-scoped rules, and `LLMLINT_FILES_EXCLUDE` plus repeated `--exclude`;
+  the `--diff` base from the flag > `LLMLINT_DIFF_BASE` > config `diff_base` >
+  `HEAD`, an `A..B` range, and a rename listing only its new path; a whole-file
+  `ignore-file` dropping only the rule it names (matching `lint`); Markdown with
+  no framing, demoted headings, fenced code left alone, and no match; JSON by
+  default when piped and Markdown on a terminal (Linux, under `script`).
+  Failure: neither `--files` nor `--diff` (or both), and an unresolvable diff
+  base, exit 2.
 - Source tracking × nested discovery (the intersection): over a tree with an
   ancestor, the run cwd, and a subtree config, `config --sources` and `where`
   trace every rule to its own file (a subtree rule to the subtree config), settings

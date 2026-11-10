@@ -21,7 +21,7 @@ use crate::cli::{RulesArgs, RulesFormat};
 use crate::commands::{ignores, lint};
 use crate::domain::config::{validate, Config, RelevanceMode, Rule};
 use crate::domain::ignore;
-use crate::domain::rule_listing::{RuleEntry, RulesDocument};
+use crate::domain::rule_listing::{AgentName, RuleEntry, RuleName, RulesDocument};
 use crate::errors::{Error, Result};
 use crate::io::configfs::{self, RuleScope};
 use crate::io::diff::DiffBackend;
@@ -96,9 +96,9 @@ pub fn run(args: RulesArgs) -> Result<i32> {
         .into_iter()
         .filter(|(_, paths)| !paths.is_empty())
         .map(|(rule, paths)| RuleEntry {
-            name: rule.name.clone(),
+            name: RuleName(rule.name.clone()),
             description: rule.description.clone(),
-            agent: rule.agent.clone().unwrap_or_else(|| "default".to_string()),
+            agent: AgentName(rule.agent.clone().unwrap_or_else(|| "default".to_string())),
             paths: paths.iter().map(|p| files::to_slash(p)).collect(),
         })
         .collect();
@@ -107,7 +107,7 @@ pub fn run(args: RulesArgs) -> Result<i32> {
         rules,
         |agent| {
             config
-                .agent_or_default(agent)
+                .agent_or_default(&agent.0)
                 .prompt_template
                 .unwrap_or_default()
         },

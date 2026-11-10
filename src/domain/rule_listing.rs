@@ -37,12 +37,37 @@ pub struct RulesDocument {
     pub rules: Vec<RuleEntry>,
 }
 
+/// A rule's name, as the document spells it. A distinct type from
+/// [`AgentName`] so the two identifiers cannot be swapped; it serializes as
+/// the bare string.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct RuleName(pub String);
+
+/// An agent's name, as the document spells it (`default` for rules that name
+/// none); serializes as the bare string.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct AgentName(pub String);
+
+impl std::fmt::Display for RuleName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::fmt::Display for AgentName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// An agent that judges at least one listed rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentEntry {
     /// The agent's name (`default` for rules that name none).
-    pub name: String,
+    pub name: AgentName,
     /// The reviewer context the agent's prompt gives it (its `prompt_template`),
     /// empty when it sets none.
     pub framing: String,
@@ -53,11 +78,11 @@ pub struct AgentEntry {
 #[serde(deny_unknown_fields)]
 pub struct RuleEntry {
     /// The rule's name.
-    pub name: String,
+    pub name: RuleName,
     /// The invariant the judge evaluates.
     pub description: String,
     /// The agent that judges it (an entry in `agents`).
-    pub agent: String,
+    pub agent: AgentName,
     /// The paths this rule's scoping matches, a subset of the document's `paths`.
     pub paths: Vec<String>,
 }
@@ -74,7 +99,7 @@ impl RulesDocument {
     pub fn new(
         paths: Vec<String>,
         rules: Vec<RuleEntry>,
-        framing: impl Fn(&str) -> String,
+        framing: impl Fn(&AgentName) -> String,
     ) -> Self {
         let mut agents: Vec<AgentEntry> = Vec::new();
         for rule in &rules {
@@ -134,15 +159,36 @@ fn finish(out: Vec<String>) -> String {
     format!("{}\n", out.join("\n").trim_end())
 }
 
+/// The two ways a Markdown code fence opens; a fence closes only on its own
+/// kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fence {
+    Backticks,
+    Tildes,
+}
+
+impl Fence {
+    /// The fence `line` opens or closes, if it is a fence line at all.
+    fn of(line: &str) -> Option<Fence> {
+        if line.starts_with("```") {
+            Some(Fence::Backticks)
+        } else if line.starts_with("~~~") {
+            Some(Fence::Tildes)
+        } else {
+            None
+        }
+    }
+}
+
 /// Trim `text` and push every ATX heading outside a fenced code block below the
 /// `####` rule heading, so pasted prose can never open a sibling section.
 fn demoted(text: &str) -> String {
-    let mut fence: Option<&str> = None;
+    let mut fence: Option<Fence> = None;
     text.trim()
         .lines()
         .map(|line| {
             let trimmed = line.trim_start();
-            let marker = ["```", "~~~"].into_iter().find(|m| trimmed.starts_with(m));
+            let marker = Fence::of(trimmed);
             match (fence, marker) {
                 (None, Some(m)) => fence = Some(m),
                 (Some(open), Some(m)) if open == m => fence = None,
@@ -164,9 +210,9 @@ mod tests {
 
     fn rule(name: &str, agent: &str, paths: &[&str]) -> RuleEntry {
         RuleEntry {
-            name: name.into(),
+            name: RuleName(name.into()),
             description: format!("{name} holds."),
-            agent: agent.into(),
+            agent: AgentName(agent.into()),
             paths: paths.iter().map(|p| p.to_string()).collect(),
         }
     }
@@ -182,7 +228,7 @@ mod tests {
             ],
             |name| format!("frame {name}"),
         );
-        let names: Vec<&str> = doc.agents.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = doc.agents.iter().map(|a| a.name.0.as_str()).collect();
         assert_eq!(names, ["style", "default"]);
         assert_eq!(doc.agents[0].framing, "frame style");
         assert_eq!(doc.schema_version, SCHEMA_VERSION);

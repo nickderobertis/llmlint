@@ -4,6 +4,8 @@
 //! model doubled at the harness boundary (the mock oneharness, recording every
 //! prompt it received), and require the two to name the same rules.
 
+// llmlint: ignore-file[e2e_not_mocked] the stand-in oneharness is this suite's double for the oneharness subprocess, the one genuinely external boundary (AGENTS.md); it is used only to record the prompts the real `lint` sends so `rules` can be held to them, and every journey drives the real freshly built llmlint binary over real files and git repos
+
 use std::collections::BTreeSet;
 
 use llmlint::domain::rule_listing::{self, RulesDocument};
@@ -73,7 +75,7 @@ fn rules_json(p: &Project, dir: &Path, args: &[&str]) -> (RulesDocument, Value) 
 }
 
 fn rule_names(doc: &RulesDocument) -> Vec<&str> {
-    doc.rules.iter().map(|r| r.name.as_str()).collect()
+    doc.rules.iter().map(|r| r.name.0.as_str()).collect()
 }
 
 /// The rule names every judge prompt the mock harness recorded under `log`
@@ -124,7 +126,7 @@ fn linted_rules(p: &Project, dir: &Path, paths: &[&str], log_name: &str) -> BTre
 }
 
 fn as_set(doc: &RulesDocument) -> BTreeSet<String> {
-    doc.rules.iter().map(|r| r.name.clone()).collect()
+    doc.rules.iter().map(|r| r.name.0.clone()).collect()
 }
 
 #[test]
@@ -149,24 +151,24 @@ fn rules_for_paths_that_do_not_exist_are_exactly_the_ones_whose_scoping_matches(
     let plugin_at = names.iter().position(|n| *n == "plugin_rule").unwrap();
     names.remove(plugin_at);
     assert_eq!(names, ["unscoped", "api_only", "not_generated_code"]);
-    let by_name = |n: &str| doc.rules.iter().find(|r| r.name == n).unwrap();
+    let by_name = |n: &str| doc.rules.iter().find(|r| r.name.0 == n).unwrap();
 
     let unscoped = by_name("unscoped");
     assert_eq!(unscoped.description, "Unscoped invariant holds.");
-    assert_eq!(unscoped.agent, "reviewer");
+    assert_eq!(unscoped.agent.0, "reviewer");
     assert_eq!(unscoped.paths, ["api/handler.rs", "lib/core_gen.rs"]);
     let api = by_name("api_only");
     assert_eq!(
-        (api.agent.as_str(), api.paths.as_slice()),
+        (api.agent.0.as_str(), api.paths.as_slice()),
         ("reviewer", &["api/handler.rs".to_string()][..])
     );
     // The rule's own exclude glob keeps `lib/core_gen.rs` from it.
     let handwritten = by_name("not_generated_code");
-    assert_eq!(handwritten.agent, "architect");
+    assert_eq!(handwritten.agent.0, "architect");
     assert_eq!(handwritten.paths, ["api/handler.rs"]);
     let plugin = by_name("plugin_rule");
     assert_eq!(plugin.description, "Plugin invariant holds.");
-    assert_eq!(plugin.agent, "architect");
+    assert_eq!(plugin.agent.0, "architect");
 
     // `generated/out.rs` is covered only by the excluded glob: no rule judges it.
     for rule in &doc.rules {
@@ -179,7 +181,7 @@ fn rules_for_paths_that_do_not_exist_are_exactly_the_ones_whose_scoping_matches(
     let agents: Vec<(&str, &str)> = doc
         .agents
         .iter()
-        .map(|a| (a.name.as_str(), a.framing.as_str()))
+        .map(|a| (a.name.0.as_str(), a.framing.as_str()))
         .collect();
     assert_eq!(agents, [("reviewer", REVIEWER), ("architect", ARCHITECT)]);
 
@@ -234,7 +236,7 @@ fn a_gitignored_existing_file_is_treated_as_lint_treats_it() {
     let linted = linted_rules(&p, p.path(), &["build/out.rs"], "prompts");
     assert!(!linted.is_empty(), "lint judges a named gitignored file");
     assert_eq!(as_set(&doc), linted);
-    let built = doc.rules.iter().find(|r| r.name == "unscoped").unwrap();
+    let built = doc.rules.iter().find(|r| r.name.0 == "unscoped").unwrap();
     assert_eq!(built.paths, ["build/out.rs"]);
 }
 
@@ -484,4 +486,289 @@ fn the_printed_document_reconciles_with_its_one_declaration() {
     assert_eq!(serde_json::to_value(&doc).unwrap(), value);
     // Non-vacuous: every nested shape was walked.
     assert!(!doc.agents.is_empty() && !doc.rules.is_empty());
+}
+
+fn names_and_paths(doc: &RulesDocument) -> Vec<(String, Vec<String>)> {
+    doc.rules
+        .iter()
+        .map(|r| (r.name.0.clone(), r.paths.clone()))
+        .collect()
+}
+
+#[test]
+fn rules_honor_cwd_and_an_explicit_config_replacing_discovery() {
+    let p = nested_fixture();
+    let elsewhere = TempDir::new().unwrap();
+    let cwd = p.path().to_str().unwrap();
+    // `--cwd` resolves discovery (the nested config included) and the paths
+    // from the project, wherever the command itself runs.
+    let (from_cwd, _) = rules_json(
+        &p,
+        elsewhere.path(),
+        &["--cwd", cwd, "--files", "app/main.rs"],
+    );
+    assert_eq!(
+        names_and_paths(&from_cwd),
+        [
+            ("root_all".to_string(), vec!["app/main.rs".to_string()]),
+            ("app_rule".to_string(), vec!["app/main.rs".to_string()]),
+            ("app_rs_rule".to_string(), vec!["app/main.rs".to_string()]),
+        ]
+    );
+    // `-c` replaces the walk: the nested config is not loaded, so its rules are
+    // absent and its override no longer switches `root_quieted` off.
+    let (explicit, _) = rules_json(
+        &p,
+        elsewhere.path(),
+        &["--cwd", cwd, "-c", "llmlint.yml", "--files", "app/main.rs"],
+    );
+    let names: Vec<&str> = rule_names(&explicit);
+    assert_eq!(names, ["root_all", "root_quieted"]);
+}
+
+#[test]
+fn rules_apply_env_and_cli_file_filters_like_lint() {
+    let p = fixture();
+    let paths = ["api/handler.rs", "lib/core.rs", "docs/guide.md"];
+    let mut args = vec!["--files"];
+    args.extend(paths);
+
+    // A session `files.include` from the env narrows the rules scoped by the
+    // session filter (`unscoped`, the plugin rule), not a rule's own `files`.
+    let out = p
+        .bare()
+        .env("LLMLINT_FILES_INCLUDE", "lib/**")
+        .arg("rules")
+        .args(&args)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: RulesDocument = serde_json::from_slice(&out.stdout).unwrap();
+    let got = names_and_paths(&doc);
+    assert!(
+        got.contains(&("unscoped".into(), vec!["lib/core.rs".into()])),
+        "{got:?}"
+    );
+    assert!(
+        got.contains(&("plugin_rule".into(), vec!["lib/core.rs".into()])),
+        "{got:?}"
+    );
+    assert!(
+        got.contains(&("api_only".into(), vec!["api/handler.rs".into()])),
+        "{got:?}"
+    );
+
+    // An env exclude and repeated `--exclude`s all add to the denylist.
+    let out = p
+        .bare()
+        .env("LLMLINT_FILES_EXCLUDE", "api/**")
+        .arg("rules")
+        .args(&args)
+        .args(["--exclude", "lib/**", "--exclude", "docs/**"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: RulesDocument = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(doc.rules.is_empty(), "{doc:?}");
+    assert_eq!(
+        doc.paths,
+        ["api/handler.rs", "docs/guide.md", "lib/core.rs"]
+    );
+}
+
+/// A repo whose history moves through `basetag` (src/a.rs, src/b.rs, src/c.rs,
+/// src/old.rs), then a commit changing `a`, then one changing `b` and renaming
+/// `old` to `moved`, with `c` changed in the work tree; `diff_base` names the tag.
+fn diff_repo() -> (Project, String) {
+    let p = Project::new();
+    let config = "version: 1\ndiff_base: basetag\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+                  - { name: src_rule, description: \"Src invariant holds.\" }\n";
+    p.write("llmlint.yml", config);
+    let long: String = (0..40).map(|i| format!("fn line_{i}() {{}}\n")).collect();
+    for f in ["src/a.rs", "src/b.rs", "src/c.rs"] {
+        p.write(f, "fn x() {}\n");
+    }
+    p.write("src/old.rs", &long);
+    init_repo(p.path());
+    git(p.path(), &["add", "."]);
+    git(p.path(), &["commit", "-q", "-m", "base"]);
+    git(p.path(), &["tag", "basetag"]);
+    p.write("src/a.rs", "fn x() { a(); }\n");
+    git(p.path(), &["commit", "-qam", "a"]);
+    let after_a = git_out(p.path(), &["rev-parse", "HEAD"]);
+    p.write("src/b.rs", "fn x() { b(); }\n");
+    git(p.path(), &["mv", "src/old.rs", "src/moved.rs"]);
+    git(p.path(), &["commit", "-qam", "b and rename"]);
+    p.write("src/c.rs", "fn x() { c(); }\n");
+    (p, after_a)
+}
+
+fn diff_paths(p: &Project, args: &[&str], env: &[(&str, &str)]) -> Vec<String> {
+    let mut cmd = p.bare();
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.arg("rules").args(args).output().unwrap();
+    assert!(
+        out.status.success(),
+        "rules {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc: RulesDocument = serde_json::from_slice(&out.stdout).unwrap();
+    // Every listed path is one the rule judges.
+    let judged: Vec<String> = doc.rules.iter().flat_map(|r| r.paths.clone()).collect();
+    assert_eq!(judged, doc.paths);
+    doc.paths
+}
+
+#[test]
+fn rules_diff_takes_its_base_from_the_flag_the_env_the_config_or_head() {
+    let (p, after_a) = diff_repo();
+    let all = ["src/a.rs", "src/b.rs", "src/c.rs", "src/moved.rs"];
+    // Bare `--diff`: the config's `diff_base`; the rename lists only its new path.
+    assert_eq!(diff_paths(&p, &["--diff"], &[]), all);
+    // A `--diff BASE` wins over the config.
+    assert_eq!(
+        diff_paths(&p, &["--diff", &after_a], &[]),
+        ["src/b.rs", "src/c.rs", "src/moved.rs"]
+    );
+    // `LLMLINT_DIFF_BASE` wins over the config; the flag wins over it.
+    assert_eq!(
+        diff_paths(&p, &["--diff"], &[("LLMLINT_DIFF_BASE", &after_a)]),
+        ["src/b.rs", "src/c.rs", "src/moved.rs"]
+    );
+    assert_eq!(
+        diff_paths(
+            &p,
+            &["--diff", "basetag"],
+            &[("LLMLINT_DIFF_BASE", &after_a)]
+        ),
+        all
+    );
+    // A range compares two commits, so the work-tree change is outside it.
+    assert_eq!(
+        diff_paths(&p, &["--diff", &format!("basetag..{after_a}")], &[]),
+        ["src/a.rs"]
+    );
+    // With no base configured anywhere, `HEAD`: only the work-tree change.
+    p.write(
+        "llmlint.yml",
+        "version: 1\nfiles:\n  include: [\"src/**\"]\nrules:\n  \
+         - { name: src_rule, description: \"Src invariant holds.\" }\n",
+    );
+    assert_eq!(diff_paths(&p, &["--diff"], &[]), ["src/c.rs"]);
+    // A base git cannot resolve is git's own error, never an empty list.
+    p.bare()
+        .args(["rules", "--diff", "no-such-ref"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn a_whole_file_ignore_drops_only_the_rule_it_names_like_lint() {
+    let p = fixture();
+    // Spelled in pieces so this test file itself carries no directive.
+    let directive = format!("// llmlint: {}[api_only] generated client", "ignore-file");
+    p.write(
+        "api/handler.rs",
+        &format!("{directive}\nfn handler() {{}}\n"),
+    );
+    p.write("api/other.rs", "fn other() {}\n");
+    let (doc, _) = rules_json(&p, p.path(), &["--files", "api/handler.rs", "api/other.rs"]);
+    let got = names_and_paths(&doc);
+    let both = vec!["api/handler.rs".to_string(), "api/other.rs".to_string()];
+    assert!(got.contains(&("unscoped".into(), both.clone())), "{got:?}");
+    assert!(
+        got.contains(&("not_generated_code".into(), both)),
+        "{got:?}"
+    );
+    assert!(
+        got.contains(&("api_only".into(), vec!["api/other.rs".into()])),
+        "{got:?}"
+    );
+
+    // Over the ignored file alone the rule drops out, as it does from `lint`.
+    let (alone, _) = rules_json(&p, p.path(), &["--files", "api/handler.rs"]);
+    assert!(!rule_names(&alone).contains(&"api_only"));
+    assert_eq!(
+        as_set(&alone),
+        linted_rules(&p, p.path(), &["api/handler.rs"], "prompts")
+    );
+}
+
+#[test]
+fn rules_markdown_handles_no_framing_nested_headings_and_no_match() {
+    let p = Project::new();
+    p.write(
+        "llmlint.yml",
+        "version: 1\nrules:\n  \
+         - name: documented\n    description: |\n      # Contract\n      \
+         Each handler documents its errors.\n      ```sh\n      # not a heading\n      ```\n    \
+         files: { include: [\"api/**\"] }\n",
+    );
+    let md = |paths: &[&str]| {
+        let out = p
+            .bare()
+            .args(["rules", "--format", "markdown", "--files"])
+            .args(paths)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let text = md(&["api/h.rs"]);
+    // The default agent sets no framing: its rules follow its heading directly.
+    assert!(
+        text.contains("### Agent `default`\n\n#### `documented`\n"),
+        "{text}"
+    );
+    // A heading in the description is demoted below the rule's; one inside
+    // fenced code is code, and stays as written.
+    assert!(text.contains("\n##### Contract\n"), "{text}");
+    assert!(text.contains("```sh\n# not a heading\n```"), "{text}");
+    assert!(text.contains("Judges: `api/h.rs`"), "{text}");
+
+    assert_eq!(
+        md(&["src/x.rs"]),
+        "## llmlint rules for these paths\n\nNo llmlint rule judges these paths.\n"
+    );
+}
+
+#[test]
+fn rules_default_to_json_when_piped() {
+    let p = fixture();
+    let out = p
+        .bare()
+        .args(["rules", "--files", "api/handler.rs"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: RulesDocument = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(!doc.rules.is_empty());
+}
+
+/// On a terminal the default is Markdown. `script` (util-linux) gives the
+/// binary a real pseudo-terminal for stdout.
+#[cfg(target_os = "linux")]
+#[test]
+fn rules_default_to_markdown_on_a_terminal() {
+    let p = fixture();
+    let bin = cargo_bin("llmlint");
+    let inner = format!("'{}' rules --files api/handler.rs", bin.display());
+    let out = p
+        .wire(Command::new("script"))
+        .args(["-qec", &inner, "/dev/null"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    assert!(
+        text.contains("## llmlint rules for these paths\n"),
+        "{text}"
+    );
+    assert!(text.contains("#### `api_only`"), "{text}");
 }

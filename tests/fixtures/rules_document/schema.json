@@ -46,7 +46,7 @@
       "properties": {
         "name": {
           "description": "The agent's name (`default` for rules that name none).",
-          "type": "string"
+          "$ref": "#/$defs/AgentName"
         },
         "framing": {
           "description": "The reviewer context the agent's prompt gives it (its `prompt_template`),\nempty when it sets none.",
@@ -59,13 +59,17 @@
         "framing"
       ]
     },
+    "AgentName": {
+      "description": "An agent's name, as the document spells it (`default` for rules that name\nnone); serializes as the bare string.",
+      "type": "string"
+    },
     "RuleEntry": {
       "description": "A rule that would judge at least one of the paths.",
       "type": "object",
       "properties": {
         "name": {
           "description": "The rule's name.",
-          "type": "string"
+          "$ref": "#/$defs/RuleName"
         },
         "description": {
           "description": "The invariant the judge evaluates.",
@@ -73,7 +77,7 @@
         },
         "agent": {
           "description": "The agent that judges it (an entry in `agents`).",
-          "type": "string"
+          "$ref": "#/$defs/AgentName"
         },
         "paths": {
           "description": "The paths this rule's scoping matches, a subset of the document's `paths`.",
@@ -90,6 +94,10 @@
         "agent",
         "paths"
       ]
+    },
+    "RuleName": {
+      "description": "A rule's name, as the document spells it. A distinct type from\n[`AgentName`] so the two identifiers cannot be swapped; it serializes as\nthe bare string.",
+      "type": "string"
     }
   }
 }
