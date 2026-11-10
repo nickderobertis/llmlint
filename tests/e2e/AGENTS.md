@@ -472,7 +472,8 @@ resolves the oneharness the test put on PATH.
   the `--diff` base from the flag > `LLMLINT_DIFF_BASE` > config `diff_base` >
   `HEAD`, an `A..B` range, and a rename listing only its new path; a whole-file
   `ignore-file` dropping only the rule it names (matching `lint`); Markdown with
-  no framing, demoted headings, fenced code left alone, and no match; JSON by
+  and without framing, headings in a framing or description demoted, backtick
+  and tilde fences left alone (one kind never closing the other), and no match; JSON by
   default when piped and Markdown on a terminal (Linux, under `script`).
   Failure: neither `--files` nor `--diff` (or both), and an unresolvable diff
   base, exit 2.

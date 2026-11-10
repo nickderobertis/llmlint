@@ -697,13 +697,20 @@ fn a_whole_file_ignore_drops_only_the_rule_it_names_like_lint() {
 }
 
 #[test]
-fn rules_markdown_handles_no_framing_nested_headings_and_no_match() {
+fn rules_markdown_handles_framing_nested_headings_fences_and_no_match() {
     let p = Project::new();
     p.write(
         "llmlint.yml",
-        "version: 1\nrules:\n  \
+        "version: 1\n\
+         agents:\n  \
+           framed:\n    prompt_template: |\n      ## Reviewer stance\n      Read as an API owner.\n\
+         rules:\n  \
          - name: documented\n    description: |\n      # Contract\n      \
-         Each handler documents its errors.\n      ```sh\n      # not a heading\n      ```\n    \
+         Each handler documents its errors.\n      ```sh\n      # not a heading\n      ```\n      \
+         ~~~text\n      ```\n      # still code: a backtick line does not close a tilde fence\n      \
+         ~~~\n      ## After the fences\n    \
+         files: { include: [\"api/**\"] }\n  \
+         - name: framed_rule\n    agent: framed\n    description: Framed invariant holds.\n    \
          files: { include: [\"api/**\"] }\n",
     );
     let md = |paths: &[&str]| {
@@ -726,6 +733,20 @@ fn rules_markdown_handles_no_framing_nested_headings_and_no_match() {
     // fenced code is code, and stays as written.
     assert!(text.contains("\n##### Contract\n"), "{text}");
     assert!(text.contains("```sh\n# not a heading\n```"), "{text}");
+    // A tilde fence is code too, and a backtick line inside it does not close
+    // it; the heading after both fences is demoted again.
+    assert!(
+        text.contains(
+            "~~~text\n```\n# still code: a backtick line does not close a tilde fence\n~~~\n"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("\n###### After the fences\n"), "{text}");
+    // A heading in an agent's framing is demoted too.
+    assert!(
+        text.contains("### Agent `framed`\n\n###### Reviewer stance\nRead as an API owner.\n"),
+        "{text}"
+    );
     assert!(text.contains("Judges: `api/h.rs`"), "{text}");
 
     assert_eq!(
