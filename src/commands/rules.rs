@@ -25,6 +25,7 @@ use crate::domain::rule_listing::{AgentName, RuleEntry, RuleName, RulesDocument}
 use crate::errors::{Error, Result};
 use crate::io::configfs::{self, RuleScope};
 use crate::io::diff::DiffBackend;
+use crate::io::plugins::PluginResolution;
 use crate::io::{env, files};
 
 pub fn run(args: RulesArgs) -> Result<i32> {
@@ -35,6 +36,7 @@ pub fn run(args: RulesArgs) -> Result<i32> {
     let loaded = configfs::load_with_targets(&args.config, &cwd, &named)?;
     let mut scopes = loaded.scopes;
     let mut config = loaded.config;
+    let plugins = loaded.plugins;
     validate(&config)?;
     // The same layering `lint` applies: env over config, then the CLI flags this
     // command shares with it (`--exclude`, and the `--diff` base over
@@ -90,7 +92,7 @@ pub fn run(args: RulesArgs) -> Result<i32> {
         }
     };
 
-    drop_file_ignored(&cwd, &config, &mut matched)?;
+    drop_file_ignored(&cwd, &config, &plugins, &mut matched)?;
 
     let rules: Vec<RuleEntry> = matched
         .into_iter()
@@ -148,9 +150,15 @@ fn scope_of(
 /// Drop each existing path a rule's whole-file `ignore-file` directive exempts,
 /// as `lint`'s planner drops it before any judge sees it. A path that does not
 /// exist carries no directive, so it is never dropped here.
+///
+/// The directives are first held to `lint`'s own structural pre-flight
+/// ([`ignores::check`]): a malformed one (no reason, an unknown rule, an
+/// unbalanced block) is the same exit-2 error `lint` raises, never a silent
+/// exemption — the parser alone would still honor a reason-less `ignore-file`.
 fn drop_file_ignored(
     cwd: &Path,
     config: &Config,
+    plugins: &[PluginResolution],
     matched: &mut [(&Rule, Vec<PathBuf>)],
 ) -> Result<()> {
     let known = ignores::known_rules(config);
@@ -160,6 +168,7 @@ fn drop_file_ignored(
         .filter(|p| cwd.join(p).is_file())
         .cloned()
         .collect();
+    ignores::check(cwd, &existing, &known, plugins)?;
     let mut exempt: BTreeMap<PathBuf, ignore::Suppressions> = BTreeMap::new();
     for path in existing {
         if let Some(text) = files::read_text(cwd, &path)? {

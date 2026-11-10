@@ -697,6 +697,78 @@ fn a_whole_file_ignore_drops_only_the_rule_it_names_like_lint() {
 }
 
 #[test]
+fn a_malformed_ignore_directive_is_rejected_like_lint_never_honored() {
+    let p = fixture();
+    // A reason-less `ignore-file` (spelled in pieces so this file carries no
+    // directive): the parser alone would still exempt the file, so without the
+    // structural pre-flight `api_only` would silently drop out with exit 0.
+    let directive = format!("// llmlint: {}[api_only]", "ignore-file");
+    p.write(
+        "api/handler.rs",
+        &format!("{directive}\nfn handler() {{}}\n"),
+    );
+    let rules = p
+        .bare()
+        .args(["rules", "--files", "api/handler.rs", "--format", "json"])
+        .assert()
+        .code(2)
+        .stdout("");
+    let rules_err = String::from_utf8_lossy(&rules.get_output().stderr).into_owned();
+    assert!(rules_err.contains("api/handler.rs:1"), "{rules_err}");
+    // `lint` refuses the same file with the same diagnosis, before any judge.
+    let lint = p.lint().args(["api/handler.rs"]).assert().code(2);
+    let lint_err = String::from_utf8_lossy(&lint.get_output().stderr).into_owned();
+    let problem = |e: &str| {
+        e.lines()
+            .find(|l| l.contains("api/handler.rs:1"))
+            .map(str::trim)
+            .map(String::from)
+    };
+    assert_eq!(problem(&rules_err), problem(&lint_err), "{lint_err}");
+
+    // The same directive with its reason is honored, so the fix is the reason.
+    p.write(
+        "api/handler.rs",
+        &format!("{directive} generated client\nfn handler() {{}}\n"),
+    );
+    let (doc, _) = rules_json(&p, p.path(), &["--files", "api/handler.rs"]);
+    assert!(!rule_names(&doc).contains(&"api_only"), "{doc:?}");
+}
+
+#[test]
+fn an_invalid_config_or_env_override_is_rejected_not_listed_over() {
+    // A rule naming an agent nothing declares fails config validation.
+    let bad = Project::new();
+    bad.write(
+        "llmlint.yml",
+        "rules:\n  - { name: orphan, agent: nobody, description: \"Orphan holds.\" }\n",
+    );
+    bad.bare()
+        .args(["rules", "--files", "a.rs", "--format", "json"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(predicate::str::contains("nobody"));
+
+    // A malformed `LLMLINT_*` override is located to its variable.
+    let p = fixture();
+    p.bare()
+        .env("LLMLINT_MAX_PROMPT_CHARS", "lots")
+        .args(["rules", "--files", "a.rs", "--format", "json"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(predicate::str::contains("LLMLINT_MAX_PROMPT_CHARS"));
+    // A malformed glob in the env exclude is refused the same way.
+    p.bare()
+        .env("LLMLINT_FILES_EXCLUDE", "[")
+        .args(["rules", "--files", "a.rs", "--format", "json"])
+        .assert()
+        .code(2)
+        .stdout("");
+}
+
+#[test]
 fn rules_markdown_handles_framing_nested_headings_fences_and_no_match() {
     let p = Project::new();
     p.write(
