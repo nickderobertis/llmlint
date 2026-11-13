@@ -8,8 +8,12 @@
 # than 2 days and keeps each unit's newest build plus every build modified
 # within 2 days, so rebuilds in the slot stay warm. Its time per pass is the
 # `llmlint-pool-maintenance-seconds` budget in pool-maintenance/budgets.yaml.
-schema_version = 1
+schema_version = 2
 
 [pool.maintain]
 command = ["just", "pool-maintenance"]
 timeout = "30m"
+
+[policy]
+publication = "change-auto"
+approvals = "none"
