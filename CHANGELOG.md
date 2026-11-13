@@ -7,6 +7,12 @@ maintained by release-plz; do not hand-edit released sections.
 
 ## [Unreleased]
 
+## [0.4.13](https://github.com/nickderobertis/llmlint/compare/v0.4.12...v0.4.13) - 2026-11-13
+
+### Added
+
+- print the llmlint rules that apply to given paths ([#268](https://github.com/nickderobertis/llmlint/pull/268))
+
 ## [0.4.12](https://github.com/nickderobertis/llmlint/compare/v0.4.11...v0.4.12) - 2026-10-25
 
 ### Added
