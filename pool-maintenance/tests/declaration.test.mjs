@@ -44,11 +44,12 @@ beforeEach(() => {
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-test("onevcs.toml declares schema 1 maintenance with a 30-minute timeout and nothing else", () => {
+test("onevcs.toml declares schema 2 maintenance with a 30-minute timeout and the change-auto policy, and nothing else", () => {
   const d = declaration();
-  expect(Object.keys(d).sort()).toEqual(["pool", "schema_version"]);
-  expect(d.schema_version).toBe(1);
+  expect(Object.keys(d).sort()).toEqual(["policy", "pool", "schema_version"]);
+  expect(d.schema_version).toBe(2);
   expect(d.pool).toEqual({ maintain: { command: ["just", "pool-maintenance"], timeout: "30m" } });
+  expect(d.policy).toEqual({ publication: "change-auto", approvals: "none" });
 });
 
 unix("the declared command prunes every target dir, keeping 2 days, and reports success", () => {
